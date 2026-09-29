@@ -559,9 +559,6 @@ def test_the_module_drafts_in_a_room_with_nothing_to_open_and_judges_on_the_revi
             return SimpleNamespace(ok=True, raw_output=json.dumps(GOOD), result=json.dumps(GOOD),
                                    text=json.dumps(GOOD), cost_usd=None, num_turns=1)
 
-    judged = []
-    monkeypatch.setattr(cards, "build_judge",
-                        lambda project: (lambda p: judged.append(p) or _judge_says(5)))
     monkeypatch.setattr("openfactory.adapters.agent.base.final_text",
                         lambda res: getattr(res, "text", ""))
     engine = _Engine()
@@ -572,8 +569,10 @@ def test_the_module_drafts_in_a_room_with_nothing_to_open_and_judges_on_the_revi
 
     out = module.compose_card(request=GESTURE, conversation=CONVERSATION, reply="Abro.")
 
-    assert out.ok and out.draft.title == GOOD["title"] and len(judged) == 1
-    assert engine.rooms == [(cards.DRAFT_PHASE, [])], "the draft must stand in an empty room"
+    assert out.ok and out.draft.title == GOOD["title"]
+    assert engine.rooms == [(cards.DRAFT_PHASE, []), (cards.JUDGE_PHASE, [])], (
+        "the draft and the judge each stand in an empty room — and a module handed a harness "
+        "judges with it, never with a live one it was not handed")
 
 
 def test_every_verdict_is_a_row_kept_whatever_the_log_level(monkeypatch):
@@ -790,3 +789,115 @@ def test_an_over_long_defect_title_is_refused_by_the_pen(tmp_path):
         card="## O que está acontecendo\n\nd", title="z" * (TITLE_LIMIT + 1))
 
     assert not result.ok and tracker.created == []
+
+
+# ── the cards a requirement is broken into pass the same check (#392) ──────────────────────────
+
+ISSUE = {"title": "Exportar o relatório mensal em CSV", "objective": "O relatório mensal pode "
+         "ser baixado em CSV com os totais do mês.", "acceptance_criteria": [
+             "Baixar o relatório de setembro entrega um CSV com uma linha por lançamento"],
+         "out_of_scope": [], "target_repo": "", "cites": 7, "already_on_board": None}
+SOURCE = "REQ-0007 — Relatório em CSV\n\nO cliente precisa baixar o relatório mensal em CSV."
+
+
+def _body(fields: dict) -> str:
+    from openfactory.product.authoring import issue_body
+    from openfactory.product.role import IssueDraft
+
+    return issue_body(IssueDraft(**fields), requirement_path="requirements/0007.md",
+                      docs_repo="a/docs")
+
+
+def _vet(fields, judge, redraft=None):
+    return cards.vet_issue(fields, body_of=_body, source=SOURCE, rubric=load_rubric(),
+                           judge=judge, redraft=redraft, project_name="books")
+
+
+def test_a_requirements_card_the_judge_passes_is_filed_as_drafted():
+    prompts = []
+    kept, why = _vet(dict(ISSUE), lambda p: prompts.append(p) or _judge_says(5))
+
+    assert kept == ISSUE and why == ""
+    [prompt] = prompts
+    assert cards.REQUIREMENT_NOTE in prompt and "REQ-0007" in prompt
+
+
+def test_a_requirements_card_with_no_criterion_is_redrafted_before_any_judge():
+    judged, asked = [], []
+
+    def redraft(prompt):
+        asked.append(prompt)
+        return {"acceptance_criteria": ["O CSV tem uma linha por lançamento do mês"]}
+
+    kept, why = _vet({**ISSUE, "acceptance_criteria": []},
+                     lambda p: judged.append(p) or _judge_says(5), redraft)
+
+    assert why == "" and kept["acceptance_criteria"] == ["O CSV tem uma linha por lançamento do mês"]
+    assert len(judged) == 1, "the floor refused the first draft without spending the judge"
+    assert "nothing says when" in asked[0]
+
+
+def test_a_requirements_card_the_judge_blocks_twice_is_not_filed_and_says_why():
+    kept, why = _vet(dict(ISSUE), lambda p: _judge_says(2, findings=["name the file format"]),
+                     lambda p: dict(ISSUE))
+
+    assert kept is None and "name the file format" in why
+
+
+def test_the_breakdown_files_nothing_the_review_refuses_and_says_which_front(tmp_path):
+    """Through `ProductModule.breakdown` with a harness that breaks the requirement into one card
+    and then, asked to review it, blocks it: nothing reaches the tracker, and the result names
+    the front and what it lacks."""
+    from openfactory.product.role import IssueDraft
+    from tests.test_the_product_owner_opens_a_card_as_described import _module, _Tracker
+
+    tracker = _Tracker()
+    module = _module(tmp_path, tracker)
+    requirement = SimpleNamespace(number=7, title="Relatório em CSV", body="baixar em CSV",
+                                  asked_by="", path="0007.md")
+    vet = module._vetter(requirement, tracker)
+    module._vetter = lambda req, tr: (lambda draft: (None, "name the file format"))
+
+    result = module._file_one(IssueDraft(**ISSUE), requirement, tracker, None,
+                              vet=module._vetter(requirement, tracker))
+
+    assert callable(vet)
+    assert not result.ok and tracker.created == []
+    assert "Exportar o relatório mensal em CSV" in result.detail
+    assert "name the file format" in result.detail
+
+
+def test_every_card_the_product_role_creates_goes_through_the_loop():
+    """ONE DOOR FOR EVERY CARD (#392). The requested card went through the loop and the defect and
+    the requirement's cards did not — three pens, one checked. So every `create_ticket` the product
+    module issues must sit in one of the three writers, and each writer must be reached through
+    the check: the gestures compose before staging, and `_file_one` vets before it files. A fourth
+    pen fails here until it is put behind the same door."""
+    import ast
+    import inspect
+    from pathlib import Path
+
+    from openfactory.product import engine, module
+
+    writers = {"file_ticket", "file_defect", "_file_one"}
+    found = set()
+    for path in Path(module.__file__).parent.glob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        # THE OUTERMOST function holding the call: a writer's nested `_open` is that writer
+        tops = [n for n in tree.body if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]
+        for cls in (n for n in tree.body if isinstance(n, ast.ClassDef)):
+            tops += [n for n in cls.body if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]
+        for fn in tops:
+            for call in ast.walk(fn):
+                if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                        and call.func.attr == "create_ticket"):
+                    found.add((path.name, fn.name))
+    outside = {f for f in found if f[1] not in writers}
+    assert not outside, f"a card is created outside the three checked writers: {sorted(outside)}"
+    assert {name for _, name in found} == writers, "the scope moved: re-read which pens exist"
+
+    gestures = inspect.getsource(engine.gestures)
+    assert gestures.count("compose(") >= 2, "a gesture stages a card the loop never saw"
+    filed = inspect.getsource(module.ProductModule._file_one)
+    assert "vet(draft)" in filed, "the requirement's cards are filed unchecked"
+    assert "vet=vet" in inspect.getsource(module.ProductModule.file_issues)

@@ -931,6 +931,8 @@ def _filing(registry, **overrides) -> SimpleNamespace:
             ok=True, issues=[SimpleNamespace(title="Exportar")])),
         _tracker=lambda: object(), _board_or_default=lambda board: None,
         _file_one=lambda *a, **k: WriteResult(ok=True, ref="#500"),
+        # the check each card of a requirement passes (#392), stood in like every other seam
+        _vetter=lambda requirement, tracker: None,
         _open_delivery=lambda req, results, **kw: handed.setdefault("_open_delivery", kw),
         _track_defect=lambda number, **kw: handed.setdefault("_track_defect", kw),
         _checked_write=lambda **_k: WriteResult(ok=True, ref="#88"), _same_as=None,

@@ -185,7 +185,8 @@ def _said(text: str) -> str:
     return " ".join(re.sub(r"[^\w\s]", " ", (text or "").lower()).split())
 
 
-def floor(draft: CardDraft, body: str, *, request: str, conversation: str) -> list[str]:
+def floor(draft: CardDraft, body: str, *, request: str, conversation: str,
+          described: bool = True) -> list[str]:
     """What is wrong with `draft` before any model looks at it — `[]` when nothing is.
 
     Written for the drafting model to read on its redraft, so each problem says what to change."""
@@ -199,7 +200,11 @@ def floor(draft: CardDraft, body: str, *, request: str, conversation: str) -> li
         problems.append(f"the title has {len(draft.title)} characters; the limit is {TITLE_LIMIT} "
                         f"— write a shorter one, never a cut one")
     description = _said(draft.description)
-    if not description:
+    if not described:
+        # A CARD OF A REQUIREMENT CARRIES NO DESCRIPTION OF ITS OWN (#392): its objective and its
+        # criteria are the work, and the requirement it cites is the rest
+        pass
+    elif not description:
         problems.append("the card has no description of the work")
     elif description == _said(request) or len(description) < 20:
         # THE DEFECT THIS MODULE EXISTS FOR: the message that asked for the card, as the card
@@ -366,7 +371,8 @@ class Ruling:
     because: tuple[str, ...] = ()
 
 
-def judge_prompt(rubric: Rubric, *, conversation: str, request: str, card: str) -> str:
+def judge_prompt(rubric: Rubric, *, conversation: str, request: str, card: str,
+                 source_note: str = "") -> str:
     """The judge's whole prompt: the rubric, the conversation, the card, and the answer's shape.
     SELF-CONTAINED — the judge stands in an empty directory and has nothing else to open."""
     criteria = []
@@ -380,6 +386,8 @@ def judge_prompt(rubric: Rubric, *, conversation: str, request: str, card: str) 
         "factory's board, from a conversation with a person. The card is the ONLY thing the coding "
         "agent will read. You do not rewrite the card and you do not suggest a better one: you "
         "score it.\n\n"
+        + (f"{source_note.strip()}\n\n" if source_note.strip() else "")
+        + 
         "Rules:\n"
         "- Score each criterion by the level whose description fits the card best. For a level "
         "below the top, name in `evidence` what keeps it from the next level up; for any level, "
@@ -471,7 +479,9 @@ def in_a_room(project, harness, phase: str) -> Judge:
     def ask(prompt: str) -> str | None:
         refuse_a_model_here(phase)
         with tempfile.TemporaryDirectory(prefix="openfactory-card-") as room:
-            sandbox = judging_worktree(project, root=room)
+            # A Path, not the str the context manager yields: the box stages the prompt under its
+            # root, and a str root is what killed every judging turn on 0.4.1 (#380)
+            sandbox = judging_worktree(project, root=Path(room))
             workspace = Workspace(path=Path(room), branch="main", base_branch="main")
             started = time.monotonic()
             res = harness.ask(sandbox=sandbox, workspace=workspace, prompt=prompt, phase=phase)
@@ -695,7 +705,7 @@ def compose(*, draft: Callable[[str], dict | None], judge: Judge | None, rubric:
         last = Composed(draft=card, attempts=attempt, rubric=f"{rubric.id}@{rubric.version}")
         problems = floor(card, body, request=request, conversation=conversation)
         if problems:
-            _log_verdict(project_name, attempt, rubric, floor=problems)
+            log_verdict(project_name, attempt, rubric, floor=problems)
             feedback = problems
             continue
         if judge is None:
@@ -708,7 +718,7 @@ def compose(*, draft: Callable[[str], dict | None], judge: Judge | None, rubric:
                         "shown unjudged", project_name, attempt)
             return Composed(draft=card, card=body, unjudged=True, attempts=attempt,
                             rubric=last.rubric)
-        _log_verdict(project_name, attempt, rubric, said=said)
+        log_verdict(project_name, attempt, rubric, said=said)
         if said.passed:
             return Composed(draft=card, card=body, ruling=said, attempts=attempt,
                             rubric=last.rubric)
@@ -729,10 +739,74 @@ def compose(*, draft: Callable[[str], dict | None], judge: Judge | None, rubric:
     return last
 
 
-def _log_verdict(project_name: str, attempt: int, rubric: Rubric, *, said: Ruling | None = None,
-                 floor: list[str] | None = None) -> None:
+def log_verdict(project_name: str, attempt: int, rubric: Rubric, *, said: Ruling | None = None,
+                floor: list[str] | None = None) -> None:
     _record_verdict(project_name, attempt, rubric, said=said, floor=floor)
     _say_verdict(project_name, attempt, rubric, said=said, floor=floor)
+
+
+#: What the judge is told when the card executes a requirement instead of a conversation (#392).
+REQUIREMENT_NOTE = (
+    "HERE THE SOURCE IS NOT A CONVERSATION: it is the accepted requirement below, and the card "
+    "executes one front of it. Read \"the conversation\" as that requirement and \"the message "
+    "that asked for the card\" as the instruction to break it into cards. A card that promises "
+    "less than its front of the requirement lost something; one that promises more invented it.")
+
+
+def vet_issue(fields: dict, *, body_of: Callable[[dict], str], source: str, rubric: Rubric,
+              judge: Judge | None, redraft: Callable[[str], dict | None] | None,
+              project_name: str = "") -> tuple[dict | None, str]:
+    """One card of a requirement's breakdown, checked by the floor and the judge before it is
+    filed — `(fields, "")` to file (possibly redrafted once), `(None, why)` to refuse (#392).
+
+    THE THIRD PEN. A requested card and a defect go through `compose`; the cards a requirement is
+    broken into were written straight to the board, with nothing between the role's first answer and
+    the tracker. `fields` is the issue as the role drafted it (title, objective,
+    acceptance_criteria, out_of_scope); `body_of` renders the body the tracker will receive, so the
+    floor's pickup-gate check reads exactly that. No person is in this loop, so a card the judge
+    still blocks after one redraft is NOT filed: the breakdown says which front and why."""
+    ask = "Break the requirement into cards; this card executes one front of it."
+    feedback: list[str] = []
+    for attempt in range(1, ATTEMPTS + 1):
+        card = CardDraft(title=str(fields.get("title") or "").strip(),
+                         objective=str(fields.get("objective") or "").strip(),
+                         done_when=[str(c) for c in fields.get("acceptance_criteria") or []],
+                         out_of_scope=[str(c) for c in fields.get("out_of_scope") or []])
+        body = body_of(fields)
+        problems = floor(card, body, request=ask, conversation=source, described=False)
+        said = None
+        if problems:
+            log_verdict(project_name, attempt, rubric, floor=problems)
+            feedback = problems
+        elif judge is None:
+            return fields, ""
+        else:
+            said = ruling(judge(judge_prompt(rubric, conversation=source, request=ask,
+                                             card=f"# {card.title}\n\n{body}",
+                                             source_note=REQUIREMENT_NOTE)), rubric)
+            if said is None:
+                log.warning("OPENFACTORY_CARD_JUDGE_UNREADABLE project=%s attempt=%s — the "
+                            "requirement's card is filed unjudged", project_name, attempt)
+                return fields, ""
+            log_verdict(project_name, attempt, rubric, said=said)
+            if said.passed:
+                return fields, ""
+            feedback = list(said.findings) or list(said.because)
+        if attempt == ATTEMPTS or redraft is None:
+            break
+        again = redraft(
+            "Rewrite this ONE card of the requirement below so it can be filed. Change exactly "
+            "what is listed, keep what was right, and never promise more than the requirement.\n\n"
+            "## What to change\n\n" + "\n".join(f"- {f}" for f in feedback)
+            + f"\n\n## The card as drafted\n\n{json.dumps(fields, ensure_ascii=False)}"
+            f"\n\n## The requirement\n\n{source.strip()}\n\n## Answer\n\nAnswer at once with "
+            "ONLY a JSON object (no prose, no code fences): {\"title\": str, \"objective\": str, "
+            "\"acceptance_criteria\": [str], \"out_of_scope\": [str]}")
+        if isinstance(again, dict):
+            fields = {**fields, **{k: again[k] for k in
+                                   ("title", "objective", "acceptance_criteria", "out_of_scope")
+                                   if k in again}}
+    return None, "; ".join(feedback[:3]) or "it did not pass the review"
 
 
 def _record_verdict(project_name: str, attempt: int, rubric: Rubric, *,

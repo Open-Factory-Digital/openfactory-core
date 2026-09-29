@@ -45,8 +45,8 @@ MUTATIONS = [
      "    if False:"),
 
     ("a draft with no description clears the floor", CARDS,
-     "    if not description:\n        problems.append(\"the card has no description of the work\")",
-     "    if False:\n        problems.append(\"the card has no description of the work\")"),
+     "    elif not description:\n        problems.append(\"the card has no description of the work\")",
+     "    elif False:\n        problems.append(\"the card has no description of the work\")"),
 
     ("a critical failure the judge named does not fail the card", CARDS,
      "    if critical:\n        because.append",
@@ -160,4 +160,24 @@ MUTATIONS = [
     ("a defect's held question comes back as a requested card", ENGINE,
      "    return _offer_card(ex, composed, request=held.request, kind=held.kind,",
      "    return _offer_card(ex, composed, request=held.request, kind=\"ticket\","),
+
+    ("THE THIRD PEN (#392): a requirement's cards are filed unchecked", MODULE,
+     "        if vet is not None:\n            vetted, why = vet(draft)",
+     "        if False:\n            vetted, why = vet(draft)"),
+
+    ("the breakdown never hands its cards to the check", MODULE,
+     "            results.append(self._file_one(draft, requirement, tracker, board, vet=vet,",
+     "            results.append(self._file_one(draft, requirement, tracker, board, vet=None,"),
+
+    ("a requirement's card the judge blocks is filed anyway", CARDS,
+     '    return None, "; ".join(feedback[:3]) or "it did not pass the review"',
+     '    return fields, ""'),
+
+    ("the judge is not told its source is a requirement", CARDS,
+     "                                             source_note=REQUIREMENT_NOTE)), rubric)",
+     "                                             source_note=\"\")), rubric)"),
+
+    ("a module handed a harness judges with a live one it was not handed", MODULE,
+     "        if self._agent is not None:\n            return cards.in_a_room(self.project, harness, cards.JUDGE_PHASE)",
+     "        if False:\n            return cards.in_a_room(self.project, harness, cards.JUDGE_PHASE)"),
 ]

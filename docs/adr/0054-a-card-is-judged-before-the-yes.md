@@ -109,7 +109,11 @@ problems. The judge's calls are metered as `product_card_judge`, and the draft's
   board as the person's own words, titled "…nao estao responsivos se minimiz". A defect now runs the
   same loop: drafted from the conversation, the same floor and rubric, the whole card before the
   yes, the held question. Its layout is `defect-template.md` (its description under "O que está
-  acontecendo", the section a correction rewrites), and the promise it breaks stays the code's.*
+  acontecendo", the section a correction rewrites), and the promise it breaks stays the code's.
+  The same day the rule became ONE DOOR FOR EVERY CARD: the cards a requirement is broken into
+  (`_file_one`) are checked by the floor and the judge against the requirement, redrafted once,
+  and not filed when still blocked — no person is in that loop to ask. A guard fails on any
+  `create_ticket` in the product module outside the three checked writers.*
 - **Calibration against people.** The log lines are the record. Measuring agreement between the
   judge's verdicts and what people later corrected or closed is the next step. A golden set and a
   runner of their own belong with the evaluation battery (ADR-0051), not with the runtime.

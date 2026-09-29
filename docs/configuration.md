@@ -797,6 +797,12 @@ that fails twice is not filed: the role asks the person the question the judge s
 | judge | a model on the **reviewer** axis scores each criterion 1–5 with evidence, and names critical failures | the criteria and the bar, through `cards/rubric.yaml` |
 | verdict | computed in code: pass when no critical failure, the mean is at least `pass.average`, and no criterion is below `pass.floor` | the two numbers, in the rubric |
 
+**Every card the role creates goes through this door** — the cards a person asks for, the defects,
+and the cards an accepted requirement is broken into (those are judged against the requirement
+instead of a conversation; one the judge still blocks after a redraft is not filed, and the reply
+names the front and what it lacks). A guard in the suite fails when a new way of creating a card
+appears outside it.
+
 The same loop runs when the role reads a message as a **broken promise** (a defect): the card is
 drafted from the conversation, judged against the same rubric and shown whole before the yes, and
 its layout is `defect-template.md`, whose description sits under `## O que está acontecendo`.
