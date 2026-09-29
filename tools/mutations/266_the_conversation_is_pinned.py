@@ -716,21 +716,21 @@ MUTATIONS = [
      '    if getattr(answer, "is_ticket", False):',
      '    if getattr(answer, "is_ticket", False) and not answer.is_request:'),
 
-    # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-28: the title-only staging moved to `_stage_ticket_as_said` (#383)
     ("the card's title is the person's whole message", ENGINE,
-     '        title = ((getattr(answer, "ticket_title", "") or "").strip() or text.strip())[:80]',
-     "        title = text.strip()[:80]"),
+     '    title = (getattr(answer, "ticket_title", "") or "").strip() or ex.text.strip()',
+     "    title = ex.text.strip()"),
 
-    # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-28: the title-only staging moved to `_stage_ticket_as_said` (#383)
     ("a card read without a title is staged with none", ENGINE,
-     '        title = ((getattr(answer, "ticket_title", "") or "").strip() or text.strip())[:80]',
-     '        title = (getattr(answer, "ticket_title", "") or "").strip()[:80]'),
+     '    title = (getattr(answer, "ticket_title", "") or "").strip() or ex.text.strip()',
+     '    title = (getattr(answer, "ticket_title", "") or "").strip()'),
 
-    # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-28: the confirmation now carries the drafted card (#383)
     ("an admin's own card is told to ask the admins", ENGINE,
-     "        ask = ticket_confirmation(title=title, language=lang)\n"
-     "        if not may_act(project, user):",
-     "        ask = ticket_confirmation(title=title, language=lang)\n        if True:"),
+     "                              disputed=disputed, language=lang)\n"
+     "    if not may_act(project, user):",
+     "                              disputed=disputed, language=lang)\n    if True:"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("an order for the backlog is never staged", ENGINE,
@@ -892,8 +892,8 @@ MUTATIONS = [
     # the project itself
     # RE-PINNED 2026-09-25 (#335): the history is read into `before`, which the clock reads
     ("a thread's history forgets the room's rolling exchange", ENGINE,
-     "    before = [t for t in transcript.recent(project, thread=thread, channel=channel)",
-     '    before = [t for t in transcript.recent(project, thread=thread, channel="")'),
+     "    before = [t for t in transcript.recent(project, thread=ex.thread, channel=ex.channel)",
+     '    before = [t for t in transcript.recent(project, thread=ex.thread, channel="")'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     # RE-PINNED 2026-09-25 (#335): the same filter, on `before`

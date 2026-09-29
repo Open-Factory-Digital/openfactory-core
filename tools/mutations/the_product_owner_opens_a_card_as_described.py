@@ -38,8 +38,10 @@ MUTATIONS = [
     ("the channel stages the draft as a DEFECT, so the yes files a broken promise for something "
      "nobody said was broken",
      "openfactory/product/engine.py",
-     '        replaced = remember(thread, {"kind": "ticket", "title": title,',
-     '        replaced = remember(thread, {"kind": "defect", "title": title,'),
+     '    replaced = remember(ex.key, {"kind": "ticket", "title": title,\n'
+     '                                 "described": ex.text.strip()[:1500],',
+     '    replaced = remember(ex.key, {"kind": "defect", "title": title,\n'
+     '                                 "described": ex.text.strip()[:1500],'),
 
     ("the ticket kind is not registered, so a yes on a staged card falls through to the default "
      "— a requirement draft",

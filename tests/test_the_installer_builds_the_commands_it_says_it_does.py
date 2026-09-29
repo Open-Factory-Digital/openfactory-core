@@ -75,6 +75,11 @@ needs_a_posix_shell = pytest.mark.skipif(
     bool(_MISSING), reason=f"this machine has no {_MISSING} — the installer cannot be driven here")
 
 
+#: Where `_socket_dir` makes its directories instead of `/tmp`, when set. Read by the helper and
+#: set by exactly one caller: the leak guard in `test_the_suite_runs_where_a_maintainer_sits.py`.
+SOCKET_ROOT_ENV = "OPENFACTORY_TEST_SOCKET_ROOT"
+
+
 def _socket_dir() -> pathlib.Path:
     """A directory short enough to hold a bindable `AF_UNIX` path (#121).
 
@@ -98,8 +103,16 @@ def _socket_dir() -> pathlib.Path:
     whole change is for — accumulated two directories under `/tmp` per run, for good. A comment
     assigning an owner nobody plays is the defect this repository keeps paying for, so
     `test_the_suite_runs_where_a_maintainer_sits.py` now counts them around a real run.
+
+    `SOCKET_ROOT_ENV` MOVES THE PARENT, AND ONLY THE GUARD THAT COUNTS SETS IT (#423). `/tmp` is
+    shared by every xdist worker, and other tests hold `ofsock*` directories there for the length
+    of one test each; a guard that counts `/tmp/ofsock*` around a subprocess counted THEIRS
+    as this file's leak — 8 of 15 runs of this area at `-n 4`, with nothing left in `/tmp` after.
+    Given a directory of its own, the count is of this run's directories and nobody else's. It
+    must stay short for the same reason `/tmp` was chosen: the guard makes it under `/tmp`.
     """
-    return pathlib.Path(tempfile.mkdtemp(prefix="ofsock", dir="/tmp"))
+    return pathlib.Path(tempfile.mkdtemp(prefix="ofsock", dir=os.environ.get(SOCKET_ROOT_ENV,
+                                                                            "/tmp")))
 
 
 @pytest.fixture(scope="module")

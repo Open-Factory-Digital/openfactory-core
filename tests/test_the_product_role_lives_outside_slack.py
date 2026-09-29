@@ -899,9 +899,12 @@ def test_the_conversational_turn_CARRIES_ITS_MEMORY():
     Read as code: the real call needs a corpus, a worktree and an agent pass.
     """
     turn, converse = _engine_fn("turn"), _engine_fn("converse")
+    # THE HISTORY IS READ BY ONE HELPER SINCE #383, which the card loop's resumption shares
+    history = _engine_fn("_this_conversation")
 
     assert ".answer(" in converse, "the turn does not hold a conversation — it drafts, like `ask`"
-    assert "transcript.record" in turn and "transcript.recent" in converse, (
+    assert "_this_conversation(" in converse, "the answer no longer reads the conversation"
+    assert "transcript.record" in turn and "transcript.recent" in history, (
         "the turn carries no memory, so every message is turn one")
     assert "pending=" in converse and "_proposal_summary" in converse, (
         "what is still staged does not reach the prompt — the role can describe a corpus that "
@@ -913,7 +916,9 @@ def test_the_conversational_turn_CARRIES_ITS_MEMORY():
 def test_the_asking_turn_is_EXCLUDED_from_its_own_history():
     """History is strictly what came BEFORE. The arrival row is already the question in the
     prompt, and feeding it back makes the role answer a message it is being asked about twice."""
-    body = _engine_fn("converse")
+    body = _engine_fn("_this_conversation")
+    assert "arrival_ts=arrival_ts" in _engine_fn("converse"), (
+        "the answer stopped handing the arriving turn to the history it reads")
 
     # THE FILTER ITSELF, not the operator that happens to express it. The first version of this
     # asserted `"!=" in body` and failed on `not (… == …)`, which is the same reading written the

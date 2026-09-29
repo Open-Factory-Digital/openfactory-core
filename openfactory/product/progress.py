@@ -32,13 +32,11 @@ from contextvars import ContextVar
 
 log = logging.getLogger("openfactory.product.progress")
 
-#: WHAT A TURN CAN BE DOING, in the order a turn usually meets them. THE LAST TWO HAVE NO CALLER
-#: YET (review of #398): they are the card loop's — the role drafts a card and a judge reviews it
-#: before the yes, the ~174 s of the chain #395 measured after the answer — and that loop arrives
-#: with #390 (`product/cards.py`), not on this branch. Once both land, the loop calls
+#: WHAT A TURN CAN BE DOING, in the order a turn usually meets them. THE LAST TWO ARE THE CARD
+#: LOOP'S (#390, `product/cards.py`): the role drafts a card and a judge reviews it before the yes —
+#: the ~174 s of the chain #395 measured after the answer — and `compose` says
 #: `stage("card_draft", step=n, of=N)` before each draft and `stage("card_review", step=n, of=N)`
-#: before each judge, and the sentences (with their `{step}/{of}`) are already here. Until then
-#: `answering` covers the answer and the card loop is still silent.
+#: before each judgement.
 STAGES = ("reading", "answering", "board", "drafting", "breaking_down", "writing",
           "card_draft", "card_review")
 

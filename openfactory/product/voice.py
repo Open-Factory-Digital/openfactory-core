@@ -584,7 +584,7 @@ _HANDED_OFF_AT = {
 #: PRESENCE, like the receipt: what the role is doing, never what it found — so no stage can leak
 #: an answer before it is post-processed. Each reads after "agora estou" / "right now I am" (the
 #: hand-off above) and alone as a status line. `{step}`/`{of}` are the card loop's attempt
-#: (#390 — no caller on this branch yet, `progress.STAGES`).
+#: (#390, `cards.compose`).
 _STAGE = {
     "pt-BR": {
         "reading": "lendo a conversa",
@@ -1008,6 +1008,64 @@ _TICKET_CONFIRM = {
           "turning it into a requirement. Is that right?",
 }
 
+#: THE WHOLE CARD, BEFORE THE YES (#383). The confirmation used to show the title alone, and the
+#: body written was the message that asked for the card: the person approved one thing and the board
+#: got another. Now the yes is to the body that will be written, exactly as it reads here.
+_CARD_CONFIRM = {
+    "pt-BR": "Vou abrir este cartão no quadro, como está abaixo — sem transformar isso em "
+             "requisito:\n\n**{title}**\n\n{card}\n\nConfirma?",
+    "en": "I will open this card on the board, exactly as below — without turning it into a "
+          "requirement:\n\n**{title}**\n\n{card}\n\nIs that right?",
+}
+
+#: Said under a card that no judge could review — no judging harness on this deployment, or an
+#: answer that could not be read. The card still passed the deterministic floor; the person is the
+#: last reader, and is told they are the only one.
+_CARD_UNJUDGED = {
+    "pt-BR": "(Não consegui revisar este cartão automaticamente — leia com atenção antes de "
+             "confirmar.)",
+    "en": "(I could not review this card automatically — read it carefully before confirming.)",
+}
+
+#: THE WHOLE DEFECT CARD, BEFORE THE YES (#392) — the sibling of `_CARD_CONFIRM`, honest about what
+#: a defect is: registered to be fixed, against a promise, not a new request.
+_DEFECT_CARD_CONFIRM = {
+    "pt-BR": "Isso quebra o que já prometemos{req} — vou registrar este problema para corrigir, "
+             "não como pedido novo, como está abaixo:\n\n**{title}**\n\n{card}\n\nConfirma?",
+    "en": "This breaks something we already promised{req} — I will register this problem to fix, "
+          "not as a new request, exactly as below:\n\n**{title}**\n\n{card}\n\nIs that right?",
+}
+
+#: The person answered the judge's question and the judge still blocks: the card is shown for their
+#: yes with what the review still says, rather than asking a second time (#383).
+_CARD_DISPUTED = {
+    "pt-BR": "(A revisão automática ainda aponta: {findings} — leia com atenção antes de "
+             "confirmar.)",
+    "en": "(The automatic review still points out: {findings} — read it carefully before "
+          "confirming.)",
+}
+
+#: Twice drafted, twice not good enough: nothing is staged, and the one thing that would make the
+#: card possible is asked. A card the factory cannot build from is worse than a question.
+_CARD_NEEDS = {
+    "pt-BR": "Antes de abrir o cartão, preciso de mais uma coisa: {ask}",
+    "en": "Before I open the card, I need one more thing: {ask}",
+}
+_CARD_NEEDS_DONE = {
+    "pt-BR": "Antes de abrir o cartão, me diga o que precisa acontecer para considerarmos isso "
+             "pronto — sem isso, quem pegar o cartão não tem como saber quando terminou.",
+    "en": "Before I open the card, tell me what must happen for this to count as done — without "
+          "it, whoever picks the card up cannot know when they have finished.",
+}
+
+#: The drafting call itself failed — no card to show and nothing staged.
+_CARD_NOT_DRAFTED = {
+    "pt-BR": "Não consegui escrever o cartão agora, então não abri nada. Pode pedir de novo em "
+             "instantes.",
+    "en": "I could not write the card just now, so nothing was opened. Please ask again in a "
+          "moment.",
+}
+
 #: HONEST about the gate, like `_DEFECT_FILED`: a card lands in Backlog, and nothing leaves Backlog
 #: without a person promoting it (ADR-0019 §5) — starting work spends money.
 _TICKET_FILED = {
@@ -1064,9 +1122,24 @@ _FACT_NOTED = {
 }
 
 
-def defect_confirmation(*, violates: int | None, language: str | None = None) -> str:
+def defect_confirmation(*, violates: int | None, language: str | None = None, card: str = "",
+                        title: str = "", unjudged: bool = False,
+                        disputed: tuple[str, ...] | list[str] = ()) -> str:
     req = f" (requisito {violates})" if violates else ""
-    return _pick(_DEFECT_CONFIRM, language).format(req=req)
+    if not card:
+        return _pick(_DEFECT_CONFIRM, language).format(req=req)
+    text = _pick(_DEFECT_CARD_CONFIRM, language).format(req=req, title=title, card=card.strip())
+    return _with_review_note(text, language=language, unjudged=unjudged, disputed=disputed)
+
+
+def _with_review_note(text: str, *, language: str | None, unjudged: bool,
+                      disputed: tuple[str, ...] | list[str]) -> str:
+    if unjudged:
+        return f"{_pick(_CARD_UNJUDGED, language)}\n\n{text}"
+    if disputed:
+        said = "; ".join(f.rstrip(".") for f in disputed[:3])
+        return f"{_pick(_CARD_DISPUTED, language).format(findings=said)}\n\n{text}"
+    return text
 
 
 def defect_filed(*, ref: str, violates: int | None, language: str | None = None,
@@ -1082,8 +1155,24 @@ def defect_filed(*, ref: str, violates: int | None, language: str | None = None,
     return text
 
 
-def ticket_confirmation(*, title: str, language: str | None = None) -> str:
-    return _pick(_TICKET_CONFIRM, language).format(title=title)
+def ticket_confirmation(*, title: str, language: str | None = None, card: str = "",
+                        unjudged: bool = False, disputed: tuple[str, ...] | list[str] = ()) -> str:
+    if not card:
+        return _pick(_TICKET_CONFIRM, language).format(title=title)
+    text = _pick(_CARD_CONFIRM, language).format(title=title, card=card.strip())
+    return _with_review_note(text, language=language, unjudged=unjudged, disputed=disputed)
+
+
+def card_needs(*, ask: str, language: str | None = None) -> str:
+    """What the role asks when a card could not be filed yet — the judge's question, or, when it
+    gave none, the one every card needs."""
+    if ask.strip():
+        return _pick(_CARD_NEEDS, language).format(ask=ask.strip())
+    return _pick(_CARD_NEEDS_DONE, language)
+
+
+def card_not_drafted(*, language: str | None = None) -> str:
+    return _pick(_CARD_NOT_DRAFTED, language)
 
 
 def reading_caveat(*, language: str | None = None) -> str:

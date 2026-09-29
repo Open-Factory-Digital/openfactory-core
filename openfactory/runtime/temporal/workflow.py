@@ -287,9 +287,14 @@ class ProductBreakdownWorkflow:
 
     @workflow.run
     async def run(self, inp: ProductBreakdownInput) -> list[dict]:
+        # SIZED FOR THE JUDGED BREAKDOWN (review of #390): every card is checked before it is
+        # filed, so the ceiling sits above the breakdown's own budget
+        # (`cards.BREAKDOWN_BUDGET_SECONDS`, past which it starts no new card and says so) and the
+        # heartbeat notices a dead worker in two minutes instead of at the ceiling
         return await workflow.execute_activity(
             product_role_break_down, inp,
-            start_to_close_timeout=timedelta(minutes=12),
+            start_to_close_timeout=timedelta(minutes=60),
+            heartbeat_timeout=timedelta(minutes=2),
             retry_policy=RetryPolicy(maximum_attempts=1),
         )
 

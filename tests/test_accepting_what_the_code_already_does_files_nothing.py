@@ -387,7 +387,7 @@ def test_and_the_chat_still_breaks_an_AUTHORED_requirement_down(origin, monkeypa
 
     said = _confirmed_in_chat(mod, AUTHORED)
 
-    assert len(harness.prompts) == 1, "the automatic breakdown stopped running for real requests"
+    assert len(_breakdowns(harness)) == 1, "the automatic breakdown stopped running for real requests"
     assert tracker.created == ["Gerar o pacote de fecho"], said
 
 
@@ -465,7 +465,7 @@ def test_an_EXPLICIT_request_breaks_an_accepted_reading_down(origin, monkeypatch
 
     results = mod.break_down(OBSERVED_N, actor=ADMIN, asked_for=True)
 
-    assert len(harness.prompts) == 1 and tracker.created == ["Gerar o pacote de fecho"]
+    assert len(_breakdowns(harness)) == 1 and tracker.created == ["Gerar o pacote de fecho"]
     assert [r.ok for r in results] == [True] and not results[0].nothing_to_build
 
 
@@ -481,7 +481,7 @@ def test_the_chat_s_own_gesture_IS_an_explicit_request(origin, monkeypatch):
     chat_turn(mod.project, text=f"quebra o requisito {OBSERVED_N} em tarefas", user=ADMIN,
               thread="C1", channel="C1", module=mod)
 
-    assert len(harness.prompts) == 1, "a person asked for the breakdown and did not get one"
+    assert len(_breakdowns(harness)) == 1, "a person asked for the breakdown and did not get one"
     assert tracker.created == ["Gerar o pacote de fecho"]
 
 
@@ -870,7 +870,7 @@ def test_the_ROW_files_the_work_of_a_request_whose_text_mentions_evidence(
     assert [name for name, _ in worker.started] == ["ProductBreakdownWorkflow"], (
         "a requirement a person asked for was accepted and no breakdown was started: "
         + out.message)
-    assert len(harness.prompts) == 1 and tracker.created == ["Gerar o pacote de fecho"]
+    assert len(_breakdowns(harness)) == 1 and tracker.created == ["Gerar o pacote de fecho"]
     assert out.data["nothing_to_build"] is False and "#901" in out.message, out.message
 
 
@@ -896,7 +896,7 @@ def test_the_CONVERSATION_files_the_work_of_a_request_whose_text_mentions_eviden
     said = _accepted_in_the_conversation(mod, monkeypatch, AUTHORED)
 
     assert "**Status:** accepted" in _on_main(edited, _REQUEST_FILE), said
-    assert len(harness.prompts) == 1 and tracker.created == ["Gerar o pacote de fecho"], said
+    assert len(_breakdowns(harness)) == 1 and tracker.created == ["Gerar o pacote de fecho"], said
     assert "já faz" not in said, said
 
 
@@ -922,3 +922,9 @@ def test_the_PAGE_is_told_the_same_for_both(edited, monkeypatch):
     assert rows[AUTHORED]["came_from_the_code"] is False, (
         "the page would tell a person that accepting their own request files no work")
     assert rows[OBSERVED_N]["came_from_the_code"] is True
+
+
+def _breakdowns(harness) -> list[str]:
+    """The breakdown calls among a harness's prompts — not the judge's review of each card it
+    filed (#392), which a module handed a harness asks of that same harness."""
+    return [p for p in harness.prompts if "impartial reviewer" not in p]

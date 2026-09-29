@@ -165,7 +165,8 @@ def bench(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENFACTORY_REGISTRY", str(registry))
 
     state = types.SimpleNamespace(jobs=[{"project": "acme", "issue": "7", "status": "running"}],
-                                  clock=1000.0, asks=[], api=api, tmp=tmp_path)
+                                  clock=1000.0, asks=[], answered=[], api=api,
+                                  tmp=tmp_path)
 
     async def _connect(*_a, **_k):
         return object()
@@ -209,6 +210,23 @@ def bench(monkeypatch, tmp_path):
             state.asks.append(path)
             return real_verdict(path, credential)
         monkeypatch.setattr(api, "_gate_verdict", _counted)
+
+    # `answered`, BESIDE `asks` AND NOT INSTEAD OF IT (#422). `asks` is appended on the worker
+    # thread as the verdict STARTS; the watch re-arms (`_due = clock + interval`) back on the loop
+    # once the answer has come home. A case that moved the clock on `asks` moved it INSIDE that
+    # window whenever the thread was slow to finish, and the re-arm then read the NEW clock: due
+    # an interval after a move nobody had asked about yet, so the next ask never came and the
+    # case timed out — 5 failures in 20 runs of one case on an idle machine, always on the second
+    # or third interval, never the first; and every run once the verdict takes 50 ms. Appended
+    # on the loop right after the real hop returns, and `_CredentialWatch.asked` re-arms with no
+    # await in between — so a case that sees it also sees the watch re-armed, by construction.
+    real_hop = getattr(api, "_ask_the_gate", None)
+    if real_hop is not None:
+        async def _answered(path, credential):
+            said = await real_hop(path, credential)
+            state.answered.append(path)
+            return said
+        monkeypatch.setattr(api, "_ask_the_gate", _answered)
 
     def _journal(line: str) -> None:
         from openfactory.paths import events_file
@@ -714,9 +732,11 @@ async def test_the_socket_of_a_GOOD_session_stays(bench):
     try:
         await bench.until(lambda: len(socket.sent) >= 2, "the socket never opened")
         for n in range(1, 4):
-            before = len(bench.asks)
+            # ON THE ANSWER, NOT THE ASK (#422): the clock moves only once the last ask has come
+            # home and re-armed the watch, or the move lands inside that ask and is lost.
+            before = len(bench.answered)
             bench.clock += bench.interval + 1
-            await bench.until(lambda: len(bench.asks) > before,  # noqa: B023
+            await bench.until(lambda: len(bench.answered) > before,  # noqa: B023
                               f"the socket's credential was not asked about (interval {n})")
         assert not handler.done() and socket.closed is None, socket.sent
     finally:

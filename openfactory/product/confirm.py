@@ -245,7 +245,10 @@ def _confirm_defect(project, entry, *, module, user, lang) -> str:
         restated=entry["restated"], reported_by=entry.get("reported_by", ""),
         violates=entry.get("violates"), severity=entry.get("severity", ""),
         source=entry.get("source", ""), **_checked(module.file_defect, entry),
-        **_whose(module.file_defect, entry))
+        **_whose(module.file_defect, entry),
+        # THE DEFECT CARD THE PERSON READ (#392), written as shown — like a requested card's
+        **({"card": entry["card"], "title": entry.get("title", "")}
+           if entry.get("card") and _takes_card(module, "file_defect") else {}))
     if not result.ok:
         return _client_detail(result.detail, lang, project=project)
     from openfactory.product.voice import defect_filed
@@ -263,11 +266,25 @@ def _confirm_defect(project, entry, *, module, user, lang) -> str:
         result, lang, project=project)
 
 
+def _takes_card(module, verb: str = "file_ticket") -> bool:
+    import inspect
+
+    try:
+        return "card" in inspect.signature(getattr(module, verb)).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 def _confirm_ticket(project, entry, *, module, user, lang) -> str:
     """opens the card the person asked for, as described, and says where it is."""
     result = module.file_ticket(
         title=entry["title"], described=entry.get("described", ""),
         reported_by=entry.get("reported_by", ""), source=entry.get("source", ""),
+        # THE CARD THE PERSON READ (#383), written as it was shown — never re-rendered at the yes,
+        # when a template changed in between would write a body nobody confirmed. Passed only when
+        # there is one and to a module that takes it: an entry staged before the card was drafted
+        # is filed as it always was.
+        **({"card": entry["card"]} if entry.get("card") and _takes_card(module) else {}),
         **_checked(module.file_ticket, entry))
     if not result.ok:
         return _client_detail(result.detail, lang, project=project)

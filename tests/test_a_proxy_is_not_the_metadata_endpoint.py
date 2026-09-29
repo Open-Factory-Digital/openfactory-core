@@ -174,7 +174,19 @@ def served(request):
                         # WAITS FOR ITS ANSWER: the address is known only once it runs, and a
                         # first connection served before the file exists would get nothing.
                         "until [ -f /tmp/ready ]; do sleep 0.1; done; "
-                        "while true; do nc -l -p 80 < /tmp/answer >/dev/null; done"],
+                        # ONE LISTENER FOR THE WHOLE TEST, NEVER ONE PER CONNECTION (#419). This
+                        # was `while true; do nc -l -p 80 …; done`: busybox `nc -l` closes its
+                        # listening socket on the first accept, so between one `nc` exiting and
+                        # the next binding, nothing listened — and the probe asks its paths back
+                        # to back, the next leaving exactly then. The request that lost the race
+                        # was refused, which this `nc` reports by printing NOTHING, so the
+                        # control came back empty and the verdict was `None`: `assert None is
+                        # False` about 1 run in 10 under `-n 8` (4/40 measured), in CI on #406.
+                        # `-lk -e` keeps the socket listening and forks the answer per
+                        # connection, so a request arriving mid-close waits in the backlog. The
+                        # child reads the request to its end before closing, so the close is a
+                        # FIN, never a reset that could take the answer with it.
+                        "exec nc -lk -p 80 -e sh -c 'cat /tmp/answer; cat >/dev/null'"],
                        check=True, capture_output=True)
         address = subprocess.run(
             ["docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
@@ -183,7 +195,14 @@ def served(request):
         subprocess.run(["docker", "exec", "-i", tag, "sh", "-c",
                         "cat > /tmp/answer && touch /tmp/ready"],
                        input=answer, text=True, check=True, capture_output=True)
-        time.sleep(1)
+        # LISTENING IS WAITED FOR, NOT SLEPT FOR (#419): one second stood for "it is listening by
+        # now", the same assumption as above one step earlier, and on a loaded machine it is not.
+        deadline = time.monotonic() + 30
+        while subprocess.run(["docker", "exec", tag, "nc", "-z", "127.0.0.1", "80"],
+                             capture_output=True).returncode != 0:
+            if time.monotonic() > deadline:
+                raise RuntimeError(f"the server in {tag} never listened on port 80")
+            time.sleep(0.1)
         yield tag, address
     finally:
         subprocess.run(["docker", "rm", "-f", tag], capture_output=True)

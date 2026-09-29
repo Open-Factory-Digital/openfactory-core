@@ -190,6 +190,9 @@ _CACHES = {
     ("openfactory/registry.py", "_NAMED"):
         "one per (registry file, project, old key) — the old keys are a fixed list of nine, so "
         "bounded by the registry, never by traffic",
+    # #383 — the card question held for the person's answer; an evicted one costs only the
+    # shortcut to the redraft
+    ("openfactory/product/cards.py", "_OPEN"): "BoundedDict(500)",
     ("openfactory/runtime/temporal/view.py", "_state_cache"): "BoundedDict(2000)",
     ("openfactory/runtime/temporal/view.py", "_deploy_cache"): "BoundedDict(2000)",
     ("openfactory/runtime/slack/bot.py", "_PENDING"): "BoundedDict(200)",
