@@ -37,6 +37,14 @@ still an apology — the capability simply did not exist. `TrackerAdapter.list_t
 waiting for: it answers with the same fields this sweep judges on (`state_reason`, `assignees`,
 `updated_at`), ordered newest-updated-first, and it draws the one distinction this whole file is
 built around — `None` = I could not read, `[]` = I read and there is nothing.
+
+AND ONLY WHERE A READ COSTS SOMETHING (#393). Everything above is a trade against a rate limit, and
+it was made for every row, including the board the platform holds in `board.db` — where a whole
+read of 300 cards is 2.9 ms and the incremental one 1.7 ms. There the trade bought nothing and cost
+the truth: the snapshot is per PROCESS, the panel and the worker are two, and `forget_board` in the
+one that wrote never reaches the other. So the row declares what a whole read costs
+(`tracker/base.py::whole_read_is_cheap`), and a row that declares it cheap is read whole on every
+call — whichever process wrote, whatever it wrote, including a writer nobody has added yet.
 """
 
 from __future__ import annotations
@@ -49,6 +57,7 @@ from datetime import UTC, datetime
 from pydantic import BaseModel, field_validator
 
 from openfactory.adapters.forge.registry import repo_of
+from openfactory.adapters.tracker.base import whole_read_is_cheap
 from openfactory.contracts.refs import canonical_ref, ref_sort_key
 from openfactory.product.triage import Ticket
 
@@ -89,6 +98,10 @@ _FULL_AFTER = 6 * 3600.0
 #: The board as we last saw it, per project: `(swept_at, last_update_seen, tickets)`. In process,
 #: so a worker replaced by a deploy pays one full sweep — which is the right trade against
 #: persisting a snapshot that could then be wrong in a way nobody notices.
+#:
+#: IN PROCESS ALSO MEANS BLIND TO EVERY OTHER PROCESS (#393), which is why it is consulted only
+#: for a row whose whole read is NOT cheap: there the rate limit is the worse failure, and here it
+#: is a board that no longer matches the one on disk.
 _SNAPSHOT: dict[str, tuple[float, str, list[Ticket]]] = {}
 _LOCK = threading.Lock()
 
@@ -204,8 +217,17 @@ def _read_whole(project, *, token: str | None, fresh: bool,
             return [], (f"this deployment does not name a tracker for {name or repo}, so there is "
                         f"nothing to read the board from — treat this as an unreadable board, "
                         f"never as an empty one")
+    # A BOARD WHOSE WHOLE READ IS CHEAP IS NEVER SERVED FROM MEMORY (#393). Everything below was
+    # built for a rate-limited API, and applied unchanged to a board in a file it made the product
+    # role in the worker describe, for three turns, a card a person had removed through the panel:
+    # the panel wrote, `forget_board` ran in the panel, and the worker's snapshot was trusted for
+    # up to `_FULL_AFTER`. A removal, a label taken off, a card stamped before its writer took the
+    # lock — none of them is an "update since", and each was a board this reader could not see.
+    # The ROW says what a read costs (`whole_read_is_cheap`), so this is never a kind comparison,
+    # and a row that says nothing keeps the snapshot exactly as before.
+    trusted = not fresh and not whole_read_is_cheap(tracker)
     with _LOCK:
-        snapshot = None if fresh else _SNAPSHOT.get(name)
+        snapshot = _SNAPSHOT.get(name) if trusted else None
 
     if snapshot and (time.monotonic() - snapshot[0]) < _FULL_AFTER:
         tickets, error = _refresh(snapshot, project=project, tracker=tracker, repo=repo,

@@ -69,6 +69,14 @@ class LocalTracker:
     laziness: `activities.py` hands any tracker without a credential of its own the GitHub App
     minter, and a row that refused the argument would fail on a deployment that has one."""
 
+    #: A WHOLE READ OF THIS BOARD IS A SQLITE QUERY ON THIS MACHINE (#393), so no reader keeps a
+    #: copy of it: `product/board.py` reads it whole every time (`tracker/base.py::
+    #: whole_read_is_cheap`). The worker, the panel and a CLI verb all write this one file, and a
+    #: reader that trusted its own sweep for hours went on describing a card a person had removed
+    #: from the panel. The board row declares the same fact on its axis (`LocalBoard.poll_seconds`),
+    #: and a test holds the two declarations together.
+    whole_read_is_cheap = True
+
     def __init__(self, project: str, *, db_path=None, token=None, token_provider=None) -> None:
         self.project = (project or "").strip()
         self._db = db_path
