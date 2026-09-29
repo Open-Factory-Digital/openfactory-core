@@ -58,9 +58,10 @@ MUTATIONS = [
      "because the assertion only checked the prompt was OFF the command line",
      "openfactory/adapters/agent/kimi.py",
      "            prompt_path = stage_prompt(sandbox, workspace, prompt, phase=phase, "
-     "project=project,\n                                       channel=False)",
+     "project=project,\n                                       channel=self.name not in "
+     "HARNESSES_WITHOUT_STAGED_PROMPT)",
      "            prompt_path = stage_prompt(sandbox, workspace, prompt, phase=phase, "
-     "project=project)"),
+     "project=project, channel=True)"),
 
     ("the no-channel caller stops being able to say so, so `channel=False` is ignored and every "
      "row stages whatever its CLI can read",

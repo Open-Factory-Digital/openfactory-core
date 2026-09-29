@@ -152,6 +152,16 @@ class JudgmentAgentAdapter(Protocol):
 MAX_ARG_STRLEN = 32 * 4096
 
 
+#: Harness KINDS whose CLI cannot read a prompt it did not get as an argument — so the staging
+#: channel (#326) does not help them, and a corpus past `MAX_ARG_STRLEN` is undeliverable even on a
+#: box that stages. Today only `kimi` (`kimi-code`): its `-p/--prompt` takes a value and no code
+#: path reads stdin into the prompt, so its adapter keeps the prompt on argv (`stage_prompt(...,
+#: channel=…)` reads THIS set, and `kimi.py` asks it too). ONE PLACE, so the refusal the run raises,
+#: the argument form kimi keeps, and the note `doctor`/`box prove` print before any pickup cannot
+#: drift apart. When `kimi-code` grows a stdin or file form, drop it from here.
+HARNESSES_WITHOUT_STAGED_PROMPT = frozenset({"kimi"})
+
+
 #: What the rest of the command costs — the harness's absolute path, the flags, the model, the
 #: session id. Held back from the ceiling so the check measures the argument the shell will
 #: actually carry, with room for what is built around the prompt (review of #360).
