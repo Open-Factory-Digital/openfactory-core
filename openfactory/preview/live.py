@@ -150,7 +150,15 @@ def should_start(project, found: preview.Preview | None, *, kind: str, running=(
     THE CAP IS ASKED BEFORE STARTING, not left to the plan step's refusal: that one records the
     preview `failed`, and a preview nobody asked for must not greet the person as a failure.
     Everything else the steps enforce whoever starts them — the budget, the expiry, the egress
-    network, the env tiers."""
+    network, the env tiers.
+
+    AND IT IS ASKED LAST, BECAUSE IT IS THE ONE QUESTION THAT COSTS (review of #408). `running` is
+    the previews up on the deployment, or A CALLABLE THAT READS THEM — which is what the job's
+    activity hands over, because reading them is a `docker ps -a` on the daemon. Handed over as a
+    value it was read before any of the refusals above was decided: a project whose operator had
+    said `preview.auto_start: false` paid one docker call on every job that opened a pull
+    request, and so did a record nobody could start. The callable is called once, here, only when
+    everything cheaper said yes."""
     from openfactory.contracts.project import PreviewPolicy
     from openfactory.preview import demand
 
@@ -163,7 +171,8 @@ def should_start(project, found: preview.Preview | None, *, kind: str, running=(
             or not found.pr_urls:
         return False, ""
     mine = preview.compose_project(project.name, found.unit)
-    why = demand.over_cap(running or (), mine=mine,
+    up = running() if callable(running) else running
+    why = demand.over_cap(up or (), mine=mine,
                           cap=cap if cap is not None else demand.max_previews())
     if why:
         return False, why

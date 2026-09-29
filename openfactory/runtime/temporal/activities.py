@@ -453,8 +453,62 @@ async def run_job(inp: RunJobInput) -> RunResult:
         f"{inp.project}#{inp.issue} via {inp.sandbox}",
         tick=watch.tick if watch else None,
     )
-    await _a_preview_starts_on_its_own(inp.project, inp.issue, result)
+    try:
+        # BOUNDED, BECAUSE NOTHING BEATS FOR IT: the loop above stopped beating when the job
+        # returned, and the engine is still counting (`_A_PREVIEW_STARTS_WITHIN`)
+        await asyncio.wait_for(_a_preview_starts_on_its_own(inp.project, inp.issue, result),
+                               timeout=_A_PREVIEW_STARTS_WITHIN)
+    except TimeoutError:
+        activity.logger.warning(
+            "OPENFACTORY_PREVIEW_AUTO_START_CUT %s#%s — starting its preview outlived %ss; the "
+            "job's result is returned without it, and the card's button starts one",
+            inp.project, inp.issue, _A_PREVIEW_STARTS_WITHIN)
     return result
+
+
+# ── what an activity does AFTER its work returned is bounded, because nothing beats for it ──────
+#
+# THE TAIL OF AN ACTIVITY IS NOT COVERED BY ITS HEARTBEAT (review of #408). `_heartbeat_while` and
+# `_heartbeating` beat WHILE the work runs and stop the moment it returns; whatever the activity
+# awaits after that runs with nothing beating, against a window the engine is still counting. Two
+# tails were written that way in #405 — the start that follows a job, and the telling that follows
+# a preview coming up — and both swallowed a failure while neither bounded a HANG. What is in
+# them can hang: reading the previews up is a `docker ps -a` that waits sixty seconds on a daemon
+# that does not answer, the engine's start is an RPC made with no timeout, and a tracker is told
+# once per card, each a call to a forge that may be throttling. Measured with the heartbeat
+# instrumented and a tail made to hang for N seconds, the gap from the last beat to the return
+# was N plus the second the job took, with no ceiling: 4.01 s at 3, 41.01 s at 40.
+#
+# WHAT IT COST WAS NEVER THE PREVIEW'S. Past the window the engine fails the activity. For the job
+# that is the most expensive step in the system failed — or RE-RUN, on a box that re-attaches —
+# after its pull request was opened; for the preview it is a stack that came up being taken down
+# as "the start did not finish", while its cards were still being told it was up.
+#
+# THE ARITHMETIC. A beat can be one period old when the work returns (and the preview's step may
+# not have beaten at all: then the window counts from a start under one period ago), so what a
+# tail has is the window LESS one period — 120 − 30 = 90 s for the job, 60 − 10 = 50 s for the
+# step. Each bound keeps the return within HALF its window of the last beat: 30 + 30 of 120,
+# 10 + 20 of 60. The other half is the engine's, to be handed the result in.
+# `tests/test_a_preview_starts_itself_when_the_pull_request_opens.py` holds both sums against the
+# windows the workflows declare, so a window that shrinks or a bound that grows is said.
+#
+# WHAT OUTLIVES ITS BOUND. The job's tail is a coroutine, so it is cancelled where it waits and
+# begins nothing more. A THREAD CANNOT BE CANCELLED (`asyncio.to_thread`): the call in flight —
+# and, for the telling, which is one thread, every card after it — runs on in the background to
+# its own end (the daemon's call and the trackers' each carry a timeout of their own), and its
+# result is dropped. Nothing it writes late can disagree with what is already there:
+#   - a start the engine accepted after the bound is the unit's ONE workflow
+#     (`preview.workflow_id`): the same start the button makes, refused as a duplicate to whoever
+#     asks second, and said `starting` on the card by its own first step;
+#   - the note of a start the cap held back is written on the record AS IT IS WHEN IT IS WRITTEN,
+#     and only while that is still `offered` (`_held_back`);
+#   - a card is commented once, because the step runs once and its answer no longer waits for
+#     the telling; and the product role is told once per start, by key (`<unit>@<started_at>`).
+
+#: How long `run_job` waits for the start that follows the job, in seconds.
+_A_PREVIEW_STARTS_WITHIN = 30.0
+#: How long `preview_up` waits for the telling that follows the stack coming up, in seconds.
+_SAID_UP_WITHIN = 20.0
 
 
 async def _a_preview_starts_on_its_own(project_name: str, issue: str, result) -> str:
@@ -473,7 +527,9 @@ async def _a_preview_starts_on_its_own(project_name: str, issue: str, result) ->
     runtime), so the automatic start and the button can never disagree about it. A limit that
     held it back (the cap) is said on the card as a note; the button still starts it.
 
-    NEVER FAILS THE JOB: the pull request is open and the work is done."""
+    NEVER FAILS THE JOB: the pull request is open and the work is done. Never HOLDS it either —
+    that half of the promise is the caller's, which cuts this where it waits
+    (`_A_PREVIEW_STARTS_WITHIN`)."""
     if getattr(result, "state", None) != JobState.PR_OPEN or not getattr(result, "pr_url", ""):
         return ""
     try:
@@ -490,13 +546,14 @@ async def _a_preview_starts_on_its_own(project_name: str, issue: str, result) ->
         token = await asyncio.to_thread(preview.unit_of_card, project.name, card)
         found = await asyncio.to_thread(preview.latest, project.name, token)
         kind = default_preview_runtime()
+        # THE DAEMON IS ASKED ONLY WHEN EVERYTHING CHEAPER SAID YES: handed over as a value, the
+        # previews up were read on every job that opened a pull request — a project whose
+        # operator turned the start off included (`should_start`, review of #408)
         start, why = await asyncio.to_thread(
-            lambda: live.should_start(project, found, kind=kind,
-                                      running=_running_previews(kind) if found else ()))
+            live.should_start, project, found, kind=kind,
+            running=lambda: _running_previews(kind))
         if why and found is not None:
-            said = live.held(why, getattr(project, "language", None))
-            await asyncio.to_thread(preview.record, found.model_copy(update={
-                "notes": tuple(dict.fromkeys([*found.notes, said]))}))
+            await asyncio.to_thread(_held_back, project, token, why)
             activity.logger.info("OPENFACTORY_PREVIEW_HELD %s %s — %s", project.name, token, why)
             return ""
         if not start:
@@ -515,6 +572,27 @@ async def _a_preview_starts_on_its_own(project_name: str, issue: str, result) ->
         activity.logger.warning("no preview was started on its own for %s#%s (%s)", project_name,
                                 issue, str(exc)[:200])
         return ""
+
+
+def _held_back(project, token: str, why: str) -> bool:
+    """The cap held an automatic start back: its sentence, as a note on the unit's record —
+    whether it was written.
+
+    ON THE RECORD AS IT IS NOW, READ HERE, AND ONLY WHILE IT IS STILL `offered` (review of #408).
+    The record the decision read is as old as the daemon's answer took, and the store is
+    append-only with the newest row the truth: a note written on that copy relabels `offered` a
+    unit a person started in between, and hides its `starting` — or its failure — from the card
+    until the next step writes. Read and written in ONE thread, so the caller's bound, which
+    cannot cut a thread, cannot fall between the two."""
+    from openfactory import preview
+    from openfactory.preview import live
+
+    now = preview.latest(project.name, token)
+    if now is None or now.state != preview.OFFERED:
+        return False
+    said = live.held(why, getattr(project, "language", None))
+    return preview.record(now.model_copy(update={
+        "notes": tuple(dict.fromkeys([*now.notes, said]))}))
 
 
 def _running_previews(kind: str):
@@ -1910,7 +1988,17 @@ async def preview_up(inp: PreviewUpInput) -> PreviewStepResult:
 
     result = await _heartbeating("up", run)
     if result.ok:
-        await asyncio.to_thread(_the_preview_is_up, inp.step.project, inp.step.unit)
+        try:
+            # BOUNDED, BECAUSE NOTHING BEATS FOR IT: a tracker told once per card must not be
+            # what has the engine call a stack that came up dead (`_SAID_UP_WITHIN`)
+            await asyncio.wait_for(
+                asyncio.to_thread(_the_preview_is_up, inp.step.project, inp.step.unit),
+                timeout=_SAID_UP_WITHIN)
+        except TimeoutError:
+            activity.logger.warning(
+                "OPENFACTORY_PREVIEW_TELLING_CUT %s %s — saying the preview is up outlived %ss; "
+                "the step answers that it is up, and the telling is left to finish on its own",
+                inp.step.project, inp.step.unit, _SAID_UP_WITHIN)
     return PreviewStepResult(ok=result.ok, why=result.why, expires_at=inp.plan.expires_at)
 
 
@@ -1931,7 +2019,9 @@ def _the_preview_is_up(project_name: str, token: str) -> list[str]:
     (ADR-0050 D5's measured limit): a comment addressed by number alone could land on another
     repository's issue. The product role is still told, by card.
 
-    NEVER RAISES: the preview is up whatever the telling does."""
+    NEVER RAISES: the preview is up whatever the telling does. And never holds the step: its
+    caller waits `_SAID_UP_WITHIN` and answers, and what is still being told then is told in the
+    background — once, the step having run once."""
     from openfactory import preview
     from openfactory.preview import demand, live
     from openfactory.product import events

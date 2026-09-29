@@ -348,10 +348,14 @@ the per-unit budget and the expiry do, and they are enforced by the steps whoeve
   (`run_job`) after the job has returned: never inside the job, which must not wait on or fail over
   a preview and also runs outside the engine; never as a step of `JobWorkflow`, whose new command
   would break the replay of jobs in flight. `started_by` is the factory's own name, said on the card
-  in the project's language.
-- **The cap is asked before starting.** A start the cap would refuse is not made; the card carries
-  the cap's sentence as a note naming the previews that are up, and the button still starts it.
-  Letting the plan step refuse it would greet the person with a failure nobody asked for.
+  in the project's language. What follows the job runs after its activity stopped heartbeating, so
+  it is bounded well inside the heartbeat window (review of #408): a preview that hangs can neither
+  fail the job nor hold its result, and the `up` step's telling below is bounded the same way.
+- **The cap is asked before starting, and asked last.** A start the cap would refuse is not made;
+  the card carries the cap's sentence as a note naming the previews that are up, and the button
+  still starts it. Letting the plan step refuse it would greet the person with a failure nobody
+  asked for. Reading the previews up is a call to the daemon, so it is made only once every refusal
+  that costs nothing — the operator's switch, the record's own state — has said yes.
 - **When it is up, it is said where the person looks** — a comment on each of the unit's cards, in
   the thread that already says "PR ready for review", and the product role's `preview_up` event
   (ADR-0052's events), both from the `up` step. The link in both is the panel's route

@@ -25,8 +25,10 @@ MUTATIONS = [
      "    if why:\n        return False, why\n    return True, \"\"",
      "    return True, \"\""),
     ("the activity never starts it", ACT,
-     "    await _a_preview_starts_on_its_own(inp.project, inp.issue, result)\n",
-     ""),
+     "        await asyncio.wait_for(_a_preview_starts_on_its_own(inp.project, inp.issue, "
+     "result),\n"
+     "                               timeout=_A_PREVIEW_STARTS_WITHIN)\n",
+     "        pass\n"),
     ("any job's end starts one, not only a pull request handed to a person", ACT,
      '    if getattr(result, "state", None) != JobState.PR_OPEN or not getattr(result, "pr_url", ""):',
      '    if not getattr(result, "pr_url", ""):'),
@@ -40,8 +42,10 @@ MUTATIONS = [
      "    except Exception as exc:  # noqa: BLE001 — the promise above: a preview never fails a job\n        activity.logger.warning(\"no preview was started on its own",
      "    except ZeroDivisionError as exc:  # noqa: BLE001\n        activity.logger.warning(\"no preview was started on its own"),
     ("the up step tells nobody", ACT,
-     "    if result.ok:\n        await asyncio.to_thread(_the_preview_is_up, inp.step.project, inp.step.unit)\n",
-     ""),
+     "            await asyncio.wait_for(\n"
+     "                asyncio.to_thread(_the_preview_is_up, inp.step.project, inp.step.unit),\n"
+     "                timeout=_SAID_UP_WITHIN)\n",
+     "            pass\n"),
     ("the card is not told", ACT,
      "                _tracker_for(project).comment(card, live.comment(found, link=link,",
      "                (lambda *a: None)(card, live.comment(found, link=link,"),
@@ -60,4 +64,33 @@ MUTATIONS = [
     ("an expired preview counts as up", LIVE,
      "    return found is not None and found.live and not found.expired(now)",
      "    return found is not None and found.live"),
+    # ── the review of #408: the tails are bounded, and the daemon is asked last ──
+    ("the start that follows the job is not bounded — a preview that hangs holds the job", ACT,
+     "        await asyncio.wait_for(_a_preview_starts_on_its_own(inp.project, inp.issue, "
+     "result),\n"
+     "                               timeout=_A_PREVIEW_STARTS_WITHIN)\n",
+     "        await _a_preview_starts_on_its_own(inp.project, inp.issue, result)\n"),
+    ("the telling that follows the up step is not bounded — a tracker that hangs holds it", ACT,
+     "            await asyncio.wait_for(\n"
+     "                asyncio.to_thread(_the_preview_is_up, inp.step.project, inp.step.unit),\n"
+     "                timeout=_SAID_UP_WITHIN)\n",
+     "            await asyncio.to_thread(_the_preview_is_up, inp.step.project, inp.step.unit)\n"),
+    ("the job's bound is as long as the heartbeat window it must fit in", ACT,
+     "_A_PREVIEW_STARTS_WITHIN = 30.0",
+     "_A_PREVIEW_STARTS_WITHIN = 120.0"),
+    ("the up step's bound is as long as the heartbeat window it must fit in", ACT,
+     "_SAID_UP_WITHIN = 20.0",
+     "_SAID_UP_WITHIN = 60.0"),
+    ("the previews up are read before the refusals that cost nothing", LIVE,
+     '    policy = getattr(project, "preview", None) or PreviewPolicy()\n'
+     '    if not getattr(policy, "auto_start", True):',
+     '    policy = getattr(project, "preview", None) or PreviewPolicy()\n'
+     '    running = running() if callable(running) else running\n'
+     '    if not getattr(policy, "auto_start", True):'),
+    ("the activity reads the previews up before anything is decided", ACT,
+     "            running=lambda: _running_previews(kind))",
+     "            running=_running_previews(kind))"),
+    ("the held note is written whatever the record has become", ACT,
+     "    if now is None or now.state != preview.OFFERED:\n        return False",
+     "    if now is None:\n        return False"),
 ]
