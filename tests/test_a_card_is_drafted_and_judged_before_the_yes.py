@@ -771,8 +771,10 @@ def test_the_defect_body_is_the_card_under_the_codes_own_lines_and_promise():
 
     assert filed_by_the_product_role(body) == "defect", "correct_card must still know it"
     assert body.count(f"## {_WHAT_WAS_ASKED['defect']}") == 1
-    assert "## A promessa violada" in body and body.index("## Objetivo") < body.index(
-        "## A promessa violada")
+    # THE CODE'S CLOSING SECTION, whichever name it has: "A promessa violada" before #399, "Sem
+    # requisito escrito" for a defect that cites none after it — the card sits above it either way
+    closing = next(h for h in ("## A promessa violada", "## Sem requisito escrito") if h in body)
+    assert body.index("## Objetivo") < body.index(closing)
 
 
 def test_the_shipped_defect_template_is_one_the_loader_accepts_and_a_ticket_one_is_not():
