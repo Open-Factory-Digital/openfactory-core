@@ -439,7 +439,13 @@ def test_no_message_this_module_can_SAY_carries_a_link():
     # THE PREVIEW IS THE SAME CASE ONE STEP EARLIER (#267 slice 3, ADR-0050): the address of the
     # client's own product running the change before it goes in — held to the same bar in
     # `tests/test_events_and_the_agenda.py::test_a_preview_sends_them_to_THEIR_product_and_nothing_else`.
-    CLIENT_OWNED = {"_DEPLOY_INVITATION", "_PREVIEW_UP"}
+    #
+    # AND THE CHANGE THAT IS THE REQUESTER'S TO TRY (#401): the preview that is already up is the
+    # same client-owned address (`_READY_TRY_LIVE`), and the card's own link (`_READY_CARD_LINK`,
+    # the tracker's `ticket_url`) is where the person starts that preview and approves or sends
+    # back the change — the card, never the pull request, held in
+    # `tests/test_the_requester_hears_the_change_is_theirs_to_try.py`.
+    CLIENT_OWNED = {"_DEPLOY_INVITATION", "_PREVIEW_UP", "_READY_TRY_LIVE", "_READY_CARD_LINK"}
 
     tree = ast.parse(Path("openfactory/product/voice.py").read_text())
     offenders = []

@@ -95,11 +95,16 @@ class Item:
     chased: str
     yours: bool
     to: str
+    #: THE PERSON'S WORDS FOR THE CHIP AND THE DATE (#401) — `direction` and `to` stay the codes a
+    #: caller compares; these are what a screen draws, in the project's language.
+    chip: str = ""
+    when: str = ""
 
     def as_dict(self) -> dict:
         return {"kind": self.kind, "subject": self.subject, "direction": self.direction,
                 "said": self.said, "what": self.what, "since": self.since,
-                "chased": self.chased, "yours": self.yours, "to": self.to}
+                "chased": self.chased, "yours": self.yours, "to": self.to,
+                "chip": self.chip, "when": self.when}
 
 
 def _sealed(value: str) -> str:
@@ -158,57 +163,74 @@ def _mine(viewer: Viewer, where: Audience) -> bool:
     return bool(viewer.person) and bool(where.person) and _sealed(viewer.person) == where.person
 
 
-def _said(loop: Loop, *, yours: bool) -> tuple[str, str]:
-    """What the role owes or waits for, in one line — and which way it points."""
-    who = "you" if yours else "the room"
+def _said(loop: Loop, *, yours: bool, language: str | None = None) -> tuple[str, str]:
+    """What the role owes or waits for, in one line — and which way it points.
+
+    IN THE PROJECT'S LANGUAGE, FROM `voice` (#401). Every line here was an English f-string, so a
+    pt-BR product's person read "tell you when the problem reported is fixed" on the one screen
+    that lists what the role promised them. This decides WHICH line; `voice.agenda_said` says it."""
+    from openfactory.product.voice import agenda_said
+
     ctx = loop.context or {}
+
+    def say(key: str, **kw) -> str:
+        return agenda_said(key, yours=yours, language=language, **kw)
+
     if loop.kind == DELIVERY:
         if ctx.get("defect"):
-            return OWED, f"tell {who} when the problem reported is fixed"
-        return OWED, f"tell {who} when requirement {loop.subject} is ready"
+            return OWED, say("delivery_defect")
+        return OWED, say("delivery", subject=loop.subject)
     if loop.kind == ACCEPTANCE:
         issue = str(ctx.get("release_issue") or "")
         if issue:
-            return AWAITED, f"hear from {who} whether #{issue} works, before it goes live"
+            return AWAITED, say("release", issue=issue)
         if ctx.get("defect"):
-            return AWAITED, f"hear from {who} whether the fix works"
-        return AWAITED, f"hear from {who} whether requirement {loop.subject} works"
+            return AWAITED, say("acceptance_defect")
+        return AWAITED, say("acceptance", subject=loop.subject)
     if loop.kind == DECISION:
-        return AWAITED, f"a decision from {who}"
+        return AWAITED, say("decision")
     if loop.kind in (QUESTION, CARD_QUESTION):
-        return AWAITED, f"an answer about #{loop.subject}"
+        return AWAITED, say("question", subject=loop.subject)
     if loop.kind == CONTEXT:
-        return AWAITED, "an answer about how the product works"
+        return AWAITED, say("context")
     return AWAITED, f"{loop.kind} {loop.subject}".strip()
 
 
-def items(rows: list[Loop], viewer: Viewer, *, room: str) -> list[Item]:
+def items(rows: list[Loop], viewer: Viewer, *, room: str,
+          language: str | None = None) -> list[Item]:
     """The product role's agenda as `viewer` may see it: every open loop of its own, oldest first,
-    each saying what is owed or awaited and to whom — "you" or "the room", never a name."""
+    each saying what is owed or awaited and to whom — "you" or "the room", never a name — in
+    `language`, the project's (#401)."""
+    from openfactory.product.voice import agenda_chip, agenda_when
+
     out: list[Item] = []
     for loop in sorted(waiting(rows, owner=OWNER), key=lambda x: x.ts):
         where = audience(loop, room=room)
         if not sees(viewer, where):
             continue
         yours = _mine(viewer, where)
-        direction, said = _said(loop, yours=yours)
+        direction, said = _said(loop, yours=yours, language=language)
         ctx = loop.context or {}
         what = str(ctx.get("asked") or ctx.get("title") or "").strip()[:_WHAT_CHARS]
         out.append(Item(kind=loop.kind, subject=loop.subject, direction=direction, said=said,
                         what=what, since=loop.ts, chased=loop.chased_ts, yours=yours,
-                        to="you" if yours else "the room"))
+                        to="you" if yours else "the room",
+                        chip=agenda_chip(direction, yours=yours, language=language),
+                        when=agenda_when(loop.ts, loop.chased_ts, language=language)))
     return out
 
 
-def render(found: list[Item]) -> str:
+def render(found: list[Item], *, language: str | None = None) -> str:
     """The agenda as text — for the CLI and for whoever reads the row's message."""
+    from openfactory.product.voice import agenda_empty, agenda_when
+
     if not found:
-        return "nothing is owed and nothing is awaited here."
+        return agenda_empty(language)
     lines = []
     for item in found:
         tail = f": {item.what}" if item.what else ""
-        chased = f", reminded {item.chased[:10]}" if item.chased else ""
-        lines.append(f"- {item.said} (since {item.since[:10] or '?'}{chased}){tail}")
+        when = item.when or agenda_when(item.since, item.chased, language=language)
+        lines.append(f"- {item.said} ({when}){tail}")
     return "\n".join(lines)
 
 

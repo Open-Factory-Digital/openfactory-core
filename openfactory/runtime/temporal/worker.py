@@ -97,6 +97,7 @@ from openfactory.runtime.temporal.activities import (
     stop_job,
     techlead_ask,
     techlead_watch,
+    tell_the_requester,
     tracker_budgets,
     update_pr_branch,
 )
@@ -161,6 +162,8 @@ WORKER_ACTIVITIES = [
     merge_pr_now, merge_pr_saying_why, close_pr, adjust_pr, review_pr,
     coordinator_advise, notify_coordinator, notify_coordinator_say,
     mark_needs_action, settle_ticket, record_outcome, diagnose_impediment, record_job_metrics,
+    # #401 — the requester told the change is theirs to try, from the merge watch
+    tell_the_requester,
     refresh_knowledge, product_sweep, techlead_watch, open_review_loop,
     # #269 — the product's documents, read on the knowledge refresh's own tick, and its quiet
     # conversations distilled just before them (slice 3)

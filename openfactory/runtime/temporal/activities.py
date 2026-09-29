@@ -69,6 +69,7 @@ from openfactory.runtime.temporal.io import (
     ProductSayInput,
     PromoteInput,
     RatePauseInput,
+    ReadyForYouInput,
     ReleaseInput,
     ReportInput,
     ReviewLoopInput,
@@ -2347,14 +2348,50 @@ _ANNOUNCE_WITHIN = 75.0
 
 
 def _pull_requests_waiting(project, gates: list[tuple[str, str]]) -> None:
-    """`events.pull_requests_at_the_gate`, never raising (#267 slice 3)."""
+    """`events.pull_requests_at_the_gate`, never raising (#267 slice 3) — and, first, the
+    catch-all of `ready_for_you` (#401): a gate the watch did not announce (a job whose history
+    predates `tell_the_requester`, a merge handed to a person later) is told to its requester on
+    the first round that sees it, and one it did announce is found told."""
     try:
         from openfactory.product import events
 
+        events.ready_at_the_gate(project, gates)
         events.pull_requests_at_the_gate(project, gates)
     except Exception as exc:  # noqa: BLE001 — never the floor report's price
         activity.logger.warning("could not tell the product role which pull requests wait on a "
                                 "person (%s)", str(exc)[:160])
+
+
+@activity.defn
+async def tell_the_requester(inp: ReadyForYouInput) -> bool:
+    """A PULL REQUEST A PERSON MUST DECIDE JUST ENTERED THE MERGE WATCH, and whoever asked for the
+    card hears it in the conversation they asked in (#401, `events.ready_for_you`).
+
+    HERE, ON THE WORKER, AND NOT WHERE THE PULL REQUEST WAS OPENED. The machine that opens it runs
+    wherever the job runs — on a remote box, another machine with no product memory — and the
+    delivery ledger that says whose conversation a card came from lives here. The watch is also the
+    one point both ways into a human gate pass through: a job that just opened its pull request,
+    and a person resuming a merge the forge refused.
+
+    NEVER RAISES, AND BOUNDED: the job is waiting on a person either way; a telling that could not
+    be made is the tech-lead round's to make on its next pass. Returns whether it was told now."""
+    def _tell() -> bool:
+        try:
+            from openfactory.product import events
+
+            return events.ready_for_you(ProjectRegistry().get(inp.project), card=inp.issue,
+                                        pr_url=inp.pr_url, verdict=inp.verdict)
+        except Exception as exc:  # noqa: BLE001 — the round says it, an hour late at worst
+            activity.logger.warning("could not tell %s#%s's requester it is ready for them (%s)",
+                                    inp.project, inp.issue, str(exc)[:160])
+            return False
+
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_tell), timeout=_ANNOUNCE_WITHIN)
+    except TimeoutError:
+        activity.logger.warning("telling %s#%s's requester outlived %ss — the round tells them",
+                                inp.project, inp.issue, _ANNOUNCE_WITHIN)
+        return False
 
 
 def _a_card_was_finished(inp: HoldSyncInput) -> None:

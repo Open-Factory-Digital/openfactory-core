@@ -2697,9 +2697,18 @@ async def _product_agenda(*, project: str, by: Actor) -> Outcome:
     viewer = agenda.Viewer(own=getattr(by, "conversation", "") or "", person=by.id,
                            may_read_room=by.may_enter(PRODUCT))
     rows = await asyncio.to_thread(loop_store.read, proj.name)
-    found = agenda.items(rows, viewer, room=events.room_of(proj))
-    return done(agenda.render(found), project=proj.name, measured_on=_measured_on(by),
-                items=[item.as_dict() for item in found])
+    # IN THE PROJECT'S LANGUAGE, AND SAYING WHAT IT IS (#401): a pt-BR product's person read
+    # "tell you when the problem reported is fixed · owed · you" under a tab nothing explained.
+    # `about` and `empty` are the panel's to draw; its own English is only the fallback.
+    from openfactory.product.voice import agenda_about, agenda_empty
+
+    language = getattr(proj, "language", None)
+    found = agenda.items(rows, viewer, room=events.room_of(proj), language=language)
+    agent = getattr(getattr(proj, "product", None), "agent_name", "") or ""
+    return done(agenda.render(found, language=language), project=proj.name,
+                measured_on=_measured_on(by), items=[item.as_dict() for item in found],
+                about=agenda_about(agent_name=agent, language=language),
+                empty=agenda_empty(language))
 
 
 async def _product_cases(*, project: str, by: Actor, thread: str = "") -> Outcome:
