@@ -2107,9 +2107,20 @@ class JobWorkflow:
                 close_pr,
                 MergeCheckInput(project=params.project, pr_url=pr_url),
                 start_to_close_timeout=timedelta(minutes=2), retry_policy=_RETRY)
+            said = f"PR closed without merging by {who} — the branch is untouched"
+            # THE SIXTH PLACE A PERSON STOPS THE FACTORY, AND THE ONE `_skip` MISSED (#409). Its
+            # docstring names five and settles each: the column moves back to the backlog and one
+            # comment says who decided. A discard ended the job, closed the pull request, and
+            # left the card in *Needs Action* with nothing on it — measured live: the workflow
+            # COMPLETED with this very note while the board went on showing a decision still
+            # waiting. Patched: a job already past this point replays its old ending (TMPRL1100).
+            if workflow.patched("a-discard-goes-back-to-the-backlog"):
+                return await self._skip(params, RunResult(ticket_id=result.ticket_id,
+                                                          state=JobState.ON_HOLD, pr_url=pr_url,
+                                                          total_cost_usd=result.total_cost_usd),
+                                        said, by_a_person=True)
             return RunResult(
-                ticket_id=result.ticket_id, state=JobState.ON_HOLD, pr_url=pr_url,
-                note=f"PR closed without merging by {who} — the branch is untouched",
+                ticket_id=result.ticket_id, state=JobState.ON_HOLD, pr_url=pr_url, note=said,
             )
 
         if answer == "review":
@@ -2218,7 +2229,8 @@ class JobWorkflow:
 
     async def _skip(self, params: JobParams, result: RunResult, why: str, *,
                     by_a_person: bool) -> RunResult:
-        """A person told the factory to stop. ONE ending for all five places they can say it.
+        """A person told the factory to stop. ONE ending for every place they can say it — five,
+        and since #409 a sixth: the merge gate's `discard`.
 
         THERE WERE FIVE, AND THE FIRST FIX CAUGHT ONE (pilot, 2026-08-16). An operator can skip at
         the impediment gate, at a rate-limit pause, during CI repair, on a PR that keeps falling

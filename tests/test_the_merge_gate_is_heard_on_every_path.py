@@ -164,8 +164,12 @@ async def mock_blocked(inp: MergeCheckInput) -> str:
     return _MSTATE[0]
 
 
+_SETTLED: list[tuple[str, str]] = []
+
+
 @activity.defn(name="settle_ticket")
 async def mock_settle(inp: HoldSyncInput) -> str:
+    _SETTLED.append((inp.state, inp.note))
     return inp.state
 
 
@@ -428,3 +432,24 @@ async def test_a_job_that_CAN_hear_is_not_told_it_cannot(env: WorkflowEnvironmen
         assert "cannot_hear" not in gate and view.gate_cannot_hear(gate) == ""
         await h.signal(JobWorkflow.human_merge_gate, args=["discard", "", "a-person"])
         await h.result()
+
+
+# ── a discard settles the card: back to the backlog, with who decided ──────────────────────────
+
+async def test_a_discard_sends_the_card_back_to_the_backlog_and_says_who(env: WorkflowEnvironment):
+    """Measured live: a person answered the merge gate with discard; the pull request was closed
+    and the workflow COMPLETED with "PR closed without merging by …", and the card stayed in
+    Needs Action with nothing on it — a decision the board went on showing as still waiting.
+    Every other place a person stops the factory settles the ticket (`_skip`); this one now does:
+    the job ends SKIPPED and the tracker is told, with who decided."""
+    _SETTLED.clear()
+    async with Worker(env.client, task_queue=TQ, workflows=[JobWorkflow], activities=MOCKS):
+        h = await _start(env.client)
+        await _napping_after_a_repair(h)
+        await h.signal(JobWorkflow.human_merge_gate, args=["discard", "", "a-person"])
+        result = await h.result()
+
+    assert _CLOSED[-1] == "https://x/pr/1"
+    assert result.state == JobState.SKIPPED
+    [(state, note)] = [s for s in _SETTLED if s[0] == JobState.SKIPPED.value]
+    assert "closed without merging by a-person" in note and "backlog" in note
