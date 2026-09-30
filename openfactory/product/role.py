@@ -138,6 +138,25 @@ _DECISION_RE = re.compile(
 #: the gesture — the pattern stopped being the only door.
 QUEUE_MARKER = "[[FILA]]"
 
+#: WHAT EVERY STAGING MARKER'S INSTRUCTION TELLS THE MODEL ABOUT THE NEXT STEP (#430). A marker that
+#: stages something is described twice in one message: by the model, before the marker, and by the
+#: frame the code appends after it, with its own question. They agree only when the model knows the
+#: frame is coming. The ticket marker said so; the defect marker did not, and when #392 made a
+#: defect draft a whole card the model still wrote "say the word and I'll draft it" above the card
+#: it had already been drafted — one message offering, then doing, then asking twice. ONE PHRASE,
+#: carried by every marker in `STAGING_MARKERS`, so a new one cannot be added without it
+#: (`tests/test_the_frame_and_the_prose_agree_on_the_next_step.py`).
+STAGED_AFTER_YOUR_REPLY = (
+    "Before the marker, say in your reply what you understood; do NOT offer to write it up or "
+    "draft it later, and do NOT ask them to confirm: the platform prepares it from this "
+    "conversation right after your reply and shows it to them whole, with its own question.")
+
+#: The markers whose gesture STAGES something for a yes — a requirement draft, a defect card, a
+#: card, an order, a queue — each shown with its own question (`engine.py::gestures`, `staging`).
+#: A marker added here must carry `STAGED_AFTER_YOUR_REPLY` in its instruction; one that stages
+#: nothing (teach, evidence, decision) must not be here.
+STAGING_MARKERS = (REQUEST_MARKER, DEFECT_MARKER, TICKET_MARKER, ORDER_MARKER, QUEUE_MARKER)
+
 #: THE ROLE ASKS THE ENGINE TO SEARCH THE PRODUCT'S MEMORY (#269 slice 2, ADR-0053 D8) — in the
 #: family of `[[DECISAO: …]]`: text the model writes, so it works on every harness, with no tool
 #: protocol. `[[BUSCA: <what to look for>]]`; the engine searches (`product/index/retrieval.py`),
@@ -603,7 +622,8 @@ class ProductRole:
             "it, name the date instead of a relative word.\n\n"
             "THEN decide what the person was doing. If they ASKED FOR SOMETHING the product does "
             "not do yet — a need, a change, a complaint that implies one — end your reply with the "
-            f"marker {REQUEST_MARKER} on its own line. If they asked a question, or were "
+            f"marker {REQUEST_MARKER} on its own line. {STAGED_AFTER_YOUR_REPLY} If they "
+            "asked a question, or were "
             "discussing something already decided, do not add it. The marker is how a conversation "
             "turns into a written requirement, so a missing one loses the request and a spurious "
             "one asks somebody to confirm a requirement they never made.\n\n"
@@ -617,27 +637,27 @@ class ProductRole:
             "and it is a malfunction, it is a defect. A REQUEST is something the product does "
             "not do yet, or a change to how it is designed to behave — that one is argued into a "
             "requirement. Do NOT use the defect marker for a new capability or a change of "
-            "design.\n\n"
+            f"design. {STAGED_AFTER_YOUR_REPLY}\n\n"
             "IF THEY ASKED YOU TO OPEN A CARD — \"abre um ticket\", \"cria um card\", \"registra "
             "uma tarefa\", any way of asking for work to be PUT ON THE BOARD as they described "
             "it, rather than discussed into a requirement — end with [[TICKET: <title>]] on its "
             "own line, the title in their words, at most 80 characters, naming the part of the "
-            "product and the problem — never cut, never the request itself. Before the marker, "
-            "say in your reply what you understood the card must carry, and do NOT ask them to "
-            "confirm: the card itself is drafted from this conversation after your reply, "
-            "checked, and shown to them whole with its own question. A card is not a promise: "
+            "product and the problem — never cut, never the request itself. "
+            f"{STAGED_AFTER_YOUR_REPLY} A card is not a promise: "
             "it carries no requirement and starts nothing by itself. Do NOT use it for a wish "
             "you should argue into a requirement, nor for a broken promise.\n\n"
             "IF THEY GAVE THE BACKLOG AN ORDER — \"coloca nessa ordem: 7, 3, 9\", \"primeiro o "
             "7, depois o 3\", \"prioriza o 9\", any way of saying which cards come FIRST — end "
             "with [[ORDEM: 7, 3, 9]] on its own line, the card numbers in the order they want, "
-            "top first, exactly as they said them. Writing the order spends nothing and starts "
+            f"top first, exactly as they said them. {STAGED_AFTER_YOUR_REPLY} Writing the "
+            "order spends nothing and starts "
             "nothing: the next start follows it. Do NOT use it when they merely mentioned cards, "
             "and NOT to start work — that is the gesture below.\n\n"
             "IF THEY ASKED TO START THE WORK that is already agreed — \"podemos avançar?\", "
             "\"pode começar?\", \"vamos seguir\", \"manda ver\", any way of asking for the work to "
-            f"BEGIN rather than to be discussed — end with {QUEUE_MARKER} on its own line. Answer "
-            "them normally as well; the marker is what puts a proposed queue in front of them, and "
+            f"BEGIN rather than to be discussed — end with {QUEUE_MARKER} on its own line. "
+            f"{STAGED_AFTER_YOUR_REPLY} "
+            "The marker is what puts a proposed queue in front of them, and "
             "an approver's yes on that queue is what SPENDS MONEY. So: a plan (\"vamos começar a "
             "discutir o relatório\"), a question about status, or a request for something new is "
             "NOT this gesture — those are the other markers or no marker at all.\n\n"

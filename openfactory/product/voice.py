@@ -982,11 +982,22 @@ _ASK = {
 }
 
 
+#: A DEFECT'S FRAME CLAIMS NO MORE THAN ITS MARKER CARRIED (#430). `[[DEFEITO:REQ-7]]` names a
+#: written promise and the frame may say it is broken; `[[DEFEITO]]` alone names none — "a defect
+#: needs no written requirement" is the role's own instruction — and a frame that still said "this
+#: breaks something we already promised" contradicted, in the same message, the role that had just
+#: said no requirement covers it. The promise without a number is that the product works.
 _DEFECT_CONFIRM = {
-    "pt-BR": "Isso quebra o que já prometemos{req} — vou registrar como problema para corrigir, "
-             "não como pedido novo. Confirma que é isso?",
-    "en": "This breaks something we already promised{req} — I will register it as a problem to "
+    "pt-BR": "Isso quebra o que o requisito {violates} prometeu — vou registrar como problema para "
+             "corrigir, não como pedido novo. Confirma que é isso?",
+    "en": "This breaks what requirement {violates} promised — I will register it as a problem to "
           "fix, not as a new request. Is that right?",
+}
+_DEFECT_CONFIRM_UNWRITTEN = {
+    "pt-BR": "Isso não está funcionando como deveria — vou registrar como problema para corrigir, "
+             "não como pedido novo. Confirma que é isso?",
+    "en": "This is not working as it should — I will register it as a problem to fix, not as a "
+          "new request. Is that right?",
 }
 
 #: HONEST about the gate. The first version said "está na fila de correção" — but a defect lands
@@ -1030,10 +1041,19 @@ _CARD_UNJUDGED = {
 #: THE WHOLE DEFECT CARD, BEFORE THE YES (#392) — the sibling of `_CARD_CONFIRM`, honest about what
 #: a defect is: registered to be fixed, against a promise, not a new request.
 _DEFECT_CARD_CONFIRM = {
-    "pt-BR": "Isso quebra o que já prometemos{req} — vou registrar este problema para corrigir, "
+    "pt-BR": "Isso quebra o que o requisito {violates} prometeu — vou registrar este problema para "
+             "corrigir, não como pedido novo, como está abaixo:\n\n**{title}**\n\n{card}\n\n"
+             "Confirma?",
+    "en": "This breaks what requirement {violates} promised — I will register this problem to "
+          "fix, not as a new request, exactly as below:\n\n**{title}**\n\n{card}\n\n"
+          "Is that right?",
+}
+#: The same card when the marker named no requirement (#430): not working, never "promised".
+_DEFECT_CARD_CONFIRM_UNWRITTEN = {
+    "pt-BR": "Isso não está funcionando como deveria — vou registrar este problema para corrigir, "
              "não como pedido novo, como está abaixo:\n\n**{title}**\n\n{card}\n\nConfirma?",
-    "en": "This breaks something we already promised{req} — I will register this problem to fix, "
-          "not as a new request, exactly as below:\n\n**{title}**\n\n{card}\n\nIs that right?",
+    "en": "This is not working as it should — I will register this problem to fix, not as a new "
+          "request, exactly as below:\n\n**{title}**\n\n{card}\n\nIs that right?",
 }
 
 #: The person answered the judge's question and the judge still blocks: the card is shown for their
@@ -1125,10 +1145,11 @@ _FACT_NOTED = {
 def defect_confirmation(*, violates: int | None, language: str | None = None, card: str = "",
                         title: str = "", unjudged: bool = False,
                         disputed: tuple[str, ...] | list[str] = ()) -> str:
-    req = f" (requisito {violates})" if violates else ""
     if not card:
-        return _pick(_DEFECT_CONFIRM, language).format(req=req)
-    text = _pick(_DEFECT_CARD_CONFIRM, language).format(req=req, title=title, card=card.strip())
+        said = _DEFECT_CONFIRM if violates else _DEFECT_CONFIRM_UNWRITTEN
+        return _pick(said, language).format(violates=violates)
+    said = _DEFECT_CARD_CONFIRM if violates else _DEFECT_CARD_CONFIRM_UNWRITTEN
+    text = _pick(said, language).format(violates=violates, title=title, card=card.strip())
     return _with_review_note(text, language=language, unjudged=unjudged, disputed=disputed)
 
 
@@ -1142,11 +1163,17 @@ def _with_review_note(text: str, *, language: str | None, unjudged: bool,
     return text
 
 
+#: The clause `defect_filed` names the promise with — in the conversation's language, like the rest
+#: of the sentence it sits in.
+_AGAINST_REQUIREMENT = {"pt-BR": ", contra o requisito {violates}",
+                        "en": ", against requirement {violates}"}
+
+
 def defect_filed(*, ref: str, violates: int | None, language: str | None = None,
                  existed: bool = False, just_asked: bool = False, url: str = "") -> str:
     if just_asked:
         return just_asked_for_a_card(where=url or (f"#{ref}" if ref else ""), language=language)
-    req = f", contra o requisito {violates}" if violates else ""
+    req = _pick(_AGAINST_REQUIREMENT, language).format(violates=violates) if violates else ""
     text = _pick(_DEFECT_FILED, language).format(req=req)
     if existed:
         text = _pick({"pt-BR": "Eu já tinha registrado esse problema — segue o mesmo registro. ",

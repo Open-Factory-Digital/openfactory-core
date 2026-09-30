@@ -605,9 +605,14 @@ def test_the_judge_never_asks_for_a_name_and_the_role_never_asks_for_the_yes_its
     prompt = cards.judge_prompt(load_rubric(), conversation=CONVERSATION, request=GESTURE,
                                 card="# t")
     assert "Never for a name, a label or wording" in prompt
+    # the card's instruction carries the phrase every staging marker shares (#430); that it does,
+    # for every such marker, is `test_the_frame_and_the_prose_agree_on_the_next_step.py`'s
+    from openfactory.product.role import STAGED_AFTER_YOUR_REPLY
+
+    assert "do NOT ask them to confirm" in STAGED_AFTER_YOUR_REPLY
     src = (Path(cards.__file__).parent / "role.py").read_text(encoding="utf-8")
     at = src.index("IF THEY ASKED YOU TO OPEN A CARD")
-    assert "do NOT ask them to " in src[at:at + 1200]
+    assert "{STAGED_AFTER_YOUR_REPLY}" in src[at:at + 1200]
 
 
 # ── the answer to a held question goes straight to one redraft ─────────────────────────────────
