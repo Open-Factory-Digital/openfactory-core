@@ -12,7 +12,13 @@ Every Portuguese literal in the core is one of three kinds, each with its own ru
 - RECOGNISING WHAT A PERSON WROTE (assent, intents, heading aliases): it stays, in a table declared
   in `RECOGNISERS`, which must carry English too — a recogniser that knows one language is the
   same defect on the way in;
-- EVERYTHING ELSE that is still Portuguese is named in `EXEMPT`, literal by literal.
+- EVERYTHING ELSE that is still Portuguese is named in `EXEMPT`, fragment by fragment.
+
+KEYED ON THE PORTUGUESE FRAGMENT, NOT THE WHOLE LITERAL. A prompt is one long string with a
+Portuguese example inside English prose; keyed whole, every edit of the English around it killed
+the entry and made the unchanged example look new. A literal is cut into fragments at sentence and
+quote boundaries (`fragments`), and only the Portuguese ones are keyed: an edit elsewhere in the
+prompt changes nothing, and a new Portuguese phrase in it is a new fragment.
 
 `EXEMPT` ONLY SHRINKS. It is the sweep's remaining work, not a place to put new literals: a new
 Portuguese literal fails here, and so does an entry that no longer matches anything — a dead entry
@@ -116,8 +122,22 @@ def _strings(node: ast.AST) -> list[ast.Constant]:
     return [n for n in ast.walk(node) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
 
 
+#: Where a literal is cut into fragments: sentence and clause punctuation, quotes, brackets, and a
+#: spaced dash.
+_BREAKS = re.compile(r"[.;:!?\n\"«»“”()\[\]{}|]+|\s[—–-]\s")
+
+
+def fragments(text: str) -> list[str]:
+    """The Portuguese pieces of `text`, whitespace-normalised — the whole literal when no piece is
+    Portuguese on its own (a literal Portuguese only as a whole is keyed whole)."""
+    found = [" ".join(piece.split()) for piece in _BREAKS.split(text)]
+    found = [piece for piece in found if piece and is_portuguese(piece)]
+    return found or [" ".join(text.split())]
+
+
 def welded() -> dict[str, list[str]]:
-    """Every Portuguese string constant of the package that no rule above allows, by file."""
+    """Every Portuguese fragment of a string constant of the package that no rule above allows, by
+    file."""
     out: dict[str, list[str]] = collections.defaultdict(list)
     for path in sorted(PACKAGE.rglob("*.py")):
         rel = path.relative_to(ROOT).as_posix()
@@ -127,7 +147,7 @@ def welded() -> dict[str, list[str]]:
             allowed |= _subtree(table)
         for node in _strings(tree):
             if id(node) not in allowed and is_portuguese(node.value):
-                out[rel].append(node.value)
+                out[rel].extend(fragments(node.value))
     return {rel: sorted(found) for rel, found in out.items()}
 
 
@@ -202,3 +222,9 @@ def test_the_detector_sees_what_it_guards():
     # with no entry — counted, so a second copy of an exempt literal is new
     assert compare({"a.py": ["x", "x"]}, {"a.py": ["x"]}) == (["a.py: 'x'"], [])
     assert compare({"a.py": ["x"]}, {"a.py": ["x", "y"]}) == ([], ["a.py: 'y'"])
+    # AN EDIT OF THE ENGLISH AROUND AN EXAMPLE KEEPS ITS KEY; a new Portuguese phrase is new
+    before = fragments('say "vamos começar a discutir o relatório" and end with the marker')
+    after = fragments('when they write "vamos começar a discutir o relatório", add the marker')
+    assert before == after == ["vamos começar a discutir o relatório"]
+    assert fragments('e.g. "podemos avançar", "pode começar"') == ["podemos avançar",
+                                                                   "pode começar"]
