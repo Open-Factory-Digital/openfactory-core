@@ -13,6 +13,8 @@
   - ADR-0051: the door, the semaphore, and events through the door.
   - ADR-0052, the owner's view: **D11 below amends its agenda**.
   - Issues: #411 (this record), and its slices #412, #413, #414. The defects that led here: #384, #393, #401, #405, #409.
+  - #448, the requester's loop (ask → preview → adjust × N → accept → merge → staging → production → delivered): the path this lifecycle has to express, from the person's side. #330 and #339, the same class seen from the forge and the inbox. #452, the sibling record for what the role *waits for* from a person.
+- **Amended:** 2026-09-30, before any slice landed, from one manual run of the full loop on a live deployment (#448): the event set gains the adjust, acceptance, staging and release events; a second pure table decides **who** may cause an event (D2); a card corrected at the merge gate is judged again and its standing review marked out of date (D3); the slices name where each new event lands.
 
 ## Context
 
@@ -78,9 +80,24 @@ transition(project, card, event: CardEvent, *, by, why="", facts=None) -> Transi
 
 It is the only way a card changes state. `CardEvent` is a closed set, named from what happened, not from the column it lands in:
 
-`filed` · `promoted` · `reordered` · `picked_up` · `refused` · `question_asked` · `question_answered` · `pr_opened` · `parked` · `resumed` · `adjusted` · `merged` · `delivered` · `accepted` · `discarded` · `skipped` · `stopped` · `closed` · `withdrawn` · `removed` · `reopened` · `edited`
+`filed` · `promoted` · `reordered` · `picked_up` · `refused` · `question_asked` · `question_answered` · `pr_opened` · `parked` · `resumed` · `adjusted` · `accepted` · `merged` · `staged` · `stage_rejected` · `released` · `delivered` · `discarded` · `skipped` · `stopped` · `closed` · `withdrawn` · `removed` · `reopened` · `edited`
 
 `facts` carries what the event knows: the PR URL, the verdict, `delivered=True/False`, the note.
+
+**The events of the requester's loop (#448), and what their facts must carry.** These four were
+in the set or missing from it without a meaning, and a `CardEvent` without a meaning is a row
+nobody can write. Amended 2026-09-30.
+
+| event | who emits it | facts |
+|---|---|---|
+| `adjusted` | the pass that ran the person's words against the same pull request, **after** the project's gates and the review ran on the new head | the pass number; the head it produced; the source of the instruction (`requester`, `operator`, `review_thread`, #330); the verdict |
+| `accepted` | the requester saying, in their conversation or on the card, that what they tried is what they asked for | who; **the head they tried** (the preview's), so an acceptance never stands for a later push; where they said it |
+| `staged` / `stage_rejected` | the promotion to a declared stage, and the requester's "not yet" there | the stage's name and address; the version; for a rejection, the words, which re-enter the loop as an adjustment |
+| `released` | the promotion to the last declared stage | the stage, the version. `delivered` follows it, never the merge, when a project declares stages |
+
+`accepted` is the input the merge was missing: with a human merge it is shown to the merger; with
+an automatic one and `preview.required`, it is what lets the factory merge (ADR-0050 D9 stands: a
+preview nobody looked at is not an acknowledgement; a recorded acceptance of the head is one).
 
 ### D2. The door decides whether the event is allowed, before it decides what follows
 
@@ -100,8 +117,30 @@ the test D9 derives walks all of them. A pair the table does not name is refused
 so a `CardEvent` added later is illegal everywhere until somebody decides where it may happen.
 
 The lifecycle **state** the table reads is the card's own, derived from the record (D4), in a
-closed set: `backlog` · `todo` · `running` · `waiting_on_a_person` · `delivered` · `closed` ·
-`removed`. It is not the column's name, which is the tracker's spelling of it.
+closed set: `backlog` · `todo` · `running` · `waiting_on_a_person` · `merged` · `staged` ·
+`delivered` · `closed` · `removed`. It is not the column's name, which is the tracker's spelling
+of it. `merged` and `staged` exist because legality needs them (amended 2026-09-30): `accepted`
+is legal only while a pull request waits on a person, `staged` only after `merged`, `released`
+only after `staged` or `merged`. "Adjusting" is not a state: a card under a pass is `running`,
+with the pass number a fact of the transition that started it.
+
+**Who may cause an event is a second pure table.** `permitted(role, event) -> Refusal | None`,
+exhaustive over *(actor role × `CardEvent`)*, default refusal, asked by the door right after
+`allowed`. The roles are a closed set:
+
+- `requester` — the person the ledger names as having asked for the card (#401);
+- `product_admin` — `product.admins` (ADR-0019 §5);
+- `operator` — the floor's credential (`project.admins`);
+- `platform` — the workflow, the worker, the sweeps;
+- `observed` — D8.
+
+How a credential maps to a role stays in `policy/authz`; **which role may cause which event is
+written here**. Today that question is answered in as many places as the consequences were:
+`may_act`, `not_theirs`, `_product_owned_refusal`, the floor-or-product scope declared on each
+action row. They become callers of this table. Without it, #448's rule — *the requester may ask
+for an adjustment of their own card, and accept it* — would live in one action's code, and the
+next rule of that kind in another: the scattering this record exists to end, for actors instead
+of states. The derived test of D9 walks this table as it walks `allowed`.
 
 ### D3. The consequences are a table, decided in pure code
 
@@ -113,6 +152,16 @@ closed set: `backlog` · `todo` · `running` · `waiting_on_a_person` · `delive
 - `Tell(requester|room, notice)`
 - `Preview(start|stop|rebuild)`
 - `Forget(board)`
+- `Judge(card)` — the card's text goes back through ADR-0054's floor and judge (amended 2026-09-30)
+- `Review(stale)` — the standing review verdict is marked out of date
+
+The two last effects belong to `edited` on a card whose pull request waits on a person (#448,
+slice 1: the requester corrects the criteria a pass must meet). A card is judged before its yes
+(ADR-0054); a card corrected later is judged again, or the correction is the one text nobody read.
+And the review that approved the change judged criteria that no longer exist, so it is out of
+date the moment they change. **A review records the head it read and a digest of the criteria it
+read them against**, so "which criteria was this verdict about?" has one answer; the next pass's
+review reads the card as it is then.
 
 The table is the one place a reader answers *"what happens when a card is discarded?"*. Every event has an entry, and "nothing" is written as an explicit empty list, never as an absent key.
 
@@ -266,8 +315,13 @@ The tab becomes **Pending**: only what the product role **waits for from the per
 | Slice | What | Done when |
 |---|---|---|
 | 1 | The door, the record, the pure table, and the executor with its ports. The person-driven endings through it: `discarded`, `skipped`, `stopped`, `closed`, `withdrawn`, `removed`, `reopened`. `cancelled` loops. Preview stop on cancel. The conversation notice. Cache invalidation. The comment as the door's own. The Pending tab. The guard, with its exemption list. | Every live defect of the Context table has a table row and a derived test. The exemption list names only slice 2 and 3 writers. |
-| 2 | **Every change to `JobWorkflow` is behind `workflow.patched`**, so a job in flight replays its old ending. Job endings through the door: `merged`, `delivered`, `parked`, `resumed` (a resumed merge decision leaves *Needs Action*), `pr_opened` (ready-for-you and the preview start move into the table), `refused`, `question_asked/answered` (the sweep checks the card is open). The stale-pickup healer no longer maps *not planned* to Done. `stop` writes its journal line. | The workflow and the worker hold no card write outside the door. |
-| 3 | `filed`, `promoted`, `reordered`, `edited`. The box's outcomes are applied by the worker. `set_state` stops commenting. Observed events from the board sweep (D8). | **The exemption list is empty.** Only the box's progress marks remain, allowed by rule. |
+| 2 | **Every change to `JobWorkflow` is behind `workflow.patched`**, so a job in flight replays its old ending. Job endings through the door: `merged`, `delivered`, `parked`, `resumed` (a resumed merge decision leaves *Needs Action*), `pr_opened` (ready-for-you and the preview start move into the table), `refused`, `question_asked/answered` (the sweep checks the card is open). **`adjusted`** — every pass ends the way the first did: the gates run on the new head, the review reads it, the preview is rebuilt, the requester is told, keyed per pass (#448 slice 2). **`accepted`**, recorded against the head, shown to the merger, and admitted by the automatic merge in place of the `preview.required` block (#448 slice 3). The stale-pickup healer no longer maps *not planned* to Done. `stop` writes its journal line. | The workflow and the worker hold no card write outside the door. |
+| 3 | `filed`, `promoted`, `reordered`, `edited` (with `Judge` and `Review(stale)` at the merge gate, #448 slice 1). `permitted` replaces the scattered actor checks. The box's outcomes are applied by the worker. `set_state` stops commenting. Observed events from the board sweep (D8). | **The exemption list is empty.** Only the box's progress marks remain, allowed by rule. |
+| 4 | `staged`, `stage_rejected`, `released`, with `delivered` moved to the last declared stage. The staging address goes to the requester's conversation; a "not yet" there re-enters the loop as an adjustment (#448 slices 4–5). | The scenario of #448 runs end to end on real parts: *request → preview → adjust × 2 → accepted → auto-merge → staging "not yet" → adjust → staging approved → production → delivered*, with the requester told at every step. |
+
+Slice 0 is this record's amendment of 2026-09-30, landed before slice 1's code: D2 makes an event
+added later illegal everywhere until decided, so deciding these before the closed set exists is
+the cheap moment.
 
 ## Consequences
 
