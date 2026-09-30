@@ -726,3 +726,55 @@ def test_prune_removes_only_images_of_previews_nothing_runs(monkeypatch):
 
     assert [a[-1] for a in daemon.argvs("image rm")] == ["bbb"]
     assert "the image openfactory-pv-acme-9-api:latest of openfactory-pv-acme-9" in pruned
+
+
+# ── #446: the panel back on a live unit's edge ──────────────────────────────────────────────────
+
+
+def _connects(monkeypatch, answer: Ran) -> list[list[str]]:
+    calls: list[list[str]] = []
+
+    def host(argv, *, env=None, timeout=120, input=None):
+        calls.append(list(argv))
+        return answer
+
+    monkeypatch.setattr(compose, "_host", host)
+    return calls
+
+
+def test_a_recreated_panel_is_put_back_on_a_live_units_edge(monkeypatch, root):
+    """The attachment belongs to the panel's container and dies with it: a panel recreated by an
+    upgrade was off every live preview's edge, which then answered "app is not answering" (#446).
+    `join_panel` puts it back, with the command `up` uses."""
+    calls = _connects(monkeypatch, Ran(0, "", ""))
+    row = _runtime()
+    assert row.join_panel("openfactory-pv-acme-12") == ""
+    assert calls == [["docker", "network", "connect", "openfactory-pv-acme-12-edge",
+                      "openfactory-panel"]]
+
+
+def test_a_panel_already_on_the_edge_is_success_not_a_failure(monkeypatch, root):
+    _connects(monkeypatch, Ran(1, "", "Error response from daemon: endpoint with name "
+                                      "openfactory-panel already exists in network x"))
+    assert _runtime().join_panel("openfactory-pv-acme-12") == "", (
+        "asked on every look at a live unit: being on it already is the common answer")
+
+
+def test_a_join_that_fails_says_which_panel_and_which_network(monkeypatch, root):
+    _connects(monkeypatch, Ran(1, "", "Error response from daemon: network not found"))
+    said = _runtime().join_panel("openfactory-pv-acme-12")
+    assert "openfactory-panel" in said and "openfactory-pv-acme-12-edge" in said
+    assert "network not found" in said
+
+
+def test_nothing_is_joined_on_the_loopback_reach_or_with_no_panel(monkeypatch, root):
+    calls = _connects(monkeypatch, Ran(0, "", ""))
+    assert _runtime(reach="loopback").join_panel("openfactory-pv-acme-12") == ""
+    assert _runtime(panel_container="").join_panel("openfactory-pv-acme-12") == ""
+    assert calls == [], "no edge to join on loopback, and no panel to put on one"
+
+
+def test_the_compose_row_declares_it_joins_the_panel():
+    from openfactory.adapters.preview.base import JoinsThePanel
+
+    assert isinstance(_runtime(), JoinsThePanel)

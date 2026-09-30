@@ -109,6 +109,20 @@ class PrunesCaches(Protocol):
         ...
 
 
+@runtime_checkable
+class JoinsThePanel(Protocol):
+    """A runtime whose units the panel reaches over a network the panel must be ON — joined when a
+    unit starts, and lost whenever the panel's container is recreated (an upgrade, a changed env
+    file, `--force-recreate`), because the attachment belongs to the container (#446). Optional:
+    a row whose units are reached any other way has nothing to rejoin and does not declare it."""
+
+    def join_panel(self, compose_project: str) -> str:
+        """Put the panel on this unit's network — "" when it is on it now (already, or joined
+        here), else the sentence saying why it could not be. Idempotent and never raises: it is
+        asked on every look at a live unit."""
+        ...
+
+
 _TOP = frozenset({"services", "volumes", "networks"})
 
 

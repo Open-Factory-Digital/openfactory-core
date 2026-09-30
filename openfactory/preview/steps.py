@@ -406,6 +406,24 @@ def _tails(log_dir: str, services, n: int = 5) -> str:
     return "\n".join(out)
 
 
+def _keep_the_panel_on(runtime, compose_project: str) -> None:
+    """A RUNNING unit's network with the panel on it (#446), on every look — the worker does it on
+    the panel's behalf, because the panel has no daemon of its own to ask. Only for a row that
+    declares it (`JoinsThePanel`), and never for a unit that is gone or failed: an ended unit's
+    network is not one the panel belongs on. Said in the log when it cannot be; a look at a
+    preview never fails over it."""
+    from openfactory.adapters.preview.base import JoinsThePanel
+
+    if not isinstance(runtime, JoinsThePanel):
+        return
+    try:
+        problem = runtime.join_panel(compose_project)
+    except Exception as exc:  # noqa: BLE001 — the row promises not to raise; this keeps it so
+        problem = f"joining raised {exc!r}"
+    if problem:
+        log.warning("OPENFACTORY_PREVIEW_PANEL_OFF_THE_EDGE %s — %s", compose_project, problem)
+
+
 def watch(project, token: str, *, runtime, world: World) -> str:
     """One look at a live unit. An exposed service that stopped makes the record `failed` with
     the last lines of the exposed services' logs; nothing on the daemon means somebody else ended
@@ -420,6 +438,7 @@ def watch(project, token: str, *, runtime, world: World) -> str:
                         ended_at=int(world.clock()))
         return GONE
     if seen.state == "running":
+        _keep_the_panel_on(runtime, cp)
         return RUNNING
     runtime.logs(cp, log_dir)
     tail = _tails(log_dir, (was.ordered() if was else ()))

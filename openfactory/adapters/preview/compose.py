@@ -1001,12 +1001,29 @@ class ComposeRuntime:
             if problem:
                 return problem
         if connect_panel and plan.reach == "network" and self.panel_container:
-            joined = _host(["docker", "network", "connect", edge, self.panel_container], env=env,
-                           timeout=60)
-            if joined.rc and "already exists" not in f"{joined.out}{joined.err}":
-                return (f"the panel container `{self.panel_container}` could not join `{edge}`: "
-                        f"{joined.said}")
+            return self._connect_panel(edge, env)
         return ""
+
+    def _connect_panel(self, edge: str, env: Mapping[str, str]) -> str:
+        """The panel on `edge` — "" when it is on it now, the reason when it is not. "Already
+        exists" is the daemon saying it was on it already, which is success: this is asked again on
+        every look at a live unit (`join_panel`), not only when the unit starts."""
+        joined = _host(["docker", "network", "connect", edge, self.panel_container], env=env,
+                       timeout=60)
+        if joined.rc and "already exists" not in f"{joined.out}{joined.err}":
+            return (f"the panel container `{self.panel_container}` could not join `{edge}`: "
+                    f"{joined.said}")
+        return ""
+
+    def join_panel(self, compose_project: str) -> str:
+        """The panel back on a live unit's edge network (#446). The attachment made when the unit
+        started belongs to the panel's CONTAINER, and dies with it: a panel recreated by an
+        upgrade was off every live preview's edge, and each one answered "app is not answering"
+        until it was rebuilt. Asked on every look at a live unit, so a recreated panel is back on
+        within one watch interval. Nothing to join on the loopback reach, or with no panel named."""
+        if self.reach != "network" or not self.panel_container:
+            return ""
+        return self._connect_panel(edge_of(compose_project), _base_env(work_root()))
 
     def _why_up_failed(self, plan: PreviewPlan, ran: Ran) -> str:
         text = f"{ran.out}\n{ran.err}"

@@ -324,6 +324,16 @@ async def _serve_preview(request: Request, host):
                                  "build. Try again in a moment.")
         except httpx.HTTPError as exc:
             log.info("preview %s did not answer (%s)", host.label, exc)
+            if not await asyncio.to_thread(_resolves, upstream_base):
+                # THE PANEL IS NOT ON THE UNIT'S NETWORK (#446): the service's alias resolves only
+                # there, so a name that does not resolve is the panel's absence, not the
+                # application's silence — the page used to blame the application for it.
+                edge = preview.edge_network(record.project, host.unit)
+                return _preview_page(502, f"{host.service} cannot be reached from the panel",
+                                     f"The panel is not on this preview's network (`{edge}`) — "
+                                     "it leaves it whenever its container is recreated, and the "
+                                     "factory puts it back on its next look at the preview, "
+                                     "within a minute. Try again in a moment.")
             return _preview_page(502, f"{host.service} is not answering",
                                  f"Is it listening on 0.0.0.0:{port}? It may also have stopped; "
                                  "the card on the panel shows its logs and says if it ended.")
@@ -355,6 +365,25 @@ async def _serve_preview(request: Request, host):
     response.raw_headers = [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in out]
     response.headers["content-length"] = str(len(body))
     return response
+
+
+def _resolves(base_url: str) -> bool:
+    """Whether the host of `base_url` resolves from here — False only when the name itself is
+    unknown (#446). Any other answer, an error included, is True: this only tells a missing
+    network from a silent application, and must never invent the first."""
+    import socket
+    from urllib.parse import urlsplit
+
+    name = urlsplit(base_url).hostname or ""
+    if not name:
+        return True
+    try:
+        socket.getaddrinfo(name, None)
+    except socket.gaierror:
+        return False
+    except OSError:
+        return True
+    return True
 
 
 async def _read_at_most(upstream, cap: int) -> bytes | None:
