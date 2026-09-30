@@ -158,11 +158,15 @@ def _exempt() -> dict[str, list[str]]:
 def compare(found: dict[str, list[str]],
             exempt: dict[str, list[str]]) -> tuple[list[str], list[str]]:
     """`(new, dead)`: literals no entry covers, and entries no literal matches — counted, so two
-    copies of one literal need two entries."""
+    copies of one literal need two entries.
+
+    COMPARED CASE-FOLDED: a sentence that gains its capital (`"{sig}ótimo"` → `"{sig}Ótimo"`,
+    #436) is the same Portuguese it was, and the list must not read it as a new phrase that
+    killed an old entry."""
     new, dead = [], []
     for rel in sorted(set(found) | set(exempt)):
-        have = collections.Counter(found.get(rel, []))
-        listed = collections.Counter(exempt.get(rel, []))
+        have = collections.Counter(text.casefold() for text in found.get(rel, []))
+        listed = collections.Counter(text.casefold() for text in exempt.get(rel, []))
         new += [f"{rel}: {text!r}" for text in (have - listed).elements()]
         dead += [f"{rel}: {text!r}" for text in (listed - have).elements()]
     return new, dead
@@ -202,6 +206,12 @@ def test_a_catalogues_english_is_english():
                 wrong += [f"{path.relative_to(ROOT)}: {n.value!r}"
                           for n in _strings(pairs["en"]) if _PT_LETTERS.search(n.value)]
     assert not wrong, "\n".join(wrong[:20])
+
+
+def test_a_capital_is_not_a_new_phrase():
+    assert compare({"a.py": ["Ótimo"]}, {"a.py": ["ótimo"]}) == ([], [])
+    assert compare({"a.py": ["Ótimo", "ótimo"]}, {"a.py": ["ótimo"]})[0], (
+        "folding the case must still count the copies")
 
 
 def test_the_detector_sees_what_it_guards():
