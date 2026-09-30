@@ -144,6 +144,11 @@ class PreviewPlan(BaseModel):
     expose: dict[str, int]
     data: tuple[tuple[str, str | list[str]], ...] = ()
     from_change: dict[str, bool]
+    #: exposed service → whether the compose document BUILDS it (`build:`) rather than only
+    #: naming an image — what the landing page is chosen among (#435)
+    built: dict[str, bool] = {}
+    #: the exposed service the shape declares a person lands on (#435); "" = derived from `built`
+    entry: str = ""
     #: repository → the commit it was built from
     commits: dict[str, str]
     #: service → {name inside the container: name in the worker's environment}. NAMES ONLY:

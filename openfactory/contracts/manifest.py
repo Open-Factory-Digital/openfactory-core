@@ -163,7 +163,10 @@ class PreviewConfig(BaseModel):
     `expose` is what a person may open; `data` how each service's data is migrated and seeded
     (always into fresh volumes — never a copy of production); `exclude` the services a preview
     does not run. Which service is "from the change" is not declared here: it is derived from
-    what each service is built and mounted from, against the change's own diff.
+    what each service is built and mounted from, against the change's own diff. `entry` is the
+    exposed service a person LANDS on (#435) — declared when the structure cannot say it;
+    undeclared, a service the compose file builds from the repository is the landing page and a
+    service that only names an image never is.
 
     Declare nothing, and nothing changes."""
 
@@ -178,6 +181,8 @@ class PreviewConfig(BaseModel):
     data: dict[str, str | list[str]] = Field(default_factory=dict)
     #: compose services a preview does not run.
     exclude: list[str] = Field(default_factory=list)
+    #: the exposed service a person lands on (#435); "" = derived (see the docstring)
+    entry: str = ""
 
     @field_validator("compose", mode="before")
     @classmethod
@@ -205,6 +210,9 @@ class PreviewConfig(BaseModel):
         excluded_data = sorted(set(self.data) & set(self.exclude))
         if excluded_data:
             raise ValueError(f"preview.data names excluded services {excluded_data}")
+        if self.entry and self.entry not in self.expose:
+            raise ValueError(f"preview.entry names {self.entry!r}, which preview.expose does not "
+                             f"list — a person can only land on a service they may open")
         return self
 
 

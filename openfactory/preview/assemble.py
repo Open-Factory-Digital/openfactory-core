@@ -451,6 +451,10 @@ def assemble(doc: dict, *, cfg: PreviewConfig, unit: Unit, layout: Layout,
         layout=layout, doc=out, paths=paths, expose=dict(cfg.expose),
         data=tuple((s, c) for s, c in cfg.data.items()),
         from_change={n: from_change.get(n, False) for n in services},
+        # WHAT EACH EXPOSED SERVICE IS, not what the diff did to it (#435): built from the
+        # repository, or pulled as an image. Judged on the base document, like `from_change`.
+        built={n: "build" in services_in[n] for n in cfg.expose if n in services_in},
+        entry=cfg.entry,
         commits=commits,
         env_names={n: policy.names_for(n) for n in services},
         build_arg_names={n: policy.names_for(n, build=True) for n, s in services.items()

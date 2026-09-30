@@ -122,6 +122,7 @@ preview:
   data:
     api: "python manage.py migrate && python manage.py loaddata demo"   # fresh data, every time
   exclude: [mailhog]                   # services a preview does not run
+  entry: web                           # optional: the exposed service a person lands on
 ```
 
 - **Where it lives.** One repository or a monorepo: the manifest's `preview:`. A product of several
@@ -350,6 +351,15 @@ release. A different **port** does not help: browsers send a host's cookies to e
   holds a fresh key lasting as long as the preview. One click opens every exposed service: the
   doors chain through the unit's hosts, each hop chosen among the unit's own services only. A
   person never types the address; the card's button opens it.
+- **The chain ends on the front door.** The card's first button, and the link a comment carries,
+  land on the service `entry` declares; undeclared, on a service the compose file **builds** from
+  the repository — one that only names an image is a backing service and is never the landing
+  page — and among those, one the change did not touch first, because a back-end change is seen
+  through the front end that draws it. The rule is structural, never a name. **Amended
+  (2026-09-30, #435):** the order was "not from the change first" alone, and an image-only service
+  is never from the change, so a storage emulator that exposes a port became the landing page and
+  the product role's link opened infrastructure; `entry` and the built-before-pulled rule replace
+  it, and a record written before `built` was kept keeps the old order.
 - **The router's target is derived from the name**, never read from a record: the service's alias
   on its unit's own edge network on the compose stack, `127.0.0.1:<port its name derives>` on one
   machine. The browser's `Host` is forwarded unchanged, so an application's absolute URLs and

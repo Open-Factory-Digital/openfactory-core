@@ -187,6 +187,8 @@ class ProductPreview(BaseModel):
     expose: dict[str, int] = Field(min_length=1)
     data: dict[str, str | list[str]] = Field(default_factory=dict)
     exclude: list[str] = Field(default_factory=list)
+    #: the exposed service a person lands on (#435) — the manifest's `preview.entry`
+    entry: str = ""
 
     @field_validator("compose", mode="before")
     @classmethod
@@ -215,6 +217,9 @@ class ProductPreview(BaseModel):
         excluded_data = sorted(set(self.data) & set(self.exclude))
         if excluded_data:
             raise ValueError(f"preview.data names excluded services {excluded_data}")
+        if self.entry and self.entry not in self.expose:
+            raise ValueError(f"preview.entry names {self.entry!r}, which preview.expose does not "
+                             f"list — a person can only land on a service they may open")
         return self
 
 
