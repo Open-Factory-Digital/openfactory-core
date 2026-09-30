@@ -44,16 +44,23 @@ _EN_WORDS = re.compile(r"(?i)\b(the|and|is|to|of|with|when|this|that|you|it|for|
 #: The keys of a catalogue: a dict with an `en` key and one of these is one.
 _PT_KEYS = {"pt-BR", "pt-PT", "pt"}
 
-#: TABLES THAT READ WHAT A PERSON WROTE, as `(path, name)`: every literal inside the assignment of
-#: that name is allowed, and the table must carry English as well (checked below).
+#: TABLES THAT READ WHAT A PERSON (OR THE ROLE) WROTE, as `(path, name)` → an English entry the
+#: table must carry: every literal inside the assignment of that name is allowed, and the English
+#: sample is checked to be in it — a recogniser that knows one language is the defect on the way in.
 RECOGNISERS = {
-    ("openfactory/adapters/tracker/parse.py", "_ALIASES"),
-    ("openfactory/adapters/tracker/parse.py", "_GIVEN"),
-    ("openfactory/adapters/tracker/parse.py", "_STEP"),
-    ("openfactory/adapters/tracker/parse.py", "_EXAMPLES"),
-    ("openfactory/adapters/tracker/parse.py", "_REQUESTER_LABELS"),
-    ("openfactory/product/module.py", "_ALSO_CALLED"),
-    ("openfactory/language/written.py", "FUNCTION_WORDS"),
+    ("openfactory/adapters/tracker/parse.py", "_ALIASES"): "acceptance criteria",
+    ("openfactory/adapters/tracker/parse.py", "_GIVEN"): "Given",
+    ("openfactory/adapters/tracker/parse.py", "_STEP"): "Then",
+    ("openfactory/adapters/tracker/parse.py", "_EXAMPLES"): "examples",
+    ("openfactory/adapters/tracker/parse.py", "_REQUESTER_LABELS"): "requested by",
+    ("openfactory/product/module.py", "_ALSO_CALLED"): "what was asked",
+    ("openfactory/language/written.py", "FUNCTION_WORDS"): "the",
+    ("openfactory/product/engine.py", "_STOPWORDS"): "the of in",
+    ("openfactory/product/staging.py", "_NO"): "not right",
+    ("openfactory/product/voice.py", "CLIENT_JARGON"): "pull request",
+    ("openfactory/product/voice.py", "_CLAIMED_DONE"): "recorded",
+    ("openfactory/product/voice.py", "_RETRACTS_WRITE"): "nothing was",
+    ("openfactory/product/voice.py", "_CANNOT_OBSERVE"): "see the",
 }
 
 
@@ -152,13 +159,13 @@ def test_no_new_portuguese_literal_and_no_dead_exemption():
 
 
 def test_every_recogniser_is_declared_where_it_lives_and_carries_english():
-    for rel, name in sorted(RECOGNISERS):
+    for (rel, name), english in sorted(RECOGNISERS.items()):
         tree = ast.parse((ROOT / rel).read_text(encoding="utf-8"))
         table = _recognisers(tree, rel).get(name)
         assert table is not None, f"{rel} declares no {name} — the recogniser moved or was renamed"
-        english = [n.value for n in _strings(table)
-                   if n.value.strip() and not is_portuguese(n.value) and n.value.isascii()]
-        assert english, f"{rel}::{name} recognises Portuguese only — add the English beside it"
+        assert any(english in n.value for n in _strings(table)), (
+            f"{rel}::{name} does not carry {english!r} — a recogniser that reads one language "
+            f"only is the same defect on the way in")
 
 
 def test_a_catalogues_english_is_english():

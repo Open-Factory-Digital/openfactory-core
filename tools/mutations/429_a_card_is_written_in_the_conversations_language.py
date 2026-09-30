@@ -12,7 +12,8 @@ Portuguese, a catalogue test that accepts a key it should not, an exemption list
 shrinking. Rows 13-17 are what the person sees after the yes: the card body's own lines in one
 language, a marker read in one language only (a translated card the product owner owns becomes
 editable from the board), the broken promise's heading read in one language, the requirement's
-breakdown reply and the pen's replies in one language.
+breakdown reply and the pen's replies in one language. Rows 18-22 are the engine's own sentences,
+the panel's copy of a proposal and its fingerprint, and the claim detector in English.
 """
 
 TEST = "tests/test_a_card_is_written_in_the_conversations_language.py"
@@ -24,6 +25,8 @@ VOICE = "openfactory/product/voice.py"
 GUARD = "tests/test_no_portuguese_is_welded_into_the_core.py"
 AUTHORING = "openfactory/product/authoring.py"
 CONFIRM = "openfactory/product/confirm.py"
+ENGINE = "openfactory/product/engine.py"
+STAGING = "openfactory/product/staging.py"
 
 MUTATIONS = [
     ("TODAY'S DEFECT: the shipped layout is chosen without the language", CARDS,
@@ -93,4 +96,25 @@ MUTATIONS = [
     ("the pen's replies are Portuguese in every language", MODULE,
      "        said = _pick(_FILING, lang)\n        ctx = self.context()\n        name = ",
      '        said = _pick(_FILING, "pt-BR")\n        ctx = self.context()\n        name = '),
+
+    ("the engine's own sentences are Portuguese in every language", VOICE,
+     "    text = _pick(_ENGINE_SAID, language)[key]",
+     '    text = _pick(_ENGINE_SAID, "pt-BR")[key]'),
+
+    ("the panel's copy of a proposal ignores the language", STAGING,
+     "    said = _labels(language)",
+     '    said = _labels("pt-BR")'),
+
+    ("the fingerprint follows the language, so a button shown in one approves nothing", STAGING,
+     "    fingerprint = blake2b(_proposal_summary(entry).encode(), digest_size=6).hexdigest()",
+     '    fingerprint = blake2b(_proposal_summary(entry, language="en").encode(), '
+     "digest_size=6).hexdigest()"),
+
+    ("an English 'I cannot see the result' is not excused", VOICE,
+     '                             r"|\\bI (cannot|can\'t|can not|do not|don\'t) see the (result|outcome)",',
+     '                             r"|NEVER",'),
+
+    ("an English 'Registered' is not a claim", VOICE,
+     '    r"filed|recorded|registered|noted|created|closed|queued|logged|wrote|corrected)\\b",',
+     '    r"filed|recorded|created|closed|queued|logged|wrote|corrected)\\b",'),
 ]

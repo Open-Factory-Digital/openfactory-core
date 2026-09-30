@@ -263,3 +263,44 @@ def test_the_pen_answers_in_the_projects_language(tmp_path):
         _FILING["en"]["no_title"]
     for said in _FILING["en"].values():
         _english(said)
+
+
+def test_the_engines_own_sentences_are_english_in_english():
+    from openfactory.product.engine import _conflict_line
+    from openfactory.product.voice import _ENGINE_SAID, engine_said
+
+    assert set(_ENGINE_SAID["en"]) == set(_ENGINE_SAID["pt-BR"])
+    for key in _ENGINE_SAID["en"]:
+        _english(engine_said(key, language="en", number=7, which=" (#1, #2)"))
+    from types import SimpleNamespace
+
+    assert _conflict_line(SimpleNamespace(requirement=3, explanation="x"), "en") == \
+        "requirement 3 — x"
+    assert _conflict_line(SimpleNamespace(requirement=None, explanation="x"), "pt-BR") == \
+        "algo já decidido — x"
+
+
+def test_the_panels_copy_of_a_proposal_is_in_the_conversations_language_and_its_token_is_not():
+    """The panel mirrors a staged proposal for a person to read, so its summary follows the
+    language; the button's fingerprint hashes the pt-BR summary always, so a button approves the
+    same proposal whatever language it was shown in."""
+    from openfactory.product.staging import _proposal_summary, proposal_token
+
+    entry = {"kind": "defect", "title": "t", "restated": "the composer is cut off",
+             "number": 7}
+    english = _proposal_summary(entry, language="en")
+    assert english.startswith("kind: defect") and "text: the composer is cut off" in english
+    _english(english)
+    assert _proposal_summary(entry).startswith("tipo: defect")
+    from hashlib import blake2b
+
+    pt = blake2b(_proposal_summary(entry, language="pt-BR").encode(), digest_size=6).hexdigest()
+    assert proposal_token("k", entry) == f"k|{pt}", "the fingerprint reads the pt-BR summary"
+
+
+def test_an_english_claim_of_a_write_is_caught_and_an_english_i_cannot_see_is_excused():
+    from openfactory.product.voice import claims_a_write
+
+    assert claims_a_write("Registered the request with the team.") == "Registered"
+    assert claims_a_write("Noted.") == "Noted"
+    assert claims_a_write("I cannot see the result of what was recorded.") == ""
