@@ -1923,7 +1923,10 @@ function render(){
 //: is the card too, and walks into its preview when one is up (#405): the link a card's comment
 //: carries, which holds no credential of its own.
 function curBoard(){
-  const m=location.pathname.match(/^\/p\/([^/]+)\/(board|card|pr|preview)(?:\/([^/]+))?/);
+  // THE SEGMENT ENDS WHERE IT ENDS (#444): `pr` is a prefix of `preview`, and an alternation tried
+  // in order read `/p/x/preview/7` as `pr` with no ref — so the link a card's comment carries
+  // opened neither the preview nor the card, for anybody.
+  const m=location.pathname.match(/^\/p\/([^/]+)\/(board|card|pr|preview)(?=\/|$)(?:\/([^/]+))?/);
   return m?{project:decodeURIComponent(m[1]),
             card:(m[2]==="card"||m[2]==="preview")&&m[3]?decodeURIComponent(m[3]):"",
             pr:m[2]==="pr"&&m[3]?decodeURIComponent(m[3]):"",
@@ -2021,6 +2024,16 @@ async function bootProduct(){
   // NO FLOOR READS AT ALL on this path — a product credential is refused every one of them, and
   // firing them anyway would fill the console with 403s and the screen with nothing.
   let name=curProduct();
+  // THE LINKS THE ROLE SENDS THE REQUESTER (#444): `/p/<project>/preview/<ref>` and
+  // `/p/<project>/card/<ref>` are read here too. They were read only on the floor's path, which a
+  // product credential never reaches, so both were dead for exactly the person they are sent to.
+  // The project comes from the link, the address becomes the product page's own, and what the
+  // link names is opened below once the page is drawn.
+  const linked=(name===null)?curBoard():null;
+  if(linked&&linked.project){
+    name=linked.project;
+    history.replaceState({},"","/product/"+encodeURIComponent(name));
+  }
   if(!name){
     const list=await api("/api/product/projects").catch(()=>[]);
     name=(Array.isArray(list)&&list.length===1)?list[0].name:"";
@@ -2041,6 +2054,12 @@ async function bootProduct(){
   renderProduct(_prod.project);
   if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda();loadDocuments();pvBoardLoad()}
   if(_prod.project)loadSessions();
+  // …AND WHAT THE LINK NAMES: the preview, walked into with a key minted for this person now (the
+  // same call the floor makes), or the card on the Board tab (#384's own view of it).
+  if(linked&&linked.card&&_prod.project===linked.project){
+    if(linked.preview)openPreviewNow(linked.project,linked.card);
+    pvTab("board");pvCardOpen(linked.card);
+  }
 }
 
 // THE AGENDA (#267 slice 3): what the product role owes, and to whom — "you" or "the room", never
