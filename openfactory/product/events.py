@@ -528,6 +528,25 @@ def _card_url(project, card: str) -> str:
         return ""
 
 
+def _preview_starts_itself(project) -> bool:
+    """Whether this deployment starts an offered preview on its own (#437) — the SAME two
+    conditions `preview/live.py::should_start` refuses on first: the project's
+    `preview.auto_start`, and a runtime named. Not the preview's record: at the moment this is
+    said the start may or may not have written `starting` yet, and the sentence must not depend
+    on which of the two got there first. False when unsure — "start it from the card" is then
+    said, which the card can always honour."""
+    try:
+        from openfactory.contracts.project import PreviewPolicy
+        from openfactory.runtime.temporal.io import default_preview_runtime
+
+        policy = getattr(project, "preview", None) or PreviewPolicy()
+        kind = default_preview_runtime()
+        return bool(getattr(policy, "auto_start", True)) and bool(kind) and kind != "none"
+    except Exception:  # noqa: BLE001 — the sentence falls back to "start it from the card"
+        log.info("could not read whether previews start themselves here", exc_info=True)
+        return False
+
+
 def _preview_offered(project, card: str) -> bool:
     """Whether the card offers a preview a person can start — this deployment runs previews
     (`preview.domain()`) and the job wrote an offer for the card's unit that is not waiting on a
@@ -594,7 +613,8 @@ def ready_for_you(project, *, card: str, pr_url: str, verdict: dict | None = Non
                             card_url=_card_url(project, card), review=_stance(verdict),
                             preview=not preview_url and _preview_offered(project, card),
                             preview_url=preview_url, language=_language(project),
-                            agent_name=_agent(project))))
+                            agent_name=_agent(project),
+                            preview_starts_itself=_preview_starts_itself(project))))
 
 
 def ready_at_the_gate(project, gates: list[tuple[str, str]]) -> list[str]:
