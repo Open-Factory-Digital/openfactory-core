@@ -236,8 +236,8 @@ _ONE_LINE = {
     "en": "{who}about {about}: {asked}",
 }
 _BATCH_HEAD = {
-    "pt-BR": "{sig}tenho {n} coisas que preciso entender antes de transformar em trabalho:",
-    "en": "{sig}there are {n} things I need to understand before I can turn this into work:",
+    "pt-BR": "{sig}Tenho {n} coisas que preciso entender antes de transformar em trabalho:",
+    "en": "{sig}There are {n} things I need to understand before I can turn this into work:",
 }
 _CHASE = {
     "pt-BR": ("{sig}{who}voltando no {about}, que perguntei há {days} dias: {asked}\n\n"
@@ -264,14 +264,14 @@ _DECISION_CHASE = {
            "want to carry on as though it had been decided."),
 }
 _DELIVERED_DEFECT = {
-    "pt-BR": "{sig}o problema que foi reportado aqui está corrigido — a correção já entrou no "
+    "pt-BR": "{sig}O problema que foi reportado aqui está corrigido — a correção já entrou no "
              "produto.",
-    "en": "{sig}the problem reported here is fixed — the fix is in the product.",
+    "en": "{sig}The problem reported here is fixed — the fix is in the product.",
 }
 _DELIVERED_REQ = {
-    "pt-BR": "{sig}o que foi pedido no requisito {subject} está pronto — todo o trabalho que saiu "
+    "pt-BR": "{sig}O que foi pedido no requisito {subject} está pronto — todo o trabalho que saiu "
              "dele foi concluído.",
-    "en": "{sig}what was asked for in requirement {subject} is ready — all the work that came out "
+    "en": "{sig}What was asked for in requirement {subject} is ready — all the work that came out "
           "of it is finished.",
 }
 
@@ -279,13 +279,13 @@ _DELIVERED_REQ = {
 _RELEASE_ABOUT = {"pt-BR": " do requisito {requirement}",
                   "en": " in requirement {requirement}"}
 _RELEASE_WITH_ADDRESS = {
-    "pt-BR": ("{sig}o que foi pedido{about} está pronto e já está no **ambiente de testes** — "
+    "pt-BR": ("{sig}O que foi pedido{about} está pronto e já está no **ambiente de testes** — "
               "nada disso está valendo para os seus usuários ainda."
               "\n\nPara experimentar: {where}\n\n"
               "Dá uma conferida quando puder e me diga se funcionou. "
               "**Se funcionou, é o seu \"sim\" que coloca no ar** — se não funcionou, me conte "
               "o que ficou errado que eu devolvo para o time e nada sobe."),
-    "en": ("{sig}what was asked for{about} is ready and is on the **test environment** — none of "
+    "en": ("{sig}What was asked for{about} is ready and is on the **test environment** — none of "
            "it is live for your users yet."
            "\n\nTo try it: {where}\n\n"
            "Have a look when you can and tell me whether it worked. "
@@ -293,7 +293,7 @@ _RELEASE_WITH_ADDRESS = {
            "went wrong and I will send it back to the team and nothing goes out."),
 }
 _RELEASE_NO_ADDRESS = {
-    "pt-BR": ("{sig}o que foi pedido{about} está pronto e já está no **ambiente de testes** — "
+    "pt-BR": ("{sig}O que foi pedido{about} está pronto e já está no **ambiente de testes** — "
               "nada disso está valendo para os seus usuários ainda.\n\n"
               "Só que eu **não tenho o endereço** desse ambiente para te passar: o projeto não "
               "declarou onde é. Se você já sabe onde olhar, confere lá e me diga se funcionou. "
@@ -301,7 +301,7 @@ _RELEASE_NO_ADDRESS = {
               "que ficou errado que eu devolvo para o time e nada sobe.\n\n"
               "Se não sabe onde olhar, peça ao time para colocar o endereço no "
               "`.openfactory/project.yaml` que da próxima vez ele vem junto."),
-    "en": ("{sig}what was asked for{about} is ready and is on the **test environment** — none of "
+    "en": ("{sig}What was asked for{about} is ready and is on the **test environment** — none of "
            "it is live for your users yet.\n\n"
            "Except I **do not have the address** of that environment to give you: the project has "
            "not declared where it is. If you already know where to look, check there and tell me "
@@ -518,13 +518,13 @@ def _which(loop: Loop, *, ambiguous: bool) -> str:
 
 def accepted_text(loop: Loop, *, agent_name: str = "", ambiguous: bool = False) -> str:
     sig = f"{agent_name}: " if agent_name else ""
-    return (f"{sig}ótimo — considero encerrado então{_which(loop, ambiguous=ambiguous)}. "
+    return (f"{sig}Ótimo — considero encerrado então{_which(loop, ambiguous=ambiguous)}. "
             f"Obrigada por confirmar.")
 
 
 def rejected_text(loop: Loop, *, agent_name: str = "", ambiguous: bool = False) -> str:
     sig = f"{agent_name}: " if agent_name else ""
-    return (f"{sig}entendido — então NÃO está resolvido{_which(loop, ambiguous=ambiguous)}, e eu "
+    return (f"{sig}Entendido — então NÃO está resolvido{_which(loop, ambiguous=ambiguous)}, e eu "
             f"não vou dar como entregue. Me conta o que ainda acontece que eu registro como "
             f"defeito contra a promessa que ficou por cumprir.")
 

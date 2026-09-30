@@ -203,9 +203,9 @@ def language_rules(language: str | None) -> str:
 #: answer in the project's language (`roles.py::language_directive`), so translating the frame is
 #: the whole of what belongs here.
 _HANDBACK_REQUIREMENT = {
-    "pt-BR": ("{sig} isto parece ser um problema do requisito{why}, mas não tenho certeza "
+    "pt-BR": ("{sig} Isto parece ser um problema do requisito{why}, mas não tenho certeza "
               "suficiente para mexer no ticket. {fix}Deixo para uma pessoa confirmar."),
-    "en": ("{sig} this looks like a problem with the requirement{why}, but I am not confident "
+    "en": ("{sig} This looks like a problem with the requirement{why}, but I am not confident "
            "enough to touch the ticket. {fix}I am leaving it for a person to confirm."),
 }
 _HANDBACK_FIX_CLAUSE = {
@@ -213,15 +213,15 @@ _HANDBACK_FIX_CLAUSE = {
     "en": "What I would change: {fix}. ",
 }
 _HANDBACK_UNCLEAR = {
-    "pt-BR": ("{sig} olhei este impedimento e não consegui dizer se a causa está no requisito ou "
+    "pt-BR": ("{sig} Olhei este impedimento e não consegui dizer se a causa está no requisito ou "
               "na execução{why}. Deixo para uma pessoa decidir."),
     "en": ("{sig} I looked at this impediment and could not tell whether the cause is the "
            "requirement or the execution{why}. I am leaving it for a person to decide."),
 }
 _HANDBACK_NOT_MINE = {
-    "pt-BR": ("{sig} a causa aqui é {what}, não do requisito{why}. O ticket em si está claro, "
+    "pt-BR": ("{sig} A causa aqui é {what}, não do requisito{why}. O ticket em si está claro, "
               "então não mexo nele."),
-    "en": ("{sig} the cause here is {what}, not the requirement{why}. The ticket itself is clear, "
+    "en": ("{sig} The cause here is {what}, not the requirement{why}. The ticket itself is clear, "
            "so I am not touching it."),
 }
 _HANDBACK_CAUSE = {
@@ -229,9 +229,9 @@ _HANDBACK_CAUSE = {
     "environment": {"pt-BR": "de ambiente", "en": "environmental"},
 }
 _FIX_COMMENT = {
-    "pt-BR": ("{sig} o impedimento aqui é do requisito, não da execução{why}.\n\n{fix}Devolvi "
+    "pt-BR": ("{sig} O impedimento aqui é do requisito, não da execução{why}.\n\n{fix}Devolvi "
               "para o Backlog. Promover para TO-DO continua sendo decisão de uma pessoa."),
-    "en": ("{sig} the impediment here is the requirement, not the execution{why}.\n\n{fix}I have "
+    "en": ("{sig} The impediment here is the requirement, not the execution{why}.\n\n{fix}I have "
            "put it back in the Backlog. Promoting it to TO-DO is still a person's call."),
 }
 _FIX_CLAUSE = {
@@ -693,8 +693,8 @@ _CARDS_OPENED_AWAITING = {
 #: The comment on the card (ADR-0047 §3). `{actor}` is the person who said yes; `{behalf}` names
 #: the requester when somebody else accepted for them.
 _ACCEPTANCE_STAMP = {
-    "pt-BR": "{sig} aceite dado por {actor} em {day}, {where}{behalf}.",
-    "en": "{sig} accepted by {actor} on {day}, {where}{behalf}.",
+    "pt-BR": "{sig} Aceite dado por {actor} em {day}, {where}{behalf}.",
+    "en": "{sig} Accepted by {actor} on {day}, {where}{behalf}.",
 }
 _ON_BEHALF = {"pt-BR": " (em nome de {requester})", "en": " (on behalf of {requester})"}
 #: ADR-0047 §4: the second yes belongs to whoever asked. Said to the admin who tried to give it
@@ -2494,7 +2494,7 @@ def correction_refused(reason: str, *, number: str, column: str = "",
 
 #: The note a correction leaves on the card: who asked, what changed, and what it said before.
 _CORRECTION_NOTE = {
-    "pt-BR": "{sig} corrigi {what} deste cartão a pedido de {actor}.",
+    "pt-BR": "{sig} Corrigi {what} deste cartão a pedido de {actor}.",
     "en": "{sig} I corrected {what} of this card at the request of {actor}.",
 }
 _CORRECTION_WHAT = {
@@ -2849,9 +2849,9 @@ _PR_WAITING = {
            "to go ahead."),
 }
 _PREVIEW_UP = {
-    "pt-BR": ("{sig}já dá para experimentar {card} antes de ele entrar no produto: {url}\n\n"
+    "pt-BR": ("{sig}Já dá para experimentar {card} antes de ele entrar no produto: {url}\n\n"
               "Dá uma olhada e me diga se é o que foi pedido."),
-    "en": ("{sig}you can already try {card} before it goes into the product: {url}\n\n"
+    "en": ("{sig}You can already try {card} before it goes into the product: {url}\n\n"
            "Have a look and tell me whether it is what was asked for."),
 }
 _CARD_WITHDRAWN = {
@@ -2869,7 +2869,7 @@ _CARD_WITHDRAWN = {
     },
 }
 _DOCUMENT_INGESTED = {
-    "pt-BR": ("{sig}li o novo documento *{name}* — agora ele faz parte do que eu sei sobre o "
+    "pt-BR": ("{sig}Li o novo documento *{name}* — agora ele faz parte do que eu sei sobre o "
               "produto, e eu digo de onde tirei sempre que usar."),
     "en": ("{sig}I have read the new document *{name}* — it is now part of what I know about the "
            "product, and I will say where it came from whenever I use it."),
