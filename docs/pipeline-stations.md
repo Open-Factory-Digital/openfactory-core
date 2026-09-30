@@ -91,7 +91,13 @@ in only when a flag is raised.
 - The diff **adds a gate-suppression** (`# noqa`, `pragma: no cover`, `type: ignore`,
   `nosec`)? → **forced to human review** regardless of the reviewer's verdict — you cannot
   pass a quality gate by silencing it (detected deterministically from the diff).
-- `approved` **+** green gates **+** policy allows → cleared for auto-merge.
+- **Not verified** — a criterion that no gate executed (the reviewer must cite the gate as
+  `gate:<name>`, and the platform checks the citation against the gates that ran)? → **not**
+  auto-merged, whatever the review mode, and announced as "Review could not verify it", never as
+  approved (#447). When a test in the repository would verify it but no gate runs it, the card
+  says which one to wire into `validate`.
+- `approved` **+** every criterion executed by a gate **+** green gates **+** policy allows →
+  cleared for auto-merge.
 
 ### 7. PR — open the pull request
 Opens the PR as the bot (idempotent — a re-run reuses the same PR, never a duplicate). The

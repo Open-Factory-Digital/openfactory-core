@@ -15,10 +15,10 @@ MUTATIONS = [
     ("the repair pass pushes and never reads it back — the original dead end", MACHINE,
      '            if self.reviewer is not None and self.manifest.review_mode != "off":\n'
      "                self._set_state(ticket, JobState.REVIEWING)\n"
-     "                review = self.reviewer.review(",
+     "                review = self._review(",
      "            if False:\n"
      "                self._set_state(ticket, JobState.REVIEWING)\n"
-     "                review = self.reviewer.review("),
+     "                review = self._review("),
 
     ("the reading is taken and dropped on the floor", MACHINE,
      # Re-pinned by #310: this result is now charged before it leaves `repair_ci`.
@@ -34,10 +34,10 @@ MUTATIONS = [
     ("…and the reverse: it reviews even where the deployment turned review off", MACHINE,
      '            if self.reviewer is not None and self.manifest.review_mode != "off":\n'
      "                self._set_state(ticket, JobState.REVIEWING)\n"
-     "                review = self.reviewer.review(",
+     "                review = self._review(",
      "            if self.reviewer is not None:\n"
      "                self._set_state(ticket, JobState.REVIEWING)\n"
-     "                review = self.reviewer.review("),
+     "                review = self._review("),
 
     # ── the workflow publishes it ───────────────────────────────────────────────────────────────
     ("the adjust path keeps the stale marker instead of the fresh verdict", WORKFLOW,

@@ -380,11 +380,28 @@ def _review_lines(r: ReviewResult) -> list[str]:
         """
         unread = r.score == 0 and not r.findings and (
             "could not be parsed" in (r.summary or "") or "never ran" in (r.summary or ""))
-        out = [f"{_REVIEW_HEADING}DID NOT COMPLETE" if unread
-               else f"{_REVIEW_HEADING}{r.decision} (score {r.score})", r.summary]
+        from openfactory.review import verdict as _verdict
+
+        # NOT VERIFIED OUTRANKS THE DECISION WORD (#447): "## Review — approved_with_findings"
+        # headed a change whose own review said nothing had executed its criteria. The word the
+        # reviewer chose stays on the line, beside what the evidence supports.
+        unverified = not unread and _verdict.not_verified(r.model_dump())
+        if unread:
+            first = f"{_REVIEW_HEADING}DID NOT COMPLETE"
+        elif unverified:
+            first = (f"{_REVIEW_HEADING}NOT VERIFIED (the reviewer said {r.decision}, "
+                     f"score {r.score})")
+        else:
+            first = f"{_REVIEW_HEADING}{r.decision} (score {r.score})"
+        out = [first, r.summary]
         if unread:
             out.append("> This is not a judgement about the diff — nothing reviewed it. "
                        "The gates above are the only automated evidence here.")
+        if unverified:
+            head = _verdict.headline(r.model_dump())
+            out.append(f"> {head['clause'][:1].upper()}{head['clause'][1:]}. This is not an "
+                       f"approval: check the change yourself before merging.")
+            out += [f"> - {p}" for p in head["points"] if p.startswith("wire `")]
         for f in r.findings:
             loc = f" ({f.file}:{f.line})" if f.file else ""
             out.append(f"- **{f.severity}**{loc}: {f.description}")
@@ -690,6 +707,20 @@ class JobRunner:
     #: (the ONE place production assembles a runner) passes it, which is what makes the gate real
     #: rather than decorative. Absent → no gate, and the test that pins the wiring says so.
     project: object | None = None
+
+    def _review(self, *, sandbox, workspace, review_input: ReviewInput) -> ReviewResult:
+        """The reviewer's verdict with its evidence checked against the gates that ran (#447).
+
+        EVERY REVIEW COMES THROUGH HERE, so no path can publish a stance the evidence does not
+        support: `review/evidence.py::settle` keeps a criterion's `executed_by` only when the gate
+        the reviewer cited ran and passed on this attempt, and the stance is computed from that
+        (`review/verdict.py::headline`). A repair pass reviews with no gates (`validations=[]`) —
+        honestly nothing executed its criteria, and it reads as not verified."""
+        from openfactory.review.evidence import settle
+
+        review = self.reviewer.review(sandbox=sandbox, workspace=workspace,
+                                      review_input=review_input)
+        return settle(review, review_input.validations)
 
     def _job_branch(self, ticket: Ticket) -> str:
         """The branch this job works on — fresh work, a CI repair and a C2 resume alike.
@@ -1281,7 +1312,7 @@ class JobRunner:
 
             if self.reviewer is not None and self.manifest.review_mode != "off":
                 self._set_state(ticket, JobState.REVIEWING)
-                result.review = self.reviewer.review(
+                result.review = self._review(
                     sandbox=self.sandbox,
                     workspace=ws,
                     review_input=ReviewInput(
@@ -1352,7 +1383,7 @@ class JobRunner:
                     result.added_suppressions = _added_suppressions(diff)
                     result.suppression_details = _suppression_details(diff)
                     self._set_state(ticket, JobState.REVIEWING)
-                    result.review = self.reviewer.review(
+                    result.review = self._review(
                         sandbox=self.sandbox, workspace=ws,
                         review_input=ReviewInput(
                             ticket=ticket, diff=diff, validations=result.validations
@@ -1746,7 +1777,7 @@ class JobRunner:
             # about the code they are deciding on.
             if self.reviewer is not None and self.manifest.review_mode != "off":
                 self._set_state(ticket, JobState.REVIEWING)
-                review = self.reviewer.review(
+                review = self._review(
                     sandbox=self.sandbox, workspace=ws,
                     review_input=ReviewInput(ticket=ticket, diff=diff, validations=[]),
                 )
@@ -1827,7 +1858,7 @@ class JobRunner:
                     note="the pull request's diff could not be read — nothing was re-reviewed",
                 )
             self._set_state(ticket, JobState.REVIEWING)
-            review = self.reviewer.review(
+            review = self._review(
                 sandbox=self.sandbox, workspace=ws,
                 review_input=ReviewInput(ticket=ticket, diff=diff, validations=[]),
             )

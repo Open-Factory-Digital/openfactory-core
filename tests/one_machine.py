@@ -135,8 +135,12 @@ class Scripted:
         is the platform's SHARED `HarnessReviewer`, the one every non-Claude deployment uses."""
         from openfactory.contracts import AgentRunResult
 
-        verdict = {"decision": "approved", "score": 92, "acceptance": [], "findings": [],
-                   "summary": "the diff does what the card asked"}
+        # THE CRITERION CITES THE GATE THAT EXECUTED IT (#447): `test` checks the feature file
+        # the card asked for, so the change is verified and may merge by itself
+        verdict = {"decision": "approved", "score": 92,
+                   "acceptance": [{"criterion": "the feature exists", "status": "passed",
+                                   "evidence": f"gate:test — `test -f {FEATURE}`"}],
+                   "findings": [], "summary": "the diff does what the card asked"}
         stream = json.dumps({"type": "result", "result": json.dumps(verdict)})
         return AgentRunResult(ok=True, summary="reviewed", cost_usd=0.0, raw_output=stream)
 

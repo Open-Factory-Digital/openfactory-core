@@ -17,6 +17,15 @@ class AcceptanceCheck(BaseModel):
     criterion: str
     status: Literal["passed", "failed", "unknown"]
     evidence: str | None = None  # e.g. a test name, a file:line
+    #: THE GATE THAT EXECUTED THIS CRITERION'S EVIDENCE — written by the platform, never read from
+    #: the model (#447). The reviewer is asked to cite the gate as `gate:<name>` in `evidence`;
+    #: `review/evidence.py::settle` keeps the name only when that gate ran and passed on this
+    #: attempt. None is "nothing executed it": a criterion "passed" by reading the diff, or by a
+    #: test no gate runs, which is exactly the case a person must not be told was verified.
+    executed_by: str | None = None
+    #: A check in the repository that WOULD verify this criterion but that no gate ran — the
+    #: reviewer's pointer (#447), so "not verified" arrives with the one step that would fix it.
+    would_verify: str | None = None
 
 
 class Finding(BaseModel):
@@ -33,6 +42,11 @@ class ReviewResult(BaseModel):
     acceptance: list[AcceptanceCheck] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)
     summary: str = ""
+    #: WHETHER THE PLATFORM CHECKED THE EVIDENCE AGAINST THE GATES THAT RAN (#447). False on a
+    #: verdict made before the check existed, or by a path that never settled it — and then the
+    #: stance is read the old way, from `decision`, because a missing `executed_by` on such a
+    #: verdict says nothing about what ran.
+    evidence_checked: bool = False
 
     # WHAT THE REVIEW COST. Not decoration: review is ON by default, and it is a whole independent
     # agent pass over the entire diff — frequently the same order of magnitude as writing the code.
