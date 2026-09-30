@@ -45,10 +45,14 @@ from openfactory.product.cards import (
     ruling,
     template_problem,
 )
-from openfactory.product.module import _WHAT_WAS_ASKED
+from openfactory.product.module import _WHAT_WAS_ASKED, _section_re
 from openfactory.product.voice import card_needs, ticket_confirmation
 from tests.test_confirmation_by_click import ADMIN, KEY, _project
 from tests.the_chat_turn import chat_turn
+
+#: THE FIXTURES BELOW ARE A PORTUGUESE CONVERSATION, so the cards they draft use the pt-BR layout
+#: (#429) — the default layout is English.
+PT = "pt-BR"
 
 GESTURE = "pode criar um card novo e siga para a correção"
 
@@ -120,7 +124,7 @@ def test_the_shipped_files_travel_with_the_package():
 # ── render ─────────────────────────────────────────────────────────────────────────────────────
 
 def test_a_section_whose_fields_are_all_empty_is_left_out():
-    body = render(CardDraft.from_answer(GOOD), load_template())
+    body = render(CardDraft.from_answer(GOOD), load_template(language=PT))
 
     assert "## Fora do escopo" not in body
     assert "## Relacionados" in body and "- #41 — mesma tela" in body
@@ -140,7 +144,7 @@ def test_a_literal_brace_in_a_products_template_is_text():
 
 def _floor(raw: dict, request: str = GESTURE) -> list[str]:
     draft = CardDraft.from_answer(raw)
-    return floor(draft, render(draft, load_template()), request=request,
+    return floor(draft, render(draft, load_template(language=PT)), request=request,
                  conversation=CONVERSATION)
 
 
@@ -230,7 +234,7 @@ class _Script:
 
 
 def _compose(draft, judge):
-    return compose(draft=draft, judge=judge, rubric=load_rubric(), template=load_template(),
+    return compose(draft=draft, judge=judge, rubric=load_rubric(), template=load_template(language=PT),
                    conversation=CONVERSATION, request=GESTURE, reply="Abro o cartão.",
                    title=GOOD["title"], project_name="books")
 
@@ -423,7 +427,8 @@ class _World:
     def compose_card(self, **kw):
         self.composed.append(kw)
         return compose(draft=self.script, judge=self.judge, rubric=load_rubric(),
-                       template=load_template(kind=kw.get("kind", "ticket")), **kw)
+                       template=load_template(kind=kw.get("kind", "ticket"),
+                                              language=kw.get("language")), **kw)
 
     def file_ticket(self, *, title, described, reported_by, source="", card=""):
         self.filed.append({"title": title, "described": described, "card": card})
@@ -501,13 +506,14 @@ def test_the_confirmation_without_a_card_is_the_title_one(lang="pt-BR"):
 # ── the pen: what is written ───────────────────────────────────────────────────────────────────
 
 def test_the_body_written_is_the_card_under_the_codes_own_lines():
-    card = render(CardDraft.from_answer(GOOD), load_template())
+    card = render(CardDraft.from_answer(GOOD), load_template(language=PT))
 
-    body = ticket_body(described=GESTURE, reported_by="<@U1>", source="#produto", card=card)
+    body = ticket_body(language=PT, described=GESTURE, reported_by="<@U1>", source="#produto", card=card)
 
     assert filed_by_the_product_role(body) == "request", "correct_card must still know it"
     assert body.index("**Pedido por:**") < body.index("## Objetivo")
-    assert f"## {_WHAT_WAS_ASKED['request']}" in body
+    # the section a correction rewrites, found as a correction finds it — under its pt-BR name here
+    assert len(_section_re(_WHAT_WAS_ASKED["request"]).findall(body)) == 1
     assert GESTURE not in body.split("## Nas palavras")[0]
 
 
@@ -573,7 +579,8 @@ def test_the_module_drafts_in_a_room_with_nothing_to_open_and_judges_on_the_revi
     engine_ask = engine.ask
     engine.ask = lambda **kw: judged.append(kw["phase"]) or engine_ask(**kw)
 
-    out = module.compose_card(request=GESTURE, conversation=CONVERSATION, reply="Abro.")
+    out = module.compose_card(request=GESTURE, conversation=CONVERSATION, reply="Abro.",
+                              language=PT)
 
     assert out.ok and out.draft.title == GOOD["title"]
     assert engine.rooms == [(cards.DRAFT_PHASE, []), (cards.JUDGE_PHASE, [])], (
@@ -701,7 +708,7 @@ def test_the_judge_and_the_draft_are_told_to_be_brief():
                                 card="# t")
     assert "BE BRIEF" in prompt and "at most three `findings`" in prompt
     drafting = cards.draft_prompt(conversation=CONVERSATION, request=GESTURE, reply="", intake="",
-                                  title="", template=load_template(), feedback=[])
+                                  title="", template=load_template(language=PT), feedback=[])
     assert "Answer at once" in drafting and "nothing to look up" in drafting
 
 
@@ -771,12 +778,12 @@ def test_a_defects_question_is_held_and_its_answer_stages_a_defect(_earlier_turn
 def test_the_defect_body_is_the_card_under_the_codes_own_lines_and_promise():
     from openfactory.product.authoring import defect_body
 
-    card = render(CardDraft.from_answer(GOOD), load_template(kind="defect"))
-    body = defect_body(restated="x", reported_by="<@U1>", severity="", source="#produto",
+    card = render(CardDraft.from_answer(GOOD), load_template(kind="defect", language=PT))
+    body = defect_body(language=PT, restated="x", reported_by="<@U1>", severity="", source="#produto",
                        requirement=None, requirement_path="", docs_repo="a/docs", card=card)
 
     assert filed_by_the_product_role(body) == "defect", "correct_card must still know it"
-    assert body.count(f"## {_WHAT_WAS_ASKED['defect']}") == 1
+    assert len(_section_re(_WHAT_WAS_ASKED["defect"]).findall(body)) == 1
     # THE CODE'S CLOSING SECTION, whichever name it has: "A promessa violada" before #399, "Sem
     # requisito escrito" for a defect that cites none after it — the card sits above it either way
     closing = next(h for h in ("## A promessa violada", "## Sem requisito escrito") if h in body)
@@ -785,7 +792,8 @@ def test_the_defect_body_is_the_card_under_the_codes_own_lines_and_promise():
 
 def test_the_shipped_defect_template_is_one_the_loader_accepts_and_a_ticket_one_is_not():
     assert template_problem(load_template(kind="defect"), "defect") == ""
-    assert "O que está acontecendo" in template_problem(load_template(), "defect")
+    assert "What is happening" in template_problem(load_template(language=PT), "defect")
+    assert "What is happening" in template_problem(load_template(), "defect")
 
 
 def test_an_over_long_defect_title_is_refused_by_the_pen(tmp_path):
@@ -918,7 +926,7 @@ def test_the_judge_sees_what_the_author_saw_the_reply_and_the_persons_answer():
     judged = []
     held = CardDraft.from_answer(GOOD)
     compose(draft=_Script(GOOD), judge=lambda p: judged.append(p) or _judge_says(5),
-            rubric=load_rubric(), template=load_template(), conversation=CONVERSATION,
+            rubric=load_rubric(), template=load_template(language=PT), conversation=CONVERSATION,
             request=GESTURE, reply="Abri o CSS: `.home-workspace` trava a altura.",
             answered=cards.Answered(question="O que é pronto?", answer="claramente isso é um bug",
                                     draft=held))

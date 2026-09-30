@@ -798,11 +798,11 @@ def _requester_front_matter(who: str, forge: str = "") -> list[str]:
     return ["---\n" + "\n".join(keys) + "\n---"]
 
 
-def _named(who: str, forge: str = "") -> str:
+def _named(who: str, forge: str = "", language: str | None = None) -> str:
     """The prose spelling of a requester: the chat identity, with the tracker identity in a
     parenthesis when there is one — the body's own copy of `requester_forge`, which is what a card
     keeps after a person's rich-editor edit has flattened the fence away."""
-    who = (who or "").strip() or "não registrado"
+    who = (who or "").strip() or _said(language)["nobody"]
     forge = (forge or "").strip()
     return f"{who} ({forge})" if forge and forge != who else who
 
@@ -810,14 +810,90 @@ def _named(who: str, forge: str = "") -> str:
 #: The line each card this role writes leaves on its face — WRITTEN from these constants and READ
 #: back from them by `filed_by_the_product_role`, so the writer and the reader cannot drift apart.
 #:
-#: THE TWO pt-BR MARKERS ARE pt-BR BECAUSE `ticket_body` AND `defect_body` ARE. The day either
-#: writer follows the project's language (#160's direction), its marker must become one per
-#: language that the reader accepts in every language — otherwise the translated card stops
-#: matching, and a card the product owner owns becomes editable from the board, silently and in
-#: the unsafe direction.
+#: ONE MARKER PER LANGUAGE, EVERY ONE READ BACK (#429). `ticket_body` and `defect_body` now write
+#: in the conversation's language, as this note said they one day would: the reader accepts the
+#: marker in every language, or a translated card would stop matching and a card the product owner
+#: owns would become editable from the board — silently, and in the unsafe direction.
 _FROM_A_REQUIREMENT = "Nothing in this issue may go beyond that requirement."
-_FROM_A_REQUEST = "**Tipo:** tarefa pedida"
-_FROM_A_DEFECT = "**Tipo:** defeito"
+_FROM_A_REQUEST = {"pt-BR": "**Tipo:** tarefa pedida", "en": "**Type:** requested task"}
+_FROM_A_DEFECT = {"pt-BR": "**Tipo:** defeito", "en": "**Type:** defect"}
+
+#: THE CODE'S OWN LINES ON A REQUESTED OR DEFECT CARD, per language (#429). The card above them is
+#: the drafter's, in the conversation's language; these said Portuguese under an English card.
+_CARD_LINES = {
+    "pt-BR": {
+        "nobody": "não registrado",
+        "request_kind": "aberta como foi descrita, sem requisito por trás",
+        "requested_by": "**Pedido por:**", "asked_where": "**Onde foi pedido:**",
+        "what_was_asked": "O que foi pedido", "nothing_more": "(nada além do título)",
+        "before_starting": "Antes de começar",
+        "before_starting_text": ("Este cartão nasceu de um pedido direto, não de um requisito "
+                                 "aceito. Quem pegar isto deve confirmar o critério de pronto com "
+                                 "quem pediu"),
+        "requirements_live": " — o registro de requisitos vive em `{docs_repo}`.",
+        "defect_breaks": "o produto está violando uma promessa já aceita",
+        "defect_broken": "o produto não está funcionando como deveria",
+        "severity": "**Gravidade:**", "reported_by": "**Reportado por:**",
+        "reported_where": "**Onde foi reportado:**",
+        "what_is_happening": "O que está acontecendo",
+        "broken_promise": "A promessa violada — REQ-{number:04d}",
+        "read_at": " (lido no commit `{commit}`)", "in_repo": "`{path}` em `{repo}`",
+        "broken_promise_text": ("O comportamento descrito acima contradiz o que este requisito "
+                                "promete. A correção deve restaurar a promessa — se a promessa é "
+                                "que está errada, isso é uma DECISÃO de produto e deve voltar como "
+                                "alteração do requisito, não como código."),
+        "no_requirement": "Sem requisito escrito",
+        "no_requirement_text": ("Nenhum requisito escrito cobre este comportamento: o que está "
+                                "quebrado é o funcionamento esperado do produto, descrito acima. "
+                                "Os critérios de aceite deste cartão são o contrato da correção — "
+                                "não é preciso encontrar um requisito antes de corrigir. Se a "
+                                "correção exigir uma decisão de produto (mudar como a tela foi "
+                                "pensada, e não só consertá-la), devolva essa pergunta ao produto "
+                                "em vez de decidir sozinho."),
+    },
+    "en": {
+        "nobody": "not recorded",
+        "request_kind": "opened as described, with no requirement behind it",
+        "requested_by": "**Requested by:**", "asked_where": "**Where it was asked:**",
+        "what_was_asked": "What was asked", "nothing_more": "(nothing beyond the title)",
+        "before_starting": "Before starting",
+        "before_starting_text": ("This card came from a direct request, not from an accepted "
+                                 "requirement. Whoever picks it up should confirm what done means "
+                                 "with the person who asked"),
+        "requirements_live": " — the requirements record lives in `{docs_repo}`.",
+        "defect_breaks": "the product is breaking a promise already accepted",
+        "defect_broken": "the product is not working as it should",
+        "severity": "**Severity:**", "reported_by": "**Reported by:**",
+        "reported_where": "**Where it was reported:**",
+        "what_is_happening": "What is happening",
+        "broken_promise": "The broken promise — REQ-{number:04d}",
+        "read_at": " (read at commit `{commit}`)", "in_repo": "`{path}` in `{repo}`",
+        "broken_promise_text": ("The behaviour described above contradicts what this requirement "
+                                "promises. The fix must restore the promise — if the promise is "
+                                "what is wrong, that is a product DECISION and must come back as "
+                                "a change to the requirement, not as code."),
+        "no_requirement": "No written requirement",
+        "no_requirement_text": ("No written requirement covers this behaviour: what is broken is "
+                                "the product's expected behaviour, described above. The acceptance "
+                                "criteria of this card are the contract of the fix — there is no "
+                                "need to find a requirement before fixing it. If the fix needs a "
+                                "product decision (changing how the screen was designed, not only "
+                                "repairing it), hand that question back to the product instead of "
+                                "deciding it alone."),
+    },
+}
+
+
+def _said(language: str | None) -> dict[str, str]:
+    from openfactory.product.voice import _pick
+
+    return _pick(_CARD_LINES, language)
+
+
+def _marker(markers: dict[str, str], language: str | None) -> str:
+    from openfactory.product.voice import _pick
+
+    return _pick(markers, language)
 
 
 def filed_by_the_product_role(body: str) -> str:
@@ -836,9 +912,9 @@ def filed_by_the_product_role(body: str) -> str:
     lines = [line.strip() for line in (body or "").splitlines()]
     if any(line.startswith(_FROM_A_REQUIREMENT) for line in lines):
         return "requirement"
-    if any(line.startswith(_FROM_A_REQUEST) for line in lines):
+    if any(line.startswith(tuple(_FROM_A_REQUEST.values())) for line in lines):
         return "request"
-    if any(line.startswith(_FROM_A_DEFECT) for line in lines):
+    if any(line.startswith(tuple(_FROM_A_DEFECT.values())) for line in lines):
         return "defect"
     return ""
 
@@ -1288,7 +1364,7 @@ def _delete_landed_branch(forge, docs_repo: str, branch: str) -> None:
 
 
 def ticket_body(*, described: str, reported_by: str, source: str, docs_repo: str = "",
-                requester_forge: str = "", card: str = "") -> str:
+                requester_forge: str = "", card: str = "", language: str | None = None) -> str:
     """The card a person asked for, as they described it — filed as described, not derived.
 
     NO REQUIREMENT IS CITED, BECAUSE NONE WAS ARGUED. `issue_body` cites the promise it executes and
@@ -1296,29 +1372,29 @@ def ticket_body(*, described: str, reported_by: str, source: str, docs_repo: str
     that pretended to cite a promise it does not have would be a defect body wearing a request. The
     executor reads what the person said, attributed, and where; the criterion of done is theirs to
     confirm before the work starts."""
+    said = _said(language)
     lines = [*_requester_front_matter(reported_by, requester_forge),
-             f"{_FROM_A_REQUEST} — aberta como foi descrita, sem requisito por trás",
-             f"**Pedido por:** {_named(reported_by, requester_forge)}"]
+             f"{_marker(_FROM_A_REQUEST, language)} — {said['request_kind']}",
+             f"{said['requested_by']} {_named(reported_by, requester_forge, language)}"]
     if source:
-        lines.append(f"**Onde foi pedido:** {source}")
+        lines.append(f"{said['asked_where']} {source}")
     if card.strip():
         # THE CARD THE PERSON CONFIRMED, WRITTEN AS THEY READ IT (#383): drafted from the
         # conversation, checked, judged and shown whole before the yes (`product/cards.py`). The
         # lines above stay the code's — who asked, where, and the marker `correct_card` reads —
         # because they are facts about the card, not text a model or a template may reword.
         return "\n".join([*lines, "", card.strip()]).rstrip() + "\n"
-    lines += ["", "## O que foi pedido", "",
-              described.strip() or "(nada além do título)", "",
-              "## Antes de começar", "",
-              "Este cartão nasceu de um pedido direto, não de um requisito aceito. Quem pegar isto "
-              "deve confirmar o critério de pronto com quem pediu"
-              + (f" — o registro de requisitos vive em `{docs_repo}`." if docs_repo else ".")]
+    lines += ["", f"## {said['what_was_asked']}", "",
+              described.strip() or said["nothing_more"], "",
+              f"## {said['before_starting']}", "",
+              said["before_starting_text"]
+              + (said["requirements_live"].format(docs_repo=docs_repo) if docs_repo else ".")]
     return "\n".join(lines).rstrip() + "\n"
 
 
 def defect_body(*, restated: str, reported_by: str, severity: str, source: str,
                 requirement, requirement_path: str, docs_repo: str, commit: str = "",
-                requester_forge: str = "", card: str = "") -> str:
+                requester_forge: str = "", card: str = "", language: str | None = None) -> str:
     """The issue body for a broken promise — classified, and citing what it breaks.
 
     The executor reads this cold, so everything it needs is HERE: what reality is doing, which
@@ -1332,34 +1408,32 @@ def defect_body(*, restated: str, reported_by: str, severity: str, source: str,
     what makes the two bodies share one answer to "where does that requirement live"."""
     # WHAT THE CARD SAYS IT IS FOLLOWS WHAT IT CITES (#399): "violando uma promessa já aceita" on a
     # defect that cites none told the coding agent a requirement exists that nobody can find
-    kind = ("o produto está violando uma promessa já aceita" if requirement is not None
-            else "o produto não está funcionando como deveria")
+    said = _said(language)
+    kind = said["defect_breaks"] if requirement is not None else said["defect_broken"]
     lines = [*_requester_front_matter(reported_by, requester_forge),
-             f"{_FROM_A_DEFECT} — {kind}"]
+             f"{_marker(_FROM_A_DEFECT, language)} — {kind}"]
     if severity:
         # only when somebody actually judged one. The first version printed "Gravidade: média"
         # from a hardcoded default — a fabricated classification the fix queue would sort by.
-        lines.append(f"**Gravidade:** {severity}")
-    lines.append(f"**Reportado por:** {_named(reported_by, requester_forge)}")
+        lines.append(f"{said['severity']} {severity}")
+    lines.append(f"{said['reported_by']} {_named(reported_by, requester_forge, language)}")
     if source:
-        lines.append(f"**Onde foi reportado:** {source}")
+        lines.append(f"{said['reported_where']} {source}")
     if card.strip():
         # THE CARD THE PERSON CONFIRMED (#392), drafted from the conversation and judged like a
         # requested card; its "O que está acontecendo" is the section a correction rewrites. The
         # promise below stays the code's: which requirement it breaks is a citation, never prose.
         lines += ["", card.strip(), ""]
     else:
-        lines += ["", "## O que está acontecendo", "", restated.strip(), ""]
+        lines += ["", f"## {said['what_is_happening']}", "", restated.strip(), ""]
     if requirement is not None:
         lines += [
-            f"## A promessa violada — REQ-{requirement.number:04d}",
+            f"## {said['broken_promise'].format(number=requirement.number)}",
             "",
-            f"`{requirement_path}` em `{docs_repo}`"
-            + (f" (lido no commit `{commit[:12]}`)" if commit else ""),
+            said["in_repo"].format(path=requirement_path, repo=docs_repo)
+            + (said["read_at"].format(commit=commit[:12]) if commit else ""),
             "",
-            "O comportamento descrito acima contradiz o que este requisito promete. A correção "
-            "deve restaurar a promessa — se a promessa é que está errada, isso é uma DECISÃO de "
-            "produto e deve voltar como alteração do requisito, não como código.",
+            said["broken_promise_text"],
             "",
             # THE CITATION EVERY CARD OF A REQUIREMENT CARRIES (#265 §6.1), in the section and the
             # words the card readers look for — so a defect is found among its requirement's
@@ -1376,14 +1450,9 @@ def defect_body(*, restated: str, reported_by: str, severity: str, source: str,
             # card up to find the broken requirement BEFORE fixing and to hand the card back when
             # none existed — on a product whose code predates its requirements, an instruction to
             # the coding agent to return almost every bug unfixed.
-            "## Sem requisito escrito",
+            f"## {said['no_requirement']}",
             "",
-            "Nenhum requisito escrito cobre este comportamento: o que está quebrado é o "
-            "funcionamento esperado do produto, descrito acima. Os critérios de aceite deste "
-            "cartão são o contrato da correção — não é preciso encontrar um requisito antes de "
-            "corrigir. Se a correção exigir uma decisão de produto (mudar como a tela foi "
-            "pensada, e não só consertá-la), devolva essa pergunta ao produto em vez de decidir "
-            "sozinho.",
+            said["no_requirement_text"],
         ]
     return "\n".join(lines)
 

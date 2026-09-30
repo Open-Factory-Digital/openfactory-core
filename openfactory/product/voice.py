@@ -1122,6 +1122,32 @@ _FACT_NOTED = {
 }
 
 
+#: WHO CAN SAY YES, SAID UNDER A PROPOSAL SOMEBODY OFF THE ADMIN LIST MADE (#429). Ten copies of
+#: `({admins}: o registro precisa da sua confirmação.)` lived in `engine.py`, outside every
+#: catalogue, so an English conversation got a Portuguese line under its English proposal. One
+#: frame, keyed by what is waiting for the yes.
+_ADMINS_MUST_CONFIRM = {
+    "pt-BR": {
+        "frame": "({admins}: {what} precisa da sua confirmação.)",
+        "record": "o registro", "order": "gravar a ordem", "card": "abrir o cartão",
+        "note": "a anotação", "decision": "a decisão", "closing": "o encerramento",
+        "correction": "a correção", "change": "a mudança",
+    },
+    "en": {
+        "frame": "({admins}: {what} needs your confirmation.)",
+        "record": "registering this", "order": "saving the order", "card": "opening the card",
+        "note": "the note", "decision": "the decision", "closing": "closing it",
+        "correction": "the correction", "change": "the change",
+    },
+}
+
+
+def admins_must_confirm(admins: str, act: str, *, language: str | None = None) -> str:
+    """The line naming the people whose yes writes `act`, in the conversation's language."""
+    said = _pick(_ADMINS_MUST_CONFIRM, language)
+    return "\n\n" + said["frame"].format(admins=admins, what=said[act])
+
+
 def defect_confirmation(*, violates: int | None, language: str | None = None, card: str = "",
                         title: str = "", unjudged: bool = False,
                         disputed: tuple[str, ...] | list[str] = ()) -> str:

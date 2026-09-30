@@ -96,6 +96,7 @@ from openfactory.product.staging import (
     proposal_token,
     remember,
 )
+from openfactory.product.voice import admins_must_confirm
 
 log = logging.getLogger("openfactory.product.engine")
 
@@ -1077,7 +1078,8 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
         compose = getattr(module, "compose_card", None)
         if callable(compose):
             composed = compose(request=text, conversation=ex.conversation,
-                               reply=answer.text or "", intake=ex.intake, kind="defect")
+                               reply=answer.text or "", intake=ex.intake, kind="defect",
+                               language=ex.lang)
             return _offer_card(ex, composed, request=text,
                                preamble=(answer.text + "\n\n") if answer.text else "",
                                kind="defect", extra={"violates": getattr(answer, "violates",
@@ -1099,7 +1101,7 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
         if not may_act(project, user):
             admins = _admin_mentions(project)
             if admins:
-                ask += f"\n\n({admins}: o registro precisa da sua confirmação.)"
+                ask += admins_must_confirm(admins, "record", language=lang)
         # the defect proposal, offered with its options. The agent's own words stay in front of
         # it: the person confirms a RESTATEMENT, so they must read it.
         body = replaced + ((answer.text + "\n\n") if answer.text else "") + ask
@@ -1129,7 +1131,8 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
             # as it always was, rather than refused: it cannot draft, and it said a card was asked
             return _stage_ticket_as_said(ex, answer)
         composed = compose(request=text, conversation=ex.conversation, reply=answer.text or "",
-                           intake=ex.intake, title=getattr(answer, "ticket_title", "") or "")
+                           intake=ex.intake, title=getattr(answer, "ticket_title", "") or "",
+                           language=ex.lang)
         return _offer_card(ex, composed, request=text, preamble=preamble)
     if getattr(answer, "is_reorder", False) and getattr(answer, "order", None):
         # SHE READ AN ORDER FOR THE BACKLOG (#33 slice 9, the chat half of `reorder`). Staged like
@@ -1146,7 +1149,7 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
         if not may_act(project, user):
             admins = _admin_mentions(project)
             if admins:
-                ask += f"\n\n({admins}: gravar a ordem precisa da sua confirmação.)"
+                ask += admins_must_confirm(admins, "order", language=lang)
         body = replaced + ((answer.text + "\n\n") if answer.text else "") + ask
         return offer(project, thread, body)
     if getattr(answer, "gesture", "") == "queue":
@@ -1208,7 +1211,7 @@ def _offer_card(ex: Exchange, composed, *, request: str, preamble: str = "",
     if not may_act(project, user):
         admins = _admin_mentions(project)
         if admins:
-            ask += f"\n\n({admins}: abrir o cartão precisa da sua confirmação.)"
+            ask += admins_must_confirm(admins, "card", language=lang)
     return offer(project, ex.key, replaced + preamble + ask)
 
 
@@ -1235,7 +1238,7 @@ def _offer_defect(ex: Exchange, composed, *, request: str, preamble: str, violat
     if not may_act(project, user):
         admins = _admin_mentions(project)
         if admins:
-            ask += f"\n\n({admins}: o registro precisa da sua confirmação.)"
+            ask += admins_must_confirm(admins, "record", language=lang)
     return offer(project, ex.key, replaced + preamble + ask)
 
 
@@ -1260,7 +1263,7 @@ def resume_card(ex: Exchange, *, arrival_ts: str = "") -> Reply | str | None:
                        title=held.draft.title,
                        answered=cards.Answered(question=held.ask, answer=ex.text,
                                                draft=held.draft, findings=held.findings),
-                       kind=held.kind)
+                       kind=held.kind, language=ex.lang)
     return _offer_card(ex, composed, request=held.request, kind=held.kind,
                        extra=dict(held.extra))
 
@@ -1293,7 +1296,7 @@ def _stage_ticket_as_said(ex: Exchange, answer) -> Reply | str:
     if not may_act(project, user):
         admins = _admin_mentions(project)
         if admins:
-            ask += f"\n\n({admins}: abrir o cartão precisa da sua confirmação.)"
+            ask += admins_must_confirm(admins, "card", language=lang)
     return offer(project, ex.key, replaced + ((answer.text + "\n\n") if answer.text else "")
                  + ask)
 
@@ -1517,7 +1520,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         if not may_act(project, user):
             admins = _admin_mentions(project)
             if admins:
-                ask += f"\n\n({admins}: a anotação precisa da sua confirmação.)"
+                ask += admins_must_confirm(admins, "note", language=lang)
         return offer(project, thread, replaced + ask)
 
     if intent == "status":
@@ -1637,7 +1640,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         if not may_act(project, user):
             admins = _admin_mentions(project)
             if admins:
-                ask += f"\n\n({admins}: a decisão precisa da sua confirmação.)"
+                ask += admins_must_confirm(admins, "decision", language=lang)
         return offer(project, thread, body + ask)
 
     if intent == "decision":
@@ -1665,7 +1668,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         if not may_act(project, user):
             admins = _admin_mentions(project)
             if admins:
-                ask += f"\n\n({admins}: a decisão precisa da sua confirmação.)"
+                ask += admins_must_confirm(admins, "decision", language=lang)
         return offer(project, thread, body + ask)
 
     if intent == "close":
@@ -1706,7 +1709,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         if not may_act(project, user):
             admins = _admin_mentions(project)
             if admins:
-                ask += f"\n\n({admins}: o encerramento precisa da sua confirmação.)"
+                ask += admins_must_confirm(admins, "closing", language=lang)
         return offer(project, thread, body + ask)
 
     if intent == "correct":
@@ -1728,7 +1731,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         if not may_act(project, user):
             admins = _admin_mentions(project)
             if admins:
-                ask += f"\n\n({admins}: a correção precisa da sua confirmação.)"
+                ask += admins_must_confirm(admins, "correction", language=lang)
         return offer(project, thread, body + ask)
 
     if intent == "align":
@@ -1757,7 +1760,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         if not may_act(project, user):
             admins = _admin_mentions(project)
             if admins:
-                ask += f"\n\n({admins}: a mudança precisa da sua confirmação.)"
+                ask += admins_must_confirm(admins, "change", language=lang)
         return offer(project, thread, body + ask)
 
     if intent == "refine":

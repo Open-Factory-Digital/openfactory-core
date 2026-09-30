@@ -805,12 +805,20 @@ appears outside it.
 
 The same loop runs when the role reads a message as a **broken promise** (a defect): the card is
 drafted from the conversation, judged against the same rubric and shown whole before the yes, and
-its layout is `defect-template.md`, whose description sits under `## O que está acontecendo`.
+its layout is `defect-template.md`, whose description sits under `## What is happening`.
+
+**A card is written in the conversation's language** (#429). Each layout ships per language —
+`template.md` and `defect-template.md` in English, `template.pt-BR.md` and
+`defect-template.pt-BR.md` beside them — and the one in the conversation's language is used (the
+project's `language`, `openfactory project set-language`), English when none ships for it. The
+drafter is told the language by name, and a card clearly written in another is redrafted.
 
 The shipped files are `openfactory/org_defaults/cards/template.md`, `defect-template.md` and
 `rubric.yaml`. **To change
 them for one product, commit your own copy to the product's context repository** (`product.docs_repo`)
-as `cards/template.md`, `cards/defect-template.md` and/or `cards/rubric.yaml`. A card is product guidance, and a product of
+as `cards/template.md`, `cards/defect-template.md` and/or `cards/rubric.yaml` — or per language, as
+`cards/template.<language>.md` (for example `cards/template.pt-BR.md`), which wins over the
+unsuffixed one for that language. A card is product guidance, and a product of
 several source repositories has one context repository. Review that change as you would review code:
 the rubric is runtime behaviour.
 

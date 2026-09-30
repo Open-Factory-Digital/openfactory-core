@@ -82,6 +82,14 @@ ship in `org_defaults/cards/`. A product replaces either by committing `cards/te
 repositories has one context repository, and that is where the role already reads and writes
 requirements. A code repository's `.openfactory/` stays technical (profiles, gates).
 
+*Amended 2026-09-30 (#429): the shipped layouts were Portuguese only, and an English conversation
+got a Portuguese card — the drafter writes in the layout's language. A layout now ships per
+language (`template.md` in the default language, English; `template.pt-BR.md` beside it), chosen
+by the conversation's language; a product may commit `cards/template.<language>.md` too, and its
+own layout still wins over a shipped one. The drafter is told the language by name and the floor
+refuses a card clearly written in another. The section a correction rewrites is an identity read
+under every name it has (`module._ALSO_CALLED`), so a card in either language can be corrected.*
+
 - A template is measured before it is used: rendered with a sample card, it must keep every field,
   pass the pickup gate, and keep the section a correction rewrites.
 - A file that cannot be used is refused by name in the log, and the shipped one is used.
@@ -108,8 +116,8 @@ problems. The judge's calls are metered as `product_card_judge`, and the draft's
   *Decided 2026-09-29 (#392, in #390): measured live, a report read as a broken promise reached the
   board as the person's own words, titled "…nao estao responsivos se minimiz". A defect now runs the
   same loop: drafted from the conversation, the same floor and rubric, the whole card before the
-  yes, the held question. Its layout is `defect-template.md` (its description under "O que está
-  acontecendo", the section a correction rewrites), and the promise it breaks stays the code's.
+  yes, the held question. Its layout is `defect-template.md` (its description under "What is happening" —
+  "O que está acontecendo" in pt-BR — the section a correction rewrites), and the promise it breaks stays the code's.
   The same day the rule became ONE DOOR FOR EVERY CARD: the cards a requirement is broken into
   (`_file_one`) are checked by the floor and the judge against the requirement, redrafted once,
   and not filed when still blocked — no person is in that loop to ask. A guard fails on any

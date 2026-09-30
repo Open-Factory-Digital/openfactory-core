@@ -1506,13 +1506,13 @@ def test_the_one_write_with_no_human_in_it_stays_inside_its_declared_boundary(wo
 def _asked(described: str = "um relatório mensal das vendas") -> str:
     from openfactory.product.authoring import ticket_body
 
-    return ticket_body(described=described, reported_by="<@U0PO>", source="chat")
+    return ticket_body(language="pt-BR", described=described, reported_by="<@U0PO>", source="chat")
 
 
 def _reported(restated: str = "o fecho não gera o pacote") -> str:
     from openfactory.product.authoring import defect_body
 
-    return defect_body(restated=restated, reported_by="<@U0PO>", severity="alta", source="chat",
+    return defect_body(language="pt-BR", restated=restated, reported_by="<@U0PO>", severity="alta", source="chat",
                        requirement=None, requirement_path="requisitos/0004-x.md", docs_repo=DOCS)
 
 
