@@ -107,11 +107,12 @@ MUTATIONS = [
      "            return True",
      "            return True"),
 
-    # re-pinned 2026-09-07: the cut is `_fit_description`'s now, with a note of its own
+    # re-pinned 2026-09-07: the cut is `_fit_description`'s now, with a note of its own; and
+    # 2026-09-30 (#433): the room it leaves is measured in the vendor's unit
     ("the second vendor cuts to its ceiling and then appends past it — a 400 every time",
      "openfactory/adapters/forge/azure_devops.py",
-     "        return body[: cls._DESCRIPTION_MAX - len(cls._CUT_NOTE)] + cls._CUT_NOTE",
-     "        return body[: cls._DESCRIPTION_MAX] + cls._CUT_NOTE"),
+     "        room = cls._DESCRIPTION_MAX - _vendor_length(cls._CUT_NOTE)\n",
+     "        room = cls._DESCRIPTION_MAX\n"),
 
     ("the second vendor loses an absent description behind 'could not read'",
      "openfactory/adapters/forge/azure_devops.py",
