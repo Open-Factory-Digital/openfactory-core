@@ -3782,6 +3782,10 @@ function refreshProject(){
     :mw.action.auto
     ?`⏳ auto-merge armed — ${VOCAB.merge_wait.auto}`
     :`PR ready — waiting for <b>your</b> review &amp; merge (<a href="${esc(safeUrl(mw.action.pr_url||"#"))}" target="_blank">open PR ↗</a>)`;}
+  // AN APPROVAL THE WORKER REFUSED (`gate_seal`). The dialog said "approved"; the gate is still
+  // waiting, and this is the only place a person looking at the card learns why.
+  const refusedJob=engine.jobs.find(j=>j.project==name && j.refused);
+  if(refusedJob&&mnow){mnow.innerHTML=`⚠ your production approval was not acted on — ${esc(refusedJob.refused)}`;}
   // A parked impediment/decision has NO live feed either — a crashed/timed-out job's Fargate task
   // is gone, so the card would otherwise sit forever on a stale "▸ Repairing" as if work
   // continues (the #394 confusion). State the truth on the card itself, not just the top banner.

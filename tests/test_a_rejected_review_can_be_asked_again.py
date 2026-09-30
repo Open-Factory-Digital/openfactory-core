@@ -78,7 +78,7 @@ def test_the_gate_takes_a_fourth_answer():
     import asyncio
     asyncio.run(job.human_merge_gate("review", "", "operator-1"))
 
-    assert job._gate == {"answer": "review", "instruction": "", "by": "operator-1"}
+    assert job._gate == {"answer": "review", "instruction": "", "by": "operator-1", "seal": ""}
 
 
 def test_the_client_side_refuses_a_verb_the_workflow_would_drop():

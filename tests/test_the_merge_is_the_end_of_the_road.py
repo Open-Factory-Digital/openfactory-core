@@ -32,6 +32,7 @@ import uuid
 from datetime import timedelta
 
 import pytest
+from gate_answers import SEAL_CHECK, answer_merge_gate
 from temporalio import activity
 from temporalio.client import Client
 from temporalio.contrib.pydantic import pydantic_data_converter
@@ -99,7 +100,7 @@ async def mock_ci(inp: MergeCheckInput) -> CiDecision:
     return CiDecision(verdict="success")
 
 
-MOCKS = [mock_run_job, mock_merged, mock_settle, mock_title, mock_refresh, mock_say, mock_ci]
+MOCKS = [SEAL_CHECK, mock_run_job, mock_merged, mock_settle, mock_title, mock_refresh, mock_say, mock_ci]
 
 
 @pytest.fixture
@@ -223,7 +224,7 @@ async def test_the_HUMAN_S_OWN_ANSWER_reaches_it_too(env: WorkflowEnvironment):
             await env.sleep(timedelta(seconds=1))
         else:
             raise AssertionError("the job never opened a merge gate for a human to answer")
-        await h.signal(JobWorkflow.human_merge_gate, args=["merge", "", "operator-1"])
+        await answer_merge_gate(h, "merge", "", "operator-1")
         result = await h.result()
 
     assert result.state == JobState.MERGED

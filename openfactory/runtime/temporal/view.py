@@ -405,6 +405,38 @@ async def _true_status(client: Client, wf) -> WorkflowExecutionStatus | None:
         return None
 
 
+async def gate_key_refusal(client: Client, *, within: float = 20.0) -> str:
+    """Whether the worker accepts a seal made with THIS process's gate key: "" when it does,
+    otherwise its refusal. Raises when no worker answers within `within` seconds — which is not
+    a disagreement, and must not be reported as one."""
+    import uuid
+    from datetime import timedelta
+
+    from openfactory import gate_seal
+    from openfactory.runtime.temporal import TASK_QUEUE
+    from openfactory.runtime.temporal.workflow import GateKeyProbeWorkflow
+
+    wf_id = f"openfactory-gate-probe-{uuid.uuid4().hex[:12]}"
+    seal = gate_seal.seal(gate_seal.PROBE, wf_id, "probe")
+    return str(await client.execute_workflow(
+        GateKeyProbeWorkflow.run, seal, id=wf_id, task_queue=TASK_QUEUE,
+        execution_timeout=timedelta(seconds=within)) or "")
+
+
+async def _gate_refusal(client: Client, wf_id: str, run_id: str | None = None) -> str:
+    """Why this job's last answer to its approval gate was not acted on, or "" (`gate_seal`).
+
+    THE PANEL SAID "APPROVED", and the worker may have refused it — most likely because the two
+    hold different gate keys. Without this the gate simply keeps waiting and nothing a person
+    reads says why. A worker too old to answer the query has refused nothing: ""."""
+    try:
+        return str(await client.get_workflow_handle(wf_id, run_id=run_id).query(
+            JobWorkflow.gate_refused) or "")
+    except Exception as exc:  # noqa: BLE001 — the card degrades, it never 500s
+        log.info("could not ask %s whether it refused an answer (%s)", wf_id, str(exc)[:120])
+        return ""
+
+
 async def _domain_state(client: Client, wf) -> tuple[str, dict | None, bool]:
     """The job's domain state, any operator ACTION it's parked on, and whether the workflow is
     genuinely LIVE. Running: a single-line park (impediment/rate-limit) surfaces its real state
@@ -579,6 +611,8 @@ async def job_detail(client: Client, project: str, issue: str, namespace: str) -
         state, action, _live = await _domain_state(client, desc)
         out["state"] = state
         out["action"] = action
+        out["refused"] = (await _gate_refusal(client, wf_id)
+                          if state == "awaiting_prod_approval" else "")
         if action and action.get("pr_url"):
             out["pr_url"] = action["pr_url"]
         try:  # THE VERDICT IS A QUERY, so it exists long before the workflow completes
@@ -1014,6 +1048,10 @@ async def list_jobs(
         row["state"], row["action"], live = await _domain_state(client, wf)
         if row["state"] == "gone":
             continue  # visibility still lists it but the workflow aged out — not a real card
+        # The merge gate carries its refusal in `action`; the approval gate has no action, so
+        # its refusal travels on the row.
+        row["refused"] = (await _gate_refusal(client, wf.id, wf.run_id)
+                          if row["state"] == "awaiting_prod_approval" else "")
         # Reconcile the visibility status (which LAGS) with the truth: the panel paints an
         # 'in production' machine card for any job whose status=='running', so a lagged
         # 'running' on an already-closed workflow was the frozen ghost. Only a genuinely live
@@ -1201,10 +1239,17 @@ async def approve_job(
 ) -> None:
     """Deliver the prod approval as a durable signal to the parked workflow (D-12). Checks
     the workflow is actually at the gate first, so an approval is never silently lost."""
-    handle = client.get_workflow_handle(job_id(project, issue))
+    from openfactory import gate_seal
+
+    wf_id = job_id(project, issue)
+    handle = client.get_workflow_handle(wf_id)
     if not await handle.query(JobWorkflow.awaiting_approval):
         raise RuntimeError("job is not awaiting prod approval")
-    await handle.signal(JobWorkflow.approve_prod, args=[version, approver, comment])
+    # SEALED, because the workflow acts on nothing else: the signal alone could have come from
+    # anybody who reaches the engine (`gate_seal`). Every caller of this function has checked the
+    # person already; the seal is how the worker knows that it was one of them.
+    seal = gate_seal.seal(gate_seal.APPROVE_PROD, wf_id, version, approver, comment)
+    await handle.signal(JobWorkflow.approve_prod, args=[version, approver, comment, seal])
 
 
 async def answer_merge_gate(client: Client, project: str, issue: str, *, answer: str,
@@ -1221,14 +1266,19 @@ async def answer_merge_gate(client: Client, project: str, issue: str, *, answer:
     answer path refuses. `awaiting_merge` is the gate's own query and this is its own signal."""
     if answer not in ("merge", "adjust", "discard", "review"):
         raise ValueError("answer must be 'merge', 'adjust', 'discard' or 'review'")
-    handle = client.get_workflow_handle(job_id(project, issue))
+    from openfactory import gate_seal
+
+    wf_id = job_id(project, issue)
+    handle = client.get_workflow_handle(wf_id)
     gate = await handle.query(JobWorkflow.awaiting_merge)
     if not gate:
         raise RuntimeError("this job is not waiting on a merge")
     deaf = gate_cannot_hear(gate)
     if deaf:
         raise GateDeaf(deaf)
-    await handle.signal(JobWorkflow.human_merge_gate, args=[answer, instruction, by])
+    # Sealed for `approve_job`'s reason above.
+    seal = gate_seal.seal(gate_seal.MERGE_GATE, wf_id, answer, instruction, by)
+    await handle.signal(JobWorkflow.human_merge_gate, args=[answer, instruction, by, seal])
     return dict(gate)
 
 

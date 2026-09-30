@@ -35,6 +35,7 @@ import uuid
 from datetime import timedelta
 
 import pytest
+from gate_answers import SEAL_CHECK, answer_merge_gate
 from temporalio import activity
 from temporalio.client import WorkflowExecutionStatus
 from temporalio.contrib.pydantic import pydantic_data_converter
@@ -202,7 +203,7 @@ async def mock_say(inp) -> None:
 
 #: THE REAL ONES: what the forge row is asked to do, and what it answers about the pull request.
 REAL = [activities.merge_pr_saying_why, activities.check_pr_status, activities.force_merge_pr]
-MOCKS = [mock_run_job, mock_ci, mock_mstate, mock_merge_now, mock_settle, mock_journal,
+MOCKS = [SEAL_CHECK, mock_run_job, mock_ci, mock_mstate, mock_merge_now, mock_settle, mock_journal,
          mock_mark, mock_diagnose, mock_title, mock_refresh, mock_say]
 
 
@@ -258,7 +259,7 @@ async def _answer_merge(h, env: WorkflowEnvironment) -> None:
         await env.sleep(timedelta(seconds=1))
     else:
         raise AssertionError("the job never opened a merge gate for a person to answer")
-    await h.signal(JobWorkflow.human_merge_gate, args=["merge", "", "a-person"])
+    await answer_merge_gate(h, "merge", "", "a-person")
 
 
 async def _nothing_settled_while_it_is_open(h, pr) -> None:

@@ -300,6 +300,16 @@ class ReleaseInput(BaseModel):
     sandbox: str = ""
 
 
+class GateSealInput(BaseModel):
+    """One human gate's answer, as the worker must check it before acting on it (`gate_seal`).
+    The workflow id is NOT a field: the activity reads it from its own context, so an answer
+    sealed for one job can never be presented as another's."""
+
+    kind: str
+    fields: list[str]
+    seal: str = ""
+
+
 class TicketRef(BaseModel):
     """A project + issue reference — for cheap read-only lookups (e.g. the ticket title
     the workflow stamps into its memo so the panel can show it next to the number)."""

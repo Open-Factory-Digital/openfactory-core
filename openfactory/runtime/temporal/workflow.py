@@ -91,6 +91,7 @@ with workflow.unsafe.imports_passed_through():
         techlead_watch,
         tell_the_requester,
         update_pr_branch,
+        verify_gate_seal,
     )
     from openfactory.runtime.temporal.io import (
         AdjustInput,
@@ -102,6 +103,7 @@ with workflow.unsafe.imports_passed_through():
         DeployNotifyInput,
         DeployStatusInput,
         DeployWatchInput,
+        GateSealInput,
         GatherInput,
         HoldSyncInput,
         JobMetricsInput,
@@ -212,6 +214,26 @@ _ADJUST_CHARS = 2000
 # Post-merge deploy watch (ADR-0005): a project's own CI deploys on push to main; we observe
 # that run on the merge commit and notify its outcome. Poll gently — a deploy is minutes.
 _DEPLOY_POLL = timedelta(minutes=1)
+
+
+@workflow.defn
+class GateKeyProbeWorkflow:
+    """Whether the WORKER accepts a seal made where the probe was started (`gate_seal`).
+
+    TWO HALVES WITH DIFFERENT KEYS REFUSE EVERY ANSWER, and from either side alone that looks like
+    nothing at all: the panel delivered, the gate waits on. Checking agreement means sealing on
+    one side and verifying on the other — so the verdict comes from the same activity a real
+    answer passes through, on whichever worker picks up the queue. Returns the refusal; "" is
+    agreement."""
+
+    @workflow.run
+    async def run(self, seal: str) -> str:
+        return await workflow.execute_activity(
+            verify_gate_seal,
+            GateSealInput(kind="gate_key_probe", fields=["probe"], seal=seal),
+            start_to_close_timeout=timedelta(minutes=1),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
 
 
 @workflow.defn
@@ -865,6 +887,13 @@ class PreviewWorkflow:
 class JobWorkflow:
     def __init__(self) -> None:
         self._approval: dict | None = None
+        self._approval_seal = ""
+        #: Why the last answer to a human gate was NOT acted on — "" when it was, or none came. The
+        #: panel told the person their answer was delivered; this is how it learns otherwise.
+        self._gate_refused = ""
+        #: Seals already acted on. A seal travels in the signal, so anybody who can read this
+        #: history can copy a fresh one; spent once, it cannot be spent again.
+        self._seals_used: set[str] = set()
         self._awaiting_approval = False
         # Single-line strict (ADR-0010): when the floor is HELD on a non-progressing job — an
         # impediment (spec/cost/validation/review/e2e/merge/CI/auth/crash) or a rate-limit pause —
@@ -963,7 +992,8 @@ class JobWorkflow:
             self._action = action
 
     @workflow.signal
-    async def human_merge_gate(self, answer: str, instruction: str = "", by: str = "") -> None:
+    async def human_merge_gate(self, answer: str, instruction: str = "", by: str = "",
+                               seal: str = "") -> None:
         """The human's answer to a PR waiting on them (#68): 'merge' | 'adjust' | 'discard' |
         'review' (#181).
 
@@ -976,11 +1006,15 @@ class JobWorkflow:
         DROPPED WHEN THERE IS NO GATE OPEN, exactly as `act_on_impediment` drops a premature or
         replayed signal — so a stale answer replayed from history can never fire the instant a
         gate opens, and an answer to a PR that already merged does nothing rather than something
-        surprising."""
+        surprising.
+
+        `seal` is the panel's proof that it authenticated `by` and sent exactly this answer
+        (`gate_seal`). It is checked where the answer is CONSUMED, in an activity, not here: a
+        signal handler cannot read a key without making replay depend on it."""
         if self._merge_wait is None:
             return
         if answer in ("merge", "adjust", "discard", "review"):
-            self._gate = {"answer": answer, "instruction": instruction, "by": by}
+            self._gate = {"answer": answer, "instruction": instruction, "by": by, "seal": seal}
 
     @workflow.query
     def awaiting_action(self) -> dict | None:
@@ -994,7 +1028,17 @@ class JobWorkflow:
         """While the job is parked in the merge watch: {pr_url, auto}. auto=False means the
         merge is a HUMAN's call (review requested / suppression handed over) — the panel must
         show 'PR ready — waiting for YOUR merge' with the link, never a silent 'starting…'."""
+        # A REFUSED ANSWER IS SAID ON THE GATE ITSELF: the panel draws `note` beside the buttons,
+        # so the person who pressed Merge reads why nothing happened, where they pressed it.
+        if self._merge_wait and self._gate_refused:
+            return {**self._merge_wait, "refused": self._gate_refused,
+                    "note": f"your last answer was not acted on — {self._gate_refused}"}
         return self._merge_wait
+
+    @workflow.query
+    def gate_refused(self) -> str:
+        """Why the last answer to this job's human gate was not acted on, or "" (`gate_seal`)."""
+        return self._gate_refused
 
     @workflow.query
     def where_to_look(self) -> dict | None:
@@ -1210,15 +1254,46 @@ class JobWorkflow:
             # and silence here is indistinguishable from nothing having happened.
             workflow.logger.warning("could not narrate %r for #%s", kind, self._params.issue)
 
+    async def _gate_sealed(self, kind: str, fields: list[str], seal: str) -> bool:
+        """Whether a human gate's answer carries the panel's seal over exactly `fields`. Checked
+        in an activity so the verdict is recorded; anything but an empty refusal — including the
+        check itself failing — is NO, the direction an authorization check must fail in.
+
+        A REFUSAL IS RECORDED where the panel reads it (`gate_refused`, and the merge gate's
+        `note`): the likeliest cause is a panel and a worker holding different keys, and then
+        every answer vanishes — which nobody must learn from a worker log."""
+        if seal and seal in self._seals_used:
+            refused = "this answer was already acted on once — answer the gate again from the panel"
+        else:
+            try:
+                refused = await workflow.execute_activity(
+                    verify_gate_seal, GateSealInput(kind=kind, fields=fields, seal=seal),
+                    start_to_close_timeout=timedelta(minutes=1), retry_policy=_ONCE)
+            except ActivityError:
+                refused = "the seal could not be checked"
+        if refused:
+            workflow.logger.warning("dropped an answer to %s: %s", kind, refused)
+            self._gate_refused = refused
+            return False
+        self._seals_used.add(seal)
+        self._gate_refused = ""
+        return True
+
     @workflow.signal
-    async def approve_prod(self, version: str, approver: str, comment: str = "") -> None:
+    async def approve_prod(self, version: str, approver: str, comment: str = "",
+                           seal: str = "") -> None:
         """The panel's authenticated prod approval (D-12), delivered as a signal. Only
         honored while the workflow is actually parked at the approval gate — a premature
         or replayed signal is dropped, so it can never bypass the human-in-the-loop or
-        auto-fire the instant the gate is reached (M6)."""
+        auto-fire the instant the gate is reached (M6).
+
+        THE SIGNAL ALONE PROVES NOTHING: anybody who reaches the engine can send it. `seal` is
+        the panel's proof that it checked `approver`'s password (`gate_seal`), verified before
+        the release runs; an approval without a valid one is dropped and the gate stays open."""
         if not self._awaiting_approval:
             return
         self._approval = {"version": version, "approver": approver, "comment": comment}
+        self._approval_seal = seal
 
     @workflow.query
     def awaiting_approval(self) -> bool:
@@ -2019,6 +2094,13 @@ class JobWorkflow:
         next iteration and merge twice, or spend a second adjust pass nobody asked for."""
         gate, self._gate = self._gate, None
         if not gate:
+            return None
+        # ONLY THE PANEL'S ANSWER IS ACTED ON (`gate_seal`). One sent straight to the engine is
+        # consumed and dropped, and the watch carries on as if nobody had answered.
+        if workflow.patched("signed-gates") and not await self._gate_sealed(
+                "human_merge_gate",
+                [gate.get("answer") or "", gate.get("instruction") or "", gate.get("by") or ""],
+                gate.get("seal") or ""):
             return None
         answer, who = gate.get("answer"), gate.get("by") or "somebody"
 
@@ -2955,10 +3037,26 @@ class JobWorkflow:
         # flag makes the signal only count while we're actually parked here (M6).
         self._awaiting_approval = True
         try:
-            await workflow.wait_condition(
-                lambda: self._approval is not None,
-                timeout=timedelta(days=params.approval_deadline_days),
-            )
+            deadline = workflow.now() + timedelta(days=params.approval_deadline_days)
+            window = timedelta(days=params.approval_deadline_days)
+            while True:
+                await workflow.wait_condition(lambda: self._approval is not None, timeout=window)
+                # AN APPROVAL IS ACTED ON ONLY WITH THE PANEL'S SEAL (`gate_seal`). One without
+                # it — sent straight to the engine — is dropped and the gate waits on, for what
+                # is left of the SAME window: a forged answer must not buy the job more time.
+                # The answer is taken as it stands NOW: another signal can land while the seal is
+                # checked, and it must not ride out on this one's verdict.
+                approval, seal = self._approval, self._approval_seal
+                if not workflow.patched("signed-gates") or await self._gate_sealed(
+                        "approve_prod",
+                        [approval["version"], approval["approver"], approval["comment"]], seal):
+                    self._approval = approval
+                    break
+                if self._approval is approval:
+                    self._approval, self._approval_seal = None, ""
+                window = deadline - workflow.now()
+                if window <= timedelta(0):
+                    raise TimeoutError("prod approval window elapsed")
         except TimeoutError:
             # The workflow used to COMPLETE here with the card still reading "In review" and
             # nothing said. A release nobody approved is not a release nobody wanted.

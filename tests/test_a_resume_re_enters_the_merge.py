@@ -23,6 +23,7 @@ import uuid
 from datetime import timedelta
 
 import pytest
+from gate_answers import SEAL_CHECK, answer_merge_gate
 from temporalio import activity
 from temporalio.client import Client, WorkflowHandle
 from temporalio.contrib.pydantic import pydantic_data_converter
@@ -133,7 +134,7 @@ async def mock_say(inp) -> None:
     return None
 
 
-MOCKS = [mock_run_job, never_merges, blocked, ci_pending, merge_says_why, merge_now,
+MOCKS = [SEAL_CHECK, mock_run_job, never_merges, blocked, ci_pending, merge_says_why, merge_now,
          mock_settle, mock_mark, mock_diagnose, mock_title, mock_refresh, mock_say]
 
 
@@ -189,7 +190,7 @@ async def test_a_resumed_merge_refusal_reaches_the_merge_without_running_the_age
     async with Worker(env.client, task_queue=TQ, workflows=[JobWorkflow], activities=MOCKS):
         h = await _start(env.client)
         await _wait_for_gate(h, env)
-        await h.signal(JobWorkflow.human_merge_gate, args=["merge", "", "a-person"])
+        await answer_merge_gate(h, "merge", "", "a-person")
         parked = await _wait_for_park(h, env)
         assert "app.py" in (parked.get("note") or ""), (
             "the park does not say what the forge said, so the person cannot clear it")
@@ -199,7 +200,7 @@ async def test_a_resumed_merge_refusal_reaches_the_merge_without_running_the_age
 
         await h.signal(JobWorkflow.act_on_impediment, args=["resume", ""])
         await _wait_for_gate(h, env)          # back at the MERGE, not in an agent pass
-        await h.signal(JobWorkflow.human_merge_gate, args=["merge", "", "a-person"])
+        await answer_merge_gate(h, "merge", "", "a-person")
         result = await h.result()
 
     assert result.state == JobState.MERGED
@@ -221,11 +222,11 @@ async def test_the_resumed_merge_keeps_what_the_post_merge_half_reads(env: Workf
     async with Worker(env.client, task_queue=TQ, workflows=[JobWorkflow], activities=MOCKS):
         h = await _start(env.client)
         await _wait_for_gate(h, env)
-        await h.signal(JobWorkflow.human_merge_gate, args=["merge", "", "a-person"])
+        await answer_merge_gate(h, "merge", "", "a-person")
         await _wait_for_park(h, env)
         await h.signal(JobWorkflow.act_on_impediment, args=["resume", ""])
         await _wait_for_gate(h, env)
-        await h.signal(JobWorkflow.human_merge_gate, args=["merge", "", "a-person"])
+        await answer_merge_gate(h, "merge", "", "a-person")
         result = await h.result()
 
     assert result.state == JobState.MERGED
@@ -290,7 +291,7 @@ async def test_a_SECOND_park_that_is_not_a_merge_refusal_goes_back_to_the_agent(
     async with Worker(env.client, task_queue=TQ, workflows=[JobWorkflow], activities=MOCKS):
         h = await _start(env.client)
         await _wait_for_gate(h, env)
-        await h.signal(JobWorkflow.human_merge_gate, args=["merge", "", "a-person"])
+        await answer_merge_gate(h, "merge", "", "a-person")
         await _wait_for_park(h, env)
 
         _STATUS[0] = "closed"                       # somebody closed it while it was parked

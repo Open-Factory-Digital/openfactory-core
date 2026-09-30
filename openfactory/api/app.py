@@ -1618,7 +1618,12 @@ async def inbox() -> list[dict]:
                                                        "issue": j.get("issue"),
                                                        "instruction": "<adjust only>"}}}})
         elif state == "awaiting_prod_approval":  # a prod release gate
+            # AN APPROVAL THE WORKER REFUSED is said here, on every channel: the panel told the
+            # person it was delivered, and the gate went on waiting (`gate_seal`).
+            refused = j.get("refused") or ""
             out.append({**base, "kind": kind,
+                        **({"note": f"your approval was not acted on — {refused}"}
+                           if refused else {}),
                         "answer": {"method": "POST",
                                    "url": f"/api/temporal/approve/{j.get('project')}/{j.get('issue')}"}})
         elif state == "paused":  # rate-limited — auto-resumes, but retry/skip are available

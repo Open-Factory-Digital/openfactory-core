@@ -1760,6 +1760,34 @@ def load_manifest_quietly(project):
         return type("_Blank", (), {"docs_repo": None, "merge_policy": "human"})()
 
 
+def gate_key_line(ask=None) -> str:
+    """ONE LINE saying whether the worker acts on answers sealed with THIS process's gate key.
+
+    A panel and a worker holding different keys refuse every approval and every merge answer,
+    and each half on its own sees nothing wrong. So the check is a round trip: seal here, verify
+    on the worker (`view.gate_key_refusal`). Run it where the PANEL runs for the answer that
+    matters; run inside the worker it can only agree with itself. `ask` is the seam for tests."""
+    import asyncio
+
+    from openfactory import gate_seal
+    from openfactory.util.causes import first_message
+
+    async def _ask() -> str:
+        from openfactory.runtime.temporal import view as tv
+
+        return await tv.gate_key_refusal(await tv.connect())
+
+    try:
+        refused = (ask or (lambda: asyncio.run(_ask())))()
+    except Exception as exc:  # noqa: BLE001 — no answer is not a disagreement
+        return (f"the gate key: could not ask the worker ({first_message(exc, limit=120)}) — no "
+                f"claim either way about whether it accepts this process's approvals")
+    if refused:
+        return (f"WARNING the worker REFUSES approvals and merge answers sealed here — {refused}. "
+                f"Set the same {gate_seal.VARIABLE} on the panel and the worker.")
+    return "the gate key: the worker accepts approvals and merge answers sealed here"
+
+
 def notifier_fallback_line(state=None) -> str:
     """ONE LINE saying where project-less speech goes — derived from the notifier registry and
     the rows installed on its axis; this module names no package's variable and no vendor.
