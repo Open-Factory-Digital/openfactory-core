@@ -45,6 +45,11 @@ class Ticket(BaseModel):
     # loaded regardless; this is for the large architecture docs (D-9).
     relevant_docs: list[str] = Field(default_factory=list)
 
+    #: WHERE THE TRACKER KEEPS THE CARD — never read as the repository a pull request lives in
+    #: (#403). A GitHub issue lives in a repository, so there the two coincide; the local board
+    #: says the project's registry name, Azure Boards its project, Jira its project key. The
+    #: repository a job's change is in is the one its forge was built for (`repo_of` of the C-18
+    #: view, `JobRunner._change_repo`).
     repo: str
     base_branch: str | None = None  # falls back to the manifest's base_branch
 

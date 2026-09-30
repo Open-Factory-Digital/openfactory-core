@@ -70,9 +70,8 @@ MUTATIONS = [
      'headline'),
 
     ("the activity reaches nothing", ACT,
-     "            return events.ready_for_you(ProjectRegistry().get(inp.project), card=inp.issue,",
-     "            return False and events.ready_for_you(ProjectRegistry().get(inp.project), "
-     "card=inp.issue,"),
+     "            return events.ready_for_you(project, card=inp.issue, pr_url=inp.pr_url,",
+     "            return False and events.ready_for_you(project, card=inp.issue, pr_url=inp.pr_url,"),
 
     ("the worker does not register the activity, so every telling fails unknown",
      "openfactory/runtime/temporal/worker.py",

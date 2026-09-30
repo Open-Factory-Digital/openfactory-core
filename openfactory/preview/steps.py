@@ -136,7 +136,7 @@ def _changes(project, token: str, was, forge, *, ctx, world: World) -> siblings.
 
     default = repo_of(project) or ""
     if not token.startswith("req"):
-        return siblings.of_record(token, was, forge, default_repo=default)
+        return siblings.of_record(token, was, forge, default_repo=default, project=project)
     number = int(token[3:])
     docs = getattr(ctx, "docs", None)
     if getattr(ctx, "available", False) and docs is not None:
@@ -147,7 +147,7 @@ def _changes(project, token: str, was, forge, *, ctx, world: World) -> siblings.
         said = f"the board could not be read ({error})"
     else:
         said = f"the product module is off — {getattr(ctx, 'reason', '') or 'it is not enabled'}"
-    found = siblings.of_record(token, was, forge, default_repo=default)
+    found = siblings.of_record(token, was, forge, default_repo=default, project=project)
     return found.model_copy(update={"missing": (
         f"{said}: REQ-{number:04d} is previewed with the cards that reached their pull request "
         f"here, and any other card of it is not in this preview.", *found.missing)})
@@ -242,7 +242,7 @@ def materialise(project, token: str, *, runtime, world: World, started_by: str =
                            f"one.", missing)
     world.write(name, token, preview.STARTING, pr_urls=tuple(c.url for c in live),
                 branches={**(was.branches if was else {}), **{c.url: c.branch for c in live}},
-                repos={**(was.repos if was else {}), **{c.url: c.repo for c in live}},
+                repos={**demand.repos_of(project, was), **{c.url: c.repo for c in live}},
                 missing=missing)
     clear(project, token, runtime)
     if shape is None:

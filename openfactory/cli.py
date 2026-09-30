@@ -390,6 +390,10 @@ def project_set_preview(
         None, "--required/--no-required",
         help="the factory never merges this project on its own; a person looks and merges"),
     hours: int | None = typer.Option(None, "--hours", help="how long a preview stays up (1–168)"),
+    auto_start: bool | None = typer.Option(
+        None, "--auto-start/--no-auto-start",
+        help="start the preview on its own when a pull request waits for a person (default), "
+             "or only when somebody presses start on the card"),
     env: list[str] = typer.Option(None, "--env",  # noqa: B008 — typer's own idiom
                                   help="svc=NAME or svc=NAME=WORKER_NAME ('*' = every service)"),
     build_arg: list[str] = typer.Option(None, "--build-arg",  # noqa: B008 — typer's own idiom
@@ -435,12 +439,13 @@ def project_set_preview(
     policy["env"] = _pairs(env, policy["env"])
     policy["build_args"] = _pairs(build_arg, policy["build_args"])
     for key, value in (("required", required), ("hours", hours), ("network", network),
-                       ("cpus", cpus), ("memory", memory)):
+                       ("cpus", cpus), ("memory", memory), ("auto_start", auto_start)):
         if value is not None:
             policy[key] = value
     reg.set_preview(name, policy)
     saved = reg.get(name).preview
     typer.echo(f"✓ {name}: previews {'required before a merge' if saved.required else 'optional'}"
+               f", {'started on their own' if saved.auto_start else 'started on demand'}"
                f", up for {saved.hours}h, egress: {saved.network or 'none'}")
     for field, label in (("env", "run time"), ("build_args", "build time")):
         for svc, names in getattr(saved, field).items():

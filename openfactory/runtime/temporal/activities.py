@@ -451,11 +451,163 @@ async def run_job(inp: RunJobInput) -> RunResult:
     # running, so it is what pulls on the box. `watch` is None for a box that cannot be read, and
     # `_watch_for` says so in the log rather than attaching a watcher that would see nothing.
     watch = _watch_for(inp)
-    return await _heartbeat_while(
+    result = await _heartbeat_while(
         lambda: _do_run_job(inp, run_id, watch=watch),
         f"{inp.project}#{inp.issue} via {inp.sandbox}",
         tick=watch.tick if watch else None,
     )
+    try:
+        # BOUNDED, BECAUSE NOTHING BEATS FOR IT: the loop above stopped beating when the job
+        # returned, and the engine is still counting (`_A_PREVIEW_STARTS_WITHIN`)
+        await asyncio.wait_for(_a_preview_starts_on_its_own(inp.project, inp.issue, result),
+                               timeout=_A_PREVIEW_STARTS_WITHIN)
+    except TimeoutError:
+        activity.logger.warning(
+            "OPENFACTORY_PREVIEW_AUTO_START_CUT %s#%s — starting its preview outlived %ss; the "
+            "job's result is returned without it, and the card's button starts one",
+            inp.project, inp.issue, _A_PREVIEW_STARTS_WITHIN)
+    return result
+
+
+# ── what an activity does AFTER its work returned is bounded, because nothing beats for it ──────
+#
+# THE TAIL OF AN ACTIVITY IS NOT COVERED BY ITS HEARTBEAT (review of #408). `_heartbeat_while` and
+# `_heartbeating` beat WHILE the work runs and stop the moment it returns; whatever the activity
+# awaits after that runs with nothing beating, against a window the engine is still counting. Two
+# tails were written that way in #405 — the start that follows a job, and the telling that follows
+# a preview coming up — and both swallowed a failure while neither bounded a HANG. What is in
+# them can hang: reading the previews up is a `docker ps -a` that waits sixty seconds on a daemon
+# that does not answer, the engine's start is an RPC made with no timeout, and a tracker is told
+# once per card, each a call to a forge that may be throttling. Measured with the heartbeat
+# instrumented and a tail made to hang for N seconds, the gap from the last beat to the return
+# was N plus the second the job took, with no ceiling: 4.01 s at 3, 41.01 s at 40.
+#
+# WHAT IT COST WAS NEVER THE PREVIEW'S. Past the window the engine fails the activity. For the job
+# that is the most expensive step in the system failed — or RE-RUN, on a box that re-attaches —
+# after its pull request was opened; for the preview it is a stack that came up being taken down
+# as "the start did not finish", while its cards were still being told it was up.
+#
+# THE ARITHMETIC. A beat can be one period old when the work returns (and the preview's step may
+# not have beaten at all: then the window counts from a start under one period ago), so what a
+# tail has is the window LESS one period — 120 − 30 = 90 s for the job, 60 − 10 = 50 s for the
+# step. Each bound keeps the return within HALF its window of the last beat: 30 + 30 of 120,
+# 10 + 20 of 60. The other half is the engine's, to be handed the result in.
+# `tests/test_a_preview_starts_itself_when_the_pull_request_opens.py` holds both sums against the
+# windows the workflows declare, so a window that shrinks or a bound that grows is said.
+#
+# WHAT OUTLIVES ITS BOUND. The job's tail is a coroutine, so it is cancelled where it waits and
+# begins nothing more. A THREAD CANNOT BE CANCELLED (`asyncio.to_thread`): the call in flight —
+# and, for the telling, which is one thread, every card after it — runs on in the background to
+# its own end (the daemon's call and the trackers' each carry a timeout of their own), and its
+# result is dropped. Nothing it writes late can disagree with what is already there:
+#   - a start the engine accepted after the bound is the unit's ONE workflow
+#     (`preview.workflow_id`): the same start the button makes, refused as a duplicate to whoever
+#     asks second, and said `starting` on the card by its own first step;
+#   - the note of a start the cap held back is written on the record AS IT IS WHEN IT IS WRITTEN,
+#     and only while that is still `offered` (`_held_back`);
+#   - a card is commented once, because the step runs once and its answer no longer waits for
+#     the telling; and the product role is told once per start, by key (`<unit>@<started_at>`).
+
+#: How long `run_job` waits for the start that follows the job, in seconds.
+_A_PREVIEW_STARTS_WITHIN = 30.0
+#: How long `preview_up` waits for the telling that follows the stack coming up, in seconds.
+_SAID_UP_WITHIN = 20.0
+
+
+async def _a_preview_starts_on_its_own(project_name: str, issue: str, result) -> str:
+    """Start the card's preview when its job just handed the pull request to a person (ADR-0050
+    D6 as amended 2026-09-29, #405) — the workflow id when one was started, `""` otherwise.
+
+    HERE, AFTER THE JOB RETURNED, AND NOT IN EITHER OF THE TWO OBVIOUS PLACES. Not inside the
+    job's machine: a job never waits on, or fails over, a preview, and the machine also runs
+    outside the engine (`openfactory run`). Not as a step of `JobWorkflow`: a new command in a
+    workflow with jobs in flight breaks their replay. This activity already holds the engine's
+    client and returns the result the workflow is waiting for; starting a separate workflow from
+    here adds nothing to the job's history.
+
+    WHAT DECIDES IS `preview/live.py::should_start`, from the record the job's offer just wrote —
+    the offer is the one judge of "this change can be previewed" (a declared shape, a named
+    runtime), so the automatic start and the button can never disagree about it. A limit that
+    held it back (the cap) is said on the card as a note; the button still starts it.
+
+    NEVER FAILS THE JOB: the pull request is open and the work is done. Never HOLDS it either —
+    that half of the promise is the caller's, which cuts this where it waits
+    (`_A_PREVIEW_STARTS_WITHIN`)."""
+    if getattr(result, "state", None) != JobState.PR_OPEN or not getattr(result, "pr_url", ""):
+        return ""
+    try:
+        from openfactory import preview
+        from openfactory.contracts.project import PreviewPolicy
+        from openfactory.preview import live
+        from openfactory.runtime.temporal import view as tv
+        from openfactory.runtime.temporal.io import PreviewParams, default_preview_runtime
+
+        project = ProjectRegistry().get(project_name)
+        card = preview.card_of(issue)
+        if not card:
+            return ""
+        token = await asyncio.to_thread(preview.unit_of_card, project.name, card)
+        found = await asyncio.to_thread(preview.latest, project.name, token)
+        kind = default_preview_runtime()
+        # THE DAEMON IS ASKED ONLY WHEN EVERYTHING CHEAPER SAID YES: handed over as a value, the
+        # previews up were read on every job that opened a pull request — a project whose
+        # operator turned the start off included (`should_start`, review of #408)
+        start, why = await asyncio.to_thread(
+            live.should_start, project, found, kind=kind,
+            running=lambda: _running_previews(kind))
+        if why and found is not None:
+            await asyncio.to_thread(_held_back, project, token, why)
+            activity.logger.info("OPENFACTORY_PREVIEW_HELD %s %s — %s", project.name, token, why)
+            return ""
+        if not start:
+            return ""
+        policy = getattr(project, "preview", None) or PreviewPolicy()
+        params = PreviewParams(project=project.name, unit=token, started_by=live.AUTO_STARTER,
+                               runtime=kind, start_timeout_minutes=policy.start_timeout_minutes)
+        try:
+            wf_id = await tv.start_preview(engine_client(), params)
+        except tv.PreviewAlreadyStarted:
+            return ""  # somebody pressed the button first: one workflow per unit, as ever
+        activity.logger.info("OPENFACTORY_PREVIEW_AUTO_START %s %s (%s)", project.name, token,
+                             wf_id)
+        return wf_id
+    except Exception as exc:  # noqa: BLE001 — the promise above: a preview never fails a job
+        activity.logger.warning("no preview was started on its own for %s#%s (%s)", project_name,
+                                issue, str(exc)[:200])
+        return ""
+
+
+def _held_back(project, token: str, why: str) -> bool:
+    """The cap held an automatic start back: its sentence, as a note on the unit's record —
+    whether it was written.
+
+    ON THE RECORD AS IT IS NOW, READ HERE, AND ONLY WHILE IT IS STILL `offered` (review of #408).
+    The record the decision read is as old as the daemon's answer took, and the store is
+    append-only with the newest row the truth: a note written on that copy relabels `offered` a
+    unit a person started in between, and hides its `starting` — or its failure — from the card
+    until the next step writes. Read and written in ONE thread, so the caller's bound, which
+    cannot cut a thread, cannot fall between the two."""
+    from openfactory import preview
+    from openfactory.preview import live
+
+    now = preview.latest(project.name, token)
+    if now is None or now.state != preview.OFFERED:
+        return False
+    said = live.held(why, getattr(project, "language", None))
+    return preview.record(now.model_copy(update={
+        "notes": tuple(dict.fromkeys([*now.notes, said]))}))
+
+
+def _running_previews(kind: str):
+    """The previews up on this deployment's runtime, for the cap — `()` when it cannot be read,
+    which lets the plan step's own cap check be the judge (it refuses by name)."""
+    from openfactory.adapters.preview.registry import build_runtime
+
+    try:
+        return build_runtime(kind).running()
+    except Exception as exc:  # noqa: BLE001 — an unread count is the plan step's to refuse
+        activity.logger.info("could not count the previews up (%s)", str(exc)[:160])
+        return ()
 
 
 def _do_run_job(inp: RunJobInput, run_id: str | None = None,
@@ -1838,7 +1990,79 @@ async def preview_up(inp: PreviewUpInput) -> PreviewStepResult:
         return steps.up(project, inp.step.unit, inp.plan, runtime=runtime, world=_preview_world())
 
     result = await _heartbeating("up", run)
+    if result.ok:
+        try:
+            # BOUNDED, BECAUSE NOTHING BEATS FOR IT: a tracker told once per card must not be
+            # what has the engine call a stack that came up dead (`_SAID_UP_WITHIN`)
+            await asyncio.wait_for(
+                asyncio.to_thread(_the_preview_is_up, inp.step.project, inp.step.unit),
+                timeout=_SAID_UP_WITHIN)
+        except TimeoutError:
+            activity.logger.warning(
+                "OPENFACTORY_PREVIEW_TELLING_CUT %s %s — saying the preview is up outlived %ss; "
+                "the step answers that it is up, and the telling is left to finish on its own",
+                inp.step.project, inp.step.unit, _SAID_UP_WITHIN)
     return PreviewStepResult(ok=result.ok, why=result.why, expires_at=inp.plan.expires_at)
+
+
+def _the_preview_is_up(project_name: str, token: str) -> list[str]:
+    """A preview just came up: said on each of its cards, in the thread that already says "PR
+    ready for review", and to the product role (`events.preview_up`) — the cards told (#405).
+
+    BEFORE THIS NOBODY WAS TOLD. The record went `live` and the card showed buttons to whoever
+    happened to open it; the product role's sentence for it had no producer. Now the preview's own
+    step says it, once per start (the step runs once; the event is keyed by the start).
+
+    THE LINK OPENS THE PANEL, NEVER THE PREVIEW'S OWN HOST: the preview's URL carries a key, and a
+    key written into a tracker is a credential everybody who reads the board holds
+    (`preview/live.py`).
+
+    A REQUIREMENT'S CARDS ARE TOLD ONLY WHEN THEY ALL LIVE IN THIS PROJECT'S REPOSITORY. The
+    record keeps card NUMBERS, and two cards of one requirement in two repositories can share one
+    (ADR-0050 D5's measured limit): a comment addressed by number alone could land on another
+    repository's issue. The product role is still told, by card.
+
+    NEVER RAISES: the preview is up whatever the telling does. And never holds the step: its
+    caller waits `_SAID_UP_WITHIN` and answers, and what is still being told then is told in the
+    background — once, the step having run once."""
+    from openfactory import preview
+    from openfactory.preview import demand, live
+    from openfactory.product import events
+
+    try:
+        project = ProjectRegistry().get(project_name)
+        found = preview.latest(project_name, token)
+    except Exception as exc:  # noqa: BLE001 — see above
+        activity.logger.warning("could not read the preview of %s %s to say it is up (%s)",
+                                project_name, token, str(exc)[:160])
+        return []
+    if found is None or not live.is_up(found):
+        return []
+    language = getattr(project, "language", None)
+    from openfactory.product.config import repo_match
+
+    own = demand.repo_of_project(project)
+    one_repo = not token.startswith("req") or all(
+        not r or bool(repo_match(r, own)) for r in demand.repos_of(project, found).values())
+    told: list[str] = []
+    for card in found.cards:
+        link = live.route(project_name, card)
+        if one_repo:
+            try:
+                _tracker_for(project).comment(card, live.comment(found, link=link,
+                                                                 language=language))
+                told.append(card)
+            except Exception as exc:  # noqa: BLE001 — the card misses a comment, said
+                activity.logger.warning("OPENFACTORY_TICKET_COMMENT_LOST %s#%s — the preview is "
+                                        "up and the card does not say so (%s)", project_name,
+                                        card, str(exc)[:160])
+        try:
+            events.preview_up(project, card=card, url=link,
+                              key=f"{token}@{found.started_at}")
+        except Exception as exc:  # noqa: BLE001 — the role's telling is additive
+            activity.logger.warning("the product role was not told that %s %s is up (%s)",
+                                    project_name, card, str(exc)[:160])
+    return told
 
 
 @activity.defn
@@ -2379,10 +2603,15 @@ async def tell_the_requester(inp: ReadyForYouInput) -> bool:
     be made is the tech-lead round's to make on its next pass. Returns whether it was told now."""
     def _tell() -> bool:
         try:
+            from openfactory.preview.live import link_for
             from openfactory.product import events
 
-            return events.ready_for_you(ProjectRegistry().get(inp.project), card=inp.issue,
-                                        pr_url=inp.pr_url, verdict=inp.verdict)
+            project = ProjectRegistry().get(inp.project)
+            # THE PREVIEW'S LINK WHEN ONE IS ALREADY UP (#405): the message then says "try it
+            # here" instead of "start it"; one that comes up later says so itself (`preview_up`)
+            return events.ready_for_you(project, card=inp.issue, pr_url=inp.pr_url,
+                                        verdict=inp.verdict,
+                                        preview_url=link_for(project, inp.issue))
         except Exception as exc:  # noqa: BLE001 — the round says it, an hour late at worst
             activity.logger.warning("could not tell %s#%s's requester it is ready for them (%s)",
                                     inp.project, inp.issue, str(exc)[:160])

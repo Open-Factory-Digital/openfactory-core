@@ -1456,14 +1456,25 @@ class JobRunner:
             # would fill the worker's finite disk.
             self._drop_published_bundle()
 
+    def _change_repo(self) -> str:
+        """The repository this job's change lives in, in the FORGE's namespace — the one its forge
+        was built for (`build_forge` → `repo_of`), which on the C-18 view the runner holds is the
+        card's own. THE ONE ANSWER for everything that names where this job's pull request is
+        (#403): `Ticket.repo` is the tracker's container and is never read for it."""
+        from openfactory.adapters.forge.registry import repo_of
+
+        return repo_of(self.project) if self.project is not None else ""
+
     def _offer_preview(self, ticket: Ticket, pr: str, branch: str, ws=None) -> None:
         """Offer a preview of this change on its card (ADR-0050 D6; the design on #265, §4.3).
 
         ONLY HERE, where the pull request was handed to a person: an auto-merged card has nobody
         to look, and a held one is not waiting on a look. It WRITES A RECORD AND RUNS NOTHING —
-        no runtime, no daemon, no compose file: a preview is built from commits on demand, so the
-        box this job ran in does not matter, and a job never waits on, or fails over, a preview.
-        Whether one can start is judged when the card is opened, never from what this writes.
+        no runtime, no daemon, no compose file: a preview is built from commits, so the box this
+        job ran in does not matter, and a job never waits on, or fails over, a preview. Whether a
+        person can start one is judged when the card is opened; the start that follows ON ITS OWN
+        is the job's activity's, after this returns (`activities._a_preview_starts_on_its_own`,
+        #405), and reads what this wrote.
 
         A UNIT THAT IS ALREADY UP IS NEVER RELABELLED: a sibling card of the same requirement joins
         its cards and the preview says it is stale (`preview/demand.py::offer`).
@@ -1476,7 +1487,8 @@ class JobRunner:
 
         try:
             made = offer(project=self.project, manifest=self.manifest, ticket=ticket, pr_url=pr,
-                         branch=branch, shape_root=getattr(ws, "host_path", None),
+                         branch=branch, repo=self._change_repo(),
+                         shape_root=getattr(ws, "host_path", None),
                          base=str(getattr(ws, "base_branch", "") or self.manifest.base_branch))
         except Exception as exc:  # noqa: BLE001 — the promise above: a preview never fails a job
             self._emit(ticket, "note", f"no preview was offered for this change — "
@@ -2601,7 +2613,14 @@ class JobRunner:
         bundle: Path | None = None
         authored = 0
         try:
-            self._card_repo = getattr(ticket, "repo", "") or ""
+            # THE FORGE'S REPOSITORY, NEVER `ticket.repo` (#403). The ticket's `repo` is where the
+            # TRACKER keeps the card — the registry name on the local board, the Azure DevOps
+            # project on Azure Boards — and the bundle is published under the repository the
+            # change is in (`activities.py`, through `_ref_repo`). On a split tracker this read
+            # `.okf/repos/shop` while the publish wrote `.okf/repos/Org.Shop`, and the gate judged
+            # every change against a bundle that was not there. `self.project` is the C-18 view,
+            # so its forge repository IS the card's.
+            self._card_repo = self._change_repo()
             bundle = self._published_okf()
             report = judge(bundle, self.repo_path, paths)
             if (mode == "enforce" and bundle is not None and report.stance() == "dark"

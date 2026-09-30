@@ -22,8 +22,8 @@ line on that conversation — behind the turn in progress, never inside one.
                         repairing it; said once per pull request, however many passes it takes
     pr_waiting          the tech-lead's hourly round (`activities.techlead_watch`) — a pull
                         request at the merge gate for 48 h (`pull_requests_at_the_gate`)
-    preview_up          NOT WIRED HERE — the entry point is `preview_up`; the preview itself
-                        (ADR-0050) is built on #265's branch, whose producer calls it
+    preview_up          `activities.preview_up` — the preview's own step, the moment it is live
+                        (`_the_preview_is_up`, #405); once per start
     ready_for_you       `activities.tell_the_requester` — the job's merge watch, the moment a
                         pull request a PERSON must decide enters it (#401); and the tech-lead's
                         round as the catch-all, which already lists every such gate
@@ -90,7 +90,7 @@ PRODUCERS = {
     DELIVERED: "openfactory/runtime/temporal/activities.py::record_outcome",
     CI_RED: "openfactory/runtime/temporal/activities.py::repair_ci",
     PR_WAITING: "openfactory/runtime/temporal/activities.py::techlead_watch",
-    PREVIEW_UP: "",
+    PREVIEW_UP: "openfactory/runtime/temporal/activities.py::preview_up",
     DOCUMENT_INGESTED: "openfactory/product/documents/ingest.py::announce",
     CARD_WITHDRAWN: "openfactory/product/module.py::withdraw_card",
     READY_FOR_YOU: "openfactory/runtime/temporal/activities.py::tell_the_requester",
@@ -463,8 +463,8 @@ def preview_up(project, *, card: str, url: str, key: str = "") -> bool:
     """A PREVIEW OF A CARD'S CHANGE CAME UP (ADR-0050): where to try it, to the card's requester,
     else the room — once per preview (`key`, the preview's own id; the address otherwise).
 
-    THE ENTRY POINT, NOT WIRED ON THIS BRANCH: the preview is built on #265's stack, and its
-    producer calls this when the preview answers."""
+    Its producer is the preview's own `up` step (`activities._the_preview_is_up`, #405); `url` is
+    the panel's route that opens it (`preview/live.py::route`), never the preview's keyed host."""
     if not _speaks(project) or not str(card or "").strip() or not str(url or "").strip():
         return False
     from openfactory.product import voice
@@ -604,7 +604,10 @@ def ready_at_the_gate(project, gates: list[tuple[str, str]]) -> list[str]:
     told = []
     for card, pr in gates or []:
         try:
-            if ready_for_you(project, card=card, pr_url=pr):
+            from openfactory.preview.live import link_for
+
+            if ready_for_you(project, card=card, pr_url=pr,
+                             preview_url=link_for(project, card)):
                 told.append(card)
         except Exception:  # noqa: BLE001 — one card's telling is not the round's price
             log.exception("[%s] could not tell #%s's requester it is ready for them",

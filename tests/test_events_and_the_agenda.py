@@ -847,8 +847,7 @@ def test_a_project_with_NO_product_role_is_told_nothing(tmp_path, ledger, monkey
 
 def test_every_WIRED_producer_calls_its_event_and_the_unwired_ones_say_so():
     """`events.PRODUCERS` is what the report claims: each named producer reaches its entry point
-    in the source, and the one whose producer lives on another branch (the preview's, #265) is
-    named as not wired."""
+    in the source."""
     source = (ROOT / "openfactory/runtime/temporal/activities.py").read_text()
 
     def _body(name: str) -> str:
@@ -859,12 +858,13 @@ def test_every_WIRED_producer_calls_its_event_and_the_unwired_ones_say_so():
     reaches = {events.DELIVERED: ("record_outcome", "_a_card_was_finished", "card_finished"),
                events.CI_RED: ("repair_ci", "_the_checks_went_red", "ci_went_red"),
                events.PR_WAITING: ("techlead_watch", "_pull_requests_waiting",
-                                   "pull_requests_at_the_gate")}
+                                   "pull_requests_at_the_gate"),
+               # #405 wired the preview's: its own `up` step, once the preview is live
+               events.PREVIEW_UP: ("preview_up", "_the_preview_is_up", "preview_up")}
     for kind, (producer, helper, entry) in reaches.items():
         assert events.PRODUCERS[kind].endswith(f"::{producer}")
         assert helper in _body(producer), f"{producer} no longer tells {kind}"
         assert f"events.{entry}(" in _body(helper), f"{helper} no longer reaches {entry}"
-    assert events.PRODUCERS[events.PREVIEW_UP] == ""
     # #269 wired the document's: its producer is the ingestion's own `announce`
     documents = (ROOT / "openfactory/product/documents/ingest.py").read_text()
     start = documents.index("def announce(")

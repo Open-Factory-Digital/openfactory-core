@@ -441,7 +441,8 @@ async def preview_link(project: str, unit: str, request: Request):
     try:
         registered = await asyncio.to_thread(lambda: ProjectRegistry().list())
         # A CARD OF A REQUIREMENT IS PREVIEWED AS THE REQUIREMENT (D1): the record says which.
-        unit = await asyncio.to_thread(lambda: preview.unit_of_card(project, unit))
+        card = unit
+        unit = await asyncio.to_thread(lambda: preview.unit_of_card(project, card))
         found = await asyncio.to_thread(lambda: preview.latest(project, unit))
     except Exception as exc:  # noqa: BLE001 — an unreadable store is said, not a 500
         return {"state": "", "live": False, "can_start": False,
@@ -456,7 +457,21 @@ async def preview_link(project: str, unit: str, request: Request):
     forge = await asyncio.to_thread(lambda: demand.forge_state(owner, unit, found))
     judged = demand.judge(found, kind=default_preview_runtime(), forge=forge,
                           required=bool(getattr(policy, "required", False)))
+    from openfactory.preview import live as pv_live
+
+    language = getattr(owner, "language", None)
     body = {"unit": unit, "state": found.state if found else "", "live": False, "services": [],
+            # WHAT STATE, IN THE PERSON'S WORDS, AND WHEN (#404). The card redrew a start before
+            # the record moved and never said a failure as one: `headline` is the first line the
+            # card draws, in the project's language; `started_at` is how the page tells the start
+            # it asked for from the last one; `starting` is the line it draws while it waits.
+            "headline": pv_live.headline(found, can_start=judged.can_start, language=language),
+            "starting": pv_live.headline(
+                preview.Preview(project=project, unit=unit, state=preview.STARTING),
+                can_start=False, language=language),
+            "started_at": found.started_at if found else 0,
+            "ended_at": found.ended_at if found else 0,
+            "link": "",
             "images": dict(found.images) if found else {},
             "base_moved": dict(found.base_moved) if found else {},
             "notes": list(found.notes) if found else [],
@@ -469,6 +484,7 @@ async def preview_link(project: str, unit: str, request: Request):
             "cards": list(found.cards) if found else [],
             "pr_urls": list(found.pr_urls) if found else [],
             "started_by": found.started_by if found else "",
+            "who": pv_live.started_by_said(found, language),
             "can_start": judged.can_start}
     if found is not None and found.shape and not found.live:
         # THE BASE DECLARES NO SHAPE (#265 slice 4): which proposal is open is the forge's answer
@@ -495,6 +511,7 @@ async def preview_link(project: str, unit: str, request: Request):
     scheme = "https" if _is_secure(request) else "http"
     body["live"] = True
     body["why"] = ""
+    body["link"] = pv_live.route(project, card)
 
     def door(svc: str) -> str:
         query = {"t": key}
@@ -3250,13 +3267,18 @@ def index() -> HTMLResponse:
 @app.get("/p/{project}/board")
 @app.get("/p/{project}/card/{ref}")
 @app.get("/p/{project}/pr/{ref}")
+@app.get("/p/{project}/preview/{ref}")
 def project_page(project: str, ref: str = "") -> HTMLResponse:
     """The same single-page app; the client reads the path to focus one project's floor.
 
     THE DEEPER ADDRESSES ARE DECLARED HERE OR THEY 404 BEFORE THE PAGE CAN READ THEM (ADR-0049
     D6). `/p/x/board` and `/p/x/card/7` are the Board and one card, and a person who bookmarks
     one, or is sent one, must land on it rather than on the server's own not-found — which is
-    what a single-page app looks like when only its root is served."""
+    what a single-page app looks like when only its root is served.
+
+    `/p/x/preview/7` IS THE LINK A CARD'S COMMENT CARRIES (#405): the page opens card 7 and, its
+    preview being up, walks into it with a key minted now, for whoever the panel lets in — the
+    link itself carries no credential, so it may sit in a tracker for ever."""
     return HTMLResponse(_read_panel(), headers=_NO_CACHE)
 
 

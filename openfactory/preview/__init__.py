@@ -381,7 +381,8 @@ class Preview(BaseModel):
     #: pull request → its branch, as the job that opened it named it — what a start fetches, so a
     #: unit whose cards were offered never has its branch guessed from a number.
     branches: dict[str, str] = {}
-    #: pull request → the repository it is in, as the job's card named it (C-18). A requirement's
+    #: pull request → the repository it is in, in the FORGE's namespace — the one the job's forge
+    #: opened it in (C-18; never the ticket's `repo`, which is the tracker's, #403). A requirement's
     #: cards live in several repositories, and a branch is a name inside ONE of them; absent, the
     #: project's own repository (every record written before a unit could span several).
     repos: dict[str, str] = {}

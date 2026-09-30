@@ -268,7 +268,9 @@ async def test_the_activity_is_registered_and_reaches_the_event(registry, monkey
     assert await ActivityEnvironment().run(
         acts.tell_the_requester,
         ReadyForYouInput(project=ROOM, issue="500", pr_url=PR, verdict=FLAGGED))
-    assert heard == [(ROOM, {"card": "500", "pr_url": PR, "verdict": FLAGGED})]
+    # the live preview's link travels too since #405 met #401 — none is up here
+    assert heard == [(ROOM, {"card": "500", "pr_url": PR, "verdict": FLAGGED,
+                             "preview_url": ""})]
     assert events.PRODUCERS[events.READY_FOR_YOU].endswith("::tell_the_requester")
 
 
