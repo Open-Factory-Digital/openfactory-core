@@ -1099,8 +1099,9 @@ class JobWorkflow:
         # one agent and pushes; it does not re-run the sandbox gates, so the fresh verdict carries
         # `gates: []` — which renders as nothing, and "nothing" is how a reader concludes there
         # were none. The previous run's gates are not carried forward either: they judged the diff
-        # this pass has just rewritten, which is the whole reason this method exists.
-        if self._verdict is not None:
+        # this pass has just rewritten, which is the whole reason this method exists. A person's
+        # adjust pass runs the gates since #448, and brings its own: those are the live check.
+        if self._verdict is not None and not getattr(result, "validations", None):
             self._verdict = {**self._verdict,
                              "gates_note": "the forge's own CI is the live check"}
         return True
