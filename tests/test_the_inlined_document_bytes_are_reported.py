@@ -241,3 +241,45 @@ def test_doctor_hands_the_sizer_the_projects_resolved_profile(tmp_path: Path, mo
 
     assert seen.get("profile") is not None, "doctor sized the corpus with no profile"
     assert seen["profile"].name == "prototype"
+
+
+def test_box_prove_hands_the_sizer_the_projects_resolved_profile(tmp_path: Path, monkeypatch):
+    """The doctor guard's twin, on the OTHER caller (#416). #370 made both `doctor` and `box prove`
+    resolve the project's profile before sizing, and only the doctor side was watched: dropping
+    `profile=` in `box_prove.py` left this file and `test_box_prove.py` green (57 passed), which is
+    how the original defect lived in both callers unseen.
+
+    Driven through the real `box_probes`, with a box that starts and runs nothing, because the
+    claim is that closure's wiring. Watched on what the sizer is HANDED, not on the number: for an
+    unprofiled project the number is identical with or without the profile."""
+    from types import SimpleNamespace
+
+    import openfactory.orchestrator.context as ctx
+    from openfactory import box_prove
+    from openfactory.adapters.sandbox import registry as sandboxes
+
+    class _Box:
+        def prepare(self, **_kw):
+            return SimpleNamespace(path=str(tmp_path))
+
+        def cleanup(self, **_kw):
+            pass
+
+    seen: dict[str, object] = {}
+    real = ctx.inlined_document_bytes
+    monkeypatch.setattr(ctx, "inlined_document_bytes",
+                        lambda m, r, **kw: seen.update(kw) or real(m, r, **kw))
+    monkeypatch.setattr(sandboxes, "installed_box_traits",
+                        lambda _kind: SimpleNamespace(honours_image=True))
+    monkeypatch.setattr(sandboxes, "build_sandbox", lambda *_a, **_kw: _Box())
+    monkeypatch.delenv(og.ENV_VAR, raising=False)
+
+    with box_prove.box_probes(SimpleNamespace(name="acme", box=None), "img", repo_path=tmp_path,
+                              manifest=Manifest(profile="prototype"), key="acme",
+                              sandbox="container") as probes:
+        assert probes.inlined_documents is not None
+        measured = probes.inlined_documents()
+
+    assert measured is not None, "box prove could not measure a readable checkout"
+    assert seen.get("profile") is not None, "box prove sized the corpus with no profile"
+    assert seen["profile"].name == "prototype"
