@@ -265,10 +265,14 @@ def test_a_preview_cannot_plant_a_cookie_the_panels_host_would_receive(panel, mo
 
 
 def test_a_service_that_does_not_answer_is_named_with_what_to_check(panel, monkeypatch):
+    from openfactory.api import app as api
+
     def refused(request):
         raise httpx.ConnectError("refused")
 
     _upstream(monkeypatch, refused)
+    # its name resolves — the panel is on the unit's network, and the APPLICATION is silent (#446)
+    monkeypatch.setattr(api, "_resolves", lambda base: True)
     r = panel.get("/", headers={"host": WEB, "cookie": _inside()})
     assert r.status_code == 502 and "0.0.0.0:3000" in r.text
 
@@ -415,3 +419,49 @@ def test_the_reaper_is_scheduled_and_says_it_has_nothing_to_end():
     assert activities.reap_previews in worker.WORKER_ACTIVITIES
     assert schedule.PREVIEW_REAP_SCHEDULE_ID == "openfactory-preview-reaper"
     assert asyncio.run(ActivityEnvironment().run(activities.reap_previews)) == []
+
+
+# ── #446: a panel off the unit's network says so, not "the app is not answering" ─────────────────
+
+
+def _refused(request):
+    raise httpx.ConnectError("[Errno -2] Name or service not known", request=request)
+
+
+def test_a_panel_off_the_units_network_names_the_network(panel, monkeypatch):
+    from openfactory.api import app as api
+
+    _upstream(monkeypatch, _refused)
+    monkeypatch.setattr(api, "_resolves", lambda base: False)
+    r = panel.get("/", headers={"host": WEB, "cookie": _inside()})
+    assert r.status_code == 502
+    assert "openfactory-pv-acme-12-edge" in r.text and "not on this preview" in r.text
+    assert "is not answering" not in r.text, "the application was blamed for the panel's absence"
+
+
+def test_a_silent_application_on_a_reachable_name_is_still_the_applications(panel, monkeypatch):
+    from openfactory.api import app as api
+
+    _upstream(monkeypatch, _refused)
+    monkeypatch.setattr(api, "_resolves", lambda base: True)
+    r = panel.get("/", headers={"host": WEB, "cookie": _inside()})
+    assert r.status_code == 502 and "is not answering" in r.text and "-edge" not in r.text
+
+
+def test_only_an_unknown_name_reads_as_a_missing_network(monkeypatch):
+    import socket
+
+    from openfactory.api import app as api
+
+    def unknown(name, *a, **kw):
+        raise socket.gaierror(-2, "Name or service not known")
+
+    monkeypatch.setattr(socket, "getaddrinfo", unknown)
+    assert api._resolves("http://web--acme--12:3000") is False
+
+    def other(name, *a, **kw):
+        raise OSError("something else")
+
+    monkeypatch.setattr(socket, "getaddrinfo", other)
+    assert api._resolves("http://web--acme--12:3000") is True, "never invent a missing network"
+    assert api._resolves("") is True
