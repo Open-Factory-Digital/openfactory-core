@@ -122,13 +122,13 @@ MUTATIONS = [
      CHANNEL_TESTS),
 
     ("two corrections of one card to different words share a button", STAGING,
-     '                         ("texto", entry.get("body", "") or entry.get("restated", "")\n'
+     '                         (said["text"], entry.get("body", "") or entry.get("restated", "")\n'
      '                          or entry.get("text", "")),',
-     '                         ("texto", entry.get("body", "") or entry.get("restated", "")),',
+     '                         (said["text"], entry.get("body", "") or entry.get("restated", "")),',
      CHANNEL_TESTS),
 
     ("two renames of one card to different titles share a button", STAGING,
-     '                         ("novo título", entry.get("new_title", "") or ""),\n',
+     '                         (said["new_title"], entry.get("new_title", "") or ""),\n',
      "",
      CHANNEL_TESTS),
 

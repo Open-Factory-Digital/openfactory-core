@@ -1142,6 +1142,107 @@ _FACT_NOTED = {
 }
 
 
+#: WHO CAN SAY YES, SAID UNDER A PROPOSAL SOMEBODY OFF THE ADMIN LIST MADE (#429). Ten copies of
+#: `({admins}: o registro precisa da sua confirmação.)` lived in `engine.py`, outside every
+#: catalogue, so an English conversation got a Portuguese line under its English proposal. One
+#: frame, keyed by what is waiting for the yes.
+_ADMINS_MUST_CONFIRM = {
+    "pt-BR": {
+        "frame": "({admins}: {what} precisa da sua confirmação.)",
+        "record": "o registro", "order": "gravar a ordem", "card": "abrir o cartão",
+        "note": "a anotação", "decision": "a decisão", "closing": "o encerramento",
+        "correction": "a correção", "change": "a mudança",
+    },
+    "en": {
+        "frame": "({admins}: {what} needs your confirmation.)",
+        "record": "registering this", "order": "saving the order", "card": "opening the card",
+        "note": "the note", "decision": "the decision", "closing": "closing it",
+        "correction": "the correction", "change": "the change",
+    },
+}
+
+
+def admins_must_confirm(admins: str, act: str, *, language: str | None = None) -> str:
+    """The line naming the people whose yes writes `act`, in the conversation's language."""
+    said = _pick(_ADMINS_MUST_CONFIRM, language)
+    return "\n\n" + said["frame"].format(admins=admins, what=said[act])
+
+
+#: THE ENGINE'S OWN SENTENCES, per language (#429) — the refusals, the release replies and the
+#: conversation header that `engine.py` composed in Portuguese outside every catalogue. Keyed by
+#: what is being said; `engine_said` formats one.
+_ENGINE_SAID = {
+    "pt-BR": {
+        "board_unread": ("Não consegui ler o quadro de trabalho agora — o problema é do meu lado, "
+                         "e o time já tem o detalhe. Tente de novo daqui a pouco."),
+        "stuck_unread": ("Não consegui olhar o que está parado agora — o problema é do meu lado, "
+                         "e o time já tem o detalhe. Tente de novo daqui a pouco."),
+        "queue_unread": ("Não consegui olhar o quadro agora — o problema é do meu lado, e o time "
+                         "já tem o detalhe. Tente de novo daqui a pouco."),
+        "already_agreed": "o requisito {number} já estava acordado.",
+        "already_dropped": "o requisito {number} já não estava valendo.",
+        "decision_on_dropped": ("o requisito {number} já não vale, então uma decisão registrada "
+                                "nele ficaria guardada onde ninguém vai procurar. Em qual "
+                                "requisito isso deve entrar?"),
+        "accept_dropped": ("o requisito {number} já não vale, então acordá-lo agora seria trazer "
+                           "de volta um texto que vocês já tinham tirado da mesa. Se isso voltou "
+                           "a fazer sentido, me digam e eu proponho de novo para vocês "
+                           "confirmarem."),
+        "conflict_requirement": "requisito {number}",
+        "conflict_decided": "algo já decidido",
+        "release_declined": ("entendi — **não subi nada**. Vou devolver isso ao time com o que "
+                             "você disse, e volto quando estiver corrigido para você conferir de "
+                             "novo."),
+        "release_ambiguous": ("tem mais de uma coisa esperando a sua conferida{which}, então **não "
+                              "subi nada** — prefiro não adivinhar qual delas você testou. "
+                              "Responda «funcionou o #número» e eu coloco essa no ar."),
+        "releasing": ("perfeito — **estou subindo para produção agora**, com o seu \"funcionou\" "
+                      "como aprovação. Fica registrado que foi você quem liberou e quando. Eu "
+                      "volto aqui quando estiver no ar."),
+        "released_by_client": "aprovado pelo cliente no canal de produto",
+        "conversation": "## Conversa até aqui (mais antigo primeiro)",
+        "you": "você", "somebody": "pessoa",
+    },
+    "en": {
+        "board_unread": ("I could not read the work board just now — the problem is on my side, "
+                         "and the team already has the details. Try again in a little while."),
+        "stuck_unread": ("I could not look at what is stuck just now — the problem is on my side, "
+                         "and the team already has the details. Try again in a little while."),
+        "queue_unread": ("I could not look at the board just now — the problem is on my side, and "
+                         "the team already has the details. Try again in a little while."),
+        "already_agreed": "requirement {number} was already agreed.",
+        "already_dropped": "requirement {number} was already no longer in force.",
+        "decision_on_dropped": ("requirement {number} is no longer in force, so a decision "
+                                "recorded in it would be kept where nobody will look. Which "
+                                "requirement should it go into?"),
+        "accept_dropped": ("requirement {number} is no longer in force, so agreeing to it now "
+                           "would bring back a text you had already taken off the table. If it "
+                           "makes sense again, tell me and I will propose it again for you to "
+                           "confirm."),
+        "conflict_requirement": "requirement {number}",
+        "conflict_decided": "something already decided",
+        "release_declined": ("understood — **I released nothing**. I will take this back to the "
+                             "team with what you said, and come back when it is fixed for you to "
+                             "check again."),
+        "release_ambiguous": ("more than one thing is waiting for your check{which}, so **I "
+                              "released nothing** — I would rather not guess which one you "
+                              "tested. Reply «it worked #number» and I will put that one live."),
+        "releasing": ("great — **I am releasing to production now**, with your \"it worked\" as "
+                      "the approval. It is recorded that you released it, and when. I will come "
+                      "back here when it is live."),
+        "released_by_client": "approved by the client in the product channel",
+        "conversation": "## The conversation so far (oldest first)",
+        "you": "you", "somebody": "someone",
+    },
+}
+
+
+def engine_said(key: str, *, language: str | None = None, **params: object) -> str:
+    """One of the engine's own sentences, in the conversation's language."""
+    text = _pick(_ENGINE_SAID, language)[key]
+    return text.format(**params) if params else text
+
+
 def defect_confirmation(*, violates: int | None, language: str | None = None, card: str = "",
                         title: str = "", unjudged: bool = False,
                         disputed: tuple[str, ...] | list[str] = ()) -> str:
@@ -1221,12 +1322,17 @@ def reordered(numbers: list[str], *, language: str | None = None, agent_name: st
     return sig + _pick(_REORDERED, language).format(order=", ".join(f"#{n}" for n in numbers))
 
 
+#: What a sentence names when it has no link or number to name (#429).
+_THE_CARD = {"pt-BR": "o cartão", "en": "the card"}
+_CANNOT_SAY = {"pt-BR": "não sei dizer", "en": "I cannot tell"}
+
+
 def ticket_filed(*, ref: str, url: str = "", language: str | None = None,
                  existed: bool = False, just_asked: bool = False) -> str:
     where = url or (f"#{ref}" if ref else "")
     if just_asked:
         return just_asked_for_a_card(where=where, language=language)
-    text = _pick(_TICKET_FILED, language).format(where=where or "o cartão")
+    text = _pick(_TICKET_FILED, language).format(where=where or _pick(_THE_CARD, language))
     if existed:
         text = _pick({"pt-BR": "Já existia um cartão com esse título — é este. ",
                       "en": "A card with that title already existed — this is it. "},
@@ -1293,7 +1399,7 @@ def just_asked_for_a_requirement(*, number: int, title: str, language: str | Non
 
 
 def just_asked_for_a_card(*, where: str, language: str | None = None) -> str:
-    return _pick(_JUST_ASKED_CARD, language).format(where=where or "o cartão")
+    return _pick(_JUST_ASKED_CARD, language).format(where=where or _pick(_THE_CARD, language))
 
 
 def just_noted(*, term: str, language: str | None = None) -> str:
@@ -1380,7 +1486,8 @@ def baseline_done(*, ok: bool, url: str = "", detail: str = "", existed: bool = 
         safe, raw = client_safe_detail(detail, language=language)
         if raw:
             log.warning("a baseline failure detail the client must not read: %s", raw[:400])
-        return sig + _pick(_BASELINE_FAILED, language).format(detail=safe or "não sei dizer")
+        return sig + _pick(_BASELINE_FAILED, language).format(
+            detail=safe or _pick(_CANNOT_SAY, language))
     if url:
         log.info("the baseline pass is at %s — for the team; the channel is told in its own terms",
                  url)
@@ -1863,7 +1970,10 @@ _CLAIMED_DONE = re.compile(
     # `wrote` and not `written`, for the reason the pt-BR side lost `escrito`: the participle is
     # what an English sentence about a document's existence uses ("nothing else is written"), and
     # the first person is only ever a claim about this turn.
-    r"filed|recorded|created|closed|queued|logged|wrote|corrected)\b",
+    # `registered` and `noted` FROM THE ENGLISH SUCCESS SENTENCES, like the pt-BR side's
+    # `registrado`/`anotado` (#429): `_DEFECT_FILED` says "Registered", `fact_noted` "Noted", and an
+    # English reply echoing them about a write nobody made was the claim nobody caught
+    r"filed|recorded|registered|noted|created|closed|queued|logged|wrote|corrected)\b",
     re.IGNORECASE)
 
 
@@ -1898,7 +2008,11 @@ _RETRACTS_WRITE = re.compile(
 #: happened. It is kept only because the sentence trips the claim detector on its own ("escrita" is
 #: both the noun and the participle), and flagging her for saying it would punish the behaviour the
 #: rule exists to produce. It therefore excuses ITS OWN SENTENCE and nothing further.
-_CANNOT_OBSERVE = re.compile(r"n[ãa]o (vejo|consigo ver|posso ver) o resultado", re.IGNORECASE)
+#: IN EVERY LANGUAGE THE ROLE ANSWERS IN (#429): an English reply saying it cannot see the outcome
+#: tripped the detector the Portuguese formula was excused from.
+_CANNOT_OBSERVE = re.compile(r"n[ãa]o (vejo|consigo ver|posso ver) o resultado"
+                             r"|\bI (cannot|can't|can not|do not|don't) see the (result|outcome)",
+                             re.IGNORECASE)
 
 
 def claims_a_write(text: str) -> str:

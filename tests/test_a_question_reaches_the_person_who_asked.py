@@ -61,7 +61,7 @@ def test_the_people_map_is_read_backwards_and_never_guessed():
 # ── the card carries both, quoted, and in prose ─────────────────────────────────────────────────
 
 def test_the_bodies_write_both_keys_quoted_and_the_prose_line_carries_the_forge_identity():
-    body = ticket_body(described="d", reported_by="U04ABC", source="s", requester_forge="mara")
+    body = ticket_body(language="pt-BR", described="d", reported_by="U04ABC", source="s", requester_forge="mara")
     assert body.startswith('---\nrequester: "U04ABC"\nrequester_forge: "mara"\n---')
     assert "**Pedido por:** U04ABC (mara)" in body
     t = _parse(body)
@@ -71,7 +71,7 @@ def test_the_bodies_write_both_keys_quoted_and_the_prose_line_carries_the_forge_
 def test_a_login_starting_with_at_is_valid_yaml_because_it_is_quoted():
     """`requester: @octocat` is not YAML — `@` cannot start a token — and would have crashed every
     read of the card on three vendors (refutation 10)."""
-    body = defect_body(restated="r", reported_by="@octocat", severity="", source="",
+    body = defect_body(language="pt-BR", restated="r", reported_by="@octocat", severity="", source="",
                        requirement=None, requirement_path="", docs_repo="d",
                        requester_forge="@octocat")
     t = _parse(body)
@@ -100,7 +100,7 @@ def test_issue_body_carries_the_forge_identity_of_who_asked_for_the_requirement(
 
 
 def test_nobody_recorded_writes_no_key_and_no_parenthesis():
-    body = ticket_body(described="d", reported_by="", source="")
+    body = ticket_body(language="pt-BR", described="d", reported_by="", source="")
     assert not body.startswith("---") and "**Pedido por:** não registrado" in body
 
 

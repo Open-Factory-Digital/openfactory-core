@@ -54,7 +54,7 @@ def test_a_defect_with_no_requirement_is_fixed_by_its_criteria_never_handed_back
     hand the card back when none existed, and its first line claimed an accepted promise."""
     from openfactory.product.authoring import defect_body, filed_by_the_product_role
 
-    body = defect_body(restated="o botão some", reported_by="<@U1>", severity="", source="",
+    body = defect_body(language="pt-BR", restated="o botão some", reported_by="<@U1>", severity="", source="",
                        requirement=None, requirement_path="", docs_repo="a/docs")
 
     assert filed_by_the_product_role(body) == "defect", "correct_card must still know it"

@@ -144,10 +144,10 @@ MUTATIONS = [
     ("TODAY'S DEFECT ON THE SIBLING PATH (#392): a report is staged as the person typed it", ENGINE,
      "        compose = getattr(module, \"compose_card\", None)\n        if callable(compose):\n"
      "            composed = compose(request=text, conversation=ex.conversation,\n"
-     "                               reply=answer.text or \"\", intake=ex.intake, kind=\"defect\")",
+     "                               reply=answer.text or \"\", intake=ex.intake, kind=\"defect\",",
      "        compose = None\n        if callable(compose):\n"
      "            composed = compose(request=text, conversation=ex.conversation,\n"
-     "                               reply=answer.text or \"\", intake=ex.intake, kind=\"defect\")"),
+     "                               reply=answer.text or \"\", intake=ex.intake, kind=\"defect\","),
 
     ("a defect card is staged as a requested card", ENGINE,
      "    if kind == \"defect\":\n        return _offer_defect(",
