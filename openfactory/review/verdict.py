@@ -43,6 +43,8 @@ def criteria(verdict: dict) -> dict:
     checks = [c for c in (verdict.get("acceptance") or []) if isinstance(c, dict)]
     tally = {"passed": 0, "failed": 0, "unknown": 0}
     unmet: list[dict] = []
+    verified = 0
+    would_verify: list[str] = []
     for check in checks:
         status = str(check.get("status") or "unknown").lower()
         if status not in tally:
@@ -50,7 +52,17 @@ def criteria(verdict: dict) -> dict:
         tally[status] += 1
         if status == "failed":
             unmet.append(check)
-    return {**tally, "unmet": unmet, "total": len(checks)}
+        # EXECUTED, NOT CLAIMED (#447): `executed_by` is the platform's, set only when the gate
+        # the reviewer cited ran and passed (`review/evidence.py`)
+        if status == "passed" and str(check.get("executed_by") or "").strip():
+            verified += 1
+        pointer = str(check.get("would_verify") or "").strip()
+        if pointer and pointer not in would_verify:
+            would_verify.append(pointer)
+    return {**tally, "unmet": unmet, "total": len(checks),
+            "checked": bool(verdict.get("evidence_checked")), "verified": verified,
+            "unverified": len(checks) - verified - tally["failed"],
+            "would_verify": would_verify}
 
 
 def _criteria_points(verdict: dict) -> list[str]:
@@ -98,6 +110,9 @@ def line(verdict: dict, *, unread: bool = False) -> str:
     if tally["total"]:
         counted = ", ".join(f"{tally[k]} {k}" for k in ("passed", "failed", "unknown") if tally[k])
         clause = f"criteria: {counted}"
+        if tally["checked"]:
+            # WHAT A GATE EXECUTED, beside what the reviewer claimed (#447)
+            clause += f" ({tally['verified']} of {tally['total']} executed by a gate)"
         if tally["unmet"]:
             clause += " — not met: " + "; ".join(
                 str(c.get("criterion") or "?")[:120] for c in tally["unmet"][:2])
@@ -135,6 +150,21 @@ def line(verdict: dict, *, unread: bool = False) -> str:
 #: differently. So `headline` says it once, on every shape of its answer: approved, approved with
 #: flags, rejected, or not read (absent, unreadable, or about code that is gone).
 APPROVED, FLAGGED, REJECTED, UNREAD = "approved", "flagged", "rejected", "unread"
+#: THE STANCE THE REVIEWER'S OWN WORD COULD NOT EXPRESS (#447): it approved, and nothing executed
+#: what the card asked for. Computed from the evidence, and never read as an approval anywhere —
+#: not on the card, not in the requester's message, not by the merge policy.
+NOT_VERIFIED = "not_verified"
+
+
+def not_verified(verdict: dict | None) -> bool:
+    """Whether `verdict` says the change was not verified: the platform checked the evidence
+    (`evidence_checked`), nothing failed, and at least one acceptance criterion — or all of them,
+    when the review mapped none — passed on no executed evidence. False on a verdict the platform
+    never checked, which keeps every verdict written before #447 reading as it did."""
+    tally = criteria(verdict) if isinstance(verdict, dict) else criteria({})
+    if not tally["checked"] or tally["failed"]:
+        return False
+    return tally["total"] == 0 or tally["unverified"] > 0
 
 
 def headline(verdict: dict | None, *, unread: bool = False) -> dict:
@@ -194,6 +224,25 @@ def headline(verdict: dict | None, *, unread: bool = False) -> dict:
         return {"level": "warn", "stance": REJECTED, "word": "Review rejected it",
                 "clause": f"this platform's own reviewer rejected the change{scored}",
                 "points": points, "criteria": tally}
+    # THE STANCE IS COMPUTED FROM THE EVIDENCE WHEN THE PLATFORM CHECKED IT (#447), the way a
+    # card's verdict is (ADR-0054): the reviewer's decision word said "approved" over its own
+    # caveat that nothing had executed the criteria, and the requester was told it was approved.
+    if tally["checked"] and tally["failed"]:
+        return {"level": "warn", "stance": REJECTED, "word": "Review rejected it",
+                "clause": f"{tally['failed']} of {tally['total']} acceptance criteria are not "
+                          f"met{scored}",
+                "points": points, "criteria": tally}
+    if not_verified(verdict):
+        pointers = [f"wire `{p[:120]}` into a gate (`validate`) and the platform can verify "
+                    f"this kind of change" for p in tally["would_verify"][:2]]
+        if tally["total"]:
+            clause = (f"{tally['unverified']} of {tally['total']} acceptance criteria were "
+                      f"checked only by reading the code — nothing executed them{scored}")
+        else:
+            clause = (f"the review mapped no acceptance criterion to evidence — nothing executed "
+                      f"what the card asked for{scored}")
+        return {"level": "warn", "stance": NOT_VERIFIED, "word": "Review could not verify it",
+                "clause": clause, "points": pointers + points, "criteria": tally}
     if points:
         return {"level": "warn", "stance": FLAGGED, "word": "Review approved it, with flags",
                 "clause": f"the reviewer approved the change{scored}, and left things a person "

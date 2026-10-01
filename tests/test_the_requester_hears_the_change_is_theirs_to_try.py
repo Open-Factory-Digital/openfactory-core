@@ -215,7 +215,8 @@ def test_a_project_with_NO_product_role_is_told_nothing(tmp_path, ledger, monkey
 # ── 2. the sentence ─────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("language", ["pt-BR", "en"])
-@pytest.mark.parametrize("stance", ["approved", "flagged", "rejected", "unread", ""])
+@pytest.mark.parametrize("stance", ["approved", "flagged", "rejected", "unread",
+                                    "not_verified", ""])
 def test_the_sentence_is_in_the_clients_words_and_names_nobody(language, stance):
     for preview, live in ((True, ""), (False, ""), (False, "https://p.example")):
         text = voice.ready_for_you(ref="500", title="Relatório", card_url=CARD_URL,
@@ -235,7 +236,11 @@ def test_the_review_line_is_the_verdicts_own_word_never_re_read():
     assert headline({"decision": "approved", "score": 95})["stance"] == "approved"
     assert headline({})["stance"] == "unread"
     assert headline({"decision": "approved", "stale": "a repair rewrote it"})["stance"] == "unread"
-    assert set(voice._READY_REVIEW) == {"approved", "flagged", "rejected", "unread"}
+    assert headline({"decision": "approved", "evidence_checked": True,
+                     "acceptance": [{"criterion": "c", "status": "passed"}]})["stance"] == (
+        "not_verified"), "approved over evidence nothing executed is not an approval (#447)"
+    assert set(voice._READY_REVIEW) == {"approved", "flagged", "rejected", "unread",
+                                        "not_verified"}
     assert events._stance(None) == "", "an unknown verdict must say nothing, not 'no review'"
 
 

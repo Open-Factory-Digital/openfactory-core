@@ -59,7 +59,10 @@ WF = "openfactory/runtime/temporal/workflow.py"
 MUTATIONS += [
     # ── the seam that actually broke it on the pilot ─────────────────────────────────────────────
     ("the verdict query drops the map again, so the gate renders nothing", WF,
-     '            "acceptance": [{"criterion": (c.criterion or "")[:200], "status": c.status}\n'
+     # re-pinned 2026-09-30 (#447): the projection also carries what executed each criterion
+     '            "acceptance": [{"criterion": (c.criterion or "")[:200], "status": c.status,\n'
+     '                            "executed_by": getattr(c, "executed_by", None) or "",\n'
+     '                            "would_verify": (getattr(c, "would_verify", None) or "")[:160]}\n'
      '                           for c in (getattr(review, "acceptance", None) or [])[:12]],\n',
      ""),
 
@@ -71,6 +74,6 @@ MUTATIONS += [
      '(getattr(review, "acceptance", None) or [])'),
 
     ("the evidence prose is published on every panel refresh", WF,
-     '{"criterion": (c.criterion or "")[:200], "status": c.status}',
-     '{"criterion": (c.criterion or "")[:200], "status": c.status, "evidence": c.evidence}'),
+     '{"criterion": (c.criterion or "")[:200], "status": c.status,\n',
+     '{"criterion": (c.criterion or "")[:200], "status": c.status, "evidence": c.evidence,\n'),
 ]

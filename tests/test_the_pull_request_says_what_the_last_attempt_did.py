@@ -54,6 +54,7 @@ from openfactory.adapters.azure_devops import AzureDevOpsError
 from openfactory.adapters.forge.local import LocalForge
 from openfactory.adapters.sandbox import WorktreeSandbox
 from openfactory.contracts import (
+    AcceptanceCheck,
     AcceptanceCriterion,
     AgentRunResult,
     Finding,
@@ -252,6 +253,9 @@ class _Reviewer:
         n = int((workspace.path / "feature.py").read_text().split("=")[-1])
         score, finding = READINGS[n]
         return ReviewResult(decision="approved_with_findings", score=score,
+                            # cited to the gate that ran, so the heading is the decision (#447)
+                            acceptance=[AcceptanceCheck(criterion="it exports", status="passed",
+                                                        evidence="gate:test — the suite")],
                             findings=[Finding(severity="low", description=finding)],
                             summary="does what the card asks")
 

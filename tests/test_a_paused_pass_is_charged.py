@@ -41,6 +41,7 @@ from pathlib import Path
 import pytest
 
 from openfactory.contracts import (
+    AcceptanceCheck,
     AcceptanceCriterion,
     AgentRunResult,
     Finding,
@@ -130,7 +131,11 @@ class _Rejects:
 
 class _Approves:
     def review(self, *, sandbox, workspace, review_input):   # noqa: ARG002
+        # its criterion cites the gate that ran it, so the change is verified and may merge by
+        # itself (#447) — this file is about what a hold is charged, not about verification
         return ReviewResult(decision="approved", score=95, summary="looks right",
+                            acceptance=[AcceptanceCheck(criterion="it works", status="passed",
+                                                        evidence="gate:test — the suite")],
                             cost_usd=REVIEW_COST, model="a-dearer-model", harness="claude_code")
 
 

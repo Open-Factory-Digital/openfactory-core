@@ -1182,8 +1182,16 @@ class JobWorkflow:
             # TRIMMED LIKE ITS NEIGHBOURS, for the reason the docstring above gives — this crosses
             # the wire on every panel refresh. The criterion text is what identifies it to a
             # reader; the evidence is prose and belongs to the closed job's result.
-            "acceptance": [{"criterion": (c.criterion or "")[:200], "status": c.status}
+            #
+            # AND WHAT EXECUTED IT (#447): `executed_by` is the gate the platform confirmed ran the
+            # evidence, `would_verify` the check no gate runs, `evidence_checked` whether the
+            # platform looked at all — the three the stance is computed from. Fields, not a
+            # command: replay-safe for the reason `verdict` states.
+            "acceptance": [{"criterion": (c.criterion or "")[:200], "status": c.status,
+                            "executed_by": getattr(c, "executed_by", None) or "",
+                            "would_verify": (getattr(c, "would_verify", None) or "")[:160]}
                            for c in (getattr(review, "acceptance", None) or [])[:12]],
+            "evidence_checked": bool(getattr(review, "evidence_checked", False)),
         }
 
     async def _flag_review_findings(self, params: JobParams, result: RunResult) -> None:

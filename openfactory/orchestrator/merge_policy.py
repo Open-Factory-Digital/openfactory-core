@@ -132,6 +132,12 @@ def should_auto_merge(manifest: Manifest, result: RunResult, *,
     if (manifest.review_mode == "blocking"
             and result.review is not None and result.review.decision == "rejected"):
         return False
+    # NOTHING EXECUTED WHAT THE CARD ASKED FOR (#447), and that holds WHATEVER the review mode.
+    # Advisory review leaves the deterministic gates as the merge floor (ADR-0014) — and this is
+    # the case where the floor has a hole: no gate ran the evidence for the acceptance criteria.
+    # A change nobody verified goes to a person, who is told so (`review/verdict.headline`).
+    if result.review is not None and _not_verified(result.review):
+        return False
     # Suppressions that SURVIVED the suppression-repair loop (ADR-0011). A HARD suppression
     # (noqa / type: ignore / nosec) always goes to a human. A coverage pragma may auto-merge —
     # but ONLY when an INDEPENDENT review has vetted it (the reviewer caught #207 and passed
@@ -207,6 +213,13 @@ def should_auto_merge(manifest: Manifest, result: RunResult, *,
     if result.preview_required:
         return False
     return True
+
+
+def _not_verified(review: ReviewResult) -> bool:
+    """The computed stance's own answer (`review/verdict.not_verified`), on the verdict itself."""
+    from openfactory.review.verdict import not_verified
+
+    return not_verified(review.model_dump())
 
 
 def format_review(review: ReviewResult) -> str:

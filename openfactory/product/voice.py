@@ -3100,6 +3100,12 @@ _READY_REVIEW = {
                  "en": " — the automatic review rejected it, so look carefully before deciding"},
     "unread": {"pt-BR": " — nenhuma revisão automática leu esta versão",
                "en": " — no automatic review read this version"},
+    # NEVER "APPROVED" WHEN NOTHING EXECUTED WHAT WAS ASKED (#447): the requester was told "the
+    # automatic review approved it" about a fix whose own review said no gate had run its criteria
+    "not_verified": {"pt-BR": " — a revisão automática não conseguiu verificar: nada executou o "
+                              "que o cartão pede, então confira você mesmo antes de aprovar",
+                     "en": " — the automatic review could not verify it: nothing executed what "
+                           "the card asks for, so check it yourself before approving"},
 }
 _READY_CARD_LINK = {"pt-BR": "O cartão: {url}", "en": "The card: {url}"}
 #: The first move, in the one form this deployment can offer it.

@@ -15,6 +15,14 @@ to a human (posted as `request-changes`, reviewers requested, ticket commented) 
 `PR_OPEN`. The **score is not a threshold** — only the decision matters; `approved` and
 `approved_with_findings` both auto-merge (findings are non-blocking comments).
 
+> **Amended 2026-09-30 (#447).** The decision word no longer decides alone. The platform checks
+> each acceptance criterion's evidence against the gates that actually ran
+> (`review/evidence.py`), and the stance is computed from that (`review/verdict.headline`): a
+> change whose criteria no gate executed is **not verified** — never auto-merged, whatever the
+> review mode, and never announced as approved. `approved` / `approved_with_findings` auto-merge
+> only when every criterion passed on a gate that ran; a failed criterion is a rejection even
+> under an `approved` word. The repair loop below still reacts to `rejected` only.
+
 The autonomous repair loops we *do* have — the gate/validation loop (Test) and the CI-repair
 loop (ADR-0004) — react to **objective** failures (exit codes). The review verdict is
 **subjective** (an LLM's judgement), so it was left as a human-escalation, not a repair trigger.

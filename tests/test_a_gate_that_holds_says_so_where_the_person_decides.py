@@ -211,8 +211,10 @@ def test_the_declaration_still_describes_a_function_that_exists():
     # 13 SINCE #251: `diff_unreadable` — the sandbox could not read which files the change
     # touches, so the risk assessment, the protected-path check and the per-component gate
     # selection were all taken on an empty list and all three reported nothing to find.
-    assert len(holds) == 14, (
-        f"{len(holds)} branches of `should_auto_merge` hold a merge, not 14 — either a gate was "
+    # 15 SINCE #447: a review that is NOT VERIFIED — nothing executed the acceptance criteria —
+    # holds whatever the review mode; it reads `review`, the row already declared.
+    assert len(holds) == 15, (
+        f"{len(holds)} branches of `should_auto_merge` hold a merge, not 15 — either a gate was "
         f"added or removed (say which, here) or this guard no longer finds the branches it reads")
 
 
