@@ -50,12 +50,11 @@ NOT_CALLERS = {
 }
 
 #: THE CEILING AND THE BASELINE, committed. Slice 1 ended at 27: the writers slices 2 and 3 own;
-#: 25 since #413's first part moved the card-question sweep through the door.
+#: 25 since #413's first part moved the card-question sweep through the door; 23 since its
+#: second moved the job's park and settle.
 #: Each slice lowers the ceiling and drops what it moved in from both; slice 3 ends at zero.
-CEILING = 25
+CEILING = 23
 BASELINE = frozenset({
-    ("openfactory/runtime/temporal/activities.py", "settle_ticket", "set_state"),
-    ("openfactory/runtime/temporal/activities.py", "_apply", "set_state"),
     ("openfactory/runtime/temporal/activities.py", "_child_to_todo", "set_state"),
     ("openfactory/runtime/temporal/activities.py", "_child_to_todo", "set_status"),
     ("openfactory/runtime/temporal/activities.py", "_do_split", "close_ticket"),

@@ -18,10 +18,6 @@ MODULE = "openfactory/product/module.py"
 
 OUTSIDE_THE_DOOR: dict[tuple[str, str, str], tuple[str, str]] = {
     # ── slice 2 (#413): the job's endings, from the workflow and the worker ─────────────────────
-    (ACTIVITIES, "settle_ticket", "set_state"):
-        ("the job's own settle — `skipped` and `delivered` at the merge", "2"),
-    (ACTIVITIES, "_apply", "set_state"):
-        ("`mark_needs_action`: a job parked on an impediment or a merge decision", "2"),
     (ACTIVITIES, "_child_to_todo", "set_state"):
         ("a split's children queued, on a tracker with no board", "2"),
     (ACTIVITIES, "_child_to_todo", "set_status"):

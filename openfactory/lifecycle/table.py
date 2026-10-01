@@ -117,6 +117,10 @@ ALLOWED: dict[CardEvent, frozenset[State]] = {
     # question as cancelled and is NEVER put back in the queue, the error the inventory found:
     # the sweep returned a closed card to TO-DO from the ledger alone (`consequences`)
     CardEvent.QUESTION_ANSWERED: frozenset(State),
+    # THE JOB'S OWN ENDINGS (#413, part 2), applied by the worker from the activities that already
+    # wrote them — `mark_needs_action` and `settle_ticket` — so no workflow history changes
+    CardEvent.PARKED: frozenset({State.TODO, State.RUNNING, State.WAITING_ON_A_PERSON}),
+    CardEvent.DELIVERED: frozenset({State.RUNNING, State.WAITING_ON_A_PERSON}),
 }
 
 #: The events that need the card CLOSED on its tracker, whatever its state says. `delivered` is a
@@ -131,7 +135,8 @@ ONLY_ON_A_CLOSED_CARD: frozenset[CardEvent] = frozenset({CardEvent.REOPENED})
 #: without any board.
 WHERE_NO_BOARD_PLACES_IT: frozenset[CardEvent] = frozenset({
     CardEvent.DISCARDED, CardEvent.SKIPPED, CardEvent.STOPPED, CardEvent.CLOSED,
-    CardEvent.WITHDRAWN, CardEvent.REMOVED, CardEvent.QUESTION_ANSWERED})
+    CardEvent.WITHDRAWN, CardEvent.REMOVED, CardEvent.QUESTION_ANSWERED, CardEvent.PARKED,
+    CardEvent.DELIVERED})
 
 
 @dataclass(frozen=True)
@@ -249,6 +254,16 @@ def consequences(event: CardEvent, facts: Mapping[str, object] | None = None) ->
         return (Remove(), *_GONE)
     if event is CardEvent.REOPENED:
         return (Reopen(), Comment(), Loops("restore"), Tell(BACK_ON_THE_BOARD), Forget())
+    if event is CardEvent.PARKED:
+        # the park's own state (on hold, needs refinement…) is the column; the comment is the
+        # caller's note when it has one — the box usually wrote its own as it parked
+        said = (Comment(),) if facts.get("note") else ()
+        return (Column(str(facts.get("job_state") or "on_hold")), *said, Forget())
+    if event is CardEvent.DELIVERED:
+        # the card closes as delivered (`Column("done")` is DONE, which every row now closes on);
+        # the announcement stays the job's one exit's (`record_outcome`), which runs after the
+        # settle and reads the board fresh — what it lacked on the local row was the closed card
+        return (Column("done"), Comment(), Forget())
     if event is CardEvent.QUESTION_ANSWERED:
         before = str(facts.get("before") or "")
         if before in _GONE_STATES:
@@ -275,6 +290,10 @@ def after(event: CardEvent, facts: Mapping[str, object] | None = None) -> State:
     if event is CardEvent.QUESTION_ANSWERED:
         before = str(facts.get("before") or "")
         return State.TODO if before in _STILL_PARKED else State(before)
+    if event is CardEvent.PARKED:
+        return State.WAITING_ON_A_PERSON
+    if event is CardEvent.DELIVERED:
+        return State.DELIVERED
     raise KeyError(f"no slice has decided where {event.value!r} leaves a card")
 
 

@@ -399,3 +399,23 @@ def test_an_answer_moves_only_a_card_still_parked_on_its_question():
         assert Loops("answer") in row
     for gone in ("closed", "removed"):
         assert consequences(CardEvent.QUESTION_ANSWERED, {"before": gone}) == (Loops("moot"),)
+
+
+def test_a_decision_the_jobs_own_ending_already_carried_out_is_not_refused():
+    """#413: a person's skip signals the job, and the job's settle can record before the row does.
+    The row's decision then finds the card already where it would leave it: it stands, and nothing
+    is applied twice — where it used to be refused for a skip the engine had in fact performed."""
+    sink = InMemoryMetricsSink()
+    ports = Ports(Seen(state=State.WAITING_ON_A_PERSON), sink_=sink)
+
+    def the_job_settles_first():
+        record.write(sink, "acme", record.Row(card="12", seq=1, event_id="settled-by-the-job",
+                                              event="skipped", by="the workflow", effects=()))
+        ports.seen_as = Seen(state=State.BACKLOG)
+        return None
+
+    moved, _ = _drive(CardEvent.SKIPPED, State.WAITING_ON_A_PERSON, ports=ports,
+                      act=the_job_settles_first)
+
+    assert moved.ok and not moved.refused, moved
+    assert ports.calls == [], "the job's ending was applied a second time"

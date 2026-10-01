@@ -2503,7 +2503,18 @@ async def mark_needs_action(inp: HoldSyncInput) -> str:
             # The escalation goes out addressed to nobody in particular.
             activity.logger.warning("could not find who created #%s", inp.issue)
             author = ""
-        tracker.set_state(inp.issue, state, reason=inp.note or None)
+        # THROUGH THE CARD'S DOOR (ADR-0055, #413): `parked`, the park's own state as the column
+        # and the note as the comment — on every row, where `set_state(reason=…)` wrote it on two
+        # and dropped it on the local board
+        from openfactory.lifecycle import CardEvent, transition
+
+        moved = transition(ProjectRegistry().get(inp.project), inp.issue, CardEvent.PARKED,
+                           by="the workflow", facts={"job_state": state.value,
+                                                     "note": inp.note or ""},
+                           tracker=tracker, event_id=_this_activitys_event("parked"))
+        if moved.refused:
+            activity.logger.info("mark_needs_action: #%s not parked by the door (%s)", inp.issue,
+                                 moved.refused[:160])
         return author
 
     try:
@@ -2673,16 +2684,34 @@ async def settle_ticket(inp: HoldSyncInput) -> str:
 
     BEST-EFFORT, LIKE ITS TWIN. The ticket has already merged. Nothing about recording that may
     fail the job or hold the floor."""
-    tracker = _tracker_for(ProjectRegistry().get(inp.project))
+    project = ProjectRegistry().get(inp.project)
+    tracker = _tracker_for(project)
     try:
         state = JobState(inp.state)
     except ValueError:
         activity.logger.warning("unknown job state %r — not settling #%s", inp.state, inp.issue)
         return "unknown-state"
-    try:
-        await asyncio.to_thread(
-            lambda: tracker.set_state(inp.issue, state, reason=inp.note or None))
-    except Exception:  # noqa: BLE001 — the merge stands whatever the tracker says
+    # THROUGH THE CARD'S DOOR (ADR-0055, #413). A skip is `skipped` — and a person's skip or
+    # discard went through the door from the action row already, so the card is in the backlog and
+    # this settles nothing twice: no second comment on the rows that wrote `set_state`'s reason. A
+    # job settled DONE is `delivered`: the card closes as delivered on every row, and the delivery
+    # it completes is announced (on the local board it never was, the card staying open in Done).
+    from openfactory.lifecycle import CardEvent, transition
+
+    event = {JobState.SKIPPED: CardEvent.SKIPPED, JobState.DONE: CardEvent.DELIVERED}.get(state)
+    if event is None:
+        activity.logger.warning("settle_ticket: %s is no ending the door knows — #%s left as it is",
+                                state.value, inp.issue)
+        return "unknown-state"
+    moved = await asyncio.to_thread(lambda: transition(
+        project, inp.issue, event, by="the workflow",
+        facts={"note": inp.note or "", "job_state": state.value}, tracker=tracker,
+        event_id=_this_activitys_event(event.value)))
+    if moved.refused:
+        activity.logger.info("settle_ticket: #%s not settled as %s (%s)", inp.issue, event.value,
+                             moved.refused[:160])
+        return "already-settled"
+    if moved.outcome("column").startswith("failed"):
         activity.logger.warning(
             "settle_ticket: could not set %s#%s → %s", inp.project, inp.issue, state.value)
         return "failed"
@@ -5580,6 +5609,17 @@ def _hours_since(iso: str) -> float:
         # ping somebody about a question asked a minute ago.
         activity.logger.info("could not read when a loop opened (%r) — not chasing it", iso)
         return 0.0
+
+
+def _this_activitys_event(event: str) -> str:
+    """An event id for a transition this activity applies: its workflow run and its own activity
+    id, so a retried activity is answered from the card's record and never decided twice (ADR-0055
+    D5). `""` outside an activity — a direct call lets the door derive one."""
+    try:
+        info = activity.info()
+    except RuntimeError:
+        return ""
+    return f"{event}-{info.workflow_run_id}-{info.activity_id}"
 
 
 def _where_a_closed_card_goes(project, tracker, board, ref: str) -> JobState:

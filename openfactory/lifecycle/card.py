@@ -140,6 +140,12 @@ def transition(project, card: str, event: CardEvent, *, by: str, why: str = "",
         if seen.cannot_tell:
             return Transition(card=card, event=event, refused=seen.cannot_tell)
         refusal = allowed(seen.state, event, open_card=seen.open)
+        if refusal is not None and acted and seen.state is after(event, {**(facts or {}),
+                                                                        "before": ""}):
+            # THE ENGINE ACTED, AND THE JOB'S OWN ENDING GOT THERE FIRST: a person's skip signals
+            # the job, whose settle can record before this row does (#413). The card is already
+            # where this decision leaves it — the decision stands, and nothing is applied twice.
+            return Transition(card=card, event=event, before=seen.state, after=seen.state)
         if refusal is not None:
             if acted:
                 log.error("OPENFACTORY_CARD_ACTED_UNRECORDED project=%s card=%s event=%s — the "

@@ -403,3 +403,77 @@ def test_the_stale_pickup_healer_files_a_closed_card_where_its_close_put_it(depl
     board.set_column(issue=ref, issue_url="", name="TO-DO")     # the stale card the poller finds
 
     assert _where_a_closed_card_goes(deployment, tracker, board, ref) is getattr(JobState, where)
+
+
+# ── the job's own endings go through the door (#413, part 2) ─────────────────────────────────
+
+def _settle(project, ref: str, state: str, note: str = "") -> str:
+    """The workflow's `settle_ticket`, called as the worker calls it — and, for a job that ended,
+    its one exit after it (`record_outcome`), which journals the outcome and announces what the
+    card delivered."""
+    from openfactory.runtime.temporal.activities import record_outcome, settle_ticket
+    from openfactory.runtime.temporal.io import HoldSyncInput
+
+    inp = HoldSyncInput(project=project.name, issue=ref.lstrip("#"), state=state, note=note)
+    settled = asyncio.run(settle_ticket(inp))
+    asyncio.run(record_outcome(inp))
+    return settled
+
+
+def test_a_job_that_delivers_on_the_local_board_tells_its_requester_it_is_ready(deployment,
+                                                                                heard):
+    """#411's inventory marked it "to verify": on the local row a delivered card stayed OPEN in
+    Done, and `Ticket.delivered` asks for a closed card — so the requester was never told "it is
+    ready" until a person closed the card by hand. Measured true on #413. A job settled DONE is
+    `delivered`: the card closes as delivered, and the delivery it completes is announced."""
+    from openfactory.memory.ledger import ACCEPTANCE, DELIVERY
+
+    ref = _filed(deployment)
+    _promoted(deployment, ref)
+    _at_the_merge_gate(deployment, ref)
+
+    assert _settle(deployment, ref, "done", note="Merged, and nothing follows the merge.") == "done"
+
+    ticket = _tracker(deployment).get_ticket(ref)
+    assert (ticket.state, ticket.state_reason) == ("closed", "completed")
+    [delivery] = _loops(deployment, DELIVERY)
+    assert not delivery.waiting and delivery.outcome == "delivered", delivery
+    assert [x for x in _loops(deployment, ACCEPTANCE) if x.waiting], "nobody was asked if it works"
+    told = [m.text for m in heard if m.conversation == CONVERSATION]
+    assert any("is ready" in t for t in told), told
+    [row] = _history(deployment, ref)
+    assert row.event == "delivered" and row.before == "waiting_on_a_person"
+    assert any("nothing follows the merge" in s for s in _said_on_the_card(deployment, ref))
+
+
+def test_a_parked_job_moves_its_card_and_says_why_on_every_row(deployment):
+    from openfactory.contracts import JobState
+    from openfactory.runtime.temporal.activities import mark_needs_action
+    from openfactory.runtime.temporal.io import HoldSyncInput
+
+    ref = _filed(deployment, by_the_product_role=False)
+    _tracker(deployment).set_state(ref, JobState.IMPLEMENTING)
+
+    asyncio.run(mark_needs_action(HoldSyncInput(project="acme", issue=ref.lstrip("#"),
+                                                state="on_hold", note="the CI is red twice")))
+
+    assert _column(deployment, ref) == "needs_action"
+    assert any("the CI is red twice" in s for s in _said_on_the_card(deployment, ref)), (
+        "the local board dropped the park's reason, as `set_state(reason=…)` did")
+    [row] = _history(deployment, ref)
+    assert row.event == "parked" and row.after == "waiting_on_a_person"
+
+
+def test_the_jobs_settle_after_a_persons_discard_writes_nothing_twice(deployment, heard):
+    """A person's discard goes through the door from the row; the job's own settle arrives after
+    it and finds the card where the discard left it — one comment, one transition."""
+    from openfactory.lifecycle import CardEvent, transition
+
+    ref = _filed(deployment)
+    _at_the_merge_gate(deployment, ref)
+    transition(deployment, ref, CardEvent.DISCARDED, by="Rob", why="not now")
+
+    assert _settle(deployment, ref, "skipped", note="PR closed without merging by Rob") == \
+        "already-settled"
+    assert len(_said_on_the_card(deployment, ref)) == 1
+    assert [r.event for r in _history(deployment, ref)] == ["discarded"]
