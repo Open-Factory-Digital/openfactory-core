@@ -2974,6 +2974,8 @@ function pvOpen(sid){
 //: The product beside the conversation: its tabs, and whether it is shown at all.
 function pvTab(k){
   _pv.tab=k;try{localStorage.setItem("of.prod.tab",k)}catch(e){}
+  // THE PERSON'S OWN "SHOW ME NOW" (#440): opening the Board reads it, never a clock
+  if(k==="board")pvBoardLoad();
   if(typeof document.querySelectorAll!=="function")return;
   document.querySelectorAll(".pv-tab").forEach(b=>b.classList.toggle("on",b.dataset.tab===k));
   document.querySelectorAll(".pv-pane").forEach(p=>p.classList.toggle("on",p.dataset.pane===k));
@@ -3133,10 +3135,13 @@ function pchatFrame(m){
 }
 //: THE ROLE SPOKE — an event announced, an answer given — so what it owes may have changed: the
 //: product page reads its agenda again (#267 slice 3). Once per reply, never on a clock; nothing
-//: on any other page, which shows no agenda.
+//: on any other page, which shows no agenda. AND ITS BOARD (#440): the role files, closes and
+//: removes cards by speaking, and a board read once when the page opened said "No open cards"
+//: beside a card the role had just filed and a job had already taken to its pull request.
 function pchatAgendaMoved(){
   if(typeof _prod!=="object"||curProduct()===null||_prod.project!==_pc.project)return;
   loadAgenda();
+  pvBoardLoad();
 }
 //: One message up the socket, WITH THE PAGE IT WAS WRITTEN ON. Shown at once, marked as on its way
 //: until the server acknowledges it; `false` when it could not be sent, so the box keeps the words.
