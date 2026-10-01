@@ -1096,6 +1096,8 @@ async def _stop(*, project: str, issue: str, by: Actor, reason: str = "") -> Out
     the engine's half and runs inside it, and what follows is `stopped`'s row of the table — which
     is also what tells the requester and takes the preview down, which the settle never did.
     """
+    import asyncio
+
     from openfactory.lifecycle import CardEvent
     from openfactory.runtime.temporal import view as tv
     from openfactory.util.causes import first_message
@@ -1151,11 +1153,33 @@ async def _stop(*, project: str, issue: str, by: Actor, reason: str = "") -> Out
     if bad:
         return bad
     settled = not moved.outcome("column").startswith("failed")
+    await asyncio.to_thread(_journal_the_stop, found, issue, by=by, why=why)
     return _after_the_door(moved, done(
         f"#{issue}: stopped by {by} — the floor is free. This does not resume: the ticket goes "
         f"back to the board and a fresh job starts from the beginning, so whatever that run had "
         f"in flight is gone.",
         project=found.name, issue=issue, by=str(by), reason=why, freed=True, settled=settled))
+
+
+def _journal_the_stop(project, issue: str, *, by: Actor, why: str) -> None:
+    """The job's journal says how it ended (#413). `record_outcome` writes that line when
+    `JobWorkflow.run` returns, and a terminated workflow never returns — so a stopped job's
+    journal ended one event short of the only fact anybody needed, exactly the lie
+    `record_outcome` was written to end. Best-effort: the stop stands whatever the journal says."""
+    try:
+        from openfactory.contracts import JobState
+        from openfactory.observability.events import JobEvent, now_iso
+        from openfactory.observability.registry import journal_for
+        from openfactory.paths import events_file
+
+        journal_for(events_file(project, issue)).emit(JobEvent(
+            ts=now_iso(), job_id=f"#{issue}", ticket_id=f"#{issue}", kind="state",
+            message=JobState.SKIPPED.value,
+            data={"reason": f"stopped by {by}" + (f": {why}" if why else ""), "by": str(by)}))
+    except Exception:  # noqa: BLE001 — the stop stands; only its journal line is missing
+        log.warning("OPENFACTORY_STOP_NOT_JOURNALLED project=%s issue=%s — the job was stopped "
+                    "and its journal does not say so", getattr(project, "name", "?"), issue,
+                    exc_info=True)
 
 
 #: What a job may be waiting for, and HOW A PERSON ANSWERS IT — in words they can act on.

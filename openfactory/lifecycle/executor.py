@@ -66,7 +66,7 @@ def _one(ports, row: record.Row, effect: Effect, *, carried: bool) -> str:
         # second one here is the double comment D6 ends
         return "carried by the close" if carried else ports.comment(row.card, note)
     if isinstance(effect, Loops):
-        return ports.loops(row.card, effect.action)
+        return ports.loops(row.card, effect.action, about=str(facts.get("about") or ""))
     if isinstance(effect, Tell):
         return ports.tell(row.card, notice=effect.notice, event_id=row.event_id,
                           title=str(facts.get("title") or ""),

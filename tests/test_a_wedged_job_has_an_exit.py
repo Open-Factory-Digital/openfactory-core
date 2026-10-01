@@ -105,6 +105,10 @@ class _Client:
         return self.handle
 
 
+class _Project:
+    name = "p"
+
+
 class _Tracker:
     """The card's tracker, recording what the card's door asked of it (ADR-0055)."""
 
@@ -137,10 +141,7 @@ def engine(monkeypatch, tracker):
     """A running job at no gate, with the project resolved and the tracker stubbed out."""
     from openfactory.actions import catalog
 
-    class Project:
-        name = "p"
-
-    monkeypatch.setattr(catalog, "_board_pair", lambda name: (Project(), tracker, None, None))
+    monkeypatch.setattr(catalog, "_board_pair", lambda name: (_Project(), tracker, None, None))
 
     def _connect(handle):
         async def _c():
@@ -178,6 +179,16 @@ def test_a_wedged_job_is_terminated_and_the_floor_is_freed(engine, tracker):
     assert tracker.states == [("87", JobState.SKIPPED)], tracker.states
     [(_, said)] = tracker.comments
     assert "Rob" in said and "rebuilt" in said, said
+    # AND THE JOB'S JOURNAL SAYS HOW IT ENDED (#413): a terminated workflow never returns, so
+    # `record_outcome` never wrote it, and the journal stopped one event short
+    import json
+
+    from openfactory.paths import events_file
+
+    journal = [json.loads(line) for line in
+               events_file(_Project(), "87").read_text(encoding="utf-8").splitlines() if line]
+    ended = [e for e in journal if e["kind"] == "state" and e["message"] == JobState.SKIPPED.value]
+    assert ended and "stopped by Rob" in (ended[-1].get("data") or {}).get("reason", ""), journal
 
 
 @pytest.mark.parametrize("gate,verb", [

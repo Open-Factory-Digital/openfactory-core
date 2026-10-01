@@ -49,9 +49,10 @@ NOT_CALLERS = {
                             "deployment's card",
 }
 
-#: THE CEILING AND THE BASELINE, committed. Slice 1 ends at 27: the writers slices 2 and 3 own.
+#: THE CEILING AND THE BASELINE, committed. Slice 1 ended at 27: the writers slices 2 and 3 own;
+#: 25 since #413's first part moved the card-question sweep through the door.
 #: Each slice lowers the ceiling and drops what it moved in from both; slice 3 ends at zero.
-CEILING = 27
+CEILING = 25
 BASELINE = frozenset({
     ("openfactory/runtime/temporal/activities.py", "settle_ticket", "set_state"),
     ("openfactory/runtime/temporal/activities.py", "_apply", "set_state"),
@@ -60,9 +61,6 @@ BASELINE = frozenset({
     ("openfactory/runtime/temporal/activities.py", "_do_split", "close_ticket"),
     ("openfactory/runtime/temporal/activities.py", "_do_gather", "set_state"),
     ("openfactory/runtime/temporal/activities.py", "_do_gather", "open_loop"),
-    ("openfactory/runtime/temporal/activities.py", "_do_card_question_sweep", "set_state"),
-    ("openfactory/runtime/temporal/activities.py", "_do_card_question_sweep",
-     "close_by_observation"),
     ("openfactory/runtime/temporal/activities.py", "scan_todo", "set_status"),
     ("openfactory/runtime/temporal/activities.py", "_a_card_was_finished", "card_finished"),
     ("openfactory/runtime/temporal/activities.py", "_product_followup", "deliver"),

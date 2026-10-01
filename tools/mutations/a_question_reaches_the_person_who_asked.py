@@ -32,10 +32,11 @@ MUTATIONS = [
      "        recorded = bool(result.ok or result.existed)\n",
      "        recorded = bool(result.ok)\n"),
 
-    ("the loop closes on a card that could not be returned",
-     "openfactory/runtime/temporal/activities.py",
-     "        if moved is False:\n",
-     "        if False:\n"),
+    # RETIRED 2026-10-01 (#413): "the loop closes on a card that could not be returned" — the
+    # answer goes through the card's door now, which records it and closes the question whatever
+    # the tracker did with the move; the move that did not land is a failed effect the hourly round
+    # applies again (`test_a_card_that_could_not_be_returned_is_returned_by_the_next_round`,
+    # and `412_…`'s "the sweep never applies what failed again").
 
     ("the question is chased every round",
      "openfactory/runtime/temporal/activities.py",

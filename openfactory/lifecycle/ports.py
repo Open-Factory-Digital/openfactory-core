@@ -34,6 +34,16 @@ class Seen:
     open: bool = True
 
 
+#: How a tracker says a card was closed as NOT delivered, in its own word (`Ticket.state_reason`).
+NOT_DELIVERED = frozenset({"not_planned", "not planned", "duplicate"})
+
+
+def withdrawn(ticket) -> bool:
+    """Whether the tracker SAYS `ticket` was closed as not delivered — False when it says it was
+    finished, and False when it cannot say."""
+    return str(getattr(ticket, "state_reason", "") or "").lower() in NOT_DELIVERED
+
+
 class Unreadable(RuntimeError):
     """The tracker or the board could not be read — a state, not "the card is not there"."""
 
@@ -140,9 +150,9 @@ class Ports:
         from openfactory.adapters.board.base import stage_key
         from openfactory.contracts.refs import canonical_ref
 
-        reason = str(getattr(ticket, "state_reason", "") or "").lower()
-        if reason in ("not_planned", "not planned", "duplicate"):
+        if withdrawn(ticket):
             return State.CLOSED
+        reason = str(getattr(ticket, "state_reason", "") or "").lower()
         if reason == "completed":
             return State.DELIVERED
         try:
@@ -183,7 +193,7 @@ class Ports:
         # THE ONE COLUMN A PERSON'S ENDING WRITES, through the port's one writer of a card's state.
         # No `reason`: the door's comment is its own effect, and `set_state` writing it too is the
         # double comment D6 ends (two rows write `reason`, the local board drops it).
-        states = {"backlog": JobState.SKIPPED}
+        states = {"backlog": JobState.SKIPPED, "todo": JobState.TODO}
         if self.tracker.set_state(card, states[key]) is False:
             raise RuntimeError(f"the tracker did not move the card to {key}")
         return "moved"
@@ -211,9 +221,11 @@ class Ports:
 
     # ── the promise, the conversation, the preview, the snapshot ───────────────────────────────
 
-    def loops(self, card: str, action: str) -> str:
+    def loops(self, card: str, action: str, *, about: str = "") -> str:
         from openfactory.lifecycle import loops
 
+        if action in ("answer", "moot"):
+            return loops.question(self.project, card, about=about, answered=action == "answer")
         if action != "cancel":
             return loops.restore(self.project, card)
         said, _still = loops.cancel(self.project, card)

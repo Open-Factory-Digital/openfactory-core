@@ -43,8 +43,8 @@ def cancel(project, card: str) -> tuple[str, bool]:
         CANCELLED,
         CANCELLED_CARDS,
         CARD_QUESTION,
-        CLOSED,
         DELIVERY,
+        close_by_observation,
         fold,
     )
     from openfactory.product.followup import cancelled_cards
@@ -56,22 +56,46 @@ def cancel(project, card: str) -> tuple[str, bool]:
         if not loop.waiting:
             continue
         if loop.kind == CARD_QUESTION and _bare(loop.subject) == _bare(card):
-            rows.append(replace(loop, state=CLOSED, outcome=CANCELLED))
+            rows += close_by_observation([loop], {(loop.kind, loop.subject, loop.about):
+                                                  CANCELLED})
             closed += 1
         elif loop.kind == DELIVERY and card in _issues(loop):
             gone = cancelled_cards(loop) | {card}
             ctx = {**(loop.context or {}), CANCELLED_CARDS: _joined(gone)}
             if _issues(loop) - gone:
-                rows.append(replace(loop, context=ctx))
+                rows.append(replace(loop, context=ctx))      # still waiting, on the rest
                 narrowed += 1
             else:
-                rows.append(replace(loop, context=ctx, state=CLOSED, outcome=CANCELLED))
+                # the ledger's own closer, over the loop as it now reads (which card went)
+                rows += close_by_observation([replace(loop, context=ctx)], {
+                    (loop.kind, loop.subject, loop.about): CANCELLED})
                 closed += 1
     if not rows:
         return "nothing was promised about it", False
     if loop_store.write(name, rows) < len(rows):
         raise RuntimeError("the ledger did not take every row")
     return f"{closed} closed as cancelled, {narrowed} {STILL_WAITING}", bool(narrowed)
+
+
+def question(project, card: str, *, about: str, answered: bool) -> str:
+    """Close the question the factory asked on `card` (`about` names which, `""` every one): as
+    answered, or as cancelled when the card is gone and nobody will ever pick it up (#413)."""
+    from openfactory.memory import store as loop_store
+    from openfactory.memory.ledger import CANCELLED, CARD_QUESTION, close_by_observation, fold
+
+    name = getattr(project, "name", "") or ""
+    open_now = [loop for loop in fold(loop_store.read(name))
+                if loop.waiting and loop.kind == CARD_QUESTION
+                and _bare(loop.subject) == _bare(card) and (not about or loop.about == about)]
+    # THE LEDGER'S OWN CLOSER, never a hand-built closed row: `close_by_observation` is the one
+    # place a loop is closed, and what keeps a settled outcome from being written twice
+    rows = close_by_observation(open_now, {
+        (x.kind, x.subject, x.about): "answered" if answered else CANCELLED for x in open_now})
+    if not rows:
+        return "no question was open on it"
+    if loop_store.write(name, rows) < len(rows):
+        raise RuntimeError("the ledger did not take every row")
+    return f"{len(rows)} closed as {'answered' if answered else CANCELLED}"
 
 
 def restore(project, card: str) -> str:

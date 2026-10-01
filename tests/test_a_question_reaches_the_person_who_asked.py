@@ -180,11 +180,19 @@ def test_a_person_s_answer_becomes_a_concept_in_their_name():
 
 
 class _Tracker:
-    def __init__(self, comments, *, move=True):
+    def __init__(self, comments, *, move=True, state="open"):
         self._comments = comments
         self.said: list[tuple[str, str]] = []
         self.moves: list[tuple[str, JobState]] = []
         self._move = move
+        self.state = state
+
+    def get_ticket(self, ref):
+        """The card as the tracker holds it — what the card's door reads before an answer moves it
+        (ADR-0055, #413)."""
+        from types import SimpleNamespace
+
+        return SimpleNamespace(state=self.state, title="Late fees", raw="", state_reason="")
 
     def comments(self, ref, *, limit=0):
         return self._comments
@@ -226,11 +234,11 @@ def _loop(ts="2026-09-06T10:00:00+00:00", state=OPEN):
 
 
 class _Sweep:
-    def __init__(self, monkeypatch, *, loops, comments, result=None, move=True):
+    def __init__(self, monkeypatch, *, loops, comments, result=None, move=True, state="open"):
         import openfactory.memory.store as loop_store
         import openfactory.product.module as product
 
-        self.tracker = _Tracker(comments, move=move)
+        self.tracker = _Tracker(comments, move=move, state=state)
         self.module = _Module(result or WriteResult(ok=True, detail="written"))
         self.written: list = []
         self.into_bundle: list = []
@@ -294,10 +302,53 @@ def test_a_write_that_failed_keeps_the_answer_on_the_card_and_says_so(monkeypatc
     assert "card" in s.tracker.said[0][1] and "protegida" in s.tracker.said[0][1]
 
 
-def test_a_card_that_could_not_be_returned_stays_open_for_the_next_round(monkeypatch):
+def test_a_card_that_could_not_be_returned_is_returned_by_the_next_round(monkeypatch):
+    """The answer is the person's, and it is recorded whatever the tracker did with the move. The
+    move that did not land is a failed effect of the card's transition (ADR-0055 D5), applied
+    again by the hourly round — where this round used to leave the whole answer for the next one
+    and say nothing on the card."""
+    from openfactory.lifecycle import converge, record
+    from openfactory.observability.metrics import InMemoryMetricsSink
+
+    sink = InMemoryMetricsSink()
+    monkeypatch.setattr(record, "keyed_sink", lambda: sink)
     s = _Sweep(monkeypatch, loops=[_loop()], comments=[_ANSWER], move=False)
-    out = s.run()
-    assert out.startswith("answered:0") and not s.written and not s.tracker.said
+
+    assert s.run().startswith("answered:1")
+    assert s.written[0].state == CLOSED and s.tracker.said, "the answer was not recorded"
+    [row] = record.read(sink, "acme", "41").rows
+    assert row.outcome(row.effects.index("column:todo")).startswith("failed")
+
+    s.tracker._move = True
+    s.tracker.moves.clear()
+    from datetime import UTC, datetime, timedelta
+
+    from openfactory.lifecycle import executor
+
+    monkeypatch.setattr(executor, "PENDING_GRACE", timedelta(0))
+    converge(type("P", (), {"name": "acme", "language": ""})(),
+             ports=_ports_over(s.tracker))
+    assert s.tracker.moves == [("41", JobState.TODO)], s.tracker.moves
+    del UTC, datetime
+
+
+def _ports_over(tracker):
+    from openfactory.lifecycle.ports import Ports
+
+    project = type("P", (), {"name": "acme", "language": "",
+                             "tracker": type("T", (), {"kind": "github"})()})()
+    return Ports(project, tracker=tracker)
+
+
+def test_an_answer_never_puts_a_card_that_is_GONE_back_in_the_queue(monkeypatch):
+    """The error the inventory found (#411): the sweep returned the card to TO-DO from the ledger
+    alone. A card closed while its question waited — on the vendor's own screen, by a person, by a
+    sweep — stays closed, and its question closes as cancelled: nobody will pick the card up."""
+    s = _Sweep(monkeypatch, loops=[_loop()], comments=[_ANSWER], state="closed")
+    s.run()
+    assert s.tracker.moves == [], "a closed card was put back in the queue"
+    (row,) = s.written
+    assert row.state == CLOSED and row.outcome == "cancelled"
 
 
 def test_no_answer_is_chased_once_after_two_days_and_never_again(monkeypatch):

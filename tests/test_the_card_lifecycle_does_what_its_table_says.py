@@ -97,7 +97,7 @@ class Ports:
     def comment(self, card, text):
         return self._do("comment", card, text)
 
-    def loops(self, card, action):
+    def loops(self, card, action, *, about=""):
         return self._do("loops", card, action)
 
     def tell(self, card, *, notice, event_id, title, removed, opened_by, conversation):
@@ -168,7 +168,8 @@ def test_every_decided_event_does_exactly_what_its_row_says(event, delivered):
     moved, ports = _drive(event, _a_state_it_happens_in(event), open_card=open_card,
                           facts=facts)
 
-    row = consequences(event, facts)
+    # the facts the door decided with — it adds where the card was (`before`)
+    row = consequences(event, moved.facts)
     carried = any(isinstance(e, Close | Remove) for e in row)
     assert moved.ok, moved.refused
     assert [_shape(c) for c in ports.calls] == \
@@ -383,3 +384,18 @@ def test_the_rows_keep_what_the_boards_own_gates_refused():
         assert allowed(before_pickup, CardEvent.REMOVED) is None
         assert allowed(before_pickup, CardEvent.DISCARDED) is not None, (
             "a card no job has is 'discarded' — there is no pull request to close")
+
+
+def test_an_answer_moves_only_a_card_still_parked_on_its_question():
+    """#413: the answer to a card's question returns it to the queue from the park the question put
+    it in — never a card somebody already moved on, and never one that is gone, whose question
+    closes as cancelled because nobody will pick the card up."""
+    for parked in ("waiting_on_a_person", ""):
+        row = consequences(CardEvent.QUESTION_ANSWERED, {"before": parked})
+        assert Column("todo") in row and Loops("answer") in row, parked
+    for moved_on in ("backlog", "todo", "running", "delivered"):
+        row = consequences(CardEvent.QUESTION_ANSWERED, {"before": moved_on})
+        assert not any(isinstance(e, Column) for e in row), f"{moved_on}: moved back"
+        assert Loops("answer") in row
+    for gone in ("closed", "removed"):
+        assert consequences(CardEvent.QUESTION_ANSWERED, {"before": gone}) == (Loops("moot"),)

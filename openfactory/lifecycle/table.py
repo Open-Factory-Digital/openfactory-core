@@ -112,6 +112,11 @@ ALLOWED: dict[CardEvent, frozenset[State]] = {
     # a card closed as not delivered, or one closed as delivered — and only once it IS closed
     # (`ONLY_ON_A_CLOSED_CARD`): a finished card nobody closed is `delivered` too, and open
     CardEvent.REOPENED: frozenset({State.CLOSED, State.DELIVERED}),
+    # AN ANSWER IS RECORDED WHEREVER THE CARD IS (#413). What follows depends on where that is —
+    # back to the queue only from the park the question put it in; a card that is gone closes its
+    # question as cancelled and is NEVER put back in the queue, the error the inventory found:
+    # the sweep returned a closed card to TO-DO from the ledger alone (`consequences`)
+    CardEvent.QUESTION_ANSWERED: frozenset(State),
 }
 
 #: The events that need the card CLOSED on its tracker, whatever its state says. `delivered` is a
@@ -126,7 +131,7 @@ ONLY_ON_A_CLOSED_CARD: frozenset[CardEvent] = frozenset({CardEvent.REOPENED})
 #: without any board.
 WHERE_NO_BOARD_PLACES_IT: frozenset[CardEvent] = frozenset({
     CardEvent.DISCARDED, CardEvent.SKIPPED, CardEvent.STOPPED, CardEvent.CLOSED,
-    CardEvent.WITHDRAWN, CardEvent.REMOVED})
+    CardEvent.WITHDRAWN, CardEvent.REMOVED, CardEvent.QUESTION_ANSWERED})
 
 
 @dataclass(frozen=True)
@@ -186,7 +191,8 @@ class Comment:
 class Loops:
     """The card's share of the product role's promises (D10). `cancel`: the card is gone, so its
     questions and its part of a delivery close as `cancelled`. `restore`: a cancelled card is
-    back, so is its part of the delivery it was cancelled from."""
+    back, so is its part of the delivery it was cancelled from. `answer`: the question the card
+    waited on closes as answered; `moot`: it closes as cancelled — the card is gone (#413)."""
 
     action: str
 
@@ -217,6 +223,10 @@ STOPPED_WORK, WILL_NOT_BE_BUILT, BACK_ON_THE_BOARD = "stopped_work", "will_not_b
 
 _GONE = (Comment(), Loops("cancel"), Tell(WILL_NOT_BE_BUILT), Preview("stop"), Forget())
 
+#: Where a card is when an answer to its question arrives, read from the transition's facts.
+_GONE_STATES = frozenset({State.CLOSED.value, State.REMOVED.value})
+_STILL_PARKED = frozenset({State.WAITING_ON_A_PERSON.value, ""})
+
 
 def consequences(event: CardEvent, facts: Mapping[str, object] | None = None) -> tuple[Effect, ...]:
     """What follows `event`, in the order it is applied. Exhaustive over the events a slice has
@@ -239,6 +249,14 @@ def consequences(event: CardEvent, facts: Mapping[str, object] | None = None) ->
         return (Remove(), *_GONE)
     if event is CardEvent.REOPENED:
         return (Reopen(), Comment(), Loops("restore"), Tell(BACK_ON_THE_BOARD), Forget())
+    if event is CardEvent.QUESTION_ANSWERED:
+        before = str(facts.get("before") or "")
+        if before in _GONE_STATES:
+            return (Loops("moot"),)
+        if before in _STILL_PARKED:
+            return (Column("todo"), Comment(), Loops("answer"), Forget())
+        # somebody already moved it on — answered, and left where it is
+        return (Comment(), Loops("answer"))
     raise KeyError(f"no slice has decided what follows {event.value!r} — it is refused in every "
                    f"state until one does (ADR-0055 D2)")
 
@@ -254,6 +272,9 @@ def after(event: CardEvent, facts: Mapping[str, object] | None = None) -> State:
         return State.CLOSED
     if event is CardEvent.REMOVED:
         return State.REMOVED
+    if event is CardEvent.QUESTION_ANSWERED:
+        before = str(facts.get("before") or "")
+        return State.TODO if before in _STILL_PARKED else State(before)
     raise KeyError(f"no slice has decided where {event.value!r} leaves a card")
 
 

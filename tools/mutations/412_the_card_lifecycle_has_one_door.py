@@ -143,8 +143,8 @@ MUTATIONS = [
 
     # ── the ports ──────────────────────────────────────────────────────────────────────────────
     ("a card's ending moves it to the queue instead of the backlog", PORTS,
-     '        states = {"backlog": JobState.SKIPPED}\n',
-     '        states = {"backlog": JobState.TODO}\n'),
+     '        states = {"backlog": JobState.SKIPPED, "todo": JobState.TODO}\n',
+     '        states = {"backlog": JobState.TODO, "todo": JobState.TODO}\n'),
 
     ("a card nobody asked for in a conversation is announced to the product's room", PORTS,
      "        if not opened_by and not conversation:\n",
@@ -192,7 +192,7 @@ MUTATIONS = [
      GUARD_TEST),
 
     ("the ceiling is raised quietly, so the list can grow", GUARD_TEST,
-     "CEILING = 27\n",
-     "CEILING = 28\n",
+     "CEILING = 25\n",
+     "CEILING = 26\n",
      GUARD_TEST),
 ]

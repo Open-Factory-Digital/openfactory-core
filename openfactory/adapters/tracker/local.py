@@ -120,6 +120,7 @@ class LocalTracker:
         ticket.labels = [lbl.lower() for lbl in labels]
         ticket.author = row["author"] or None
         ticket.state = row["state"] or "open"
+        ticket.state_reason = row["closed_reason"] or ""
         # The card's own record wins over anything the body's prose says: the requester is written
         # when the card is opened and a person editing the description must not silently reassign
         # who the factory asks (ADR-0048 §5).
