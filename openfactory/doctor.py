@@ -351,11 +351,12 @@ class Probes:
     #: How this machine searches and reads a product (`ReadingState`) — None for a project with no
     #: product module, whose documents nobody reads (#337). None = an older Probes, too.
     product_reading: Callable[[], ReadingState] | None = None
-    #: `(per_role_bytes, overflow_note)` — how many BYTES each declared document role would inline
-    #: into every agent pass (after `_MAX_DOC_CHARS` truncation), and, when that total would not fit
-    #: a box that cannot hand the prompt over off argv, the note that says so (#7). The size a
-    #: refusal (#360) will one day quote, made knowable before the first pickup. None = an older
-    #: Probes, or a checkout/manifest this deployment could not read; the check is skipped.
+    #: `(per_role_bytes, note)` — how many BYTES each declared document role would inline into
+    #: every agent pass (after `_MAX_DOC_CHARS` truncation), and, on a deployment whose prompt
+    #: rides the command line, how the prompt a pass carries for a blank card compares with the line
+    #: the pass refuses at (#7, #418). The size a refusal (#360) will one day quote, made knowable
+    #: before the first pickup. None = an older Probes, or a checkout/manifest this deployment could
+    #: not read; the check is skipped.
     inlined_documents: Callable[[], tuple[dict[str, int], str] | None] | None = None
 
 
@@ -452,10 +453,11 @@ def diagnose(probes: Probes) -> Report:
 def _documents(p: Probes) -> Finding:
     """How many bytes the project's declared documents would inline into every pass (#7).
 
-    NEVER A FAIL — it reports what IS. A note (not a remedy) fires only when the total would not fit
-    a box that cannot hand the prompt over off the command line: the byte count, the per-argument
-    limit and which harnesses cannot read a staged prompt. A deployment on a staging box with a
-    stdin-capable harness is unaffected and is told nothing is wrong, because nothing is."""
+    NEVER A FAIL — it reports what IS. A note (not a remedy) appears only where the prompt cannot be
+    handed over off the command line: whether every pass would refuse it, or else how close it
+    comes and how many bytes the card has left (#418), and which harnesses cannot read a staged
+    prompt. A deployment on a staging box with a stdin-capable harness is unaffected and is told
+    nothing is wrong, because nothing is."""
     from openfactory.orchestrator.context import inlined_document_summary
 
     assert p.inlined_documents is not None
@@ -2383,7 +2385,7 @@ def probes_for(project) -> Probes:
                                                             reached.why)
 
     def _inlined_documents() -> tuple[dict[str, int], str] | None:
-        """Per-role inlined bytes and the overflow note, from this deployment's box + harness (#7).
+        """Per-role inlined bytes and the note, from this deployment's box + harness (#7, #418).
 
         Read from the checkout the job would use, and the box the poller runs — `default_sandbox()`,
         the same reader `_box_gate`/`_sandbox` above ask. Whether that box stages input is asked of
@@ -2395,6 +2397,7 @@ def probes_for(project) -> Probes:
         from openfactory.orchestrator.context import (
             inlined_document_bytes,
             inlined_document_overflow,
+            prompt_floor_bytes,
         )
         from openfactory.policy.profiles import ProfileError, resolve_profile
 
@@ -2418,7 +2421,11 @@ def probes_for(project) -> Probes:
                      getattr(project, "name", "?"), str(exc)[:120])
             return None
         per_role = inlined_document_bytes(manifest, pathlib.Path(root), profile=profile)
-        note = inlined_document_overflow(sum(per_role.values()),
+        # THE PROMPT A PASS CARRIES, NOT THE DOCUMENTS ALONE (#418): the note is decided on what
+        # `stage_prompt` will measure — the documents behind the role's instructions and the
+        # brief, quoted — so it cannot call fitting a project the pass refuses at pickup.
+        floor = prompt_floor_bytes(manifest, pathlib.Path(root), profile=profile)
+        note = inlined_document_overflow(sum(per_role.values()), prompt_bytes=floor,
                                          stages_input=_box_stages_input(_sandbox()),
                                          harness=harness_kind(project, "executor"))
         return per_role, note

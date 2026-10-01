@@ -432,32 +432,95 @@ def inlined_document_summary(per_role: dict[str, int]) -> str:
             f"{_MAX_DOC_CHARS:,}-char truncation ({parts})")
 
 
-def inlined_document_overflow(total: int, *, stages_input: bool, harness: str) -> str:
-    """The note to add when `total` bytes would NOT fit a box that cannot hand the prompt over off
-    the command line — the byte count, the per-argument limit, and the harnesses that cannot read a
-    staged prompt. `""` when there is nothing to say: the documents fit `MAX_ARG_STRLEN`, OR this
-    box stages input AND this harness can read it there (a staging box with a stdin-capable harness
-    is unaffected and must not be told it has a problem, #7).
+#: The passes EVERY ticket runs with the documents inlined, each behind its own role prompt: the
+#: planner, the first one a pickup starts, and the executor, which every repair reuses and which
+#: carries the plan on top. Every harness builds both as `f"{role}\n\n{ticket_brief(context)}"`
+#: (`claude_code.py`, `codex.py`, `kimi.py`, `opencode.py`); the sizer and the recovery pass carry
+#: the same brief behind shorter instructions, so the larger of these two bounds them as well.
+_PASSES_THAT_INLINE_THE_DOCUMENTS = ("planner", "executor")
+
+#: A card with nothing written on it. The brief's own text around it is real and the card's words
+#: are zero, so every prompt a pass will ever carry for this project is at least this long —
+#: and nothing is invented to stand in for a ticket that does not exist yet (#418).
+_BLANK_CARD = Ticket(id="", title="", objective="", repo="")
+
+
+def prompt_floor_bytes(manifest: Manifest, repo_path: Path, *,
+                       profile: ResolvedProfile | None = None) -> int:
+    """The BYTES, quoted the way the shell will carry them, of the prompt a pass hands its CLI for
+    this project and a BLANK card — the floor every ticket's prompt stands on (#418).
+
+    THE NOTE USED TO MEASURE THE DOCUMENTS ALONE, against the raw `MAX_ARG_STRLEN`, while the pass
+    refuses on its WHOLE prompt, quoted, against that limit less the command's margin
+    (`ARGV_PROMPT_CEILING`). Measured on this tree, no operator tier, ADRs of 8,000 characters: the
+    planner's instructions and the brief around the documents add 7,704 bytes once quoted, and the
+    margin 4,096 more — so a corpus from 119,209 to 131,072 bytes, an 11,864-byte window, read as
+    fitting and was refused at pickup with any card at all.
+
+    BUILT BY THE JOB'S OWN CODE, so it is that prompt and not a second estimate of it:
+    `build_context` reads the documents and the architecture index under `profile`, `ticket_brief`
+    renders them behind each pass's role prompt, and `_argv_bytes` measures what `stage_prompt`
+    measures. What it leaves out is what no diagnostic can read before a ticket exists — the
+    card's words, its plan and the knowledge map (`knowledge_map=""` loads none). The note says
+    how much room those have left instead of inventing a ticket to fill it. The profile is owed
+    by the caller exactly as `inlined_document_bytes` owes it."""
+    from openfactory.adapters.agent.base import _argv_bytes, ticket_brief
+    from openfactory.adapters.agent.roles import role_prompt
+
+    context = build_context(manifest, Path(repo_path), _BLANK_CARD, knowledge_map="",
+                            profile=profile)
+    brief = ticket_brief(context)
+    return max(_argv_bytes(f"{role_prompt(role)}\n\n{brief}")
+               for role in _PASSES_THAT_INLINE_THE_DOCUMENTS)
+
+
+def inlined_document_overflow(total: int, *, prompt_bytes: int, stages_input: bool,
+                              harness: str) -> str:
+    """The note for a deployment whose prompt travels ON THE COMMAND LINE — a box with no staging
+    channel, or a harness that cannot read a staged prompt. `""` for every other deployment: a
+    staging box with a stdin-capable harness is unaffected and must not be told it has a problem
+    (#7).
+
+    `total` is the documents' own bytes, the report's sum; `prompt_bytes` is `prompt_floor_bytes`,
+    the documents behind the role's instructions and the brief, quoted, for a blank card. The line
+    is `ARGV_PROMPT_CEILING`, the one `stage_prompt` refuses at — not the raw limit the documents
+    alone were measured against, under which a project read as fitting and was refused at pickup
+    (#418). Past it, EVERY pass would refuse the prompt whatever the card says. Within it, the
+    note says how close the floor comes, as a percentage, and how many bytes the card, its plan
+    and the knowledge map have left between them: those are unknown before a ticket exists, so
+    the operator is given the number to judge them by rather than a guess at them.
 
     A NOTE, NEVER A REFUSAL, and NO BOUND INVENTED. #360 already refuses an undeliverable prompt BY
     NAME at the moment a pass would start; this only makes the size knowable BEFORE then, from the
     manifest and the checkout alone. It reports what is; #364 decides whether a bound should exist.
     """
-    from openfactory.adapters.agent.base import HARNESSES_WITHOUT_STAGED_PROMPT, MAX_ARG_STRLEN
+    from openfactory.adapters.agent.base import (
+        ARGV_PROMPT_CEILING,
+        HARNESSES_WITHOUT_STAGED_PROMPT,
+        MAX_ARG_STRLEN,
+    )
 
-    if total <= MAX_ARG_STRLEN:
-        return ""
     reads_staged = harness not in HARNESSES_WITHOUT_STAGED_PROMPT
     if stages_input and reads_staged:
         return ""
     cannot = ", ".join(f"`{h}`" for h in sorted(HARNESSES_WITHOUT_STAGED_PROMPT))
     why = ("this box offers no staging channel" if not stages_input
            else f"the {harness!r} harness cannot read a staged prompt")
-    return (
-        f"the declared documents alone inline {total:,} bytes, past Linux's "
-        f"{MAX_ARG_STRLEN:,}-byte per-argument limit (`MAX_ARG_STRLEN`) — and {why}, so a pass "
-        f"would refuse the prompt BY NAME rather than deliver it. A box that stages input off argv "
-        f"(the worktree and container boxes do) with a harness whose CLI can read it there is "
-        f"unaffected; {cannot}-based harnesses cannot read a staged prompt. Nothing is capped here "
-        f"— this is the size before a ticket spends anything."
-    )
+    measured = (f"the declared documents inline {total:,} bytes, and behind the role's "
+                f"instructions and the brief a pass's prompt is {prompt_bytes:,} bytes once quoted "
+                f"before a card is written")
+    limit = (f"the {ARGV_PROMPT_CEILING:,} bytes one argument can carry here (Linux's "
+             f"{MAX_ARG_STRLEN:,}-byte per-argument limit, `MAX_ARG_STRLEN`, less the rest of the "
+             f"command)")
+    unaffected = (f"A box that stages input off argv (the worktree and container boxes do) with a "
+                  f"harness whose CLI can read it there is unaffected; {cannot}-based harnesses "
+                  f"cannot read a staged prompt. Nothing is capped here — this is the size before "
+                  f"a ticket spends anything.")
+    if prompt_bytes > ARGV_PROMPT_CEILING:
+        return (f"{measured} — past {limit}, and {why}, so EVERY pass would refuse the prompt BY "
+                f"NAME, whatever the card says. {unaffected}")
+    left = ARGV_PROMPT_CEILING - prompt_bytes
+    return (f"{why}, so every prompt rides the command line: {measured} — "
+            f"{prompt_bytes * 100 // ARGV_PROMPT_CEILING}% of {limit}. The card, its plan and the "
+            f"knowledge map share the {left:,} bytes left; a pass whose prompt goes past them "
+            f"refuses it BY NAME. {unaffected}")
