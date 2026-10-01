@@ -60,11 +60,10 @@ class Ports:
         self.name = getattr(project, "name", "") or ""
         self._tracker = tracker
         self._board = board
-        # A CALLER THAT HANDS ONLY ITS TRACKER STILL GETS ITS BOARD READ (#413). The product module
-        # and the worker's activities hold a tracker and no board; built only alongside a missing
-        # tracker, the board stayed None for them, every open card read as one no board places, and
-        # the table's permissive row for that answered — a job's settle of a skip a person had
-        # already made was applied a second time.
+        # A CALLER THAT HANDS ONLY ITS TRACKER STILL GETS ITS BOARD READ. The product module holds
+        # a tracker and no board; built only alongside a missing tracker, the board stayed None for
+        # it, every open card read as one no board places, and the table's permissive row for
+        # that answered instead of the card's own column (found building #413).
         self._board_known = board is not None
         self._columns = columns
 

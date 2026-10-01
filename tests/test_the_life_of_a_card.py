@@ -385,6 +385,21 @@ def test_a_delivery_of_two_cards_waits_on_the_one_that_remains_and_is_announced_
                for m in heard if m.conversation == CONVERSATION), [m.text for m in heard]
 
 
+def test_a_caller_that_hands_the_door_only_its_tracker_still_has_the_card_placed(deployment):
+    """The product module hands the door a tracker and no board. The board was built only alongside
+    a missing tracker, so for it every open card read as one no board places — where the table is
+    permissive — instead of the card's own column (found building #413)."""
+    from openfactory.lifecycle.ports import Ports
+    from openfactory.lifecycle.table import State
+
+    ref = _filed(deployment)
+    _at_the_merge_gate(deployment, ref)
+
+    seen = Ports(deployment, tracker=_tracker(deployment)).seen(ref.lstrip("#"))
+
+    assert seen.state is State.WAITING_ON_A_PERSON, seen
+
+
 # ── the sweeps ask before they act (#413) ────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("delivered,where", [(True, "DONE"), (False, "SKIPPED")])
