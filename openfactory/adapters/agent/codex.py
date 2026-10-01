@@ -199,6 +199,11 @@ class CodexAdapter:
         # from stdin as well as from an argument (the module docstring records it from `--help`), so
         # `cat <path> | codex exec …` keeps the command line short whatever the corpus is — past the
         # single-argument ceiling a prompt no longer raises `OSError: Argument list too long`.
+        # `exec resume <id>` TOO, which its `--help` does not say — it documents only `-` — and
+        # which is the form a paused job comes back through: read in `codex-rs/exec/src/lib.rs` at
+        # rust-v0.146.0 (the pinned `HARNESS_CODEX`) and rust-v0.157.1, a resume with no positional
+        # prompt goes through the same `resolve_prompt(None)` as `exec` and reads a piped stdin
+        # (#326, 2026-10-01).
         # `prompt_path` is None for the smoke probe and a box with no channel and a small prompt.
         cmd = ([f"cat {shlex.quote(prompt_path)} |", harness, "exec"] if prompt_path
                else [harness, "exec"])
