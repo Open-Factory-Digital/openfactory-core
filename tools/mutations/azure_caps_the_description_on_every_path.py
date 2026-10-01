@@ -27,17 +27,17 @@ MUTATIONS = [
     # ── what the method does ────────────────────────────────────────────────────────────────────
     ("nothing is ever cut, so a long description reaches the vendor and comes back 400",
      "openfactory/adapters/forge/azure_devops.py",
-     "        if len(body) <= cls._DESCRIPTION_MAX:",
+     "        if _vendor_length(body) <= cls._DESCRIPTION_MAX:",
      "        if True:"),
 
     ("it cuts to the ceiling and then appends the marker past it — a long body turned into a 400 "
      "by the very code that exists to prevent one",
      "openfactory/adapters/forge/azure_devops.py",
-     "        return body[: cls._DESCRIPTION_MAX - len(cls._CUT_NOTE)] + cls._CUT_NOTE",
-     "        return body[: cls._DESCRIPTION_MAX] + cls._CUT_NOTE"),
+     "        room = cls._DESCRIPTION_MAX - _vendor_length(cls._CUT_NOTE)\n",
+     "        room = cls._DESCRIPTION_MAX\n"),
 
     ("it cuts silently, so a description that stops mid-sentence reads as one that ends there",
      "openfactory/adapters/forge/azure_devops.py",
-     "        return body[: cls._DESCRIPTION_MAX - len(cls._CUT_NOTE)] + cls._CUT_NOTE",
-     "        return body[: cls._DESCRIPTION_MAX]"),
+     "        return \"\".join(kept) + cls._CUT_NOTE",
+     "        return \"\".join(kept)"),
 ]
