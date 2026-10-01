@@ -457,7 +457,7 @@ def test_the_product_view_is_DRIVEN_open_the_card_close_it_from_the_card_see_the
               "_pv.ask.reason='filed twice';await pvCardClose();"
               "return {listed,opened,asking,after:nodes['#pvBoard'].innerHTML,acts}",
               "pvBoardLoad", "pvCardOpen", "pvCardRead", "pvCardAsk", "pvCardClose",
-              "paintPvBoard", "_bcontrols", stubs=stubs)
+              "paintPvBoard", "_bcontrols", "pvAdjustBlock", stubs=stubs)
 
     assert 'data-r="7"' in got["listed"] and "A monthly report" in got["listed"], got["listed"]
     assert "Close card" in got["opened"] and "Remove from the board" in got["opened"]

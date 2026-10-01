@@ -10,6 +10,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from openfactory.adapters.sandbox.registry import DEFAULT_BOX_IMAGE, BoxTraits, box_traits
+from openfactory.contracts.project import ADJUST_PASSES
 from openfactory.preview.plan import Layout, PreviewPlan
 
 #: The box a deployment gets when it says nothing: the local container, the reference path.
@@ -122,6 +123,11 @@ class JobParams(BaseModel):
     #: platform ships is the same answer — and for an add-on's box it RAISES, naming the built-ins,
     #: rather than guessing whether a job it cannot see must be stopped.
     box: BoxTraits | None = None
+    #: HOW MANY MORE PASSES this job may be sent back for at its merge gate — the project's
+    #: `adjust_passes` (#448), stamped by whoever starts the job, for `language`'s reason one field
+    #: up: the workflow may not read the registry. A history that predates the field deserialises
+    #: it as today's hard-coded 2, so a job in flight replays and refuses exactly as it did.
+    adjust_passes: int = ADJUST_PASSES
 
     def traits(self) -> BoxTraits:
         """What the WORKFLOW may ask about this job's box, with no I/O: the stamped traits, else the

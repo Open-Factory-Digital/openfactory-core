@@ -287,16 +287,22 @@ MUTATIONS = [
      '    _case.hook("confirmed", project, key, verified)'),
 
     # ── 5. a yes from someone who may not write ──────────────────────────────────────────────────
+    # re-pinned 2026-10-01 (#448): the approver's check is `_may_say_yes` now — the same refusal,
+    # which also admits a card's requester for their own card's pass
     ("a yes from someone off the admin list performs the write", CONFIRM,
-     "    if not may_act(project, user, via=via):\n"
-     "        return unauthorized_message(project)\n\n"
+     "    refusal = _may_say_yes(project, entry, user, via=via, module=module)\n"
+     "    if refusal:\n"
+     "        return refusal\n\n"
      "    from openfactory.product.staging import consume\n",
      "    from openfactory.product.staging import consume\n"),
 
     ("the receipt waits for the authorisation", CONFIRM,
-     "    if on_it is not None:\n        on_it()\n    if not may_act(project, user, via=via):",
-     "    if not may_act(project, user, via=via):\n        return unauthorized_message(project)\n"
-     "    if on_it is not None:\n        on_it()\n    if not may_act(project, user, via=via):"),
+     "    if on_it is not None:\n        on_it()\n"
+     "    # AN APPROVER — or, for the requester's own proposals, the card's requester (#448)\n",
+     "    if _may_say_yes(project, entry, user, via=via, module=module):\n"
+     "        return _may_say_yes(project, entry, user, via=via, module=module)\n"
+     "    if on_it is not None:\n        on_it()\n"
+     "    # AN APPROVER — or, for the requester's own proposals, the card's requester (#448)\n"),
 
     # RETIRED 2026-09-24 (#266 slice 4): "…and the reverse: the requester's own yes confirms
     # (slice 4's rule, unannounced)". It proved the pin by letting a requester OFF the admin list

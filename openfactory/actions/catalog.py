@@ -327,7 +327,8 @@ async def _scan(*, project: str, by: Actor) -> Outcome:
         try:
             await client.start_workflow(
                 "JobWorkflow",
-                JobParams(project=proj.name, issue=issue, sandbox=scan_sandbox, image=scan_image),
+                JobParams(project=proj.name, issue=issue, sandbox=scan_sandbox, image=scan_image,
+                          adjust_passes=proj.adjust_passes),
                 id=f"openfactory-{proj.name}-{issue}", task_queue=TASK_QUEUE,
             )
             started.append(issue)
@@ -442,7 +443,8 @@ async def _start_durable(found, issue: str, *, by: Actor, sandbox: str, promote:
 
     try:
         params = JobParams(project=found.name, issue=issue, sandbox=sandbox, promote=promote,
-                           image=resolve_box_image(found, sandbox=sandbox))
+                           image=resolve_box_image(found, sandbox=sandbox),
+                           adjust_passes=found.adjust_passes)
     except ValueError as exc:
         return refused(INVALID, str(exc))
     try:
@@ -856,6 +858,13 @@ async def _answer_gate(*, project: str, issue: str, by: Actor, answer: str,
         # consume an answer (pre-patch replay). Folding this into 'not waiting on a merge' told
         # the operator the PR may have merged when the truth is the gate is deaf.
         return None, refused(CONFLICT, f"#{issue} is waiting on a merge it cannot hear: {exc}")
+    except tv.AdjustsSpent as exc:
+        # WHAT HAPPENS NEXT, NOT ONLY WHAT WAS REFUSED (#448): the job is waiting on a person,
+        # and past the project's budget that person decides — merge, or discard. The job's own
+        # standing note says the same sentence (`vocabulary.adjusts_spent_note`).
+        from openfactory.runtime.temporal.vocabulary import adjusts_spent_note
+
+        return None, refused(CONFLICT, f"#{issue}: {adjusts_spent_note(exc.passes)}.")
     except RuntimeError as exc:  # the engine answered: this job is not at the merge gate
         return None, refused(
             CONFLICT,
@@ -3650,7 +3659,7 @@ async def _product_board(*, project: str, by: Actor, card: str = "") -> Outcome:
     read and `[]` when it was read and is empty."""
     import asyncio
 
-    _module, proj, bad = _product_module(project, by=by)
+    module, proj, bad = _product_module(project, by=by)
     if bad:
         return bad
     _proj, tracker, board, bad = _board_pair(project)
@@ -3693,6 +3702,15 @@ async def _product_board(*, project: str, by: Actor, card: str = "") -> Outcome:
         return {"cards": cards, "card": detail}
 
     read = await asyncio.to_thread(_read)
+    # ANOTHER PASS, FROM THE CARD (#448). The engine is asked only about a card the factory took up
+    # and has not finished — the one place a change can be waiting on the person who asked for it —
+    # and the module says whether THIS viewer may send it back (`ProductModule.adjust_view`).
+    shown = read["card"]
+    if (shown and shown.get("readable") and shown.get("open") and shown.get("started")
+            and not shown.get("finished")):
+        vouched = bool(by.admin) and by.may_enter(FLOOR)
+        shown["adjust"] = await asyncio.to_thread(
+            lambda: module.adjust_view(shown["ref"], actor=by.id, vouched=vouched))
     count = "could not be read" if read["cards"] is None else f"{len(read['cards'])} open"
     return done(f"{proj.name}'s board — {count}", project=proj.name, **read)
 
@@ -3745,6 +3763,49 @@ async def _product_withdraw_card(*, project: str, number: str, reason: str, by: 
     return await _by_the_product_role(proj, ref, by=by, reason=said, remove=removing,
                                       delivered=has_finished(stage.key) and not removing,
                                       vouched=operator)
+
+
+async def _product_adjust(*, project: str, number: str, instruction: str, by: Actor,
+                          criteria: str = "") -> Outcome:
+    """Send the change on a card back for another pass, from the card on the product view (#448).
+
+    THE FLOOR'S `adjust`, FOR THE PERSON WHO TRIED THE CHANGE. That row is the operator's (FLOOR,
+    admin); the person who asked for the card and tried its preview — the one who can judge it —
+    could only ask somebody else to press it. This row is the card's own control, #384's pattern
+    (`product_withdraw_card`): the confirmation is the one they just gave on the card, and WHO MAY
+    is the module's answer (`send_back`) — a product admin, the card's own requester, or an
+    operator (an admin who may enter the floor), whom this row vouches for. So no `needs_admin`.
+
+    `criteria` IS THE CARD'S BAR AS THE PERSON EDITED IT, one per line; empty leaves it as it is.
+    The module corrects the card first and then sends the pass, so the pass and its review read
+    the corrected bar — the same act the conversation's yes performs (`confirm._confirm_adjust`)."""
+    import asyncio
+
+    module, _proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    ref = str(number or "").strip().lstrip("#")
+    if not ref:
+        return refused(INVALID, "say which card.")
+    bar = [line.strip().lstrip("-*").strip() for line in str(criteria or "").splitlines()]
+    # AN OPERATOR IS VOUCHED FOR as on `product_withdraw_card` (#384): an admin who may enter
+    # the floor — a product-scoped credential never is
+    vouched = bool(by.admin) and by.may_enter(FLOOR)
+    result = await asyncio.to_thread(
+        lambda: module.send_back(ref, actor=by.id, instruction=instruction,
+                                 criteria=[c for c in bar if c], vouched=vouched))
+    if not result.ok:
+        return _write_outcome(result, did=f"send #{ref} back for another pass", project=project,
+                              issue=ref, through="product")
+    from openfactory.product.adjust import headline
+
+    # THE SAME SENTENCE THE CONVERSATION'S YES GETS, in the project's language, and what did not
+    # land after it (`confirm._confirm_adjust`)
+    said = headline(result, instruction=instruction.strip(),
+                    language=getattr(_proj, "language", None))
+    return done("\n\n".join(filter(None, [said, str(result.detail or "")])), project=project,
+                issue=ref, through="product", pass_number=result.pass_number,
+                passes=result.passes, corrected=result.corrected)
 
 
 async def _product_record_decision(*, project: str, number: str, decision: str, by: Actor,
@@ -6496,6 +6557,22 @@ CATALOG: dict[str, ActionSpec] = {
             choose_when="when a person on the product view drops a card from the card itself — "
                         "the conversation's own close is `product_close_card`, staged and "
                         "confirmed there",
+        ),
+        ActionSpec(
+            name="product_adjust",
+            scope=PRODUCT,
+            summary="send the change waiting on a card back for another pass on the same pull "
+                    "request, correcting the card's acceptance criteria with it",
+            run=_product_adjust,
+            required=("project", "number", "instruction"),
+            optional=("criteria",),
+            # THE MODULE DECIDES WHO (#448, #384's rule): a product admin, or the person who asked
+            # for the card — and the second is on no allowlist, so `needs_admin` would refuse them
+            needs_admin=False,
+            choose_when="when the person who asked for a card has tried its change and says what "
+                        "is still wrong, from the card on the product view — the conversation "
+                        "stages the same act for its yes, and the floor's `adjust` is the "
+                        "operator's",
         ),
         ActionSpec(
             name="product_correct_card",

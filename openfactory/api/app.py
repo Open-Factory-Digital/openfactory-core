@@ -1644,6 +1644,10 @@ async def inbox() -> list[dict]:
                  "consequence": "closes the PR without merging and frees the floor; "
                                 "the branch and its commits are untouched"},
             ]
+            # NO PASS LEFT, NO "ADJUST" (#448): the budget is the project's and the job says how
+            # much is left; past it the gate's note says a person decides, and the seam refuses.
+            if act.get("adjusts_left") == 0:
+                options = [o for o in options if o["key"] != "adjust"]
             # THE FOURTH ANSWER, AND ONLY WHERE IT IS REAL (#181). `adjust` fixed what the review
             # rejected and nothing could ask whether it worked, so the person was left merging on
             # their own reading of the diff — the work an independent review exists to remove.

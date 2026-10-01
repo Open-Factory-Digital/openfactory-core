@@ -499,6 +499,21 @@ def _confirm_correct(project, entry, *, module, user, lang) -> str:
         result, lang, project=project)
 
 
+def _confirm_adjust(project, entry, *, module, user, lang) -> str:
+    """the act that sends a change back for another pass and moves its bar with it (#448)."""
+    result = module.send_back(entry["number"], actor=user,
+                              instruction=entry.get("instruction", ""),
+                              criteria=list(entry.get("criteria") or ()))
+    if not result.ok:
+        return _client_detail(result.detail, lang, project=project)
+    from openfactory.product.adjust import headline
+
+    # WHICH PASS OF HOW MANY AND WHETHER THE BAR MOVED, from the act's own facts — then whatever
+    # did not land after it (a correction whose note could not be left), through the one path
+    return _still_to_say(headline(result, instruction=entry.get("instruction", ""), language=lang),
+                         result, lang, project=project)
+
+
 def _confirm_align(project, entry, *, module, user, lang) -> str:
     """the act that changes what gets BUILT."""
     result = module.align_card(entry["number"], requirement=entry["requirement"], actor=user)
@@ -627,8 +642,38 @@ _EXECUTORS = {
     "close": _confirm_close,
     "align": _confirm_align,
     "correct": _confirm_correct,
+    "adjust": _confirm_adjust,
     "fact": _confirm_fact,
 }
+
+#: THE PROPOSALS A CARD'S OWN REQUESTER MAY SAY YES TO, though no allowlist names them (#448). The
+#: yes here is not "may this person make the role write" but "is this their card": another pass on
+#: the change THEY asked for, judged by the one person who tried it — `withdraw_card`'s rule for the
+#: card's own controls (#384), asked of the module that reads the card (`may_send_back`). Every
+#: other kind still needs an approver.
+_THE_REQUESTERS_OWN = frozenset({"adjust"})
+
+
+def _may_say_yes(project, entry: dict, user: str, *, via: str, module=None) -> str:
+    """The refusal of this person's yes before anything is consumed — "" when it may go ahead.
+    AUTHZ BEFORE POP, as `confirm` says: asked of the entry the caller read."""
+    from openfactory.product.module import may_act, unauthorized_message
+
+    if may_act(project, user, via=via):
+        return ""
+    if str(entry.get("kind") or "") in _THE_REQUESTERS_OWN and user:
+        if module is None:
+            from openfactory.product.module import ProductModule
+
+            module = ProductModule(project, via=via)
+        asks = getattr(module, "may_send_back", None)
+        if callable(asks) and asks(str(entry.get("number") or ""), user):
+            return ""
+        from openfactory.product.voice import adjust_said
+
+        return adjust_said("not_yours", ref=str(entry.get("number") or ""),
+                           language=getattr(project, "language", None))
+    return unauthorized_message(project)
 
 
 def confirm(project, *, key: str, entry: dict, fingerprint: str = "", module, user: str,
@@ -660,12 +705,12 @@ def confirm(project, *, key: str, entry: dict, fingerprint: str = "", module, us
     know they were heard: the platform's standing invariant is that a stall self-heals or speaks,
     never a quiet nothing.
     """
-    from openfactory.product.module import may_act, unauthorized_message
-
     if on_it is not None:
         on_it()
-    if not may_act(project, user, via=via):
-        return unauthorized_message(project)
+    # AN APPROVER — or, for the requester's own proposals, the card's requester (#448)
+    refusal = _may_say_yes(project, entry, user, via=via, module=module)
+    if refusal:
+        return refusal
 
     from openfactory.product.staging import consume
 
@@ -1005,11 +1050,13 @@ def answer_staged(project, *, token: str, approved: bool, user: str, module=None
             # was never posted for
             return "replaced", _clicked_but_replaced(project)
         return "rejected", _clicked_reject(project)
-    if not may_act(project, user, via=via):
+    said = _may_say_yes(project, entry, user, via=via, module=module)
+    if said:
         # AUTHZ BEFORE POP, like every other confirmation path: an unauthorised click must not
         # consume the proposal, or the real approver's later yes finds nothing. `confirm` asks
-        # again one frame down — this one exists to NAME the outcome for an HTTP caller.
-        return "unauthorized", unauthorized_message(project)
+        # again one frame down — this one exists to NAME the outcome for an HTTP caller. The
+        # card's requester passes it for their own card's pass (#448, `_THE_REQUESTERS_OWN`).
+        return "unauthorized", said
     # …and whose proposal it is (#266 slice 4), named for the same caller: an admin's click on
     # somebody else's proposal is a refusal the panel maps to a 403, never a decision it records
     refused = not_theirs(project, entry, user)
