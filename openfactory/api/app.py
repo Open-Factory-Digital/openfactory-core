@@ -1656,10 +1656,19 @@ async def inbox() -> list[dict]:
                     "consequence": "reads the pull request AS IT STANDS and replaces the verdict "
                                    "on this card — it changes no code, and it costs a model pass",
                 })
+            # AND THE PULL REQUEST'S OWN COMMENTS, WHERE THE FORGE KEEPS THEM (#330). Beside
+            # `adjust`, because it is the same pass with its words taken from the forge; offered
+            # only where the forge row can list them, for `can_review`'s reason.
+            if act.get("can_address"):
+                options.insert([o["key"] for o in options].index("adjust") + 1, {
+                    "key": "address", "label": "Address comments",
+                    "consequence": "one more agent pass on the SAME branch and PR, against the "
+                                   "review comments people left on it that still stand",
+                })
             out.append({**base, "kind": kind,
                         "options": options,
                         "answer": {"method": "POST",
-                                   "url": "/api/act/<merge|adjust|discard|review>",
+                                   "url": "/api/act/<merge|adjust|address|discard|review>",
                                    "body": {"params": {"project": j.get("project"),
                                                        "issue": j.get("issue"),
                                                        "instruction": "<adjust only>"}}}})

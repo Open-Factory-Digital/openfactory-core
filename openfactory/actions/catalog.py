@@ -929,6 +929,59 @@ async def _adjust(*, project: str, issue: str, instruction: str, by: Actor) -> O
         by=str(by), instruction=text[:280], length=len(text))
 
 
+async def _address(*, project: str, issue: str, by: Actor) -> Outcome:
+    """Send the PR back for ONE pass against what people wrote on it (#330) — same branch, same PR.
+
+    `adjust` with its words taken from the forge rather than typed. The comments existed, written
+    against the lines they are about, and the only way to act on them was to read the threads,
+    compress them into one paragraph and paste it into `adjust`: a lossy copy nobody could audit.
+
+    THE PULL REQUEST IS READ FIRST. A forge that cannot list its comments, or a pull request with
+    nothing standing on it, is refused here by name, before the gate is answered and before a pass
+    is spent. The pass reads them again when it starts, because a thread can be resolved in
+    between, and says on the pull request which ones it took."""
+    import asyncio
+
+    from openfactory.adapters.forge.base import CommentsNotListed, review_comments_of
+    from openfactory.runtime.temporal import view as tv
+
+    found, bad = _project(project)
+    if bad:
+        return bad
+    client, bad = await _connected()
+    if bad:
+        return bad
+    try:
+        waiting = await tv.merge_gate_of(client, found.name, issue)
+    except Exception as exc:  # noqa: BLE001
+        if _looks_missing(exc):
+            return refused(NOT_FOUND, f"no job has ever run for #{issue} on {found.name}.")
+        raise
+    pr_url = str((waiting or {}).get("pr_url") or "")
+    if not pr_url:
+        return refused(CONFLICT, f"#{issue} is not waiting on a merge — there is no pull request "
+                                 f"whose comments a pass could take.")
+    _, _, forge = await asyncio.to_thread(_forge_and_manifest, found.name)
+    comments = await asyncio.to_thread(review_comments_of, forge, pr_url)
+    if isinstance(comments, CommentsNotListed):
+        return refused(CONFLICT, f"#{issue}: {comments}. Say what needs changing with 'adjust' "
+                                 f"instead.")
+    if not comments:
+        return refused(CONFLICT, f"#{issue}: nothing people wrote on the pull request still "
+                                 f"stands — every thread is resolved and no request for changes "
+                                 f"is open, so there is nothing for a pass to address.")
+    gate, bad = await _answer_gate(project=project, issue=issue, by=by, answer="address")
+    if bad:
+        return bad
+    return done(
+        f"#{issue}: sent back for one pass on the {len(comments)} review comment"
+        f"{'s' if len(comments) != 1 else ''} standing on the pull request. The pass lists the "
+        f"ones it takes on the pull request, pushes to the same PR, and the gate re-opens when it "
+        f"is done.",
+        project=project, issue=issue, answer="address", pr_url=(gate or {}).get("pr_url"),
+        by=str(by), comments=len(comments))
+
+
 async def _review(*, project: str, issue: str, by: Actor) -> Outcome:
     """Ask the independent reviewer to read the open pull request again, as it stands (#181).
 
@@ -6170,6 +6223,18 @@ CATALOG: dict[str, ActionSpec] = {
                         "over `discard` for anything salvageable — it keeps the same pull request "
                         "and spends one repair pass, where discarding throws the run away and the "
                         "ticket starts again from nothing",
+        ),
+        ActionSpec(
+            name="address",
+            summary="send the PR back for one repair pass against the review comments people "
+                    "left on it — same PR",
+            run=_address,
+            required=("project", "issue"),
+            choose_when="when people reviewed the pull request on the forge and their comments "
+                        "say what to change: unresolved threads, a request for changes. Prefer "
+                        "it over `adjust` when the words are already written there — it carries "
+                        "them as they were written, attached to their lines, where retyping "
+                        "loses some. It spends one adjust pass and refuses when nothing stands",
         ),
         ActionSpec(
             name="review",

@@ -94,6 +94,7 @@ with workflow.unsafe.imports_passed_through():
         verify_gate_seal,
     )
     from openfactory.runtime.temporal.io import (
+        REVIEW_THREAD,
         AdjustInput,
         AskInput,
         CiRepairInput,
@@ -997,7 +998,7 @@ class JobWorkflow:
     async def human_merge_gate(self, answer: str, instruction: str = "", by: str = "",
                                seal: str = "") -> None:
         """The human's answer to a PR waiting on them (#68): 'merge' | 'adjust' | 'discard' |
-        'review' (#181).
+        'review' (#181) | 'address' (#330, an adjust pass on the pull request's own comments).
 
         `adjust` carries FREE TEXT — the product owner's decision. It is deliberately NOT a
         `DecisionRequest` option key: a key is matched against a fixed list at both consumption
@@ -1015,7 +1016,7 @@ class JobWorkflow:
         signal handler cannot read a key without making replay depend on it."""
         if self._merge_wait is None:
             return
-        if answer in ("merge", "adjust", "discard", "review"):
+        if answer in ("merge", "adjust", "address", "discard", "review"):
             self._gate = {"answer": answer, "instruction": instruction, "by": by, "seal": seal}
 
     @workflow.query
@@ -2263,7 +2264,10 @@ class JobWorkflow:
                 }
             return None  # nothing was rewritten; the gate re-opens with the reading in hand
 
-        # adjust
+        # adjust — on a person's own words, or (`address`, #330) on what people wrote on the pull
+        # request, which the worker reads when the pass starts. One budget for both: the same
+        # pass, on the same branch, with its words from somewhere else.
+        threads = answer == "address"
         if self._adjust_passes >= self._ADJUST_MAX:
             self._merge_wait = {"pr_url": pr_url, "auto": False,
                                 "note": f"{self._ADJUST_MAX} adjust passes already spent"}
@@ -2275,15 +2279,18 @@ class JobWorkflow:
         # Merge and Discard, and a click would have landed or closed a PR mid-rewrite. A wait
         # nobody is being asked about is not a question (ADR-0038 D2). `working` is a FIELD, not a
         # command, so an in-flight job replaying pre-fix history stays deterministic.
+        asked = ("asked for the review comments to be addressed" if threads else
+                 "asked for a change")
         self._merge_wait = {"pr_url": pr_url, "auto": False, "working": True,
-                            "note": f"{who} asked for a change — one more pass on the same PR"}
-        self._the_reviewed_code_is_gone(f"{who} asked for a change and a pass rewrote the pull "
-                                        f"request")
+                            "note": f"{who} {asked} — one more pass on the same PR"}
+        self._the_reviewed_code_is_gone(f"{who} {asked} and a pass rewrote the pull request")
         passed = await workflow.execute_activity(
             adjust_pr,
             AdjustInput(project=params.project, issue=params.issue, pr_url=pr_url,
                         sandbox=params.sandbox, attempt=self._adjust_passes,
-                        instruction=str(gate.get("instruction") or "")[:_ADJUST_CHARS]),
+                        instruction=("" if threads else
+                                     str(gate.get("instruction") or "")[:_ADJUST_CHARS]),
+                        source=REVIEW_THREAD if threads else "", by=who),
             start_to_close_timeout=timedelta(seconds=ACTIVITY_CEILING),
             heartbeat_timeout=timedelta(seconds=120),
             retry_policy=(_RETRY_REATTACHING if params.traits().idempotent else _ONCE),

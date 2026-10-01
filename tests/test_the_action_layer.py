@@ -243,9 +243,10 @@ OWNED = {
     "execute_workflow": "ask",
     "PromotionRunner": "promote",            # running the release synchronously, in-process
     # The one seam every merge answer goes through — four of them since #181 added the
-    # re-review, and the marker stays ONE because the seam did: a front end that grew its
-    # own way to answer the gate would be a second definition of what the gate accepts.
-    "answer_merge_gate": "merge/adjust/discard/review",
+    # re-review, five since #330 added `address`, and the marker stays ONE because the seam did:
+    # a front end that grew its own way to answer the gate would be a second definition of what
+    # the gate accepts.
+    "answer_merge_gate": "merge/adjust/address/discard/review",
     # THE OTHER MERGE, and it is a different act (ADR-0049 D9). `merge` answers a gate a parked job
     # is waiting in; `pr_merge` PERFORMS the fast-forward on a pull request no job is waiting on —
     # the one a `run` or a `poll` left behind — and only on the forge for which that is the whole
