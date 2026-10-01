@@ -41,7 +41,11 @@ MetricKind = Literal["agent_run", "job", "product_sweep", "techlead_watch", "age
                      # People registered by invitation, their invitations and sessions — the
                      # local identity row's durable half (`identity/people.py`, #33). Under one
                      # deployment-wide key, not a project's.
-                     "person"]
+                     "person",
+                     # What happened to a card, one row per transition and one per effect's
+                     # outcome (ADR-0055 D4) — written only through `KeyedSink`, under keys the
+                     # card's lifecycle chooses (`lifecycle/record.py`), never under a time.
+                     "card_transition"]
 
 
 class MetricRecord(BaseModel):
@@ -164,6 +168,37 @@ class ForgettingSink(Protocol):
     def forget(self, project: str, *, kind: str) -> int: ...
 
 
+@runtime_checkable
+class KeyedSink(Protocol):
+    """A sink that writes a row ONLY IF ITS KEY IS ABSENT, and reads back the rows under a key
+    prefix, in key order (ADR-0055 D5).
+
+    WHY A KEY THE CALLER CHOOSES. Every other row here is keyed by the time it was written
+    (`dynamo_key`: `<ts>#<ticket>#<kind>`), so two writers never collide — which is right for
+    telemetry and exactly wrong for a card's record. A card takes one transition at a time: two
+    transitions racing for its next sequence number must collide, and the loser must know it
+    lost. `record` cannot say that: on SQLite it is `INSERT OR REPLACE`, so the second writer
+    silently overwrites the first.
+
+    A SEPARATE PROTOCOL, like `ForgettingSink`: a store added from outside declares it by
+    implementing both methods, and one that does not is refused for this use by name
+    (`lifecycle/record.py`) rather than handed a write it would turn into an overwrite. The
+    shipped SQLite sink does it with a plain `INSERT`; a DynamoDB table does it with
+    `attribute_not_exists(sk)` and a `begins_with` query on the same keys.
+
+    BOTH RAISE `query.StoreUnreadable` WHEN THE STORE WILL NOT ANSWER. "The key was taken" and
+    "the store could not be asked" are opposite answers to the door that writes a person's
+    decision, and only the first one means somebody else got there first."""
+
+    def record_if_absent(self, rec: MetricRecord, *, key: str) -> bool:
+        """Write `rec` under `key` within its project; False when a row already holds that key."""
+        ...
+
+    def records_under(self, project: str, prefix: str) -> list[dict]:
+        """Every row of `project` whose key starts with `prefix`, in key order."""
+        ...
+
+
 class NullMetricsSink:
     """Default: drops records (local dev / metrics off). Never raises."""
 
@@ -185,13 +220,28 @@ class InMemoryMetricsSink:
 
     def __init__(self) -> None:
         self.records: list[MetricRecord] = []
+        self.keyed: dict[tuple[str, str], MetricRecord] = {}
 
     def record(self, rec: MetricRecord) -> bool:
         self.records.append(rec)
         return True
 
+    def record_if_absent(self, rec: MetricRecord, *, key: str) -> bool:
+        if (rec.project, key) in self.keyed:
+            return False
+        self.keyed[(rec.project, key)] = rec
+        self.records.append(rec)
+        return True
+
+    def records_under(self, project: str, prefix: str) -> list[dict]:
+        return [{**rec.model_dump(), "pk": pk, "sk": sk}
+                for (pk, sk), rec in sorted(self.keyed.items())
+                if pk == project and sk.startswith(prefix)]
+
     def forget(self, project: str, *, kind: str) -> int:
         before = len(self.records)
         self.records = [r for r in self.records
                         if not (r.project == project and r.kind == kind)]
+        self.keyed = {k: r for k, r in self.keyed.items()
+                      if not (r.project == project and r.kind == kind)}
         return before - len(self.records)

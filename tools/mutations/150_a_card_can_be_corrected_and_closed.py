@@ -230,18 +230,24 @@ MUTATIONS = [
      "not\n",
      "        except ZeroDivisionError as exc:\n"),
 
+    # RE-PINNED 2026-10-01 (#412): the reopen and its note are two effects of the card's door, and
+    # the row reads their outcomes — the cut makes ANY failed effect read as a card still closed
     ("a reopen whose note failed is reported as a card still closed", CATALOG,
-     "    except Exception as exc:  # noqa: BLE001 — the reopen landed; only its record did not\n",
-     "    except ZeroDivisionError as exc:\n"),
+     '    if moved.outcome("reopen").startswith("failed") and not moved.recorded:\n'
+     '        return refused(UNAVAILABLE, f"{issue} is still closed:',
+     '    if moved.failed and not moved.recorded:\n'
+     '        return refused(UNAVAILABLE, f"{issue} is still closed:'),
 
     ("the reopen and its note share one `AttributeError` branch again, so a failed note reads as "
      "a tracker that cannot reopen", CATALOG,
      "    try:\n"
-     "        reopen = tracker.reopen_ticket\n"
+     "        tracker.reopen_ticket  # noqa: B018 — asked before the door records a reopen it "
+     "cannot do\n"
      "    except AttributeError:",
      "    try:\n"
-     "        reopen = tracker.reopen_ticket\n"
-     "        tracker.comment(issue, card_reopen_note(who=str(by)))\n"
+     "        tracker.reopen_ticket  # noqa: B018 — asked before the door records a reopen it "
+     "cannot do\n"
+     "        tracker.comment(issue, 'reopened')\n"
      "    except AttributeError:"),
 
     ("the note lists the parts as one run-on phrase joined by `and`", VOICE,

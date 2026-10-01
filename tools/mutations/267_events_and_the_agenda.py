@@ -186,8 +186,12 @@ MUTATIONS = [
      ".strip()[:_WHAT_CHARS]\n"),
     ("the panel's agenda reads nobody's conversation, so a person's own items never show",
      CATALOG,
-     '    viewer = agenda.Viewer(own=getattr(by, "conversation", "") or "", person=by.id,\n',
-     '    viewer = agenda.Viewer(own="", person=by.id,\n'),
+     '    viewer = agenda.Viewer(own=getattr(by, "conversation", "") or "", person=by.id,\n'
+     '                           may_read_room=by.may_enter(PRODUCT))\n'
+     '    rows = await asyncio.to_thread(loop_store.read, proj.name)\n',
+     '    viewer = agenda.Viewer(own="", person=by.id,\n'
+     '                           may_read_room=by.may_enter(PRODUCT))\n'
+     '    rows = await asyncio.to_thread(loop_store.read, proj.name)\n'),
     ("the operator's list of loops carries everybody's private items", APP,
      "    loops = waiting(agenda.visible(loop_store.read(project), viewer, room=room))\n",
      "    loops = waiting(loop_store.read(project))\n"),

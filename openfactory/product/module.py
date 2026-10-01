@@ -4114,7 +4114,7 @@ class ProductModule:
                                delivered=False)
 
     def _close_one(self, number: str, *, actor: str, in_favour_of: str | None, reason: str,
-                   delivered: bool = False) -> WriteResult:
+                   delivered: bool = False, event: str = "closed") -> WriteResult:
         """`close_card` once the person is authorised — shared with `withdraw_card` (#384), so the
         close a card's own control asks for IS this role's close, not a copy of it.
 
@@ -4155,30 +4155,28 @@ class ProductModule:
                            f"trabalho. Me digam qual cartão fica com ele.")
 
         tracker = self._tracker()
-        try:
-            # NOT A DELIVERY. This act takes an item off the list of work — "deixa de ser algo a
-            # fazer", in the words the client confirms — which is the opposite of shipping it.
-            # Left as the default, `#511` (closed as a duplicate of `#288` at a client's request)
-            # came back marked completed and read as delivered work everywhere downstream.
-            #
-            # THROUGH THE PORT'S SEAM (#203): a row written before `delivered` existed is refused
-            # this close by name, instead of raising a `TypeError` this `except` would report as
-            # "I could not close it" with nothing a person could act on.
-            from openfactory.adapters.tracker.base import close_ticket
+        # NOT A DELIVERY. This act takes an item off the list of work — "deixa de ser algo a
+        # fazer", in the words the client confirms — which is the opposite of shipping it. Left as
+        # the default, `#511` (closed as a duplicate of `#288` at a client's request) came back
+        # marked completed and read as delivered work everywhere downstream.
+        #
+        # THROUGH THE CARD'S DOOR (ADR-0055), whose close is the port's seam (#203) and whose row
+        # of the table does what this close did by hand — forgetting the snapshot — and what it
+        # never did: the promise about the card cancelled, its requester told, its preview down.
+        from openfactory.lifecycle import transition
 
-            close_ticket(tracker, f"#{number}",
-                         _closing_note(in_favour_of=in_favour_of, actor=actor,
-                                       reason=reason, agent=self._name()),
-                         delivered=delivered)
-        except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
+        moved = transition(self.project, f"#{number}", event, by=actor, why=reason,
+                           facts={"delivered": delivered,
+                                  "note": _closing_note(in_favour_of=in_favour_of, actor=actor,
+                                                        reason=reason, agent=self._name())},
+                           tracker=tracker)
+        if moved.refused:
+            return WriteResult(ok=False, existed=True, ref=f"#{number}", detail=moved.refused)
+        if moved.outcome("close").startswith("failed") and not moved.recorded:
             return _could_not(f"não consegui fechar o #{number} agora. Nada mudou — o time foi "
                               f"avisado e resolve.",
-                              act=f"close #{number}", cause=exc, ref=f"#{number}")
-
-        from openfactory.product.board import forget_board
-
-        forget_board(getattr(self.project, "name", ""))   # what we cached is now wrong
-
+                              act=f"close #{number}", cause=RuntimeError(moved.outcome("close")),
+                              ref=f"#{number}")
         detail = ""
         if survivor is not None:
             try:
@@ -4202,9 +4200,9 @@ class ProductModule:
         the board REFUSING was the whole answer, and the refusal sent the person off to find a
         conversation and say in words what a button could have done. So the board asks the role,
         and the role writes — through `_close_one`, which is `close_card`'s own close, and through
-        the tracker's own removal — and the conversation the card was asked in is told
-        (`events.card_withdrawn`). #150's rule for EDITS is untouched: changing what a card says
-        still goes through the conversation, where the requirement and the card move together.
+        the tracker's own removal — and the conversation the card was asked in is told (by the
+        card's door, ADR-0055). #150's rule for EDITS is untouched: changing what a card says still
+        goes through the conversation, where the requirement and the card move together.
 
         WHO MAY, AND ON WHOSE AUTHORITY — three, of which only the first is `may_act`:
 
@@ -4225,7 +4223,6 @@ class ProductModule:
         deletes the card and keeps an audit line; a row that can only close closes, and the answer
         says so. `delivered` is the column's word for a close (#162), passed by the row that read
         it; a delivered close tells no conversation that the work "will not be built"."""
-        from openfactory.product import events
         from openfactory.product.speaker import is_guest
         from openfactory.product.voice import card_withdrawn_result
 
@@ -4239,20 +4236,16 @@ class ProductModule:
             return WriteResult(ok=False, detail=card_withdrawn_result(ref=number, how="not_yours",
                                                                       language=lang))
 
-        tickets, _error = self._read_board()
-        title = next((t.title for t in tickets if t.number == number), "")
+        # THE CONVERSATION IS TOLD BY THE CARD'S DOOR (ADR-0055), once per transition, for every
+        # way a card leaves the table — not only this one, which was the only path that told it
         if remove:
-            result = self._remove_one(number, actor=actor, reason=reason)
-        else:
-            result = self._close_one(number, actor=actor, in_favour_of=None, reason=reason,
-                                     delivered=delivered)
-            if result.ok and not result.detail:
-                result.detail = card_withdrawn_result(ref=number, how="closed", language=lang)
-        if result.ok and not delivered:
-            from openfactory.adapters.board_db import now_iso
-
-            events.card_withdrawn(self.project, card=number, title=title,
-                                  removed=bool(remove), key=now_iso())
+            return self._remove_one(number, actor=actor, reason=reason)
+        # a card the factory finished closes as delivered (#162) — `closed`, which cancels nothing;
+        # anything else is a card the person withdrew
+        result = self._close_one(number, actor=actor, in_favour_of=None, reason=reason,
+                                 delivered=delivered, event="closed" if delivered else "withdrawn")
+        if result.ok and not result.detail:
+            result.detail = card_withdrawn_result(ref=number, how="closed", language=lang)
         return result
 
     def _asked_by(self, number: str) -> str:
@@ -4268,8 +4261,6 @@ class ProductModule:
     def _remove_one(self, number: str, *, actor: str, reason: str) -> WriteResult:
         """Remove one card through the tracker's own removal, or close it where the row has none —
         and say which, because only one of the two leaves the card in a tracker's history."""
-        from openfactory.adapters.tracker.base import remove_ticket
-        from openfactory.product.board import forget_board
         from openfactory.product.voice import card_withdrawn_result
 
         tickets, error = self._read_board()
@@ -4281,18 +4272,22 @@ class ProductModule:
         if card.state != "open":
             return WriteResult(ok=False, existed=True, ref=f"#{number}",
                                detail=f"o #{number} já estava fechado — não mexi nele")
-        tracker = self._tracker()
-        try:
-            removed = remove_ticket(tracker, f"#{number}", reason, by=actor,
-                                    note=_closing_note(in_favour_of=None, actor=actor,
-                                                       reason=reason, agent=self._name()))
-        except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
+        # THROUGH THE CARD'S DOOR (ADR-0055): the tracker's own removal, then what a removal means
+        # for the promise, the requester, the preview and the snapshot
+        from openfactory.lifecycle import CardEvent, transition
+        moved = transition(self.project, f"#{number}", CardEvent.REMOVED, by=actor, why=reason,
+                           facts={"note": _closing_note(in_favour_of=None, actor=actor,
+                                                        reason=reason, agent=self._name())},
+                           tracker=self._tracker())
+        if moved.refused:
+            return WriteResult(ok=False, existed=True, ref=f"#{number}", detail=moved.refused)
+        if moved.outcome("remove").startswith("failed") and not moved.recorded:
             return _could_not(f"não consegui remover o #{number} agora. Nada mudou — o time foi "
                               f"avisado e resolve.",
-                              act=f"remove #{number}", cause=exc, ref=f"#{number}")
-        forget_board(getattr(self.project, "name", ""))   # what we cached is now wrong
+                              act=f"remove #{number}", cause=RuntimeError(moved.outcome("remove")),
+                              ref=f"#{number}")
         return WriteResult(ok=True, ref=f"#{number}", detail=card_withdrawn_result(
-            ref=number, how="removed" if removed else "only_closed",
+            ref=number, how="removed" if moved.outcome("remove") == "removed" else "only_closed",
             language=getattr(self.project, "language", None)))
 
     def correct_card(self, number: str, *, actor: str, text: str = "",

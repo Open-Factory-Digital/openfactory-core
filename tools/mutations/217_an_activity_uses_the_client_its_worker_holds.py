@@ -48,9 +48,9 @@ MUTATIONS = [
      _CONNECT),
 
     ("`techlead_watch` opens a client of its own again", ACTS,
-     "    await asyncio.to_thread(_repoint_product_orphans, project)\n\n"
+     "    await asyncio.to_thread(_converge_card_transitions, project)\n\n"
      "    client = engine_client()\n",
-     "    await asyncio.to_thread(_repoint_product_orphans, project)\n\n" + _CONNECT),
+     "    await asyncio.to_thread(_converge_card_transitions, project)\n\n" + _CONNECT),
 
     ("an activity reaches for the PANEL'S POOL instead: one client, but not the worker's", ACTS,
      "    # list — see `engine_client`.\n    client = engine_client()\n",
@@ -116,8 +116,8 @@ MUTATIONS = [
      "tests/test_the_box_image_resolves_in_one_place.py"),
 
     ("`techlead_watch` connects for itself: the Jira floor is never read", ACTS,
-     "    await asyncio.to_thread(_repoint_product_orphans, project)\n\n"
+     "    await asyncio.to_thread(_converge_card_transitions, project)\n\n"
      "    client = engine_client()\n",
-     "    await asyncio.to_thread(_repoint_product_orphans, project)\n\n" + _CONNECT,
+     "    await asyncio.to_thread(_converge_card_transitions, project)\n\n" + _CONNECT,
      "tests/test_the_techlead_sees_a_jira_floor.py"),
 ]

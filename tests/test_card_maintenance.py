@@ -163,6 +163,14 @@ class _Tracker:
         self.breaks = breaks
         self.board: _Board | None = None
 
+    def get_ticket(self, ref: str):
+        """The card as the board holds it — what the card's door reads before it closes one
+        (ADR-0055): absent is `KeyError`, the port's own shape for a card that is not there."""
+        n = int(str(ref).lstrip("#"))
+        if self.board is None or n not in self.board.tickets:
+            raise KeyError(ref)
+        return self.board.tickets[n]
+
     def close_ticket(self, ref: str, reason: str, *, delivered: bool = True) -> None:
         self._maybe_break("close")
         self.closed.append((ref, reason))
@@ -299,7 +307,8 @@ def test_closing_a_card_is_one_act_that_links_both_ways(world):
     res = mod.close_card(511, actor=ADMIN, in_favour_of=288)
 
     assert res.ok is True and res.ref == "#511"
-    assert [ref for ref, _ in world.tracker.closed] == ["#511"]
+    # the card's door hands the tracker the canonical ref (C-05), as every action row always has
+    assert [ref for ref, _ in world.tracker.closed] == ["511"]
     _, closing = world.tracker.closed[0]
     assert "#288" in closing, "the closed card does not say where the work went"
     assert ADMIN in closing, "nobody is named on the decision"

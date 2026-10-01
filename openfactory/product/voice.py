@@ -3059,6 +3059,136 @@ def card_withdrawn(*, ref: str, title: str = "", removed: bool = False,
         sig=_sig(agent_name), card=_card(ref, title, language))
 
 
+# ── what happened to a card, said by the door it went through (ADR-0055) ─────────────────────────
+#
+# ONE COMMENT ON THE CARD, THE SAME ON EVERY ROW (D6). The note a stop, a skip or a discard left
+# travelled as `set_state(reason=…)`, which two trackers write as a comment and the local board
+# drops, and the stop's own sentence was English on a Portuguese board. The door writes these.
+_CARD_NOTE = {
+    "pt-BR": {
+        "discarded": ("_Pull request fechado sem merge por {who}._{why} Nada foi entregue: o "
+                      "cartão voltou para o backlog, e o branch e os commits dele estão intactos."),
+        "skipped": ("_Pulado por {who}._{why} A fábrica parou de trabalhar nele e a fila está "
+                    "livre. Nada foi entregue: o cartão voltou para o backlog."),
+        "stopped": ("_Parado por {who}._{why} O job foi encerrado no motor; nada foi mergeado e "
+                    "nenhum branch foi apagado. O cartão voltou para o backlog e pode ser "
+                    "retomado."),
+    },
+    "en": {
+        "discarded": ("_Pull request closed without merging by {who}._{why} Nothing was "
+                      "delivered: the card is back in the backlog, and its branch and commits are "
+                      "untouched."),
+        "skipped": ("_Skipped by {who}._{why} The factory stopped working on it and the queue is "
+                    "free. Nothing was delivered: the card is back in the backlog."),
+        "stopped": ("_Stopped by {who}._{why} The job was terminated in the engine; nothing was "
+                    "merged and no branch was deleted. The card is back in the backlog and can be "
+                    "picked up again."),
+    },
+}
+_CARD_NOTE_WHY = {"pt-BR": " Motivo: {why}", "en": " Reason: {why}"}
+
+
+def card_note(event: str, *, who: str, why: str = "", language: str | None = None) -> str:
+    """The comment the door leaves on a card for `event`, saying who decided and why."""
+    why = (why or "").strip()
+    if event in ("closed", "withdrawn", "removed"):
+        return card_close_note(who=who, reason=why, language=language)
+    if event == "reopened":
+        return card_reopen_note(who=who, language=language)
+    said = _pick(_CARD_NOTE_WHY, language).format(why=why) if why else ""
+    return _pick(_CARD_NOTE, language)[event].format(who=who, why=said)
+
+
+#: What the requester's conversation is told when the work on their card stopped, and when a card
+#: they were told would not be built is back. A card that is gone is `_CARD_WITHDRAWN`'s.
+_CARD_MOVED = {
+    "pt-BR": {
+        "stopped_work": ("{sig}O trabalho no cartão #{ref}{title} parou e nada dele foi entregue: "
+                         "o cartão voltou para o backlog até alguém retomá-lo."),
+        "back": "{sig}O cartão #{ref}{title} foi reaberto e voltou para o backlog.",
+    },
+    "en": {
+        "stopped_work": ("{sig}The work on #{ref}{title} stopped, and nothing of it was delivered: "
+                         "the card is back in the backlog until somebody picks it up again."),
+        "back": "{sig}#{ref}{title} was reopened and is back in the backlog.",
+    },
+}
+
+
+def card_moved(notice: str, *, ref: str, title: str = "", removed: bool = False,
+               language: str | None = None, agent_name: str = "") -> str:
+    """What the requester is told, once, when the door moved their card (ADR-0055 D10)."""
+    if notice == "will_not_be_built":
+        return card_withdrawn(ref=ref, title=title, removed=removed, language=language,
+                              agent_name=agent_name)
+    title = (title or "").strip()
+    return _pick(_CARD_MOVED, language)[notice].format(
+        sig=_sig(agent_name), ref=str(ref).lstrip("#"), title=f" ({title})" if title else "")
+
+
+#: Why the door refused: where the card is, and what cannot happen to it from there (D2).
+_CARD_WHERE = {
+    "pt-BR": {"backlog": "no backlog", "todo": "em TO-DO, esperando a fábrica",
+              "running": "com a fábrica trabalhando nele", "waiting_on_a_person":
+              "esperando uma pessoa", "merged": "já mergeado", "staged": "em um estágio",
+              "delivered": "entregue", "closed": "fechado", "removed": "fora do quadro",
+              "": "aberto, e o quadro não diz onde"},
+    "en": {"backlog": "in the backlog", "todo": "in TO-DO, waiting for the factory",
+           "running": "being worked on by the factory", "waiting_on_a_person":
+           "waiting on a person", "merged": "merged", "staged": "on a stage",
+           "delivered": "delivered", "closed": "closed", "removed": "not on the board",
+           "": "open, and its board does not say where"},
+}
+_CARD_DONE_TO = {
+    "pt-BR": {"discarded": "descartado", "skipped": "pulado", "stopped": "parado",
+              "closed": "fechado", "withdrawn": "retirado", "removed": "removido",
+              "reopened": "reaberto"},
+    "en": {"discarded": "discarded", "skipped": "skipped", "stopped": "stopped",
+           "closed": "closed", "withdrawn": "withdrawn", "removed": "removed",
+           "reopened": "reopened"},
+}
+_CARD_REFUSED = {
+    "pt-BR": "O #{ref} está {where} — não pode ser {done} a partir daí. Nada foi alterado.",
+    "en": "#{ref} is {where} — it cannot be {done} from there. Nothing was changed.",
+}
+_CARD_RACED = {
+    "pt-BR": ("O #{ref} mudou enquanto isso era decidido, mais de uma vez — nada foi alterado. "
+              "Tente de novo."),
+    "en": "#{ref} kept changing while this was being decided — nothing was changed. Try again.",
+}
+
+
+def card_refused(event: str, *, state: str, ref: str, language: str | None = None) -> str:
+    """Why `event` may not happen to card `ref` while it is in `state` — `""` when no board places
+    it."""
+    return _pick(_CARD_REFUSED, language).format(
+        ref=str(ref).lstrip("#"), where=_pick(_CARD_WHERE, language).get(state, state),
+        done=_pick(_CARD_DONE_TO, language).get(event, event))
+
+
+def card_raced(*, ref: str, language: str | None = None) -> str:
+    return _pick(_CARD_RACED, language).format(ref=str(ref).lstrip("#"))
+
+
+#: WHAT THE PRODUCT ROLE OWES, AS ONE LINE ON THE CARD ITSELF (ADR-0055 D11). The person cannot act
+#: on a promise, so it is not on the list of what waits on them; it is on the card it is about.
+_CARD_OWED = {
+    "pt-BR": "{agent} avisa você na conversa quando isto for entregue.",
+    "en": "{agent} will tell you in the conversation when this is delivered.",
+}
+_CARD_OWED_BACKLOG = {
+    "pt-BR": " Até lá o cartão está no backlog: o trabalho nele parou sem entrega.",
+    "en": " Until then the card is in the backlog: the work on it stopped with nothing delivered.",
+}
+
+
+def card_owed(*, agent_name: str = "", in_backlog: bool = False,
+              language: str | None = None) -> str:
+    agent = (agent_name or "").strip() or _pick(_AGENDA_AGENT, language)
+    line = _pick(_CARD_OWED, language).format(agent=agent[:1].upper() + agent[1:])
+    return line + (_pick(_CARD_OWED_BACKLOG, language) if in_backlog else "")
+
+
 def document_ingested(*, name: str, language: str | None = None, agent_name: str = "") -> str:
     """A document now in the product's memory, said where it was brought (#269)."""
     return _pick(_DOCUMENT_INGESTED, language).format(sig=_sig(agent_name),
@@ -3181,25 +3311,25 @@ _AGENDA_SAID = {
     "context": {"pt-BR": "uma resposta sobre como o produto funciona",
                 "en": "an answer about how the product works"},
 }
-#: The chip: which way the item points and to whom, as one phrase.
+#: The chip: whom the item waits on, as one phrase. ONLY WHAT IS AWAITED HAS ONE (ADR-0055 D11):
+#: what the role owes is not on the Pending tab, so its "owed to you" chip is gone with it.
 _AGENDA_CHIP = {
-    ("owed", "you"): {"pt-BR": "devo a você", "en": "owed to you"},
-    ("owed", "room"): {"pt-BR": "devo à sala", "en": "owed to the room"},
     ("awaited", "you"): {"pt-BR": "espero de você", "en": "awaited from you"},
     ("awaited", "room"): {"pt-BR": "espero da sala", "en": "awaited from the room"},
 }
 _AGENDA_WHEN = {"pt-BR": "desde {since}", "en": "since {since}"}
 _AGENDA_REMINDED = {"pt-BR": ", lembrei em {chased}", "en": ", reminded {chased}"}
 _AGENDA_EMPTY = {
-    "pt-BR": "não devo nada a ninguém aqui, e não estou esperando nada.",
-    "en": "nothing is owed and nothing is awaited here.",
+    "pt-BR": "Nada está esperando por você aqui.",
+    "en": "Nothing is waiting on you here.",
 }
-#: WHAT THE TAB IS, IN ONE SENTENCE — the panel draws it above the list.
+#: WHAT THE TAB IS, IN ONE SENTENCE — the panel draws it above the list. Only what waits on the
+#: person (ADR-0055 D11): what the role owes them is a line on the card it is about.
 _AGENDA_ABOUT = {
-    "pt-BR": ("O que {agent} deve a você — um aviso quando algo que você pediu ficar pronto — e o "
-              "que espera de você: uma decisão, uma resposta, um \"funcionou?\"."),
-    "en": ("What {agent} owes you — a word when something you asked for is ready — and what it "
-           "is waiting for from you: a decision, an answer, a \"did it work?\"."),
+    "pt-BR": ("O que {agent} espera de você: uma decisão, uma resposta, um \"funcionou?\". Cada "
+              "item abre onde ele é respondido — a conversa ou o cartão."),
+    "en": ("What {agent} is waiting for from you: a decision, an answer, a \"did it work?\". "
+           "Each one opens where it is answered — the conversation or the card."),
 }
 _AGENDA_AGENT = {"pt-BR": "o agente de produto", "en": "the product role"}
 

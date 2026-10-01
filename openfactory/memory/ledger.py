@@ -76,6 +76,17 @@ CONTEXT = "context"
 CARD_QUESTION = "card_question"
 KINDS = (REMEDY, FINDING, QUESTION, DELIVERY, ACCEPTANCE, DECISION, CONTEXT, CARD_QUESTION)
 
+#: How a loop about a card ends when THE CARD IS GONE — closed as not delivered, withdrawn or
+#: removed (ADR-0055 D10). Outcomes are each kind's own words; this one is shared because the
+#: observation is the same for every kind keyed to a card: nothing will ever answer it. Without it
+#: a delivery whose card will never ship stayed open for ever, and the agenda went on promising
+#: "I will tell you when it is fixed" about a card nobody would fix.
+CANCELLED = "cancelled"
+
+#: The cards of a DELIVERY loop that were cancelled while the rest still wait, as its context holds
+#: them — the loop closes only when what REMAINS is delivered, and as `cancelled` when nothing does.
+CANCELLED_CARDS = "cancelled"
+
 
 @dataclass(frozen=True)
 class Loop:

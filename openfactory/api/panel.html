@@ -1263,6 +1263,8 @@ const ACTS={
   pvDiscardYes:  d=>pvDiscardYes(d.i),
   pvTab:         d=>pvTab(d.t),
   pvCardOpen:    d=>pvCardOpen(d.r),
+  pvPendingCard: d=>{pvTab("board");pvCardOpen(d.r)},
+  pvPendingTalk: ()=>{const a=$("#prodAsk");if(a)a.focus()},
   pvCardBack:    ()=>pvCardBack(),
   pvSuggest:     d=>pvSuggest(d.q),
 };
@@ -2043,11 +2045,13 @@ async function bootProduct(){
   if(_prod.project)loadSessions();
 }
 
-// THE AGENDA (#267 slice 3): what the product role owes, and to whom — "you" or "the room", never
-// a name. The server filters it by who the credential names, like the chat (`product_agenda`):
-// this person's own items and the room's, never somebody else's private ones. READ WHEN THE PAGE
-// OPENS AND WHEN THE ROLE SAYS SOMETHING (`pchatFrame`), never on a clock: what changes it is an
-// event arriving, a delivery announced, an answer given — each of which arrives as a reply.
+// PENDING (#267 slice 3; ADR-0055 D11): what the product role is waiting for from the person — "you"
+// or "the room", never a name. What it OWES them is not here: they cannot act on a promise, so it
+// is one line on the card it is about (`c.owed`). The server filters it by who the credential
+// names, like the chat (`product_agenda`): this person's own items and the room's, never somebody
+// else's private ones. READ WHEN THE PAGE OPENS AND WHEN THE ROLE SAYS SOMETHING (`pchatFrame`),
+// never on a clock: what changes it is an event arriving, a delivery announced, an answer given —
+// each of which arrives as a reply.
 async function loadAgenda(){
   if(!_prod.project)return;
   const out=await act("product_agenda",{project:_prod.project}).catch(()=>null);
@@ -2069,12 +2073,17 @@ function paintAgenda(){
   }
   if(cnt)cnt.textContent=String(_prod.agenda.length);
   if(!_prod.agenda.length){
-    el.innerHTML=`<div class="empty" style="padding:18px">${esc(_prod.agendaEmpty||"nothing is owed and nothing is awaited here")}</div>`;return;
+    el.innerHTML=`<div class="empty" style="padding:18px">${esc(_prod.agendaEmpty||"Nothing is waiting on you here.")}</div>`;return;
   }
   el.innerHTML=_prod.agenda.map(i=>{
     const owed=i.direction==="owed";
     // #401: the chip and the date as the server wrote them, in the project's language
     const chip=esc(String(i.chip||`${owed?"owed":"awaited"} · ${i.to||""}`));
+    // ADR-0055 D11: EACH ITEM OPENS WHERE IT IS ANSWERED — the card it is about, or the
+    // conversation, whose box is this page's own
+    const go=i.opens==="card"&&i.card
+      ?`<button class="btn sm ghost" data-act="pvPendingCard" data-r="${esc(String(i.card))}">#${esc(String(i.card))}</button>`
+      :`<button class="btn sm ghost" data-act="pvPendingTalk">${i.card?`#${esc(String(i.card))} · `:""}↩</button>`;
     const when=esc(String(i.when||`since ${String(i.since||"").slice(0,10)||"?"}${i.chased?` · reminded ${String(i.chased).slice(0,10)}`:""}`));
     if($("#pv")){
       // #335: WHAT IT IS ABOUT FIRST — the question or the requirement — and whose move it is under
@@ -2083,7 +2092,7 @@ function paintAgenda(){
       return `<div class="row">
       <div class="grow"><b style="color:var(--txt)">${esc(String(i.what||i.said||""))}</b>
         <div class="sub">${esc(ref)}${esc(String(i.said||""))} · ${when}</div></div>
-      <span class="chip ${owed?"ok":"warn"}">${chip}</span></div>`;
+      <span class="chip ${owed?"ok":"warn"}">${chip}</span>${go}</div>`;
     }
     return `<div class="row">
       <span class="tk">${esc(String(i.subject||""))}</span>
@@ -2185,9 +2194,9 @@ function renderProduct(name){
         </div></div>
       </main>
       <aside class="pv-side" id="pvSide">
-        <div class="pv-tabs">${tab("reqs","Requirements","prodCount")}${tab("agenda","Agenda","prodAgendaCount")}${tab("docs","Documents","prodDocCount")}${tab("board","Board","")}</div>
+        <div class="pv-tabs">${tab("reqs","Requirements","prodCount")}${tab("agenda","Pending","prodAgendaCount")}${tab("docs","Documents","prodDocCount")}${tab("board","Board","")}</div>
         ${pane("reqs",`<div class="pv-status" id="prodHead"></div><div id="prodReqs"></div>`)}
-        ${pane("agenda",`<div class="pv-about" id="prodAgendaAbout">What <span class="pv-agentname">${esc(pvAgent())}</span> owes — something it will tell you when it is done — and what it is waiting for: a decision, an answer, a "did it work?". Yours and the room's, never somebody else's.</div><div id="prodAgenda"></div>`)}
+        ${pane("agenda",`<div class="pv-about" id="prodAgendaAbout">What <span class="pv-agentname">${esc(pvAgent())}</span> is waiting for from you: a decision, an answer, a "did it work?". Each one opens where it is answered — the conversation or the card.</div><div id="prodAgenda"></div>`)}
         ${pane("docs",`<div class="pv-about">The product's documents — the files in its context repository (specifications, contracts, PDFs, minutes, diagrams) that <span class="pv-agentname">${esc(pvAgent())}</span> reads and answers from, for everyone who talks to it.</div>
           <input class="pv-search pv-docfind" id="pvDocFind" type="search" placeholder="Search the documents" oninput="pvDocSearch(this)" aria-label="search the documents">
           <div id="pvHere"></div><div id="prodDocs"></div>`)}
@@ -2311,6 +2320,7 @@ function paintPvBoard(){
     el.innerHTML=`${back}<h4 style="margin:10px 0 4px">#${esc(c.ref)} ${esc(c.title||"")}</h4>
       <div class="pv-note">${esc(c.column||"")}${c.state==="closed"?" · closed":""}</div>
       <div class="pv-md" style="max-height:220px;overflow:auto">${esc(c.body||"")}</div>
+      ${c.owed?`<div class="pv-note" data-owed>${esc(c.owed)}</div>`:""}
       ${_bcontrols(c,"product")}${said}`;
     return;
   }

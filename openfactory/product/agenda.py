@@ -99,12 +99,17 @@ class Item:
     #: caller compares; these are what a screen draws, in the project's language.
     chip: str = ""
     when: str = ""
+    #: WHERE IT IS ANSWERED (ADR-0055 D11): the card it is about, `""` when it is about none, and
+    #: whether the answer is given in the `conversation` or on the `card` — what the Pending tab
+    #: opens when the person picks the item
+    card: str = ""
+    opens: str = ""
 
     def as_dict(self) -> dict:
         return {"kind": self.kind, "subject": self.subject, "direction": self.direction,
                 "said": self.said, "what": self.what, "since": self.since,
                 "chased": self.chased, "yours": self.yours, "to": self.to,
-                "chip": self.chip, "when": self.when}
+                "chip": self.chip, "when": self.when, "card": self.card, "opens": self.opens}
 
 
 def _sealed(value: str) -> str:
@@ -212,12 +217,54 @@ def items(rows: list[Loop], viewer: Viewer, *, room: str,
         direction, said = _said(loop, yours=yours, language=language)
         ctx = loop.context or {}
         what = str(ctx.get("asked") or ctx.get("title") or "").strip()[:_WHAT_CHARS]
+        card, opens = _answered_at(loop)
         out.append(Item(kind=loop.kind, subject=loop.subject, direction=direction, said=said,
                         what=what, since=loop.ts, chased=loop.chased_ts, yours=yours,
                         to="you" if yours else "the room",
-                        chip=agenda_chip(direction, yours=yours, language=language),
-                        when=agenda_when(loop.ts, loop.chased_ts, language=language)))
+                        # an owed item has no chip: the person is not shown it as theirs to act on
+                        chip=(agenda_chip(direction, yours=yours, language=language)
+                              if direction == AWAITED else ""),
+                        when=agenda_when(loop.ts, loop.chased_ts, language=language),
+                        card=card, opens=opens))
     return out
+
+
+def _answered_at(loop: Loop) -> tuple[str, str]:
+    """`(the card the item is about, where it is answered)`. A question on a card is answered ON
+    the card — the requester's comment closes it (ADR-0048); everything else the role waits for is
+    said to it in the conversation: a decision, an answer, a "did it work?"."""
+    from openfactory.contracts.refs import canonical_ref
+
+    ctx = loop.context or {}
+    if loop.kind == CARD_QUESTION:
+        return canonical_ref(loop.subject), "card"
+    if loop.kind == ACCEPTANCE:
+        named = str(ctx.get("release_issue") or "").strip() or \
+            next((n for n in str(ctx.get("issues") or "").split(",") if n.strip()), "")
+        return canonical_ref(named), "conversation"
+    return "", "conversation"
+
+
+def pending(rows: list[Loop], viewer: Viewer, *, room: str,
+            language: str | None = None) -> list[Item]:
+    """WHAT WAITS ON THE PERSON — the Pending tab (ADR-0055 D11, amending ADR-0052 D12). Only what
+    the role is waiting FOR: what it owes them is not theirs to act on, and is one line on the card
+    it is about (`owed_on`)."""
+    return [item for item in items(rows, viewer, room=room, language=language)
+            if item.direction == AWAITED]
+
+
+def owed_on(rows: list[Loop], viewer: Viewer, card: str, *, room: str) -> bool:
+    """Whether the role owes `viewer`'s side a word about `card` — a delivery that still waits on
+    it, and that `viewer` may see. A card cancelled out of a delivery is owed nothing."""
+    from openfactory.contracts.refs import canonical_ref
+    from openfactory.product.events import issues_of
+    from openfactory.product.followup import cancelled_cards
+
+    card = canonical_ref(card)
+    return any(loop.kind == DELIVERY and card in issues_of(loop) - cancelled_cards(loop)
+               and sees(viewer, audience(loop, room=room))
+               for loop in waiting(rows, owner=OWNER))
 
 
 def render(found: list[Item], *, language: str | None = None) -> str:
@@ -234,5 +281,5 @@ def render(found: list[Item], *, language: str | None = None) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["AWAITED", "OWED", "Audience", "Item", "Viewer", "audience", "items", "render",
-           "sees", "visible"]
+__all__ = ["AWAITED", "OWED", "Audience", "Item", "Viewer", "audience", "items", "owed_on",
+           "pending", "render", "sees", "visible"]
