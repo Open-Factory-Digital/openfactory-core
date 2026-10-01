@@ -103,6 +103,137 @@ def _no_live_credentials_at_import() -> None:
     _strip()
 
 
+#: THE OPERATOR'S OWN WORLD, captured ONCE before anything here redirects it (#365). A real
+#: OpenFactory deployment lives under `~/.openfactory/` — the generated `env`, `registry.yaml`,
+#: `board.db`, `metrics.db` — and it exports its configuration into the shell that launches the
+#: suite (`OPENFACTORY_BOARD_DB`, `OPENFACTORY_OWN_WORK`, `TEMPORAL_ADDRESS`, …). ADR-0049 puts
+#: that deployment on the very machine a contributor works on, so the suite read BOTH: a default
+#: with no override falls to `namespace.operator_path` — `Path.home()/.openfactory/…`, the
+#: operator's live files — and the box kind, the engine address and `own_work` read the loaded
+#: shell. A suite whose meaning, and whose WRITES, depend on who runs it is the leak the credential
+#: floor and the registry floor above are earlier halves of. `tests/test_the_suite_reads_no_
+#: operators_openfactory.py` is the guard.
+_OPERATOR_HOME: Path | None = None
+#: name → sha256 of the value. DIGESTS, NEVER VALUES: these are the operator's secrets (a panel
+#: token, a bot token), and the point of taking them away is that no test can read them — a copy
+#: kept for the guard to compare against would be one more place to read them from.
+_OPERATOR_ENV: dict[str, str] = {}
+
+#: HOW AN xdist WORKER LEARNS WHAT THE CONTROLLER TOOK AWAY. Workers are spawned after the
+#: controller's `pytest_configure` has already stripped the variables and re-homed `HOME`, so a
+#: worker capturing for itself would capture the controller's suite home and an empty environment,
+#: and every check against them would be vacuous under `-n`. The controller hands both down in
+#: xdist's own `workerinput` (`_HandDown`) — NOT through the environment, which every nested pytest
+#: a test starts would inherit and mistake for its own operator.
+_HANDED_DOWN = "openfactory_suite_operator"
+
+
+class _HandDown:
+    """Registered on the controller only when xdist is installed: an unknown `pytest_*` hook in a
+    conftest is an error where the plugin is absent."""
+
+    @staticmethod
+    def pytest_configure_node(node) -> None:
+        node.workerinput[_HANDED_DOWN] = {"home": str(_OPERATOR_HOME), "env": dict(_OPERATOR_ENV)}
+
+#: The two prefixes a deployment's environment carries. Everything the platform reads by
+#: configuration is `OPENFACTORY_*` (`environ.ENV_PREFIX`), and the durable engine adds `TEMPORAL_*`
+#: — both are the operator's when they arrive in the shell, and both are stripped so no test reads
+#: them. The suite SETS its own under `OPENFACTORY_*` (a registry, a log dir, a cache); those are
+#: written back AFTER this strip, by the fixtures and hooks that own them.
+OPERATOR_PREFIXES = ("OPENFACTORY_", "TEMPORAL_")
+
+
+def _isolate_the_operator(suite_home: Path, workerinput: dict | None = None) -> None:
+    """Capture the operator's home and ambient `OPENFACTORY_*`/`TEMPORAL_*`, then take both away:
+    point `HOME` at a directory of the suite's own and delete every one of those variables.
+
+    Called from `pytest_configure`, BEFORE collection — the same window the registry hook below
+    runs in, and for the same reason: a module or a module-scoped fixture that resolves a default
+    at import would otherwise read the operator's home first. Captured before it is changed, so the
+    guard can prove what a test no longer sees."""
+    global _OPERATOR_HOME
+
+    handed_down = (workerinput or {}).get(_HANDED_DOWN)
+    if handed_down:
+        # an xdist worker: the controller has already captured and stripped — take its capture
+        _OPERATOR_HOME = Path(handed_down["home"])
+        _OPERATOR_ENV.update(handed_down["env"])
+    else:
+        _OPERATOR_HOME = Path(os.environ.get("HOME") or Path.home()).resolve()
+        _OPERATOR_ENV.update({name: _digest(value) for name, value in os.environ.items()
+                              if name.startswith(OPERATOR_PREFIXES)})
+    for name in [n for n in os.environ if n.startswith(OPERATOR_PREFIXES)]:
+        os.environ.pop(name, None)
+    suite_home.mkdir(parents=True, exist_ok=True)
+    _carry_dockers_plugins(suite_home)
+    os.environ["HOME"] = str(suite_home)
+
+
+def _digest(value: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _carry_dockers_plugins(home: Path) -> None:
+    """Link the operator's `~/.docker/cli-plugins` into `home`, when there is one.
+
+    DOCKER'S OWN PER-USER CONFIGURATION IS NOT THE DEPLOYMENT THIS FIXTURE HIDES. Docker Desktop
+    installs `docker compose` per user, at `~/.docker/cli-plugins/docker-compose`, and the preview
+    runtime finds it through `HOME` (`compose.docker_config()` falls back to `~/.docker`). An empty
+    home took the plugin away, and the real-daemon preview tests went red on a maintainer's Mac:
+    `unknown shorthand flag: 'p' in -p` is `docker` failing to find `compose` (review of #454).
+
+    THE PLUGINS AND NOTHING ELSE: `~/.docker/config.json` can hold the operator's registry logins,
+    which no test may read."""
+    if _OPERATOR_HOME is None:
+        return
+    plugins = _OPERATOR_HOME / ".docker" / "cli-plugins"
+    link = home / ".docker" / "cli-plugins"
+    if plugins.is_dir() and not link.exists() and not link.is_symlink():
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(plugins, target_is_directory=True)
+
+
+def operators_real_home() -> Path:
+    """The home the shell that launched the suite named — the one no test may read (#365)."""
+    assert _OPERATOR_HOME is not None, "pytest_configure has not captured the operator's home yet"
+    return _OPERATOR_HOME
+
+
+def operators_ambient_environment() -> dict[str, str]:
+    """The `OPENFACTORY_*`/`TEMPORAL_*` the shell that launched the suite carried, name → sha256
+    of the value (`_digest`) — the deployment's own configuration, which no test may read (#365).
+    The same under `-n`: a worker reads the controller's capture."""
+    return dict(_OPERATOR_ENV)
+
+
+def ambient_digest(value: str) -> str:
+    """The digest `operators_ambient_environment` holds for `value`, to compare against."""
+    return _digest(value)
+
+
+@pytest.fixture(autouse=True)
+def _a_home_of_its_own(monkeypatch, tmp_path_factory, request) -> None:
+    """`HOME` is a directory of THIS test's own, so `Path.home()` — and every `~/.openfactory/…`
+    a default resolves to (`namespace.operator_path`, `board_db.db_path`, `gate_seal`) — lands
+    there and never at the operator's real deployment (#365).
+
+    Named after the node id and created empty, like the journals and registries above: a test
+    starts from nothing, and a test that wants its own home still sets `HOME` and wins, because
+    this runs first as an autouse fixture does. The session-wide strip in `pytest_configure` has
+    already re-homed `HOME` for the import window; this narrows it to one directory per test so a
+    file one test writes under its home is never the next test's."""
+    import hashlib
+
+    own = hashlib.sha1(request.node.nodeid.encode()).hexdigest()[:12]
+    home = tmp_path_factory.getbasetemp() / "homes" / own
+    home.mkdir(parents=True, exist_ok=True)
+    _carry_dockers_plugins(home)
+    monkeypatch.setenv("HOME", str(home))
+
+
 @pytest.fixture(autouse=True)
 def _the_suite_never_borrows_this_machines_az_login(monkeypatch) -> None:
     """A LIVE CREDENTIAL THAT `_strip()` CANNOT REACH, because it lives behind a subprocess.
@@ -427,6 +558,12 @@ def pytest_configure(config) -> None:
     this hook too and gets its own."""
     home = Path(tempfile.mkdtemp(prefix="openfactory-suite-registry"))
     _SESSION_REGISTRY["home"] = home
+    # FIRST, so the operator's ambient OPENFACTORY_* (a shell's OPENFACTORY_REGISTRY among them) is
+    # gone before the suite names its own on the next line, and HOME points nowhere near the real
+    # deployment for the whole import window (#365).
+    _isolate_the_operator(home / "operator-home", getattr(config, "workerinput", None))
+    if config.pluginmanager.hasplugin("xdist") and not hasattr(config, "workerinput"):
+        config.pluginmanager.register(_HandDown(), "openfactory-suite-operator-hand-down")
     os.environ[REGISTRY_VARIABLE] = str(home / "registry.yaml")
 
 
@@ -434,6 +571,8 @@ def pytest_unconfigure(config) -> None:
     home = _SESSION_REGISTRY.pop("home", None)
     if home is not None:
         shutil.rmtree(home, ignore_errors=True)
+    if _OPERATOR_HOME is not None:
+        os.environ["HOME"] = str(_OPERATOR_HOME)
 
 
 @pytest.fixture(autouse=True)
