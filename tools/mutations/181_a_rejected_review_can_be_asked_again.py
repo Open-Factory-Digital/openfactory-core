@@ -47,7 +47,7 @@ MUTATIONS = [
     ("the read pass runs an agent — the one thing it promises it will not do",
      "openfactory/orchestrator/machine.py",
      "            self._set_state(ticket, JobState.REVIEWING)\n"
-     "            review = self.reviewer.review(\n"
+     "            review = self._review(\n"
      "                sandbox=self.sandbox, workspace=ws,\n"
      "                review_input=ReviewInput(ticket=ticket, diff=diff, validations=[]),\n"
      "            )\n"
@@ -55,7 +55,7 @@ MUTATIONS = [
      "            self._set_state(ticket, JobState.REVIEWING)\n"
      "            self.agent.repair(sandbox=self.sandbox, workspace=ws,\n"
      "                              context=self._build_context(ticket, ws), failure_log='')\n"
-     "            review = self.reviewer.review(\n"
+     "            review = self._review(\n"
      "                sandbox=self.sandbox, workspace=ws,\n"
      "                review_input=ReviewInput(ticket=ticket, diff=diff, validations=[]),\n"
      "            )\n"

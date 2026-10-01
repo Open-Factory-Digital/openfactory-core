@@ -12,6 +12,7 @@ import uuid
 from datetime import timedelta
 
 import pytest
+from gate_answers import SEAL_CHECK, approve_prod, seal_checks_done
 from temporalio import activity, workflow
 from temporalio.client import Client
 from temporalio.common import RetryPolicy
@@ -261,7 +262,7 @@ async def mock_mark_needs_action(inp) -> str:
     return "ok"
 
 
-MOCKS = [mock_run_job, mock_status_merged, mock_stop_job, mock_refresh_knowledge, mock_promote_staging,
+MOCKS = [SEAL_CHECK, mock_run_job, mock_status_merged, mock_stop_job, mock_refresh_knowledge, mock_promote_staging,
          mock_release_prod, mock_fetch_ticket_title, mock_ci_success]
 
 
@@ -386,7 +387,7 @@ async def test_promotes_to_prod_on_approval_signal(env: WorkflowEnvironment):
             if await h.query(JobWorkflow.awaiting_approval):
                 break
             await asyncio.sleep(_POLL_SLEEP)
-        await h.signal(JobWorkflow.approve_prod, args=["1.2.0", "alice", "ship it"])
+        await approve_prod(h, "1.2.0", "alice", "ship it")
         result = await h.result()
     assert result.state == JobState.DONE
 
@@ -401,6 +402,111 @@ async def test_premature_approval_is_dropped(env: WorkflowEnvironment):
         await h.signal(JobWorkflow.approve_prod, args=["9.9.9", "ghost", "sneaky"])
         result = await h.result()
     assert result.state == JobState.ON_HOLD
+
+
+_RELEASED: list[ReleaseInput] = []
+
+
+@activity.defn(name="release_prod")
+async def recording_release_prod(inp: ReleaseInput) -> RunResult:
+    _RELEASED.append(inp)
+    return RunResult(ticket_id=inp.issue, state=JobState.DONE)
+
+
+def _releasing_worker(env: WorkflowEnvironment) -> Worker:
+    mocks = [m for m in MOCKS if m is not mock_release_prod] + [recording_release_prod]
+    return Worker(env.client, task_queue=TQ, workflows=[JobWorkflow], activities=mocks)
+
+
+async def _at_the_approval_gate(h) -> None:
+    import asyncio
+
+    for _ in range(_POLL_TRIES):
+        if await h.query(JobWorkflow.awaiting_approval):
+            return
+        await asyncio.sleep(_POLL_SLEEP)
+    raise AssertionError("the job never parked at the approval gate")
+
+
+@pytest.mark.parametrize("forged", ["no seal", "sealed for another approver", "sealed for another job"])
+async def test_an_approval_sent_straight_to_the_engine_releases_nothing(
+        env: WorkflowEnvironment, forged: str):
+    """THE ADVISORY'S BYPASS. Anybody who reaches the engine can send `approve_prod` — the panel
+    checks the approver's password, the signal carried only a name. An approval without the
+    panel's seal over exactly these fields, for exactly this job, must release nothing: the gate
+    holds to its deadline as if nobody had answered."""
+    from openfactory import gate_seal
+
+    _RELEASED.clear()
+    async with _releasing_worker(env):
+        h = await _start(env.client, JobParams(project="p", issue="10", promote=True,
+                                               approval_deadline_days=1))
+        await _at_the_approval_gate(h)
+        seal = {"no seal": "",
+                "sealed for another approver": gate_seal.seal(
+                    gate_seal.APPROVE_PROD, h.id, "9.9.9", "alice", ""),
+                "sealed for another job": gate_seal.seal(
+                    gate_seal.APPROVE_PROD, "wf-some-other-job", "9.9.9", "mallory", ""),
+                }[forged]
+        await h.signal(JobWorkflow.approve_prod, args=["9.9.9", "mallory", "", seal])
+        result = await h.result()
+    assert result.state == JobState.ON_HOLD, result
+    assert _RELEASED == [], f"a forged approval ({forged}) released {_RELEASED}"
+
+
+async def test_a_forged_approval_leaves_the_gate_open_for_the_real_one(env: WorkflowEnvironment):
+    """Dropping the forgery is half of it; the other half is that it does not CLOSE the gate —
+    otherwise anybody on the network could still deny every release by answering first."""
+    import asyncio
+
+    _RELEASED.clear()
+    async with _releasing_worker(env):
+        h = await _start(env.client, JobParams(project="p", issue="10", promote=True))
+        await _at_the_approval_gate(h)
+        await h.signal(JobWorkflow.approve_prod, args=["6.6.6", "mallory", "forged"])
+        for _ in range(_POLL_TRIES):
+            if await seal_checks_done(h) >= 1:
+                break
+            await asyncio.sleep(_POLL_SLEEP)
+        else:
+            raise AssertionError("the forged approval was never checked")
+        assert await h.query(JobWorkflow.awaiting_approval), "a forged answer closed the gate"
+        refused = await h.query(JobWorkflow.gate_refused)
+        assert "carries no seal" in refused, (
+            f"the refusal is not readable where the panel asks: {refused!r}")
+        await approve_prod(h, "1.2.0", "alice", "ship it")
+        result = await h.result()
+    assert result.state == JobState.DONE
+    assert [(r.version, r.approver) for r in _RELEASED] == [("1.2.0", "alice")]
+
+
+@pytest.mark.parametrize("keys", ["the same key", "different keys"])
+async def test_the_doctors_probe_is_answered_by_the_worker(env: WorkflowEnvironment, monkeypatch,
+                                                            keys: str):
+    """`openfactory doctor` seals a probe with ITS key and the WORKER verifies it — the only way
+    to see two halves that hold different keys before a person's approval vanishes between them."""
+    from openfactory import gate_seal
+    from openfactory.runtime.temporal import TASK_QUEUE
+    from openfactory.runtime.temporal import view as tv
+    from openfactory.runtime.temporal.workflow import GateKeyProbeWorkflow
+
+    monkeypatch.setenv(gate_seal.VARIABLE, "the-workers-key")
+    if keys == "different keys":
+        real = gate_seal.seal
+
+        def sealed_elsewhere(*args, **kwargs):
+            with monkeypatch.context() as m:
+                m.setenv(gate_seal.VARIABLE, "the-panels-key")
+                return real(*args, **kwargs)
+        monkeypatch.setattr(gate_seal, "seal", sealed_elsewhere)
+
+    async with Worker(env.client, task_queue=TASK_QUEUE, workflows=[GateKeyProbeWorkflow],
+                      activities=[SEAL_CHECK]):
+        refused = await tv.gate_key_refusal(env.client)
+    if keys == "the same key":
+        assert refused == ""
+    else:
+        assert "different gate keys" in refused, refused
 
 
 async def test_paused_job_resumes_durably_inside_the_workflow(env: WorkflowEnvironment):
@@ -1111,7 +1217,7 @@ async def test_promotion_runs_on_the_JOBS_box_not_the_workers(env: WorkflowEnvir
     _PROMOTED_ON.clear()
     worker = Worker(
         env.client, task_queue=TQ, workflows=[JobWorkflow],
-        activities=[mock_run_job, mock_status_merged, mock_stop_job, mock_refresh_knowledge,
+        activities=[SEAL_CHECK, mock_run_job, mock_status_merged, mock_stop_job, mock_refresh_knowledge,
                     promote_recording_the_box, release_recording_the_box, mock_fetch_ticket_title,
                     mock_ci_success],
     )
@@ -1122,7 +1228,7 @@ async def test_promotion_runs_on_the_JOBS_box_not_the_workers(env: WorkflowEnvir
             if await h.query(JobWorkflow.awaiting_approval):
                 break
             await asyncio.sleep(_POLL_SLEEP)
-        await h.signal(JobWorkflow.approve_prod, args=["1.0.0", "alice", "ship it"])
+        await approve_prod(h, "1.0.0", "alice", "ship it")
         result = await h.result()
     assert result.state == JobState.DONE
     assert _PROMOTED_ON == [("staging", "nomad"), ("release", "nomad")]
@@ -1151,7 +1257,7 @@ async def test_manifest_environments_drive_promotion_without_flag(env: WorkflowE
 
     worker = Worker(
         env.client, task_queue=TQ, workflows=[JobWorkflow],
-        activities=[run_job_with_environments, mock_status_merged, mock_stop_job, mock_refresh_knowledge,
+        activities=[SEAL_CHECK, run_job_with_environments, mock_status_merged, mock_stop_job, mock_refresh_knowledge,
                     mock_promote_staging, mock_release_prod],
     )
     async with worker:
@@ -1161,7 +1267,7 @@ async def test_manifest_environments_drive_promotion_without_flag(env: WorkflowE
             if await h.query(JobWorkflow.awaiting_approval):
                 break
             await asyncio.sleep(_POLL_SLEEP)
-        await h.signal(JobWorkflow.approve_prod, args=["1.0.0", "alice", ""])
+        await approve_prod(h, "1.0.0", "alice", "")
         result = await h.result()
     assert result.state == JobState.DONE  # config-driven, end to end
 

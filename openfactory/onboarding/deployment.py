@@ -1006,7 +1006,11 @@ OPENFACTORY_BOT_EMAIL=bot@openfactory.local
         parts.append(
             "\n# ── Published ports — override any that collide with something already running "
             "──\n" + "".join(f"{listener.port_var}={listener.default_port}\n"
-                             for listener in LISTENERS))
+                             for listener in LISTENERS)
+            + "# Where the panel is published. Empty is 127.0.0.1, this machine only: it speaks "
+              "plain HTTP,\n# so serve it to other machines (0.0.0.0) only behind TLS — a reverse "
+              "proxy or a VPN. The engine\n# and its UI have no sign-in and are published on "
+              "127.0.0.1 whatever this says.\nPANEL_BIND=\n")
 
     out.text = "".join(parts)
     return out

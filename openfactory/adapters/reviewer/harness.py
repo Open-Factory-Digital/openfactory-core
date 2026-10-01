@@ -21,7 +21,12 @@ from __future__ import annotations
 
 import json
 
-from openfactory.adapters.reviewer.base import ReviewerAdapter, ReviewInput
+from openfactory.adapters.reviewer.base import (
+    ACCEPTANCE_SHAPE,
+    EVIDENCE_RULE,
+    ReviewerAdapter,
+    ReviewInput,
+)
 from openfactory.adapters.sandbox.base import SandboxAdapter, Workspace
 from openfactory.contracts import ReviewResult
 
@@ -30,11 +35,11 @@ Return ONLY a JSON object (no prose, no code fences) with this shape:
 {
   "decision": "approved" | "approved_with_findings" | "rejected",
   "score": 0-100,
-  "acceptance": [{"criterion": str, "status": "passed"|"failed"|"unknown", "evidence": str|null}],
+__ACCEPTANCE__
   "findings": [{"severity": "low"|"medium"|"high"|"critical", "description": str,
                 "file": str|null, "line": int|null, "criterion": str|null}],
   "summary": str
-}"""
+}""".replace("__ACCEPTANCE__", ACCEPTANCE_SHAPE)
 
 _INSTRUCTIONS = (
     "You are an INDEPENDENT reviewer. You did NOT write this code. You are given only the "
@@ -64,7 +69,7 @@ def build_review_prompt(ri: ReviewInput) -> str:
         for v in ri.validations
     ) or "(none)"
     parts = [
-        _INSTRUCTIONS,
+        _INSTRUCTIONS + " " + EVIDENCE_RULE,
         f"\n# Ticket {t.id}: {t.title}\n## Objective\n{t.objective}",
         f"\n## Acceptance criteria\n{crits}",
         f"\n## Platform validation results\n{vals}",

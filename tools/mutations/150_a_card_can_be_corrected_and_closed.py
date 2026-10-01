@@ -143,11 +143,11 @@ MUTATIONS = [
      '                    ""),'),
 
     ("a card opened from a request is not recognised, so it is rewritten from the board", AUTHORING,
-     "    if any(line.startswith(_FROM_A_REQUEST) for line in lines):",
+     "    if any(line.startswith(tuple(_FROM_A_REQUEST.values())) for line in lines):",
      "    if False:"),
 
     ("a card opened from a defect is not recognised", AUTHORING,
-     "    if any(line.startswith(_FROM_A_DEFECT) for line in lines):",
+     "    if any(line.startswith(tuple(_FROM_A_DEFECT.values())) for line in lines):",
      "    if False:"),
 
     ("a requirement card is not recognised", AUTHORING,

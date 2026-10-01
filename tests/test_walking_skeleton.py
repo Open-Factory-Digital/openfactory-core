@@ -16,6 +16,7 @@ from openfactory.adapters.sandbox import WorktreeSandbox
 from openfactory.adapters.sandbox.base import SandboxAdapter, Workspace
 from openfactory.adapters.tracker.parse import parse_ticket_body
 from openfactory.contracts import (
+    AcceptanceCheck,
     AcceptanceCriterion,
     AgentRunResult,
     Component,
@@ -160,6 +161,9 @@ class FakeReviewer:
         return ReviewResult(
             decision="approved_with_findings",
             score=88,
+            # cited to the gate that executed it, so the change is verified (#447)
+            acceptance=[AcceptanceCheck(criterion="the feature exists", status="passed",
+                                        evidence="gate:test — the suite ran it")],
             findings=[Finding(severity="low", description="minor nit")],
             summary="looks correct against the criteria",
         )

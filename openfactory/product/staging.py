@@ -270,6 +270,55 @@ def _pending_from_store(thread: str, project) -> dict | None:
     return None
 
 
+def waiting_in(project, conversation: str, person: str = "", *,
+               now: float | None = None) -> dict | None:
+    """`{token, approve, reject}` of the proposal waiting for `person` in `conversation`, as the
+    DURABLE STORE says it — or None when nothing is (#443). What a page may draw buttons for.
+
+    THE STORE, NEVER `_PENDING`. This process's dictionary is its own copy: the panel thaws a row
+    into it on a read and keeps it, so a proposal answered in the worker by a typed "sim" is still
+    in it here. The store is the one record every process writes — a yes, a no, a click, an
+    expiry all answer the row (`consume`, `_answer_expired`) — so it is the one that can say what
+    is still waiting. A page that kept its own copy drew "Confirm and record" two hours after the
+    person had confirmed by typing, with no question above it.
+
+    Found as `find_waiting` finds it: this person's own key first, then the conversation's bare
+    key (a proposal staged for nobody in particular), each the latest ask the store holds for it.
+    A row older than `PROPOSAL_TTL_SECONDS` is waiting for nothing — its first read answers it
+    `expired` — and is said as None here. Never raises: an unreadable store is None, because
+    buttons nobody can confirm are the defect this exists to end."""
+    try:
+        from datetime import datetime
+
+        from openfactory.memory import messages as _panel_store
+        from openfactory.product.voice import confirm_labels
+
+        name = getattr(project, "name", "") or str(project or "")
+        conversation = str(conversation or "")
+        if not name or not conversation:
+            return None
+        rows = {q.token.partition("|")[0]: q for q in _panel_store.pending(name)}
+        clock = time.time() if now is None else now
+        for key in dict.fromkeys((key_for(conversation, person), conversation)):
+            q = rows.get(key)
+            if q is None:
+                continue
+            try:
+                if clock - datetime.fromisoformat(q.ts).timestamp() > PROPOSAL_TTL_SECONDS:
+                    continue
+            except ValueError:
+                pass  # a stamp the store did not write in its own format: its answer decides
+            # THE LABELS IT WAS ASKED WITH (`remember` mirrors them), the language's own when a
+            # row predates them
+            default = confirm_labels(language=getattr(project, "language", None))
+            return {"token": q.token,
+                    "approve": q.approve if q.approve not in ("", "Approve") else default[0],
+                    "reject": q.reject if q.reject not in ("", "Reject") else default[1]}
+    except Exception:  # noqa: BLE001 — no buttons is the safe reading of a store nobody can read
+        log.info("could not read what waits in %s", conversation, exc_info=True)
+    return None
+
+
 def _reset_for_tests() -> None:
     """Forget every staged proposal and every tombstone — the suite's isolation, in one place.
 
@@ -429,7 +478,8 @@ def remember(thread: str, entry: dict, *, lang=None, project=None, person: str =
 
             approve, reject = confirm_labels(language=lang)
             _panel_store.ask(getattr(project, "name", "") or "",
-                             _proposal_summary(entry) or "proposta aguardando confirmação",
+                             _proposal_summary(entry, language=lang)
+                             or _labels(lang)["waiting"],
                              token=proposal_token(thread, entry), approve=approve, reject=reject,
                              channel=where, payload=_freeze(entry))
         except Exception:  # noqa: BLE001 — the mirror is additive; the staging is not
@@ -696,51 +746,81 @@ def _stored(project) -> list[tuple[str, dict]]:
         return []
 
 
-def _proposal_summary(entry: dict) -> str:
+#: THE LABELS OF A PROPOSAL'S SUMMARY, per language (#429). THE FINGERPRINT READS THE pt-BR ONES,
+#: ALWAYS: `proposal_token` hashes the summary, and a button posted in one language must approve
+#: the same proposal a click reads back in any other — so only the summary a PERSON reads (the
+#: panel's mirror) is asked for in the conversation's language.
+_SUMMARY_LABELS = {
+    "pt-BR": {
+        "kind": "tipo", "requirement_kind": "requisito", "title": "título", "number": "número",
+        "in_favour_of": "em favor de", "requirement": "requisito", "reason": "motivo",
+        "term": "termo", "decision": "decisão", "text": "texto", "new_title": "novo título",
+        "items": "itens", "content": "conteúdo", "criteria": "critérios",
+        "waiting": "proposta aguardando confirmação",
+    },
+    "en": {
+        "kind": "kind", "requirement_kind": "requirement", "title": "title", "number": "number",
+        "in_favour_of": "in favour of", "requirement": "requirement", "reason": "reason",
+        "term": "term", "decision": "decision", "text": "text", "new_title": "new title",
+        "items": "items", "content": "content", "criteria": "criteria",
+        "waiting": "proposal waiting for confirmation",
+    },
+}
+
+
+def _labels(language: str | None) -> dict:
+    from openfactory.product.voice import _pick
+
+    return _pick(_SUMMARY_LABELS, language)
+
+
+def _proposal_summary(entry: dict, *, language: str = "pt-BR") -> str:
     """What is on the table, in one blob for the judge. Only what a staged entry actually holds —
     a summary that invents fields would have the model approving something nobody drafted."""
-    kind = entry.get("kind", "requisito")
+    said = _labels(language)
+    kind = entry.get("kind", said["requirement_kind"])
     answer = entry.get("answer")
     draft = getattr(answer, "draft", None) if answer is not None else None
-    parts = [f"tipo: {kind}"]
+    parts = [f"{said['kind']}: {kind}"]
     # `número` is load-bearing for the FINGERPRINT, not just the judge: an accept entry holds
     # nothing but its kind and number, so without it every staged accept hashed identically and a
     # stale button for requirement 3 would have approved whatever accept came to be staged later.
-    for label, value in (("título", getattr(draft, "title", "")),
-                         ("número", entry.get("number", "") or ""),
+    for label, value in ((said["title"], getattr(draft, "title", "")),
+                         (said["number"], entry.get("number", "") or ""),
                          # WHAT THE NUMBER ALONE DOES NOT DISTINGUISH. Two closes of the same card
                          # in favour of different cards — or two alignments of one card to
                          # different requirements — are different decisions that hash identically
                          # without these, so a button posted for one would perform the other. The
                          # second half of the act is as load-bearing as the first.
-                         ("em favor de", entry.get("in_favour_of", "") or ""),
-                         ("requisito", entry.get("requirement", "") or ""),
+                         (said["in_favour_of"], entry.get("in_favour_of", "") or ""),
+                         (said["requirement"], entry.get("requirement", "") or ""),
                          # the reason travels onto the client's card in their name, so two closes
                          # (or two drops) of one number with different reasons are different acts
                          # and must not share a button
-                         ("motivo", entry.get("reason", "") or ""),
-                         ("termo", entry.get("term", "")),
+                         (said["reason"], entry.get("reason", "") or ""),
+                         (said["term"], entry.get("term", "")),
                          # THE SENTENCE ITSELF, and it is load-bearing for exactly the reason the
                          # two lines above are: two decisions recorded against one requirement are
                          # different acts that would hash identically without it, so the button
                          # posted for the first would write the second — into a register whose
                          # entire value is that nobody edits it afterwards.
-                         ("decisão", entry.get("decision", "") or ""),
-                         ("texto", entry.get("body", "") or entry.get("restated", "")
+                         (said["decision"], entry.get("decision", "") or ""),
+                         (said["text"], entry.get("body", "") or entry.get("restated", "")
                           or entry.get("text", "")),
                          # a correction of one card to two different titles is two decisions
-                         ("novo título", entry.get("new_title", "") or ""),
-                         ("itens", ", ".join(str(n) for n in entry.get("numbers", []) or []))):
+                         (said["new_title"], entry.get("new_title", "") or ""),
+                         (said["items"], ", ".join(str(n) for n in entry.get("numbers", [])
+                                                   or []))):
         if value:
             parts.append(f"{label}: {value}")
     body = getattr(draft, "body", "") or getattr(draft, "statement", "")
     if body:
-        parts.append(f"conteúdo: {str(body)[:800]}")
+        parts.append(f"{said['content']}: {str(body)[:800]}")
     # the criteria distinguish two drafts that share a title — a redraft after a correction must
     # not be approvable by the button posted for its predecessor
     criteria = list(getattr(draft, "must_be_true", None) or [])
     if criteria:
-        parts.append("critérios: " + "; ".join(str(c) for c in criteria[:8]))
+        parts.append(f"{said['criteria']}: " + "; ".join(str(c) for c in criteria[:8]))
     return "\n".join(parts)
 
 

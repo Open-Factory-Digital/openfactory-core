@@ -17,6 +17,24 @@ from pydantic import BaseModel, Field
 from openfactory.adapters.sandbox.base import SandboxAdapter, Workspace
 from openfactory.contracts import ReviewResult, Ticket, ValidationResult
 
+#: HOW A CRITERION IS PASSED, said to every reviewer the same way (#447). The platform checks the
+#: citation against the gates that ran (`review/evidence.py`) — so the rule the model is given and
+#: the rule the code applies are one rule, and a verdict means the same whichever harness wrote it.
+EVIDENCE_RULE = (
+    "A criterion is `passed` only on evidence a gate listed under the platform's validation "
+    "results EXECUTED: cite that gate in `evidence` as `gate:<name>` (for example `gate:test — "
+    "tests/test_x.py::test_y covers it`). Reading the diff is not execution, and neither is a test "
+    "that no listed gate runs — for those, the status is `unknown`, and if a test or command in "
+    "the repository WOULD verify the criterion, name it in `would_verify` (for example `npm run "
+    "test:e2e — frontend/e2e/home.spec.ts`). The platform confirms every `gate:` citation against "
+    "the gates that actually ran; a criterion it cannot confirm is reported as not verified, "
+    "whatever the decision says."
+)
+
+#: The acceptance entry every reviewer returns, with the field the rule above asks for.
+ACCEPTANCE_SHAPE = ('  "acceptance": [{"criterion": str, "status": "passed"|"failed"|"unknown", '
+                    '"evidence": str|null, "would_verify": str|null}],')
+
 
 class ReviewInput(BaseModel):
     ticket: Ticket

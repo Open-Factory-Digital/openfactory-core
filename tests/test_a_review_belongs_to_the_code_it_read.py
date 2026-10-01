@@ -290,7 +290,8 @@ def test_the_MACHINE_reviews_the_diff_it_just_pushed():
     src = whole[start:whole.index("\n    def ", start + 10)]
     assert "self._commit(ws, ticket)" in src, "this is not the repair pass — the slice has drifted"
 
-    assert "self.reviewer.review(" in src, (
+    # through `_review` since #447, which checks the evidence against the gates that ran
+    assert "self._review(" in src, (
         "the pass pushes a rewritten pull request and never reads it back")
     # BOTH SITES BY NAME, because `review=review` is in this slice twice and a substring check
     # over the whole of it is satisfied by either. Cutting the RunResult's copy — the one the

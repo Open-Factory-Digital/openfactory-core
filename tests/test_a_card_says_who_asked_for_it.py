@@ -36,7 +36,7 @@ def _parsed(body: str, author: str | None = "openfactory-bot") -> Ticket:
 
 
 def test_the_card_a_person_asked_for_names_them_as_front_matter():
-    body = ticket_body(described="um relatório mensal", reported_by="<@U0PO>", source="chat")
+    body = ticket_body(language="pt-BR", described="um relatório mensal", reported_by="<@U0PO>", source="chat")
 
     assert body.startswith("---\nrequester:"), body[:60]
     assert "**Pedido por:** <@U0PO>" in body, "the prose line stays for the person reading"
@@ -44,7 +44,7 @@ def test_the_card_a_person_asked_for_names_them_as_front_matter():
 
 
 def test_the_defect_card_names_who_reported_it():
-    body = defect_body(restated="o fecho não gera o pacote", reported_by="<@U0BA>",
+    body = defect_body(language="pt-BR", restated="o fecho não gera o pacote", reported_by="<@U0BA>",
                        severity="alta", source="chat", requirement=None,
                        requirement_path="requirements/0001-x.md", docs_repo="o/docs")
 
@@ -64,7 +64,7 @@ def test_the_card_born_from_a_requirement_is_asked_for_by_who_asked_for_the_requ
 
 
 def test_a_card_with_nobody_recorded_carries_no_key():
-    body = ticket_body(described="x", reported_by="", source="")
+    body = ticket_body(language="pt-BR", described="x", reported_by="", source="")
 
     assert not body.startswith("---"), "a key naming nobody would be read as somebody"
     assert "**Pedido por:** não registrado" in body

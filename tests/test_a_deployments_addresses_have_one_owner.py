@@ -483,7 +483,8 @@ def _compose(env: dict[str, str]) -> dict:
     out: dict = {"published": {}, "container": {}, "reach": {}}
     for name, service in services.items():
         for mapping in service.get("ports") or []:
-            published, _, container = _interpolate(str(mapping), env).rpartition(":")
+            # `host:published:container` — every mapping names the address it binds on.
+            published, container = _interpolate(str(mapping), env).split(":")[-2:]
             out["published"][name], out["container"][name] = int(published), int(container)
         for var, value in (service.get("environment") or {}).items():
             if var in _EVERY_VAR:

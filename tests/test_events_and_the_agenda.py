@@ -1065,3 +1065,28 @@ def test_the_guard_above_is_LOOKING():
                  "events.pull_requests_at_the_gate(", "events.deliver(", "events.to_room(",
                  "events.ready_for_you(", "events.ready_at_the_gate(", "door.report("):
         assert call in source, call
+
+
+def test_the_product_board_is_read_again_when_the_role_speaks_and_when_it_is_opened():
+    """The Board tab was read once, when the page opened, and said "No open cards" beside a card
+    the role had just filed from the conversation and a job had taken to its pull request (#440).
+    It follows the agenda's trigger — the role spoke — and the person's own: opening the tab.
+    Never a clock (#266 slice 5)."""
+    import re
+
+    page = (ROOT / "openfactory/api/panel.html").read_text()
+    code = page[page.index("<script>"):]
+
+    def _function(name: str) -> str:
+        start = code.index(f"function {name}(")
+        nxt = re.search(r"\n(async )?function ", code[start + 10:])
+        return code[start:start + 10 + (nxt.start() if nxt else len(code))]
+
+    assert "pvBoardLoad()" in _function("pchatAgendaMoved"), (
+        "the role files, closes and removes cards by speaking — its reply must re-read the board")
+    tab = _function("pvTab")
+    assert re.search(r'if\(k==="board"\)pvBoardLoad\(\)', tab), (
+        "opening the Board tab must read it, not show what the page read when it opened")
+    assert 'tab("board"' in code, "the tab key the guard checks must be the key the page draws"
+    for name in ("pvBoardLoad", "pchatAgendaMoved", "pvTab"):
+        assert "setInterval" not in _function(name) and "setTimeout" not in _function(name)

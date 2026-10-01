@@ -1,23 +1,23 @@
-## Objetivo
+## Objective
 
 {objective}
 
-## O que está acontecendo
+## What is happening
 
 {description}
 
-## Critérios de aceite
+## Acceptance criteria
 
 {done_when}
 
-## Fora do escopo
+## Out of scope
 
 {out_of_scope}
 
-## Relacionados
+## Related
 
 {related}
 
-## Nas palavras de quem reportou
+## In the words of who reported it
 
 {source_quote}

@@ -96,6 +96,7 @@ from openfactory.product.staging import (
     proposal_token,
     remember,
 )
+from openfactory.product.voice import admins_must_confirm, engine_said
 
 log = logging.getLogger("openfactory.product.engine")
 
@@ -871,7 +872,9 @@ def _this_conversation(ex: Exchange, *, arrival_ts: str = "") -> tuple[str, list
         # THE CLIENT'S LANGUAGE, said here rather than welded into the renderer (#168). This block
         # is read by a model that is answering a pt-BR client; the tech-lead's identical block is
         # read by one whose whole surface is English.
-        heading="## Conversa até aqui (mais antigo primeiro)", you="você", somebody="pessoa",
+        heading=engine_said("conversation", language=ex.lang),
+        you=engine_said("you", language=ex.lang),
+        somebody=engine_said("somebody", language=ex.lang),
         stamp=lambda ts: clock.stamp(ts, zone))
     return said, before
 
@@ -1077,7 +1080,8 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
         compose = getattr(module, "compose_card", None)
         if callable(compose):
             composed = compose(request=text, conversation=ex.conversation,
-                               reply=answer.text or "", intake=ex.intake, kind="defect")
+                               reply=answer.text or "", intake=ex.intake, kind="defect",
+                               language=ex.lang)
             return _offer_card(ex, composed, request=text,
                                preamble=(answer.text + "\n\n") if answer.text else "",
                                kind="defect", extra={"violates": getattr(answer, "violates",
@@ -1099,7 +1103,7 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
         if not may_act(project, user):
             admins = _admin_mentions(project)
             if admins:
-                ask += f"\n\n({admins}: o registro precisa da sua confirmação.)"
+                ask += admins_must_confirm(admins, "record", language=lang)
         # the defect proposal, offered with its options. The agent's own words stay in front of
         # it: the person confirms a RESTATEMENT, so they must read it.
         body = replaced + ((answer.text + "\n\n") if answer.text else "") + ask
@@ -1129,7 +1133,8 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
             # as it always was, rather than refused: it cannot draft, and it said a card was asked
             return _stage_ticket_as_said(ex, answer)
         composed = compose(request=text, conversation=ex.conversation, reply=answer.text or "",
-                           intake=ex.intake, title=getattr(answer, "ticket_title", "") or "")
+                           intake=ex.intake, title=getattr(answer, "ticket_title", "") or "",
+                           language=ex.lang)
         return _offer_card(ex, composed, request=text, preamble=preamble)
     if getattr(answer, "is_reorder", False) and getattr(answer, "order", None):
         # SHE READ AN ORDER FOR THE BACKLOG (#33 slice 9, the chat half of `reorder`). Staged like
@@ -1146,7 +1151,7 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
         if not may_act(project, user):
             admins = _admin_mentions(project)
             if admins:
-                ask += f"\n\n({admins}: gravar a ordem precisa da sua confirmação.)"
+                ask += admins_must_confirm(admins, "order", language=lang)
         body = replaced + ((answer.text + "\n\n") if answer.text else "") + ask
         return offer(project, thread, body)
     if getattr(answer, "gesture", "") == "queue":
@@ -1208,7 +1213,7 @@ def _offer_card(ex: Exchange, composed, *, request: str, preamble: str = "",
     if not may_act(project, user):
         admins = _admin_mentions(project)
         if admins:
-            ask += f"\n\n({admins}: abrir o cartão precisa da sua confirmação.)"
+            ask += admins_must_confirm(admins, "card", language=lang)
     return offer(project, ex.key, replaced + preamble + ask)
 
 
@@ -1235,7 +1240,7 @@ def _offer_defect(ex: Exchange, composed, *, request: str, preamble: str, violat
     if not may_act(project, user):
         admins = _admin_mentions(project)
         if admins:
-            ask += f"\n\n({admins}: o registro precisa da sua confirmação.)"
+            ask += admins_must_confirm(admins, "record", language=lang)
     return offer(project, ex.key, replaced + preamble + ask)
 
 
@@ -1260,7 +1265,7 @@ def resume_card(ex: Exchange, *, arrival_ts: str = "") -> Reply | str | None:
                        title=held.draft.title,
                        answered=cards.Answered(question=held.ask, answer=ex.text,
                                                draft=held.draft, findings=held.findings),
-                       kind=held.kind)
+                       kind=held.kind, language=ex.lang)
     return _offer_card(ex, composed, request=held.request, kind=held.kind,
                        extra=dict(held.extra))
 
@@ -1293,7 +1298,7 @@ def _stage_ticket_as_said(ex: Exchange, answer) -> Reply | str:
     if not may_act(project, user):
         admins = _admin_mentions(project)
         if admins:
-            ask += f"\n\n({admins}: abrir o cartão precisa da sua confirmação.)"
+            ask += admins_must_confirm(admins, "card", language=lang)
     return offer(project, ex.key, replaced + ((answer.text + "\n\n") if answer.text else "")
                  + ask)
 
@@ -1380,11 +1385,12 @@ def offer_draft(project, *, request: str, user: str, thread: str, module,
     # sentinel — which is why the preamble is an argument here and never glued on outside.
     return offer(project, thread, preamble + replaced + confirmation_request(
         title=draft.title, must_be_true=draft.must_be_true,
-        conflicts=[_conflict_line(c) for c in draft.conflicts], language=lang))
+        conflicts=[_conflict_line(c, lang) for c in draft.conflicts], language=lang))
 
 
-def _conflict_line(conflict) -> str:
-    ref = f"requisito {conflict.requirement}" if conflict.requirement else "algo já decidido"
+def _conflict_line(conflict, lang=None) -> str:
+    ref = (engine_said("conflict_requirement", language=lang, number=conflict.requirement)
+           if conflict.requirement else engine_said("conflict_decided", language=lang))
     return f"{ref} — {conflict.explanation}"
 
 
@@ -1517,7 +1523,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         if not may_act(project, user):
             admins = _admin_mentions(project)
             if admins:
-                ask += f"\n\n({admins}: a anotação precisa da sua confirmação.)"
+                ask += admins_must_confirm(admins, "note", language=lang)
         return offer(project, thread, replaced + ask)
 
     if intent == "status":
@@ -1550,8 +1556,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
             # the channel hears that the problem is ours.
             log.warning("[%s] triage could not read the board: %s",
                         getattr(project, "name", "?"), str(error)[:400])
-            return ("Não consegui ler o quadro de trabalho agora — o problema é do meu lado, e o "
-                    "time já tem o detalhe. Tente de novo daqui a pouco.")
+            return engine_said("board_unread", language=lang)
         return triage_report(report, language=lang, agent_name=name)
 
     if intent == "needs_action":
@@ -1564,8 +1569,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         if review is None:
             log.warning("[%s] needs-action could not read the board: %s",
                         getattr(project, "name", "?"), str(error)[:400])
-            return ("Não consegui olhar o que está parado agora — o problema é do meu lado, e o "
-                    "time já tem o detalhe. Tente de novo daqui a pouco.")
+            return engine_said("stuck_unread", language=lang)
         return _needs_action_reply(review, name, language=lang)
 
     if intent == "breakdown":
@@ -1594,17 +1598,15 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         if instead:
             return instead
         if req.is_promise:
-            return f"{name}: o requisito {number} já estava acordado." if name else \
-                   f"o requisito {number} já estava acordado."
+            agreed = engine_said("already_agreed", language=lang, number=number)
+            return f"{name}: {agreed}" if name else agreed
         if not req.is_live:
             # THE MODULE'S OWN QUESTION, ASKED HERE TOO — `drop` reads this same flag one branch
             # below. This one compared a raw status to "accepted", so a retired requirement bought
             # a confirmation from a person; and `module.accept` refuses only what is ALREADY
             # agreed, so that yes would have written a text the client had taken off the table
             # back into force as a promise the factory defends.
-            retired = (f"o requisito {number} já não vale, então acordá-lo agora seria trazer de "
-                       f"volta um texto que vocês já tinham tirado da mesa. Se isso voltou a fazer "
-                       f"sentido, me digam e eu proponho de novo para vocês confirmarem.")
+            retired = engine_said("accept_dropped", language=lang, number=number)
             return f"{name}: {retired}" if name else retired
         from openfactory.product.voice import accept_confirmation
 
@@ -1622,8 +1624,8 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         if not req.is_live:
             # already off the table — saying "confirm and I'll drop it" would stage a write that
             # changes nothing, and the person would believe they had decided something
-            return (f"{name}: o requisito {number} já não estava valendo." if name
-                    else f"o requisito {number} já não estava valendo.")
+            dropped = engine_said("already_dropped", language=lang, number=number)
+            return f"{name}: {dropped}" if name else dropped
         from openfactory.product.voice import drop_confirmation
 
         was_a_promise = req.is_promise
@@ -1637,7 +1639,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         if not may_act(project, user):
             admins = _admin_mentions(project)
             if admins:
-                ask += f"\n\n({admins}: a decisão precisa da sua confirmação.)"
+                ask += admins_must_confirm(admins, "decision", language=lang)
         return offer(project, thread, body + ask)
 
     if intent == "decision":
@@ -1649,8 +1651,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         if not req.is_live:
             # writing into a document nobody is executing records the decision where nobody will
             # go looking for it — and the person would believe it had landed somewhere useful
-            gone = (f"o requisito {number} já não vale, então uma decisão registrada nele ficaria "
-                    f"guardada onde ninguém vai procurar. Em qual requisito isso deve entrar?")
+            gone = engine_said("decision_on_dropped", language=lang, number=number)
             return f"{name}: {gone}" if name else gone
         from openfactory.product.voice import decision_confirmation
 
@@ -1665,7 +1666,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         if not may_act(project, user):
             admins = _admin_mentions(project)
             if admins:
-                ask += f"\n\n({admins}: a decisão precisa da sua confirmação.)"
+                ask += admins_must_confirm(admins, "decision", language=lang)
         return offer(project, thread, body + ask)
 
     if intent == "close":
@@ -1706,7 +1707,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         if not may_act(project, user):
             admins = _admin_mentions(project)
             if admins:
-                ask += f"\n\n({admins}: o encerramento precisa da sua confirmação.)"
+                ask += admins_must_confirm(admins, "closing", language=lang)
         return offer(project, thread, body + ask)
 
     if intent == "correct":
@@ -1728,7 +1729,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         if not may_act(project, user):
             admins = _admin_mentions(project)
             if admins:
-                ask += f"\n\n({admins}: a correção precisa da sua confirmação.)"
+                ask += admins_must_confirm(admins, "correction", language=lang)
         return offer(project, thread, body + ask)
 
     if intent == "align":
@@ -1757,7 +1758,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         if not may_act(project, user):
             admins = _admin_mentions(project)
             if admins:
-                ask += f"\n\n({admins}: a mudança precisa da sua confirmação.)"
+                ask += admins_must_confirm(admins, "change", language=lang)
         return offer(project, thread, body + ask)
 
     if intent == "refine":
@@ -1921,8 +1922,7 @@ def _queue_reply(project, module, name: str, thread: str, *,
     if state is None:
         log.warning("[%s] queue proposal could not read the board: %s",
                     getattr(project, "name", "?"), str(error)[:400])
-        return ("Não consegui olhar o quadro agora — o problema é do meu lado, e o time já tem o "
-                "detalhe. Tente de novo daqui a pouco.")
+        return engine_said("queue_unread", language=getattr(project, "language", None))
 
     titles = {}
     try:
@@ -2045,8 +2045,7 @@ def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, l
         # A "NÃO FUNCIONOU" CLOSES THE LOOP from whoever says it, as it did when the module closed
         # it: it spends nothing, and a release that did not work is not waiting on anybody's yes.
         _close_release(project, loop, verdict)
-        return (f"{head}entendi — **não subi nada**. Vou devolver isso ao time com o que você "
-                f"disse, e volto quando estiver corrigido para você conferir de novo.")
+        return head + engine_said("release_declined", language=lang)
     if ambiguous:
         # NOTHING was released AND nothing was closed (module.settle_acceptance hands every release
         # back open — #24 item 2, #273): the question below is still pending, so the reply that
@@ -2056,9 +2055,7 @@ def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, l
         # mouth.
         listed = _waiting_release_refs(project)
         which = f" ({', '.join(f'#{r}' for r in listed)})" if listed else ""
-        return (f"{head}tem mais de uma coisa esperando a sua conferida{which}, então **não subi "
-                f"nada** — prefiro não adivinhar qual delas você testou. Responda "
-                f"«funcionou o #número» e eu coloco essa no ar.")
+        return head + engine_said("release_ambiguous", language=lang, which=which)
     if not may_act(project, user, via=via):
         # THE QUESTION STAYS OPEN FOR SOMEBODY WHO MAY ANSWER IT (#273). Nothing has closed the
         # loop before this line, so it is still waiting — still chased — and an admin's own
@@ -2072,12 +2069,10 @@ def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, l
     from openfactory.product.release import release
 
     ok, why = release(project, issue, approver=user,
-                      comment="aprovado pelo cliente no canal de produto")
+                      comment=engine_said("released_by_client", language=lang))
     if not ok:
         return f"{head}{why}"
-    return (f"{head}perfeito — **estou subindo para produção agora**, com o seu \"funcionou\" "
-            f"como aprovação. Fica registrado que foi você quem liberou e quando. Eu volto aqui "
-            f"quando estiver no ar.")
+    return head + engine_said("releasing", language=lang)
 
 
 # ── `_where_it_came_from`, `_also_broke_it_down` and `_breakdown_reply` moved with the executor ──

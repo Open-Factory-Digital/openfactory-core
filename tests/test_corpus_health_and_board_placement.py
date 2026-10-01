@@ -92,7 +92,8 @@ def _module(tmp_path, *, corpus=None, answer="ok"):
             Requirement(number=1, slug="x", path="0001-x.md", title="Pacote de fecho",
                         status="accepted")]),
         docs_path=str(tmp_path), docs_commit="abc123", requirements_dir="requirements")
-    project = Project(name="books", repo_path="/work/books",
+    # a Portuguese project, like its fixtures: cards follow the project's language (#429)
+    project = Project(name="books", repo_path="/work/books", language="pt-BR",
                       product=ProductConfig(docs_repo=DOCS, admins=[ADMIN]))
     h = _Harness(answer)
     return ProductModule(project, context=ctx, agent=h), h

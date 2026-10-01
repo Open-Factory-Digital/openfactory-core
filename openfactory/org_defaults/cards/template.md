@@ -1,23 +1,23 @@
-## Objetivo
+## Objective
 
 {objective}
 
-## O que foi pedido
+## What was asked
 
 {description}
 
-## Critérios de aceite
+## Acceptance criteria
 
 {done_when}
 
-## Fora do escopo
+## Out of scope
 
 {out_of_scope}
 
-## Relacionados
+## Related
 
 {related}
 
-## Nas palavras de quem pediu
+## In the words of who asked
 
 {source_quote}

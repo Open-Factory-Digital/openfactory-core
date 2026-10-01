@@ -214,7 +214,9 @@ def _module(tmp_path, tracker: _Tracker) -> ProductModule:
     ctx = ProductContext(link=ProductLink(active=True, docs_repo=DOCS, kind="ok", reason="fine"),
                          corpus=_corpus(), docs_path=str(tmp_path), docs_commit=COMMIT,
                          requirements_dir=REQUIREMENTS_DIR)
-    return ProductModule(_module_project(), context=ctx, agent=_Harness("{}"), tracker=tracker)
+    # a Portuguese project, like the fixtures: the card and the replies follow its language (#429)
+    project = _module_project().model_copy(update={"language": "pt-BR"})
+    return ProductModule(project, context=ctx, agent=_Harness("{}"), tracker=tracker)
 
 
 def test_the_module_opens_the_card_as_described_places_it_and_answers_with_the_url(tmp_path):
@@ -340,7 +342,7 @@ def test_the_filed_sentence_carries_the_url_and_is_honest_about_the_backlog():
 
 
 def test_the_body_says_it_has_no_requirement_behind_it():
-    body = ticket_body(described="o relatório em CSV", reported_by="<@U1>", source="#produto",
+    body = ticket_body(language="pt-BR", described="o relatório em CSV", reported_by="<@U1>", source="#produto",
                       docs_repo="a/docs")
 
     assert "sem requisito por trás" in body

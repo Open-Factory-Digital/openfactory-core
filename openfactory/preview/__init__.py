@@ -374,6 +374,11 @@ class Preview(BaseModel):
     #: exposed service → "healthy" (its healthcheck passed) | "started" (it has none)
     health: dict[str, str] = {}
     from_change: dict[str, bool] = {}
+    #: exposed service → whether the compose document builds it from the repository (#435).
+    #: Empty on a record written before it was kept: that record keeps the S11 order.
+    built: dict[str, bool] = {}
+    #: the exposed service the shape declares a person lands on (#435); "" = derived
+    entry: str = ""
     commits: dict[str, str] = {}
     #: pull request → the head it was BUILT from. What `stale` is judged against at read time: the
     #: forge moving the branch past this is a preview of a commit nobody is merging any more.
@@ -416,10 +421,30 @@ class Preview(BaseModel):
         return self.expires_at <= (time.time() if now is None else now)
 
     def ordered(self) -> list[str]:
-        """The exposed services in the order a person is offered them: the ones NOT from the
-        change first (S11) — the screens a person opens are usually the part the change did not
-        touch, and a back-end change is seen through the front end that draws it."""
-        return sorted(self.services, key=lambda s: (bool(self.from_change.get(s)), s))
+        """The exposed services in the order a person is offered them. THE FIRST IS THE FRONT
+        DOOR: the card's first button, the chain it starts and the link a comment carries all end
+        on it (`next_door`, `/api/preview`).
+
+        THE DECLARED ENTRY FIRST (#435), when the shape names one — the only answer that is not a
+        guess. Then what each service IS, not what the diff did to it: a service the compose
+        document BUILDS from the repository before one that only names an image. The first rule
+        here used to be S11 alone — the ones NOT from the change first, because "the screens a
+        person opens are usually the part the change did not touch" — and an image-only service
+        is never from the change, so a storage emulator or a database's admin port became the
+        landing page, and the link the product role sent opened infrastructure (seen live: a
+        `400` from an emulator's root, the application one button further). S11 still orders
+        the candidates among themselves. A record that does not say what is built — written
+        before it was kept, or a shape that builds nothing — ties on that rule and keeps the S11
+        order, as before."""
+        def rank(s: str) -> tuple:
+            # EACH TERM TIES WHEN IT HAS NOTHING TO SAY, so no guard is needed around it: no entry,
+            # or one this record does not expose, and every service is "not the entry"; nothing
+            # built, or a record that does not say, and every service is "not built"
+            return (bool(self.entry) and s != self.entry,
+                    not self.built.get(s, False),
+                    bool(self.from_change.get(s)), s)
+
+        return sorted(self.services, key=rank)
 
 
 def workflow_id(project: str, token: str) -> str:

@@ -419,6 +419,27 @@ TEMPORAL_API_KEY=<from $SSM_PREFIX/temporal-api-key>
 The panel's **Engine ↗** deep-links resolve automatically: a `*.tmprl.cloud` endpoint →
 the Cloud console; anything else → the local dev-server UI.
 
+**The gate key.** The panel seals every answer to a human gate (the production approval, the
+merge gate) and the worker acts only on a sealed one, so a signal sent to the engine by anybody
+else approves and merges nothing. The panel and the worker must hold the same key. On one machine,
+and on compose, they share it without configuration (a `gate.key` file beside the registry, made
+on first use). Where they share no disk (a hosted worker), set the same secret on both:
+```
+OPENFACTORY_GATE_SECRET=<32+ random bytes, e.g. `openssl rand -hex 32`>
+```
+Two halves holding different keys refuse every approval. The refusal is shown on the gate in
+the panel and in the inbox, and `openfactory doctor` checks agreement directly: run where the panel
+runs, it seals a probe with that key and asks the worker to verify it.
+
+**What the seal proves, and what it does not.** An answer that did not come from a process holding
+the key is refused — so a signal sent straight to the engine approves and merges nothing. It does
+*not* prove the panel sent it: the worker's product role also signs (a client's "it worked" releases
+through the same path), and the key is symmetric. Job code in the **container** box cannot reach it
+(the state directory is not mounted and `box.env` refuses the variable). Code in the **worktree**
+box runs as your user with no filesystem confinement and *can* read the key file — as can the
+judging roles, which run as worktree boxes inside the worker container. On those doors the seal does
+not stand between agent code and a gate; run jobs whose code you do not trust in the container box.
+
 ---
 
 ## 8. The deployment-wide fallback notifier (optional)
@@ -805,12 +826,20 @@ appears outside it.
 
 The same loop runs when the role reads a message as a **broken promise** (a defect): the card is
 drafted from the conversation, judged against the same rubric and shown whole before the yes, and
-its layout is `defect-template.md`, whose description sits under `## O que está acontecendo`.
+its layout is `defect-template.md`, whose description sits under `## What is happening`.
+
+**A card is written in the conversation's language** (#429). Each layout ships per language —
+`template.md` and `defect-template.md` in English, `template.pt-BR.md` and
+`defect-template.pt-BR.md` beside them — and the one in the conversation's language is used (the
+project's `language`, `openfactory project set-language`), English when none ships for it. The
+drafter is told the language by name, and a card clearly written in another is redrafted.
 
 The shipped files are `openfactory/org_defaults/cards/template.md`, `defect-template.md` and
 `rubric.yaml`. **To change
 them for one product, commit your own copy to the product's context repository** (`product.docs_repo`)
-as `cards/template.md`, `cards/defect-template.md` and/or `cards/rubric.yaml`. A card is product guidance, and a product of
+as `cards/template.md`, `cards/defect-template.md` and/or `cards/rubric.yaml` — or per language, as
+`cards/template.<language>.md` (for example `cards/template.pt-BR.md`), which wins over the
+unsuffixed one for that language. A card is product guidance, and a product of
 several source repositories has one context repository. Review that change as you would review code:
 the rubric is runtime behaviour.
 

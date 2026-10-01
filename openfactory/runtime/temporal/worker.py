@@ -100,6 +100,7 @@ from openfactory.runtime.temporal.activities import (
     tell_the_requester,
     tracker_budgets,
     update_pr_branch,
+    verify_gate_seal,
 )
 from openfactory.runtime.temporal.connection import (
     EngineNotListening,
@@ -115,6 +116,7 @@ from openfactory.runtime.temporal.workflow import (
     CardQuestionSweepWorkflow,
     CoordinatorWorkflow,
     DeployWatchWorkflow,
+    GateKeyProbeWorkflow,
     JobWorkflow,
     KnowledgeRefreshWorkflow,
     PreviewReapWorkflow,
@@ -146,6 +148,10 @@ WORKER_ACTIVITIES = [
     run_job, stop_job, check_pr_merged, check_pr_status, check_ci_status, read_ci_checks,
     repair_ci, check_deploy_status, notify_deploy, fetch_ticket_title,
     promote_staging, release_prod, scan_projects, scan_todo, start_jobs,
+    # The check a human gate's answer must pass before a release or a merge acts on it. A gate
+    # that cannot run it drops every answer, so an unregistered one is a factory nobody can
+    # approve anything on.
+    verify_gate_seal,
     available_slots, preflight_check, split_ticket, tracker_budgets,
     # ADR-0048 — the gather after the sizing and the sweep that reads the answers. REGISTERED,
     # not just defined: a workflow calling an unregistered activity raises NotFoundError at run
@@ -368,7 +374,9 @@ async def main() -> None:
                    PreviewReapWorkflow, PreviewWorkflow,
                    KnowledgeRefreshWorkflow,
                    # one per conversation with the product role (#266 slice 3)
-                   ConversationWorkflow],
+                   ConversationWorkflow,
+                   # `openfactory doctor`'s question: does this worker accept the key there?
+                   GateKeyProbeWorkflow],
         activities=WORKER_ACTIVITIES,
         # Audit fix (2026-07-23): =1 serialized EVERY activity behind the hours-long run_job —
         # proven in prod: #424's deploy-watch check queued 49 MINUTES (schedule-to-start) behind

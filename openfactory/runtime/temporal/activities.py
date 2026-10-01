@@ -45,6 +45,7 @@ from openfactory.runtime.temporal.io import (
     CoordinatorSayInput,
     DeployNotifyInput,
     DeployStatusInput,
+    GateSealInput,
     GatherInput,
     GatherVerdict,
     HoldSyncInput,
@@ -2750,6 +2751,17 @@ async def promote_staging(inp: PromoteInput) -> RunResult:
                                sandbox=inp.sandbox),
         f"{inp.project}#{inp.issue} staging",
     )
+
+
+@activity.defn
+async def verify_gate_seal(inp: GateSealInput) -> str:
+    """Empty when a human gate's answer carries the panel's seal over exactly these fields for
+    THIS workflow; otherwise the reason it does not (`gate_seal`). An activity, never workflow
+    code: it reads a key from the environment or the disk, and its verdict must be recorded in
+    history so a replay reaches the same decision whatever the key is by then."""
+    from openfactory import gate_seal
+
+    return gate_seal.refusal(inp.seal, inp.kind, activity.info().workflow_id, *inp.fields)
 
 
 @activity.defn

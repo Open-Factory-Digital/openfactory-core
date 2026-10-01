@@ -205,7 +205,9 @@ def test_a_pass_that_re_reviewed_publishes_the_FRESH_verdict_unmarked(repo: Path
     runner.repair_ci("#9", "CI failed", pr_url="https://forge/pr/1")
 
     body = forge.opened["body"]
-    assert f"{_REVIEW_HEADING}approved (score 91)" in body
+    # a repair pass re-runs no gate, so nothing executed its criteria: the fresh reading says
+    # so (#447) — and it is the fresh one, which is what this test is about
+    assert f"{_REVIEW_HEADING}NOT VERIFIED (the reviewer said approved, score 91)" in body
     assert CAVEAT not in body, "a fresh reading was published wearing an out-of-date marker"
     assert WAS not in body
     assert "the second track discards the error" not in body, (
@@ -238,7 +240,9 @@ def test_a_re_review_CLEARS_the_marker_rather_than_adding_to_it(repo: Path, tmp_
 
     body = forge.opened["body"]
     assert CAVEAT not in body, "the re-review left the out-of-date marker standing"
-    assert f"{_REVIEW_HEADING}approved (score 91)" in body
+    # a repair pass re-runs no gate, so nothing executed its criteria: the fresh reading says
+    # so (#447) — and it is the fresh one, which is what this test is about
+    assert f"{_REVIEW_HEADING}NOT VERIFIED (the reviewer said approved, score 91)" in body
     assert dated  # the original is unused beyond its shape; kept for the reader
 
 
@@ -439,6 +443,47 @@ def test_azure_caps_a_pull_request_description_on_the_create_path_too():
         f"the cut body is {len(cut)} characters — this vendor answers 400, it does not truncate")
     assert cut.endswith(AzureReposForge._CUT_NOTE), (
         "a description that stops mid-sentence with no marker reads as one that ends there")
+
+
+def _utf16(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+@pytest.mark.parametrize("filler", ["🟢", "a🟡", "é🔴—"])
+def test_an_azure_description_is_cut_in_the_vendors_unit_not_pythons(filler):
+    """The ceiling is a .NET string length — UTF-16 code units — and the cut counted code points
+    (#433). The knowledge gate writes one `🟢`/`🟡`/`🔴` per file into the body, each one unit to
+    `len()` and two to the vendor, so a long body cut to 4000 code points went out over the limit
+    and got the very 400 the cut exists for. The test above fills with `"x"`, the one input where
+    the two units agree — which is why it could not see this."""
+    from openfactory.adapters.forge.azure_devops import AzureReposForge
+
+    ceiling = AzureReposForge._DESCRIPTION_MAX
+    over = filler * ceiling
+    cut = AzureReposForge._fit_description(over)
+    assert _utf16(cut) <= ceiling, (
+        f"the cut body is {_utf16(cut)} UTF-16 units ({len(cut)} code points) — Azure DevOps "
+        f"measures the first, and answers 400 above {ceiling}")
+    assert cut.endswith(AzureReposForge._CUT_NOTE)
+    cut.encode("utf-8")  # a pictograph split into a lone surrogate does not encode — nor post
+
+    # AT THE CEILING IN THE VENDOR'S UNIT, a body is untouched; one unit more, it is cut
+    at = "🟢" * (ceiling // 2)
+    assert AzureReposForge._fit_description(at) == at, "a body at the ceiling must be untouched"
+    assert AzureReposForge._fit_description(at + "x") != at + "x", (
+        f"{len(at) + 1} code points are {_utf16(at) + 1} units — over the vendor's ceiling")
+
+
+def test_an_azure_description_cut_on_a_pictograph_keeps_it_whole_or_drops_it():
+    """The boundary falls in the middle of a two-unit character: the cut drops the character
+    rather than keep half of it."""
+    from openfactory.adapters.forge.azure_devops import AzureReposForge
+
+    room = AzureReposForge._DESCRIPTION_MAX - _utf16(AzureReposForge._CUT_NOTE)
+    body = "x" * (room - 1) + "🟢" + "tail" * 100
+    cut = AzureReposForge._fit_description(body)
+    assert cut == "x" * (room - 1) + AzureReposForge._CUT_NOTE, (
+        "one unit of room left and a two-unit pictograph next: it goes whole, not halved")
 
 
 def test_neither_azure_description_path_writes_a_body_it_did_not_measure():

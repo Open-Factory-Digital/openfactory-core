@@ -420,6 +420,7 @@ _PROBES = {
                 "suppressions": []},
     "verdict_unread": True,
     "wedged": True,
+    "refused": "the answer's seal does not match",
 }
 
 

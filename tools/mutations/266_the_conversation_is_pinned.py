@@ -468,10 +468,8 @@ MUTATIONS = [
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("what is already agreed is staged for agreement again", ENGINE,
-     "        if req.is_promise:\n            return f\"{name}: o requisito {number} já estava "
-     "acordado.\"",
-     "        if False:\n            return f\"{name}: o requisito {number} já estava "
-     "acordado.\""),
+     "        if req.is_promise:\n            agreed = engine_said(\"already_agreed\"",
+     "        if False:\n            agreed = engine_said(\"already_agreed\""),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("a retired requirement is staged to be agreed back into force", ENGINE,
@@ -537,10 +535,10 @@ MUTATIONS = [
     ("a close does not name who can confirm it", ENGINE,
      "                                 language=lang)\n        if not may_act(project, user):\n"
      "            admins = _admin_mentions(project)\n            if admins:\n"
-     '                ask += f"\\n\\n({admins}: o encerramento',
+     '                ask += admins_must_confirm(admins, "closing"',
      "                                 language=lang)\n        if False:\n"
      "            admins = _admin_mentions(project)\n            if admins:\n"
-     '                ask += f"\\n\\n({admins}: o encerramento'),
+     '                ask += admins_must_confirm(admins, "closing"'),
 
     ("a confirmed close has no executor of its own", CONFIRM,
      '    "close": _confirm_close,\n', ""),
@@ -863,12 +861,12 @@ MUTATIONS = [
      "    _close_release(project, loop, verdict)\n\n"
      "    from openfactory.product.release import release\n\n"
      "    ok, why = release(project, issue, approver=user,\n"
-     '                      comment="aprovado pelo cliente no canal de produto")\n'
+     '                      comment=engine_said("released_by_client", language=lang))\n'
      "    if not ok:\n"
      '        return f"{head}{why}"\n',
      "    from openfactory.product.release import release\n\n"
      "    ok, why = release(project, issue, approver=user,\n"
-     '                      comment="aprovado pelo cliente no canal de produto")\n'
+     '                      comment=engine_said("released_by_client", language=lang))\n'
      "    if not ok:\n"
      '        return f"{head}{why}"\n'
      "    _close_release(project, loop, verdict)\n"),

@@ -146,7 +146,7 @@ _WAITING_ON = {
 _RENDERED = frozenset({
     "issue", "title", "state", "attention", "action", "deploy",
     "board", "board_unread", "ticket_state", "ticket_unread",
-    "verdict", "verdict_unread", "wedged",
+    "verdict", "verdict_unread", "wedged", "refused",
 })
 
 _NOT_RENDERED: dict[str, str] = {
@@ -769,6 +769,12 @@ def state_snapshot(jobs: list[dict]) -> str:
         deploy = str(j.get("deploy") or "").strip()
         if deploy:
             parts.append(f" · deploy: {deploy}")
+        # A PERSON'S APPROVAL THE WORKER REFUSED (`gate_seal`). The job still reads "awaiting
+        # approval", and without this line the tech-lead would tell them to go and approve it —
+        # which they did.
+        refused = str(j.get("refused") or "").strip()
+        if refused:
+            parts.append(f" [APPROVAL NOT ACTED ON: {refused}]")
         if j.get("wedged"):
             # A JOB NOTHING CAN ADVANCE, and the one state where `stop` is the right answer. The
             # tech-lead has to be able to tell it from a job that is merely slow, or it proposes

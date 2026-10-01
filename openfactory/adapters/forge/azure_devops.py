@@ -243,6 +243,11 @@ def _ci_status_from_evaluations(evaluations: list[dict]) -> str:
     return "success"
 
 
+
+def _vendor_length(text: str) -> int:
+    """How long Azure DevOps says `text` is: a .NET string length, in UTF-16 code units (#433)."""
+    return len(text.encode("utf-16-le")) // 2
+
 class AzureReposForge(ForgeAdapter):
     """One Azure DevOps organisation/project/repository triple, as the forge axis."""
 
@@ -1039,10 +1044,24 @@ class AzureReposForge(ForgeAdapter):
 
         NOT `truncated()`, which is this port's DIFF cutter: its note says "this diff was cut" and
         it appends that note ON TOP of the limit, which on this vendor turns a long body into a
-        400 rather than a short one."""
-        if len(body) <= cls._DESCRIPTION_MAX:
+        400 rather than a short one.
+
+        MEASURED IN THE VENDOR'S UNIT, NOT PYTHON'S (#433). The ceiling is a .NET string length —
+        UTF-16 code units — and `len()` counts code points, so every character outside the BMP is
+        one here and two there. The knowledge gate writes one `🟢`/`🟡`/`🔴` per file into the
+        body (ADR-0046), and a long body cut to 4000 code points went out as 4000 + N units: the
+        same 400 as before the cut existed, on the first job whose change touched enough files.
+        The cut walks whole code points, so a pictograph is never split into a lone surrogate."""
+        if _vendor_length(body) <= cls._DESCRIPTION_MAX:
             return body
-        return body[: cls._DESCRIPTION_MAX - len(cls._CUT_NOTE)] + cls._CUT_NOTE
+        room = cls._DESCRIPTION_MAX - _vendor_length(cls._CUT_NOTE)
+        kept, used = [], 0
+        for ch in body:
+            used += _vendor_length(ch)
+            if used > room:
+                break
+            kept.append(ch)
+        return "".join(kept) + cls._CUT_NOTE
 
     def pr_body(self, *, pr: str, repo: str = "") -> str | None:
         """The PR's description, or None when the read failed (#187).
