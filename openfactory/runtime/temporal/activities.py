@@ -37,6 +37,7 @@ from openfactory.registry import ProjectRegistry
 from openfactory.runtime.card_repo import _checkout_key, _ref_repo, _runner_view
 from openfactory.runtime.repairable import what_to_repair
 from openfactory.runtime.temporal.io import (
+    AdjustedInput,
     AdjustInput,
     AskInput,
     CiRepairInput,
@@ -2644,6 +2645,40 @@ async def tell_the_requester(inp: ReadyForYouInput) -> bool:
         activity.logger.warning("telling %s#%s's requester outlived %ss — the round tells them",
                                 inp.project, inp.issue, _ANNOUNCE_WITHIN)
         return False
+
+
+@activity.defn
+async def card_adjusted(inp: AdjustedInput) -> str:
+    """A PASS A PERSON ASKED FOR REWROTE THE PULL REQUEST, and it ends the way the first pass did
+    (#413 part 3, #448 slice 2): `adjusted` through the card's door — a comment saying whose pass
+    it is, the live preview rebuilt from the new head, and the requester told that THIS pass is
+    theirs to try, keyed by its number.
+
+    THE GAP IT CLOSES, measured on a live run (#448, card #1000007): the operator's adjust pass
+    ended, and nothing rebuilt the preview or told the requester — `ready_for_you` is keyed on the
+    card and the pull request, which a second pass does not change, so it was deduplicated away.
+
+    NEVER RAISES: the pass is pushed and the gate re-opens whatever this manages to say; what
+    failed is the door's record, and the hourly round applies it again."""
+    def _apply() -> str:
+        from openfactory.lifecycle import CardEvent, transition
+        from openfactory.product.voice import card_note
+
+        project = ProjectRegistry().get(inp.project)
+        said = card_note("adjusted", who=inp.by or "a person", why=inp.instruction[:280],
+                         language=getattr(project, "language", None))
+        moved = transition(project, inp.issue, CardEvent.ADJUSTED, by=inp.by or "a person",
+                           why=inp.instruction[:280],
+                           facts={"pass_number": inp.pass_number, "pr_url": inp.pr_url,
+                                  "note": said},
+                           tracker=_tracker_for(project), event_id=_pass_event(inp.pass_number))
+        return moved.refused or ", ".join(f"{n}={o}" for n, o in moved.effects)
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_apply), timeout=_ANNOUNCE_WITHIN)
+    except Exception as exc:  # noqa: BLE001 — see the docstring
+        activity.logger.warning("the adjust pass of %s#%s was not recorded as such (%s)",
+                                inp.project, inp.issue, str(exc)[:160])
+        return "unrecorded"
 
 
 def _a_card_was_finished(inp: HoldSyncInput) -> None:
@@ -5620,6 +5655,14 @@ def _this_activitys_event(event: str) -> str:
     except RuntimeError:
         return ""
     return f"{event}-{info.workflow_run_id}-{info.activity_id}"
+
+
+def _pass_event(pass_number: int) -> str:
+    """The id of one adjust pass's transition: the run's activity id and the pass, so a retried
+    activity is answered from the record and a second pass is never mistaken for the first. `""`
+    outside an activity, where the door derives one."""
+    run = _this_activitys_event("adjusted")
+    return f"{run}-pass{pass_number}" if run else ""
 
 
 def _where_a_closed_card_goes(project, tracker, board, ref: str) -> JobState:

@@ -495,7 +495,7 @@ def document_ingested(project, *, name: str, key: str = "", conversation: str = 
 
 
 def card_moved(project, *, card: str, notice: str, event_id: str, title: str = "",
-               removed: bool = False, conversation: str = "") -> str:
+               removed: bool = False, conversation: str = "", pass_number: int = 0) -> str:
     """THE CARD'S DOOR MOVED IT (ADR-0055 D10) — said to the conversation its requester asked in,
     else the room, once per transition: `event_id` is the transition's own, so the door applying
     its effects again (a retry, the sweep) never says it twice.
@@ -519,11 +519,27 @@ def card_moved(project, *, card: str, notice: str, event_id: str, title: str = "
                                      voice.card_moved(notice, ref=card, title=title,
                                                       removed=removed,
                                                       language=_language(project),
-                                                      agent_name=_agent(project)))):
+                                                      agent_name=_agent(project),
+                                                      pass_number=pass_number,
+                                                      link=_where_to_try(project, card)
+                                                      if pass_number else ""))):
         return "told"
     if said in _read(_store_path(project))["told"]:
         return "told already"
     raise RuntimeError("the conversation's door did not take it")
+
+
+def _where_to_try(project, card: str) -> str:
+    """Where a person tries `card`'s change now: its preview while one is up — by the project's
+    NAME, which is what `link_for` reads (it was handed the project and answered "" for every card)
+    — else the card, where the preview is started."""
+    try:
+        from openfactory.preview.live import link_for
+
+        return link_for(getattr(project, "name", "") or "", str(card)) or _card_url(project, card)
+    except Exception:  # noqa: BLE001 — a link is a courtesy; the sentence still names the card
+        log.info("could not tell where #%s is tried", card, exc_info=True)
+        return _card_url(project, card)
 
 
 # ── ready for you ────────────────────────────────────────────────────────────────────────────────

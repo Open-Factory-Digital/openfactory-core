@@ -230,6 +230,19 @@ class CiRepairInput(BaseModel):
     attempt: int = 0
 
 
+class AdjustedInput(BaseModel):
+    """A person's adjust pass rewrote the pull request (#413, #448): the card's door records
+    `adjusted`, the live preview is rebuilt from the new head, and the requester is told the pass
+    is ready — once per pass, keyed by its number, never folded into the first pass's telling."""
+
+    project: str
+    issue: str
+    pr_url: str = ""
+    pass_number: int = 1
+    by: str = ""
+    instruction: str = ""
+
+
 class AdjustInput(BaseModel):
     """One repair pass on an open PR driven by a HUMAN's own words (#68, C-32).
 

@@ -121,6 +121,8 @@ ALLOWED: dict[CardEvent, frozenset[State]] = {
     # wrote them — `mark_needs_action` and `settle_ticket` — so no workflow history changes
     CardEvent.PARKED: frozenset({State.TODO, State.RUNNING, State.WAITING_ON_A_PERSON}),
     CardEvent.DELIVERED: frozenset({State.RUNNING, State.WAITING_ON_A_PERSON}),
+    # A PASS A PERSON ASKED FOR, BACK AT THE MERGE GATE (#413 part 3, #448 slice 2)
+    CardEvent.ADJUSTED: frozenset({State.RUNNING, State.WAITING_ON_A_PERSON}),
 }
 
 #: The events that need the card CLOSED on its tracker, whatever its state says. `delivered` is a
@@ -136,7 +138,7 @@ ONLY_ON_A_CLOSED_CARD: frozenset[CardEvent] = frozenset({CardEvent.REOPENED})
 WHERE_NO_BOARD_PLACES_IT: frozenset[CardEvent] = frozenset({
     CardEvent.DISCARDED, CardEvent.SKIPPED, CardEvent.STOPPED, CardEvent.CLOSED,
     CardEvent.WITHDRAWN, CardEvent.REMOVED, CardEvent.QUESTION_ANSWERED, CardEvent.PARKED,
-    CardEvent.DELIVERED})
+    CardEvent.DELIVERED, CardEvent.ADJUSTED})
 
 
 @dataclass(frozen=True)
@@ -223,8 +225,10 @@ class Forget:
 
 Effect = Column | Close | Remove | Reopen | Comment | Loops | Tell | Preview | Forget
 
-#: What the requester is told, by which way the work ended.
+#: What the requester is told, by which way the work ended — and, for a pass a person asked for,
+#: that the pass is ready to try.
 STOPPED_WORK, WILL_NOT_BE_BUILT, BACK_ON_THE_BOARD = "stopped_work", "will_not_be_built", "back"
+PASS_READY = "pass_ready"
 
 _GONE = (Comment(), Loops("cancel"), Tell(WILL_NOT_BE_BUILT), Preview("stop"), Forget())
 
@@ -259,6 +263,11 @@ def consequences(event: CardEvent, facts: Mapping[str, object] | None = None) ->
         # caller's note when it has one — the box usually wrote its own as it parked
         said = (Comment(),) if facts.get("note") else ()
         return (Column(str(facts.get("job_state") or "on_hold")), *said, Forget())
+    if event is CardEvent.ADJUSTED:
+        # EVERY PASS ENDS THE WAY THE FIRST DID (#448): the preview shows the new head, and the
+        # person who asked hears that this pass is theirs to try — keyed by the pass, so a second
+        # pass is never folded into the first one's telling
+        return (Comment(), Preview("rebuild"), Tell(PASS_READY), Forget())
     if event is CardEvent.DELIVERED:
         # the card closes as delivered (`Column("done")` is DONE, which every row now closes on);
         # the announcement stays the job's one exit's (`record_outcome`), which runs after the
@@ -290,7 +299,7 @@ def after(event: CardEvent, facts: Mapping[str, object] | None = None) -> State:
     if event is CardEvent.QUESTION_ANSWERED:
         before = str(facts.get("before") or "")
         return State.TODO if before in _STILL_PARKED else State(before)
-    if event is CardEvent.PARKED:
+    if event in (CardEvent.PARKED, CardEvent.ADJUSTED):
         return State.WAITING_ON_A_PERSON
     if event is CardEvent.DELIVERED:
         return State.DELIVERED

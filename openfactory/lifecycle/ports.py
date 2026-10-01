@@ -258,7 +258,7 @@ class Ports:
                           self.name)
 
     def tell(self, card: str, *, notice: str, event_id: str, title: str, removed: bool,
-             opened_by: str, conversation: str) -> str:
+             opened_by: str, conversation: str, pass_number: int = 0) -> str:
         """Tell the conversation the card was asked in. A card nobody asked for in a conversation —
         written on the board, with no delivery recording where — has no requester to tell, and the
         product's room is not told what an operator did on the board; one the product role opened
@@ -270,7 +270,8 @@ class Ports:
         if not opened_by and not conversation:
             return "nobody to tell: nobody asked for it in a conversation"
         return events.card_moved(self.project, card=card, notice=notice, event_id=event_id,
-                                 title=title, removed=removed, conversation=conversation)
+                                 title=title, removed=removed, conversation=conversation,
+                                 pass_number=pass_number)
 
     def preview(self, card: str, *, action: str, by: str) -> str:
         """Take down the preview of `card`'s unit — unless the unit also shows another card that is
@@ -285,7 +286,7 @@ class Ports:
         if found is None or not found.live:
             return "none running"
         others = [c for c in (found.cards or ()) if str(c).rsplit("#", 1)[-1] != bare]
-        still = [c for c in others if self._open(str(c))]
+        still = [c for c in others if self._open(str(c))] if action == "stop" else []
         if still:
             return f"kept: it also shows #{str(still[0]).lstrip('#')}, which is still open"
         try:

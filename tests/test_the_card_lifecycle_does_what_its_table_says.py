@@ -100,7 +100,8 @@ class Ports:
     def loops(self, card, action, *, about=""):
         return self._do("loops", card, action)
 
-    def tell(self, card, *, notice, event_id, title, removed, opened_by, conversation):
+    def tell(self, card, *, notice, event_id, title, removed, opened_by, conversation,
+             pass_number=0):
         return self._do("tell", card, notice)
 
     def preview(self, card, *, action, by):
@@ -419,3 +420,11 @@ def test_a_decision_the_jobs_own_ending_already_carried_out_is_not_refused():
 
     assert moved.ok and not moved.refused, moved
     assert ports.calls == [], "the job's ending was applied a second time"
+
+
+def test_every_adjust_pass_ends_the_way_the_first_did():
+    """#448: when a pass ends, the preview shows the new head and its requester is told that this
+    pass is theirs to try — the two things the live run found missing."""
+    row = consequences(CardEvent.ADJUSTED, {})
+    assert Preview("rebuild") in row, "the preview goes on showing the pass before"
+    assert Tell("pass_ready") in row, "the requester never hears the pass is ready"
