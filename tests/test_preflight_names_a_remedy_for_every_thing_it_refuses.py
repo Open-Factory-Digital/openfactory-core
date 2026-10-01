@@ -163,6 +163,38 @@ def test_a_check_that_RAISES_becomes_a_finding_and_never_a_traceback():
     assert finding.remedy.strip(), "a check that raised left no remedy"
 
 
+@pytest.mark.parametrize("declared", ["~/work", "work/here", "/srv/~/work"])
+def test_a_declared_work_directory_compose_cannot_bind_is_named_and_not_blamed_on_HOME(
+        declared, tmp_path, monkeypatch):
+    """`init` and the installer refuse a declared `~/work` by name (#367); preflight caught the
+    same refusal as its parent, `UnusableHome`, and reported it as "$HOME is not a directory this
+    process can write under" — the wrong cause, on a machine whose `$HOME` was fine, with a remedy
+    to set the variable the person had just set (measured on 34c91c7, 2026-10-01).
+
+    THROUGH THE REAL PROBE, because that is where the reason was lost: a check handed a probe that
+    already raises proves nothing about the one `probes_for_this_machine` wires in. And the path is
+    never asked to be made, since `_probe_writable` would `mkdir` it relative to wherever this ran."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("OPENFACTORY_WORK_DIR", declared)
+    asked: list[str] = []
+
+    def writable(where: str) -> tuple[bool, str]:
+        asked.append(where)
+        return True, "created and written as this user"
+
+    finding = _finding(preflight.check(_probes(
+        work_dir=preflight.probes_for_this_machine().work_dir,
+        writable_without_root=writable)), "work_dir")
+
+    assert finding.answered and not finding.ok, finding
+    assert finding.message.startswith(f"OPENFACTORY_WORK_DIR={declared} "), (
+        f"the finding does not name the value that was declared: {finding.message!r}")
+    assert "$HOME" not in finding.message, finding.message
+    assert "OPENFACTORY_WORK_DIR=" in finding.remedy and "report" not in finding.remedy, (
+        f"the remedy is not the one for a declared value: {finding.remedy!r}")
+    assert asked == [], f"preflight was about to make {asked}, which compose cannot bind"
+
+
 def test_every_check_runs_even_when_an_earlier_one_failed():
     """STOPPING AT THE FIRST FAILURE TURNS ONE SESSION INTO SIX, and during an install it turns
     into somebody giving up: a person who must re-run an installer once per problem stops after
