@@ -28,8 +28,8 @@ only shrink (`tests/card_writers_outside_the_door.py`).
 
 from __future__ import annotations
 
-from openfactory.lifecycle.card import Transition, transition
+from openfactory.lifecycle.card import Transition, back_in_the_backlog, transition
 from openfactory.lifecycle.executor import converge
 from openfactory.lifecycle.table import CardEvent, State
 
-__all__ = ["CardEvent", "State", "Transition", "converge", "transition"]
+__all__ = ["CardEvent", "State", "Transition", "back_in_the_backlog", "converge", "transition"]

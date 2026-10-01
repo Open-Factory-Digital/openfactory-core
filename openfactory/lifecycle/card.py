@@ -188,3 +188,25 @@ def _state(value: str) -> State | None:
         return State(value) if value else None
     except ValueError:
         return None
+
+
+#: The endings that leave a card in the backlog with its promise still open (D10).
+_STOPPED_THERE = frozenset({CardEvent.DISCARDED.value, CardEvent.SKIPPED.value,
+                            CardEvent.STOPPED.value})
+
+
+def back_in_the_backlog(project, card: str) -> bool:
+    """Whether `card` is in the backlog because a person ended the work on it — its record's latest
+    transition is a discard, a skip or a stop — rather than because it was filed there and nobody
+    has started it. False when the record cannot say: "the work stopped" is a claim, and a card
+    nobody can account for is not said to have one."""
+    from openfactory.contracts.refs import canonical_ref
+
+    try:
+        latest = record.read(record.keyed_sink(), getattr(project, "name", "") or "",
+                             canonical_ref(card)).latest
+    except Exception:  # noqa: BLE001 — see the docstring: unknown is not "stopped"
+        log.info("could not read #%s's record to tell why it is in the backlog", card,
+                 exc_info=True)
+        return False
+    return latest is not None and latest.event in _STOPPED_THERE

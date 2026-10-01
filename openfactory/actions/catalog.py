@@ -3800,7 +3800,14 @@ def _owed_line(proj, by: Actor, card: str, *, column: str, board) -> str:
     except Exception:  # noqa: BLE001 — a courtesy line; the card reads on without it
         log.info("could not read what is owed about %s", card, exc_info=True)
         return ""
-    backlog = bool(board is not None and column and stage_key(board, column) == "backlog")
+    # BACK IN THE BACKLOG, NOT NEW TO IT: every card the role files lands in Backlog (ADR-0019 §5),
+    # and the first live run of this line told the person who had just reported a defect that the
+    # work on it "stopped". Only a card whose work a person ended is back there — which only the
+    # card's record says (ADR-0055 D4).
+    from openfactory.lifecycle import back_in_the_backlog
+
+    backlog = bool(board is not None and column and stage_key(board, column) == "backlog"
+                   and back_in_the_backlog(proj, card))
     return card_owed(agent_name=getattr(getattr(proj, "product", None), "agent_name", "") or "",
                      in_backlog=backlog, language=getattr(proj, "language", None))
 

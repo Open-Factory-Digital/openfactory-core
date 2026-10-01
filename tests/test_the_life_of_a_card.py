@@ -315,6 +315,10 @@ def test_pending_is_what_waits_on_the_person_and_what_is_owed_is_on_the_card(dep
     owed = _act("product_board", who=ASKER, product=True, project="acme",
                 card=ref).data["card"]["owed"]
     assert "will tell you in the conversation when this is delivered" in owed
+    # NEW TO THE BACKLOG IS NOT BACK IN IT: a card just filed lands there, and nobody's work on it
+    # stopped — found on the first live run, where a defect reported a minute earlier was said to
+    # have had its work stopped
+    assert "stopped" not in owed and "backlog" not in owed, owed
 
     page = (pathlib.Path(__file__).resolve().parent.parent / "openfactory" / "api"
             / "panel.html").read_text(encoding="utf-8")

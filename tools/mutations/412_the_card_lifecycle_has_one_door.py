@@ -165,6 +165,11 @@ MUTATIONS = [
      "            if item.direction == AWAITED]",
      "            if True]"),
 
+    ("a card new to the backlog is said to have had its work stopped — the first live run's "
+     "finding", CATALOG,
+     "                   and back_in_the_backlog(proj, card))\n",
+     "                   and True)\n"),
+
     ("the card's line says the role will tell them, about a card nobody is working on", CATALOG,
      "                     in_backlog=backlog, language=getattr(proj, \"language\", None))",
      "                     in_backlog=False, language=getattr(proj, \"language\", None))"),
