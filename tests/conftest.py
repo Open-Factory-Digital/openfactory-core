@@ -114,7 +114,27 @@ def _no_live_credentials_at_import() -> None:
 #: floor and the registry floor above are earlier halves of. `tests/test_the_suite_reads_no_
 #: operators_openfactory.py` is the guard.
 _OPERATOR_HOME: Path | None = None
+#: name → sha256 of the value. DIGESTS, NEVER VALUES: these are the operator's secrets (a panel
+#: token, a bot token), and the point of taking them away is that no test can read them — a copy
+#: kept for the guard to compare against would be one more place to read them from.
 _OPERATOR_ENV: dict[str, str] = {}
+
+#: HOW AN xdist WORKER LEARNS WHAT THE CONTROLLER TOOK AWAY. Workers are spawned after the
+#: controller's `pytest_configure` has already stripped the variables and re-homed `HOME`, so a
+#: worker capturing for itself would capture the controller's suite home and an empty environment,
+#: and every check against them would be vacuous under `-n`. The controller hands both down in
+#: xdist's own `workerinput` (`_HandDown`) — NOT through the environment, which every nested pytest
+#: a test starts would inherit and mistake for its own operator.
+_HANDED_DOWN = "openfactory_suite_operator"
+
+
+class _HandDown:
+    """Registered on the controller only when xdist is installed: an unknown `pytest_*` hook in a
+    conftest is an error where the plugin is absent."""
+
+    @staticmethod
+    def pytest_configure_node(node) -> None:
+        node.workerinput[_HANDED_DOWN] = {"home": str(_OPERATOR_HOME), "env": dict(_OPERATOR_ENV)}
 
 #: The two prefixes a deployment's environment carries. Everything the platform reads by
 #: configuration is `OPENFACTORY_*` (`environ.ENV_PREFIX`), and the durable engine adds `TEMPORAL_*`
@@ -124,7 +144,7 @@ _OPERATOR_ENV: dict[str, str] = {}
 OPERATOR_PREFIXES = ("OPENFACTORY_", "TEMPORAL_")
 
 
-def _isolate_the_operator(suite_home: Path) -> None:
+def _isolate_the_operator(suite_home: Path, workerinput: dict | None = None) -> None:
     """Capture the operator's home and ambient `OPENFACTORY_*`/`TEMPORAL_*`, then take both away:
     point `HOME` at a directory of the suite's own and delete every one of those variables.
 
@@ -134,13 +154,46 @@ def _isolate_the_operator(suite_home: Path) -> None:
     guard can prove what a test no longer sees."""
     global _OPERATOR_HOME
 
-    _OPERATOR_HOME = Path(os.environ.get("HOME") or Path.home()).resolve()
-    _OPERATOR_ENV.update({name: value for name, value in os.environ.items()
-                          if name.startswith(OPERATOR_PREFIXES)})
-    for name in _OPERATOR_ENV:
+    handed_down = (workerinput or {}).get(_HANDED_DOWN)
+    if handed_down:
+        # an xdist worker: the controller has already captured and stripped — take its capture
+        _OPERATOR_HOME = Path(handed_down["home"])
+        _OPERATOR_ENV.update(handed_down["env"])
+    else:
+        _OPERATOR_HOME = Path(os.environ.get("HOME") or Path.home()).resolve()
+        _OPERATOR_ENV.update({name: _digest(value) for name, value in os.environ.items()
+                              if name.startswith(OPERATOR_PREFIXES)})
+    for name in [n for n in os.environ if n.startswith(OPERATOR_PREFIXES)]:
         os.environ.pop(name, None)
     suite_home.mkdir(parents=True, exist_ok=True)
+    _carry_dockers_plugins(suite_home)
     os.environ["HOME"] = str(suite_home)
+
+
+def _digest(value: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _carry_dockers_plugins(home: Path) -> None:
+    """Link the operator's `~/.docker/cli-plugins` into `home`, when there is one.
+
+    DOCKER'S OWN PER-USER CONFIGURATION IS NOT THE DEPLOYMENT THIS FIXTURE HIDES. Docker Desktop
+    installs `docker compose` per user, at `~/.docker/cli-plugins/docker-compose`, and the preview
+    runtime finds it through `HOME` (`compose.docker_config()` falls back to `~/.docker`). An empty
+    home took the plugin away, and the real-daemon preview tests went red on a maintainer's Mac:
+    `unknown shorthand flag: 'p' in -p` is `docker` failing to find `compose` (review of #454).
+
+    THE PLUGINS AND NOTHING ELSE: `~/.docker/config.json` can hold the operator's registry logins,
+    which no test may read."""
+    if _OPERATOR_HOME is None:
+        return
+    plugins = _OPERATOR_HOME / ".docker" / "cli-plugins"
+    link = home / ".docker" / "cli-plugins"
+    if plugins.is_dir() and not link.exists() and not link.is_symlink():
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(plugins, target_is_directory=True)
 
 
 def operators_real_home() -> Path:
@@ -150,9 +203,15 @@ def operators_real_home() -> Path:
 
 
 def operators_ambient_environment() -> dict[str, str]:
-    """The `OPENFACTORY_*`/`TEMPORAL_*` the shell that launched the suite carried, name→value —
-    the deployment's own configuration, which no test may read (#365)."""
+    """The `OPENFACTORY_*`/`TEMPORAL_*` the shell that launched the suite carried, name → sha256
+    of the value (`_digest`) — the deployment's own configuration, which no test may read (#365).
+    The same under `-n`: a worker reads the controller's capture."""
     return dict(_OPERATOR_ENV)
+
+
+def ambient_digest(value: str) -> str:
+    """The digest `operators_ambient_environment` holds for `value`, to compare against."""
+    return _digest(value)
 
 
 @pytest.fixture(autouse=True)
@@ -171,6 +230,7 @@ def _a_home_of_its_own(monkeypatch, tmp_path_factory, request) -> None:
     own = hashlib.sha1(request.node.nodeid.encode()).hexdigest()[:12]
     home = tmp_path_factory.getbasetemp() / "homes" / own
     home.mkdir(parents=True, exist_ok=True)
+    _carry_dockers_plugins(home)
     monkeypatch.setenv("HOME", str(home))
 
 
@@ -501,7 +561,9 @@ def pytest_configure(config) -> None:
     # FIRST, so the operator's ambient OPENFACTORY_* (a shell's OPENFACTORY_REGISTRY among them) is
     # gone before the suite names its own on the next line, and HOME points nowhere near the real
     # deployment for the whole import window (#365).
-    _isolate_the_operator(home / "operator-home")
+    _isolate_the_operator(home / "operator-home", getattr(config, "workerinput", None))
+    if config.pluginmanager.hasplugin("xdist") and not hasattr(config, "workerinput"):
+        config.pluginmanager.register(_HandDown(), "openfactory-suite-operator-hand-down")
     os.environ[REGISTRY_VARIABLE] = str(home / "registry.yaml")
 
 

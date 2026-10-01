@@ -29,12 +29,15 @@ The protected run must also leave the planted deployment byte-for-byte unchanged
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
 
 import conftest
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -66,8 +69,8 @@ def test_no_ambient_openfactory_or_temporal_reaches_a_test():
     same run whether or not a deployment is present (ADR-0049), and the honest proof that the
     stripping works at all — on a clean machine too — is the planted verifier below, which supplies
     its own `OPENFACTORY_LEAKED`/`TEMPORAL_LEAKED` and requires the conftest to remove them."""
-    leaked = {name: value for name, value in conftest.operators_ambient_environment().items()
-              if os.environ.get(name) == value}
+    leaked = {name for name, digest in conftest.operators_ambient_environment().items()
+              if name in os.environ and conftest.ambient_digest(os.environ[name]) == digest}
     assert not leaked, (
         f"the operator's own environment reached a test unchanged: {sorted(leaked)} — a suite that "
         f"reads these measures the deployment on the machine, not the code")
@@ -83,6 +86,15 @@ PROBE = textwrap.dedent("""
     from pathlib import Path
 
     PLANTED = Path(os.environ["PLANTED_HOME"]).resolve()
+
+    # RESOLVED AT IMPORT, before any fixture runs: only the configure-time re-homing covers this
+    # window, so this is what fails when that layer alone is cut.
+    HOME_AT_IMPORT = Path.home().resolve()
+
+
+    def test_a_default_resolved_at_import_is_not_the_deployments():
+        assert HOME_AT_IMPORT != PLANTED and PLANTED not in HOME_AT_IMPORT.parents, (
+            f"a value resolved at import is the planted deployment's home: {HOME_AT_IMPORT}")
 
 
     def test_the_deployment_planted_around_this_run_is_not_visible():
@@ -109,9 +121,30 @@ PROBE = textwrap.dedent("""
             pass
 
 
-    def test_collected():
-        pass
+    def test_a_file_one_test_writes_under_its_home():
+        (Path.home() / ".openfactory").mkdir(parents=True, exist_ok=True)
+        (Path.home() / ".openfactory" / "left-by-an-earlier-test").write_text("x")
+
+
+    def test_is_never_the_next_tests():
+        # only the per-test home covers this: with one home for the whole session, the file the
+        # test above wrote is here
+        assert not (Path.home() / ".openfactory" / "left-by-an-earlier-test").exists(), (
+            "a file an earlier test wrote under its home is this test's too")
+
+
+    def test_dockers_own_plugins_come_along_and_its_logins_do_not():
+        # Docker Desktop's compose plugin lives at ~/.docker/cli-plugins; the preview runtime finds
+        # it through HOME. The plugins are carried into the test's home — the logins beside them
+        # (config.json) are not.
+        assert (Path.home() / ".docker" / "cli-plugins" / "docker-compose").exists(), (
+            "the operator's docker CLI plugins did not reach this test's home")
+        assert not (Path.home() / ".docker" / "config.json").exists(), (
+            "the operator's docker logins reached this test's home")
 """)
+
+#: How many tests the probe holds — counted from its text, so the check below cannot drift from it.
+PROBE_TESTS = len(re.findall(r"^def test_", PROBE, re.M))
 
 #: What a person's deployment holds before the run. Every file the acceptance criteria name, with
 #: bytes we can recognise, so the protected run proving "unchanged" is proving something.
@@ -129,6 +162,13 @@ def _plant_a_deployment(home: Path) -> Path:
     okf.mkdir(parents=True)
     for name, body in PLANTED_FILES.items():
         (okf / name).write_text(body, encoding="utf-8")
+    # Docker's per-user configuration beside it, as Docker Desktop leaves it: a plugin the suite
+    # must still find, and a login file it must not
+    plugins = home / ".docker" / "cli-plugins"
+    plugins.mkdir(parents=True)
+    (plugins / "docker-compose").write_text("#!/bin/sh\n", encoding="utf-8")
+    (home / ".docker" / "config.json").write_text('{"auths": {"registry.example": {}}}',
+                                                  encoding="utf-8")
     return okf
 
 
@@ -166,7 +206,8 @@ def _run_the_probe(arena: Path, home: Path, *extra: str) -> subprocess.Completed
 
 
 def _passed(done: subprocess.CompletedProcess[str]) -> None:
-    assert done.returncode == 0 and "2 passed" in done.stdout, (
+    counted = re.search(r"(\d+) passed", done.stdout)
+    assert done.returncode == 0 and counted and int(counted.group(1)) == PROBE_TESTS, (
         f"the protected probe did not run and pass, so this measures nothing:\n"
         f"{done.stdout[-2000:]}{done.stderr[-800:]}")
 
@@ -196,3 +237,31 @@ def test_without_the_conftest_the_same_probe_DOES_see_the_deployment(tmp_path):
     assert done.returncode != 0, (
         f"without the conftest the probe still saw an isolated world — it is not measuring the "
         f"conftest:\n{done.stdout[-2000:]}{done.stderr[-800:]}")
+
+
+# ── docker's own plugins still work from a test's home ──────────────────────────────────────────
+
+def _compose_version(home: Path, config: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "HOME": str(home), "DOCKER_CONFIG": config}
+    return subprocess.run([shutil.which("docker") or "docker", "compose", "version"], env=env,
+                          capture_output=True, text=True, timeout=60)
+
+
+def test_docker_compose_is_found_from_a_tests_home():
+    """THE REGRESSION THE REVIEW OF #454 FOUND. On Docker Desktop the compose plugin is per user,
+    under `~/.docker/cli-plugins`, and the preview runtime looks for it through `HOME`
+    (`compose.docker_config()`). With an empty home of its own, a test lost it and every
+    real-daemon preview test went red. Wherever `docker compose` works for the operator, it must
+    work from a test's home, configured the way the preview runtime configures it. No daemon is
+    needed: `compose version` never reaches one."""
+    from openfactory.adapters.preview import compose
+
+    if not shutil.which("docker"):
+        pytest.skip("no docker CLI on this machine")
+    real = conftest.operators_real_home()
+    if _compose_version(real, str(real / ".docker")).returncode != 0:
+        pytest.skip("`docker compose` is not installed for the operator either")
+    done = _compose_version(Path.home(), compose.docker_config())
+    assert done.returncode == 0, (
+        f"`docker compose` works from the operator's home and not from a test's: "
+        f"{(done.stderr or done.stdout)[-400:]}")
