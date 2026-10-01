@@ -690,7 +690,7 @@ def test_a_question_is_held_for_the_person_it_was_asked_of_only(_earlier_turns):
     world = _World(GOOD, GOOD, judge=_blocked_then())
     chat_turn(_p(), text=GESTURE, user=ADMIN, thread=KEY, module=world)
 
-    assert cards.take_question("somebody-else") is None
+    assert cards.held_question("somebody-else") is None
     assert len(cards._OPEN) == 1
 
 
@@ -703,7 +703,7 @@ def test_a_question_older_than_a_proposal_is_not_an_answer(monkeypatch):
     cards._OPEN["k"] = cards.OpenQuestion(**{**cards._OPEN["k"].__dict__,
                                             "at": cards._OPEN["k"].at - PROPOSAL_TTL_SECONDS - 1})
 
-    assert cards.take_question("k") is None
+    assert cards.held_question("k") is None
 
 
 def test_the_judge_and_the_draft_are_told_to_be_brief():

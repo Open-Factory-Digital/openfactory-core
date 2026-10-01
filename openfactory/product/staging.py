@@ -184,19 +184,22 @@ def pending_for(thread: str, *, project=None) -> dict | None:
 
     AND THE READ THAT FINDS IT EXPIRED ANSWERS ITS DURABLE ROW (#274), or the expiry is found
     again on every read after it. See `_answer_expired`.
+
+    THE STORE DECIDES WHENEVER IT CAN BE READ (#452). `_PENDING` is this process's copy and it was
+    believed first. Measured on `main` with two processes on one SQLite store: a card staged on
+    worker A, a "não" and its correction taken on worker B, then the person's "sim" on A — and A
+    FILED THE CARD THE PERSON HAD REFUSED, from its copy, while the correction they had just read
+    sat unconfirmed (the two cards share one token, so the store's check let the copy through).
+    The copy is believed now only as `_believed` says.
     """
+    stored = _latest_ask(thread, project)
     with _PENDING_LOCK:
-        entry = _PENDING.get(thread)
-        if entry is None and project is not None:
-            # THE DURABLE FALLBACK (C-33): this process never staged it — it is the panel's
-            # process, or a worker that restarted. The store's pending list keeps the latest ask
-            # per conversation key; thaw it and let the TTL check below treat it like any local
-            # entry. `staged_at` is reconstructed from the row's own timestamp.
-            entry = _pending_from_store(thread, project)
-            if entry is not None:
-                _PENDING[thread] = entry
+        entry = _believed(thread, _PENDING.get(thread), stored)
         if entry is None:
+            # a copy the store says is decided, or replaced, is not kept to be believed later
+            _PENDING.pop(thread, None)
             return None
+        _PENDING[thread] = entry
         staged = entry.get("staged_at")
         if staged is not None and (time.time() - float(staged)) > PROPOSAL_TTL_SECONDS:
             _PENDING.pop(thread, None)
@@ -215,7 +218,147 @@ def pending_for(thread: str, *, project=None) -> dict | None:
             return entry
     # outside the lock, like every other write to the store here (`remember`, `consume`)
     _answer_expired(thread, entry, project)
+    _hold_notice(thread, entry, project)
     return None
+
+
+#: The store could not be asked: no project names one, or it would not answer.
+_UNREAD = object()
+
+
+def _latest_ask(thread: str, project):
+    """The store's latest ask under `thread` and the answer that settled it (None while open) —
+    None when the store holds no ask there, `_UNREAD` when there is no store to ask."""
+    if project is None:
+        return _UNREAD
+    try:
+        from openfactory.memory import messages as _panel_store
+
+        for row, settled in _panel_store.asked(getattr(project, "name", "") or ""):
+            if row.token.partition("|")[0] == thread:
+                return row, settled
+        return None
+    except Exception:  # noqa: BLE001 — this process's copy is all there is to go on
+        log.info("could not read the durable staging for %s", thread, exc_info=True)
+        return _UNREAD
+
+
+def _believed(thread: str, local: dict | None, stored) -> dict | None:
+    """Which proposal waits under `thread`: this process's copy, the store's, or none (#452).
+
+    THE COPY IS BELIEVED in three cases only — there is no store to ask; the store has no ask
+    under this key (its mirror never landed: the mirror is best-effort); or the copy was staged
+    AFTER the store's latest ask, so its own row is the one that did not land. Otherwise the store
+    says: the copy, when its latest ask is this very staging still open — the copy and not a
+    thawed twin, so `consume`'s compare-and-swap keeps the identity it compares; nothing, when
+    that ask was answered, here or anywhere; and the store's own entry, thawed, when another
+    process staged something since.
+
+    "THIS VERY STAGING" IS ITS MOMENT, NOT ITS TOKEN. Every card a person asks for in one
+    conversation hashes to the same token — a ticket's summary is its kind alone — so a token
+    said "the same" of the card the other worker had just replaced. The moment `remember` stamped
+    on the entry travels in the row's payload, and two stagings never share one.
+
+    "After" is read off two clocks, the copy's moment and the row's. On one host they are one
+    clock; across hosts the skew must stay under the time between two stagings in one
+    conversation, which is at least a turn of the role."""
+    if stored is _UNREAD or stored is None:
+        return local
+    row, settled = stored
+    if local is not None:
+        staged = local.get("staged_at")
+        if staged is not None and staged == _moment(row) and proposal_token(thread,
+                                                                            local) == row.token:
+            return local if settled is None else None
+        if _newer(local, row):
+            return local
+    if settled is not None:
+        return None
+    return _thaw_row(row)
+
+
+def _moment(row) -> float | None:
+    """When the proposal a stored ask carries was staged: the `staged_at` frozen in its payload,
+    or the row's own stamp for a payload that has none."""
+    import json
+
+    from openfactory.product.waiting import seconds
+
+    try:
+        staged = json.loads(row.payload or "{}").get("staged_at")
+        if staged is not None:
+            return float(staged)
+    except Exception:  # noqa: BLE001 — an unreadable payload is dated by its row
+        log.info("a staged proposal's payload carries no readable moment; dated by its row",
+                 exc_info=True)
+    return seconds(row.ts)
+
+
+def _newer(local: dict, row) -> bool:
+    """Whether this process staged `local` after the store's `row` was staged."""
+    asked_at = _moment(row)
+    staged = local.get("staged_at")
+    return asked_at is not None and staged is not None and float(staged) > asked_at
+
+
+def _thaw_row(row) -> dict | None:
+    """A stored ask's entry, thawed, dated by its own moment (`_moment`) — or None."""
+    if not row.payload:
+        return None
+    entry = _thaw(row.payload)
+    if entry is None:
+        return None
+    staged = _moment(row)
+    if staged is not None:
+        entry["staged_at"] = staged
+    return entry
+
+
+#: The token prefix of the notice a late yes is owed once its proposal aged out (#452), recorded
+#: as a hold (`messages.HELD`) under the key the proposal was staged at, in its conversation.
+EXPIRY_NOTICE = "expired:"
+
+
+def _hold_notice(thread: str, entry: dict, project) -> None:
+    """The notice a late yes is owed, WRITTEN (#452). Never raises.
+
+    THE TOMBSTONE WAS THIS PROCESS'S MEMORY. A read that found the proposal expired — any message
+    in the conversation, a click on the panel — answered its row `expired` and laid the tombstone
+    here; a restart before the late "sim" forgot the tombstone, and the row, already answered, had
+    nothing left to thaw. Measured on `main`: the "sim" went to the role as an ordinary message,
+    which answered it politely while the person believed they had confirmed. The tombstone stays
+    as this process's copy; the store's hold is what any process reads (`_expired_recently`)."""
+    if project is None:
+        return
+    from openfactory.memory import messages as _panel_store
+
+    if not _panel_store.hold(getattr(project, "name", "") or "", "",
+                             token=f"{EXPIRY_NOTICE}{thread}",
+                             channel=conversation_of(thread, entry)):
+        log.warning("the expiry of the proposal staged in %s was not written — a late yes after a "
+                    "restart will not hear that it expired", thread)
+
+
+def _spend_notices(project, keys: tuple[str, ...], answer: str) -> bool:
+    """Close the written expiry notices owed under any of `keys` — the key a proposal was staged
+    at, or its conversation — and say whether there was one. Never raises."""
+    if project is None:
+        return False
+    wanted = {k for k in keys if k}
+    try:
+        from openfactory.memory import messages as _panel_store
+
+        name = getattr(project, "name", "") or ""
+        owed = [m.token for m, closed in _panel_store.held(name)
+                if closed is None and m.token.startswith(EXPIRY_NOTICE)
+                and (m.token[len(EXPIRY_NOTICE):] in wanted or m.channel in wanted)]
+        for token in owed:
+            _panel_store.release(name, token=token, answer=answer)
+        return bool(owed)
+    except Exception:  # noqa: BLE001 — this process's tombstones still answer
+        log.info("could not read the written expiry notices for %s", sorted(wanted),
+                 exc_info=True)
+        return False
 
 
 def _answer_expired(thread: str, entry: dict, project) -> None:
@@ -248,28 +391,6 @@ def _answer_expired(thread: str, entry: dict, project) -> None:
                     "notice may be said again", thread, exc_info=True)
 
 
-def _pending_from_store(thread: str, project) -> dict | None:
-    """The durable staging row for this conversation, thawed — or None."""
-    try:
-        from datetime import datetime
-
-        from openfactory.memory import messages as _panel_store
-
-        for q in _panel_store.pending(getattr(project, "name", "") or ""):
-            if q.token.partition("|")[0] == thread and q.payload:
-                entry = _thaw(q.payload)
-                if entry is None:
-                    return None
-                try:
-                    entry["staged_at"] = datetime.fromisoformat(q.ts).timestamp()
-                except ValueError:
-                    pass  # keep the frozen staged_at; the TTL check handles the rest
-                return entry
-    except Exception:  # noqa: BLE001 — the fallback is additive; a local miss stays a miss
-        log.info("could not read the durable staging for %s", thread, exc_info=True)
-    return None
-
-
 def waiting_in(project, conversation: str, person: str = "", *,
                now: float | None = None) -> dict | None:
     """`{token, approve, reject}` of the proposal waiting for `person` in `conversation`, as the
@@ -282,38 +403,25 @@ def waiting_in(project, conversation: str, person: str = "", *,
     is still waiting. A page that kept its own copy drew "Confirm and record" two hours after the
     person had confirmed by typing, with no question above it.
 
-    Found as `find_waiting` finds it: this person's own key first, then the conversation's bare
-    key (a proposal staged for nobody in particular), each the latest ask the store holds for it.
-    A row older than `PROPOSAL_TTL_SECONDS` is waiting for nothing — its first read answers it
-    `expired` — and is said as None here. Never raises: an unreadable store is None, because
-    buttons nobody can confirm are the defect this exists to end."""
+    THE PROPOSALS OF THE ONE READER OF WHAT WAITS (#452, `waiting.in_conversation`): this person's
+    own key first, then the conversation's bare key (a proposal staged for nobody in particular),
+    each the latest ask the store holds for it. A row older than `PROPOSAL_TTL_SECONDS` is waiting
+    for nothing — its first read answers it `expired` — and is said as None here. A question held
+    for the person's words is not drawn: it has nothing to press. Never raises: an unreadable store
+    is None, because buttons nobody can confirm are the defect this exists to end."""
     try:
-        from datetime import datetime
-
-        from openfactory.memory import messages as _panel_store
         from openfactory.product.voice import confirm_labels
+        from openfactory.product.waiting import PROPOSAL, in_conversation
 
-        name = getattr(project, "name", "") or str(project or "")
-        conversation = str(conversation or "")
-        if not name or not conversation:
-            return None
-        rows = {q.token.partition("|")[0]: q for q in _panel_store.pending(name)}
-        clock = time.time() if now is None else now
-        for key in dict.fromkeys((key_for(conversation, person), conversation)):
-            q = rows.get(key)
-            if q is None:
+        for wait in in_conversation(project, conversation, person, now=now):
+            if wait.kind != PROPOSAL:
                 continue
-            try:
-                if clock - datetime.fromisoformat(q.ts).timestamp() > PROPOSAL_TTL_SECONDS:
-                    continue
-            except ValueError:
-                pass  # a stamp the store did not write in its own format: its answer decides
             # THE LABELS IT WAS ASKED WITH (`remember` mirrors them), the language's own when a
             # row predates them
             default = confirm_labels(language=getattr(project, "language", None))
-            return {"token": q.token,
-                    "approve": q.approve if q.approve not in ("", "Approve") else default[0],
-                    "reject": q.reject if q.reject not in ("", "Reject") else default[1]}
+            return {"token": wait.token,
+                    "approve": wait.approve if wait.approve not in ("", "Approve") else default[0],
+                    "reject": wait.reject if wait.reject not in ("", "Reject") else default[1]}
     except Exception:  # noqa: BLE001 — no buttons is the safe reading of a store nobody can read
         log.info("could not read what waits in %s", conversation, exc_info=True)
     return None
@@ -343,15 +451,21 @@ def _reset_for_tests() -> None:
         _EXPIRED_TOMBSTONES.clear()
 
 
-def _expired_recently(*keys: str) -> bool:
+def _expired_recently(*keys: str, project=None) -> bool:
     """Whether a proposal aged out under any of these keys — consumed on read: the notice is owed
-    to exactly one late confirmation, not to every message for ever after."""
+    to exactly one late confirmation, not to every message for ever after.
+
+    THIS PROCESS'S TOMBSTONE OR THE STORE'S NOTICE (#452), and both are spent by the one reading:
+    the notice written where the expiry was found (`_hold_notice`) is what a restarted or second
+    worker reads, and closing it is what keeps the next yes, in any process, from hearing it
+    again."""
     hit = False
     with _PENDING_LOCK:
         for key in keys:
             if key and _EXPIRED_TOMBSTONES.pop(key, None) is not None:
                 hit = True
-    return hit
+    told = _spend_notices(project, keys, "told")
+    return hit or told
 
 
 def _freeze(entry: dict) -> str:
@@ -484,6 +598,9 @@ def remember(thread: str, entry: dict, *, lang=None, project=None, person: str =
                              channel=where, payload=_freeze(entry))
         except Exception:  # noqa: BLE001 — the mirror is additive; the staging is not
             log.info("could not mirror the staged proposal onto the panel", exc_info=True)
+        # …AND THE WRITTEN NOTICE WITH THE TOMBSTONE (#452): another process must not tell this
+        # proposal's yes that an older one expired
+        _spend_notices(project, (thread, where), "superseded")
     if displaced is None:
         return twins
     from openfactory.product.voice import _pick
