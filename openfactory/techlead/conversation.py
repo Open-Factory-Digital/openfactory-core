@@ -656,12 +656,15 @@ def answer_text(res) -> str:
 def parked(job: dict) -> bool:
     """Is this job waiting on a PERSON rather than working?
 
-    ONE DEFINITION, because there are now two readers of it and they must agree. The snapshot uses
-    it to reach the ORPHANED verdict, and `comments_for` uses it to decide which tickets are worth
-    a provider round trip. Two spellings would mean a job the snapshot calls parked whose thread
-    was never fetched — and the digest, which lists only parked jobs, would then be silently
-    missing a ticket the model is being asked to judge. Absence reading as compliance is this
-    codebase's cheapest way to lose an answer."""
+    ONE DEFINITION, because there are several readers of it and they must agree. `comments_for`
+    uses it to decide which tickets are worth a provider round trip, and the digest lists only
+    parked jobs. Two spellings would mean a job the digest calls parked whose thread was never
+    fetched — and the digest would then be silently missing a ticket the model is being asked to
+    judge. Absence reading as compliance is this codebase's cheapest way to lose an answer.
+
+    A CLOSED RUN COUNTS HERE BY ITS STATE, which is kept for the threads: a stopped job's ticket is
+    still worth reading. It is not a run anybody can answer, so the snapshot's ORPHANED line —
+    which names `skip` — no longer asks this; it asks the engine's `attention` (#339)."""
     state = job.get("state") or job.get("status") or "unknown"
     return bool(job.get("attention")) or state in _PARKED_STATES
 
@@ -737,7 +740,6 @@ def state_snapshot(jobs: list[dict]) -> str:
         title = (j.get("title") or "").strip() or "(untitled)"
         ticket = j.get("ticket_state")  # the tracker's real ticket state: open | closed | None
         board = j.get("board")  # the HUMAN's authoritative view (Needs Action / In progress / …)
-        waiting = parked(j)
         parts = [f"- #{issue} {title}: Temporal {state}"]
         if j.get("attention"):
             parts.append(" ⚠️needs-attention")
@@ -759,7 +761,13 @@ def state_snapshot(jobs: list[dict]) -> str:
         # (b) closed+not-parked = resolved, ignore; (c) open+parked = genuine work for a human.
         # All three are gated on a state we actually READ; an unreadable ticket reaches none of
         # them, which is why they test for "closed" rather than for "not open".
-        if ticket == "closed" and waiting:
+        #
+        # ORPHANED NAMES A VERB, SO IT ASKS WHETHER THE RUN IS LIVE (#339) — `attention`, which
+        # `view.list_jobs` answers with `live`. It asked `parked()`, which also counts a CLOSED
+        # run by its state — right for which threads to read, wrong here: a stopped run whose
+        # ticket a later run merged read "skip to clean up", and `skip` on a workflow that is no
+        # longer running is refused. Such a run falls to "likely resolved" below.
+        if ticket == "closed" and j.get("attention") is True:
             parts.append(" [ORPHANED: ticket closed but workflow still parked — skip to clean up]")
         elif ticket == "closed" and state not in ("merged", "done", "closed"):
             parts.append(" [likely resolved — ticket closed]")

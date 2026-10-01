@@ -282,7 +282,9 @@ def floor(monkeypatch):
 def test_gather_jobs_enriches_from_the_ports_and_marks_what_it_could_not_read(floor, monkeypatch):
     """The whole card in one assertion: the ticket state on each job came from `TrackerAdapter`,
     and the ticket that could not be read says so instead of inheriting a default."""
-    floor([{"project": "books", "issue": "69", "state": "failed"},
+    # #69 is a LIVE park (`attention`, as `view.list_jobs` flags one): only a live run is ORPHANED
+    # by a closed ticket, because only a live run has a `skip` to answer (#339).
+    floor([{"project": "books", "issue": "69", "state": "failed", "attention": True},
            {"project": "books", "issue": "70", "state": "running"},
            {"project": "outra", "issue": "99", "state": "running"}])
     tracker = _Tracker({"69": ("closed", "Plan 88.1 — Spreadsheet import")}, refuse={"70"})
