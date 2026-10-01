@@ -58,7 +58,10 @@ def test_UNKNOWN_is_its_own_answer_and_folds_into_neither():
     it would either invent a pass nobody earned or a failure nobody found."""
     got = criteria({"acceptance": [{"criterion": "c", "status": "unknown"}]})
 
-    assert got == {"passed": 0, "failed": 0, "unknown": 1, "unmet": [], "total": 1}
+    assert {k: got[k] for k in ("passed", "failed", "unknown", "unmet", "total")} == {
+        "passed": 0, "failed": 0, "unknown": 1, "unmet": [], "total": 1}
+    # …and it is not verified either: nothing executed it (#447)
+    assert (got["verified"], got["unverified"]) == (0, 1)
 
 
 def test_a_status_the_reviewer_invented_is_read_as_unknown():

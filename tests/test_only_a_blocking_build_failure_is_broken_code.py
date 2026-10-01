@@ -43,6 +43,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
+from gate_answers import SEAL_CHECK, answer_merge_gate
 from temporalio import activity
 from temporalio.client import Client, WorkflowHandle
 from temporalio.contrib.pydantic import pydantic_data_converter
@@ -592,7 +593,7 @@ async def mock_notify(inp) -> None:
     return None
 
 
-MOCKS = [mock_run_job, mock_open, mock_read, mock_legacy, mock_mstate, mock_force, mock_merge,
+MOCKS = [SEAL_CHECK, mock_run_job, mock_open, mock_read, mock_legacy, mock_mstate, mock_force, mock_merge,
          mock_close, mock_repair, mock_update, mock_settle, mock_mark, mock_diagnose, mock_title,
          mock_refresh, mock_say, mock_notify]
 
@@ -650,7 +651,7 @@ async def test_nothing_ran_is_waited_on_then_said__and_the_machine_never_merges_
         assert said["auto"] is False, "the card still says the machine is merging it"
         assert _FORCED == [], "the machine merged a pull request nothing verified"
 
-        await h.signal(JobWorkflow.human_merge_gate, args=["merge", "", "a-person"])
+        await answer_merge_gate(h, "merge", "", "a-person")
         result = await h.result()
 
     assert result.state == JobState.MERGED and _MERGED == [WATCHED] and _FORCED == []
@@ -668,7 +669,7 @@ async def test_an_advisory_failure_is_said_on_the_card_and_starts_no_repair(env)
                            lambda g: "'Work item linking'" in (g.get("note") or ""))
         assert "advisory" in gate["note"] and "cannot stop this merge" in gate["note"]
         assert "no check has" not in gate["note"], "checks that ran were called nothing"
-        await h.signal(JobWorkflow.human_merge_gate, args=["discard", "", "a-person"])
+        await answer_merge_gate(h, "discard", "", "a-person")
         await h.result()
     assert _REPAIRS == [] and _CLOSED == [WATCHED]
 

@@ -40,6 +40,72 @@ import uuid
 log = logging.getLogger("openfactory.product.confirm")
 
 
+#: WHAT THIS MODULE SAYS IN ITS OWN WORDS, per language (#429) — the replies after a yes that no
+#: voice function composes: the requirement's breakdown, and the queue and the order when nothing
+#: landed. They were Portuguese under English frames. `one` and `many` are the two numbers a count
+#: agrees with.
+_SAID = {
+    "pt-BR": {
+        "not_queued": "não consegui colocar na fila.",
+        "not_queued_some": "\n\n{n} não entraram: ",
+        "not_ordered": "não consegui gravar a ordem.",
+        "not_ordered_some": "\n\n{n} não entraram na ordem: ",
+        "no_breakdown": "Ainda não consegui transformar isso em frentes de trabalho",
+        "no_breakdown_now": " agora",
+        "agreement_holds": (". O acordo está registrado do mesmo jeito — é só me pedir para "
+                            "quebrar em tarefas que eu tento de novo."),
+        "no_task": ("Não consegui tirar nenhuma tarefa do requisito {number}. Me diga o que ele "
+                    "deveria produzir na prática e eu tento de novo."),
+        "task": ("tarefa", "tarefas"),
+        "became": "O requisito {number} virou **{count}** {noun}{tail}.",
+        "already_split": ("O requisito {number} já estava dividido em **{count}** {noun}{tail} — "
+                          "não criei nada novo e não mudei nada de lugar."),
+        "it_is": ("Está", "Estão"), "is": ("está", "estão"),
+        "in_backlog": ("\n\n{where} no Backlog — começar a trabalhar {them} continua sendo "
+                       "decisão de uma pessoa."),
+        "them": ("nela", "nelas"),
+        "existed": ("\n\n{refs} já {existed} de antes — não criei de novo, e {stays} onde "
+                    "{was}."),
+        "existed_words": (("existia", "existiam"), ("continua", "continuam"),
+                          ("estava", "estavam")),
+        "about": "\n\nSobre {refs}:",
+        "not_registered_some": "\n\n{n} não deu para registrar: ",
+    },
+    "en": {
+        "not_queued": "I could not put it in the queue.",
+        "not_queued_some": "\n\n{n} did not go in: ",
+        "not_ordered": "I could not save the order.",
+        "not_ordered_some": "\n\n{n} did not go into the order: ",
+        "no_breakdown": "I could not turn this into streams of work yet",
+        "no_breakdown_now": "",
+        "agreement_holds": (". The agreement is recorded all the same — just ask me to break it "
+                            "into tasks and I will try again."),
+        "no_task": ("I could not get any task out of requirement {number}. Tell me what it should "
+                    "produce in practice and I will try again."),
+        "task": ("task", "tasks"),
+        "became": "Requirement {number} became **{count}** {noun}{tail}.",
+        "already_split": ("Requirement {number} was already split into **{count}** {noun}{tail} "
+                          "— I created nothing new and moved nothing."),
+        "it_is": ("It is", "They are"), "is": ("is", "are"),
+        "in_backlog": ("\n\n{where} in the Backlog — starting work on {them} is still a "
+                       "person's decision."),
+        "them": ("it", "them"),
+        "existed": ("\n\n{refs} already {existed} — I did not create {it} again, and {stays} "
+                    "where {was}."),
+        "existed_words": (("existed", "existed"), ("it stays", "they stay"),
+                          ("it was", "they were")),
+        "about": "\n\nAbout {refs}:",
+        "not_registered_some": "\n\n{n} could not be registered: ",
+    },
+}
+
+
+def _said(lang) -> dict:
+    from openfactory.product.voice import _pick
+
+    return _pick(_SAID, lang)
+
+
 # ── the sanitising boundary ──────────────────────────────────────────────────────────────────────
 
 def _client_detail(detail: str, lang, *, project=None) -> str:
@@ -226,7 +292,7 @@ def _confirm_queue(project, entry, *, module, user, lang) -> str:
     failed = [r for r in results if not r.ok]
     if not landed:
         return (_client_detail(failed[0].detail, lang, project=project) if failed
-                else "não consegui colocar na fila.")
+                else _said(lang)["not_queued"])
     from openfactory.product.voice import queued
 
     cfg = getattr(project, "product", None)
@@ -234,8 +300,8 @@ def _confirm_queue(project, entry, *, module, user, lang) -> str:
     if failed:
         # the partial-failure line reads the SAME detail the total-failure branch above already
         # sanitises — one raw and one clean was the sibling divergence, found by the sweep
-        out += f"\n\n{len(failed)} não entraram: " \
-               f"{_client_detail(failed[0].detail, lang, project=project)}"
+        out += (_said(lang)["not_queued_some"].format(n=len(failed))
+                + _client_detail(failed[0].detail, lang, project=project))
     return out
 
 
@@ -306,13 +372,13 @@ def _confirm_reorder(project, entry, *, module, user, lang) -> str:
     failed = [r for r in results if not r.ok]
     if not placed:
         return (_client_detail(failed[0].detail, lang, project=project) if failed
-                else "não consegui gravar a ordem.")
+                else _said(lang)["not_ordered"])
     from openfactory.product.voice import reordered
     cfg = getattr(project, "product", None)
     out = reordered(placed, language=lang, agent_name=getattr(cfg, "agent_name", "") or "")
     if failed:
-        out += f"\n\n{len(failed)} não entraram na ordem: " \
-               f"{_client_detail(failed[0].detail, lang, project=project)}"
+        out += (_said(lang)["not_ordered_some"].format(n=len(failed))
+                + _client_detail(failed[0].detail, lang, project=project))
     return out
 
 
@@ -741,10 +807,9 @@ def _also_broke_it_down(module, number: int, user: str, head: str, lang, project
     if results:
         failed = [r for r in results if not r.ok]
         detail = _client_detail(failed[0].detail, lang, project=project) if failed else ""
-    tail = ("Ainda não consegui transformar isso em frentes de trabalho"
-            + (f": {detail}" if detail else " agora")
-            + ". O acordo está registrado do mesmo jeito — é só me pedir para quebrar em tarefas "
-              "que eu tento de novo.")
+    said = _said(lang)
+    tail = (said["no_breakdown"] + (f": {detail}" if detail else said["no_breakdown_now"])
+            + said["agreement_holds"])
     return f"{head}\n\n{tail}"
 
 
@@ -776,8 +841,7 @@ def _breakdown_reply(results, number: int, name: str, lang=None, project=None) -
         # no drafts and no errors: the breakdown ran and produced nothing. Counting that as "virou
         # 0 tarefas" and announcing the Backlog was the shape this whole function is being fixed
         # for — a sentence about cards that do not exist.
-        return (f"{head}Não consegui tirar nenhuma tarefa do requisito {number}. Me diga o que ele "
-                f"deveria produzir na prática e eu tento de novo.")
+        return head + _said(lang)["no_task"].format(number=number)
 
     landed = [r for r in results if r.ok]
     already = [r for r in landed if getattr(r, "existed", False)]
@@ -786,26 +850,24 @@ def _breakdown_reply(results, number: int, name: str, lang=None, project=None) -
     # sentence, and `_unfinished` is the one reading that tells a residue from a measure.
     placed = [r for r in fresh if not _unfinished(r)]
 
+    said = _said(lang)
     listed = ", ".join(r.ref for r in landed if r.ref)
-    noun = "tarefa" if len(landed) == 1 else "tarefas"
+    noun = said["task"][0 if len(landed) == 1 else 1]
     tail = f": {listed}" if listed else ""
-    if fresh:
-        out = f"{head}O requisito {number} virou **{len(landed)}** {noun}{tail}."
-    else:
-        # nothing was created and nothing was moved: "virou" would claim this turn did something
-        out = (f"{head}O requisito {number} já estava dividido em **{len(landed)}** {noun}{tail} "
-               f"— não criei nada novo e não mudei nada de lugar.")
+    # nothing was created and nothing was moved: "became" would claim this turn did something
+    out = head + said["became" if fresh else "already_split"].format(
+        number=number, count=len(landed), noun=noun, tail=tail)
     if placed:
-        one = len(placed) == 1
-        where = (("Está" if one else "Estão") if len(placed) == len(landed)
-                 else f"{', '.join(r.ref for r in placed if r.ref)} {'está' if one else 'estão'}")
-        out += (f"\n\n{where} no Backlog — começar a trabalhar {'nela' if one else 'nelas'} "
-                f"continua sendo decisão de uma pessoa.")
+        n = 0 if len(placed) == 1 else 1
+        where = (said["it_is"][n] if len(placed) == len(landed)
+                 else f"{', '.join(r.ref for r in placed if r.ref)} {said['is'][n]}")
+        out += said["in_backlog"].format(where=where, them=said["them"][n])
     if already and fresh:
-        one = len(already) == 1
-        out += (f"\n\n{', '.join(r.ref for r in already if r.ref)} já "
-                f"{'existia' if one else 'existiam'} de antes — não criei de novo, e "
-                f"{'continua' if one else 'continuam'} onde {'estava' if one else 'estavam'}.")
+        n = 0 if len(already) == 1 else 1
+        existed, stays, was = (words[n] for words in said["existed_words"])
+        out += said["existed"].format(refs=", ".join(r.ref for r in already if r.ref),
+                                      existed=existed, stays=stays, was=was,
+                                      it=said["them"][n])
     # the module's own sentence about the cards it could not place, said to the person it was
     # written for. First result only, like the failure line below: one voice per outcome — so when
     # the batch has siblings that DID land, the cards it is about have to be named, or the client
@@ -813,11 +875,11 @@ def _breakdown_reply(results, number: int, name: str, lang=None, project=None) -
     unplaced = [r for r in fresh if _unfinished(r)]
     if unplaced:
         if len(landed) > 1:
-            out += f"\n\nSobre {', '.join(r.ref for r in unplaced if r.ref)}:"
+            out += said["about"].format(refs=", ".join(r.ref for r in unplaced if r.ref))
         out = _still_to_say(out, unplaced[0], lang, project=project)
     if failed:
-        out += (f"\n\n{len(failed)} não deu para registrar: "
-                f"{_client_detail(failed[0].detail, lang, project=project)}")
+        out += (said["not_registered_some"].format(n=len(failed))
+                + _client_detail(failed[0].detail, lang, project=project))
     return out
 
 

@@ -102,7 +102,8 @@ def test_the_renderer_spells_no_variable_the_public_core_does_not_read(tmp_path)
 
 def test_the_port_allowance_is_the_published_ports_and_nothing_the_worker_forwards():
     ports = _published_ports()
-    assert ports and all(name.endswith("_PORT") for name in ports), sorted(ports)
+    # A port, or the address one is bound on (PANEL_BIND) — both are the operator's rows.
+    assert ports and all(name.endswith(("_PORT", "_BIND")) for name in ports), sorted(ports)
     forwarded = set()
     import yaml
 

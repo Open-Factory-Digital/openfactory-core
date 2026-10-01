@@ -56,6 +56,7 @@ from openfactory.adapters.sandbox.base import (
 log = logging.getLogger("openfactory.sandbox.container")
 
 _AUTH_ENV_VARS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
+_GATE_SECRET = "OPENFACTORY_GATE_SECRET"
 _WORKDIR = "/workspace"
 
 #: Where the framework's harness toolbox is mounted inside the box (ADR-0037 D2).
@@ -368,6 +369,12 @@ class ContainerSandbox(SandboxAdapter):
             raise ValueError(
                 f"box.env entries must be environment variable NAMES, got {bad!r} — a value or "
                 "an option here would ride straight into the docker command line")
+        # THE GATE KEY NEVER ENTERS A BOX (`gate_seal`): job code holding it could seal its own
+        # production approval. Refused by name rather than dropped, so the list says what it does.
+        if _GATE_SECRET in extra_env:
+            raise ValueError(
+                f"box.env may not carry {_GATE_SECRET} — it is the key a production approval is "
+                "sealed with, and a job holding it could approve its own release")
         self.image = image
         self.project = project
         self.toolbox = toolbox

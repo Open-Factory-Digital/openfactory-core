@@ -104,7 +104,7 @@ class ProductShape(BaseModel):
         is made, what is left out — the paths relative to the compose file's own repository."""
         p = self.preview
         return PreviewConfig(compose=list(p.compose.paths), expose=dict(p.expose),
-                             data=dict(p.data), exclude=list(p.exclude))
+                             data=dict(p.data), exclude=list(p.exclude), entry=p.entry)
 
 
 def _named(repos: Iterable[str]) -> str:

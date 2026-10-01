@@ -112,7 +112,14 @@ services:
       # (`runtime/temporal/schedule.ensure_retention`) — a value a deployment declares and the
       # platform makes true, the same shape the schedules use.
       DEFAULT_NAMESPACE_RETENTION: ${OPENFACTORY_ENGINE_RETENTION_DAYS:-30}d
-    ports: ["${TEMPORAL_PORT:-7233}:7233"]
+    # LOOPBACK ONLY, AND NOT CONFIGURABLE. The engine has no authentication of its own: anybody
+    # who reaches this port can read every job's history, cancel or terminate any run, and send
+    # any workflow signal. Neither the worker nor the panel needs it on the host — they dial
+    # `temporal:7233` on the compose network — so it is published only for tooling on this
+    # machine. A port with no host IP is bound on 0.0.0.0 AND ahead of most host firewalls
+    # (Docker's rules come before ufw's), which is how every release up to 0.4.1 exposed it.
+    # `tests/test_nothing_is_published_beyond_this_machine.py` holds this.
+    ports: ["127.0.0.1:${TEMPORAL_PORT:-7233}:7233"]
     healthcheck:
       # Exits non-zero until the namespace exists, which is what "ready" means here. A port that
       # accepts connections is not the same as a server that can hold a workflow, and starting the
@@ -134,7 +141,11 @@ services:
     # already held by a client's own web app — and a hard-coded one turns "run the factory
     # locally" into "stop whatever else you were doing first". The defaults stay familiar; the
     # override costs one line in the env file.
-    ports: ["${TEMPORAL_UI_PORT:-8080}:8080"]
+    #
+    # LOOPBACK ONLY, for the engine's reason above: the UI is the engine's own write surface
+    # (cancel, terminate, signal) with no sign-in in front of it. Reach it from elsewhere through
+    # an SSH tunnel or an authenticating proxy, never by publishing it.
+    ports: ["127.0.0.1:${TEMPORAL_UI_PORT:-8080}:8080"]
 
   # ── the box the agent's code runs in ────────────────────────────────────────────────────────
   # NOT A RUNNING SERVICE. It exists so `docker compose up` BUILDS the sandbox image, then exits.
@@ -541,7 +552,11 @@ services:
       # The same directory the worker mounts, and for the panel's own reason: the pull-request
       # page reads the diff out of the person's repository (ADR-0049 D3/D4).
       - ${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}:${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}
-    ports: ["${PANEL_PORT:-8787}:8787"]
+    # LOOPBACK BY DEFAULT. The panel authenticates, but it speaks plain HTTP, so on a network its
+    # sign-in tokens cross in clear text. A deployment that means to serve it to other machines
+    # says so with PANEL_BIND (an address, e.g. 0.0.0.0) and puts TLS in front of it — a reverse
+    # proxy or a VPN. PANEL_BIND and never PANEL_PORT: other rows build URLs out of the port.
+    ports: ["${PANEL_BIND:-127.0.0.1}:${PANEL_PORT:-8787}:8787"]
 
 volumes:
   temporal_db:

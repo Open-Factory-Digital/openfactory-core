@@ -140,7 +140,10 @@ _AGENT_CRED_VARS = ("OPENFACTORY_AGENT_TOKENS",)
 # The key the panel signs a card preview's entry tokens with (ADR-0050). Only the panel needs it;
 # a workload holding it could mint its own way into any preview on the deployment. Stripped for
 # the reason the token pool is: nothing the agent does needs it.
-_PANEL_SECRET_VARS = ("OPENFACTORY_PREVIEW_SECRET",)
+#
+# …and the key a human gate's answer is sealed with (`gate_seal`). A workload holding it could seal
+# its own production approval or merge — the exact bypass the seal exists to close.
+_PANEL_SECRET_VARS = ("OPENFACTORY_PREVIEW_SECRET", "OPENFACTORY_GATE_SECRET")
 
 
 def _scrubbed_env(keep: tuple[str, ...] = ()) -> dict[str, str]:

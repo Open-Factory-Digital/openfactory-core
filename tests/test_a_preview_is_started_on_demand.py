@@ -1085,3 +1085,50 @@ def test_the_cli_reads_the_record_and_its_logs(panel, tmp_path):
     assert shown.exit_code == 0 and "Traceback: boom" in shown.output
     missing = runner.invoke(cli.app, ["preview", "logs", "acme", "12", "web"])
     assert missing.exit_code == 1
+
+
+# ── #446: every look at a running unit keeps the panel on its network ───────────────────────────
+
+
+class Joining(Runtime):
+    """A runtime that declares `JoinsThePanel` and remembers each unit it was asked to join."""
+
+    def __init__(self, *, answer: str = "", **kw):
+        super().__init__(**kw)
+        self.joined: list[str] = []
+        self.answer = answer
+
+    def join_panel(self, compose_project):
+        self.joined.append(compose_project)
+        return self.answer
+
+
+def test_a_look_at_a_running_unit_puts_the_panel_back_on_its_network(unit_dirs):
+    """The panel has no daemon of its own, so the worker does it on every watch — a panel
+    recreated by an upgrade is back on within one interval (#446)."""
+    runtime = Joining(on_daemon="running")
+    assert steps.watch(ACME, "12", runtime=runtime, world=_world(Store(_live()))) == steps.RUNNING
+    assert runtime.joined == [preview.compose_project("acme", "12")]
+
+
+def test_an_ended_or_failed_unit_is_never_joined(unit_dirs):
+    gone = Joining()
+    assert steps.watch(ACME, "12", runtime=gone, world=_world(Store(_live()))) == steps.GONE
+    failed = Joining(on_daemon="failed")
+    assert steps.watch(ACME, "12", runtime=failed, world=_world(Store(_live()))) == steps.FAILED
+    assert gone.joined == [] and failed.joined == [], (
+        "an ended unit's network is not one the panel belongs on")
+
+
+def test_a_join_that_cannot_be_made_is_logged_and_the_look_goes_on(unit_dirs, caplog):
+    runtime = Joining(on_daemon="running", answer="the panel could not join x-edge: no network")
+    with caplog.at_level("WARNING"):
+        assert steps.watch(ACME, "12", runtime=runtime,
+                           world=_world(Store(_live()))) == steps.RUNNING
+    assert "OPENFACTORY_PREVIEW_PANEL_OFF_THE_EDGE" in caplog.text and "no network" in caplog.text
+
+
+def test_a_row_that_does_not_join_is_left_as_it_was(unit_dirs):
+    plain = Runtime(on_daemon="running")
+    assert steps.watch(ACME, "12", runtime=plain, world=_world(Store(_live()))) == steps.RUNNING
+    assert plain.calls == ["watch"]

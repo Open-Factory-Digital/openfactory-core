@@ -2974,6 +2974,8 @@ function pvOpen(sid){
 //: The product beside the conversation: its tabs, and whether it is shown at all.
 function pvTab(k){
   _pv.tab=k;try{localStorage.setItem("of.prod.tab",k)}catch(e){}
+  // THE PERSON'S OWN "SHOW ME NOW" (#440): opening the Board reads it, never a clock
+  if(k==="board")pvBoardLoad();
   if(typeof document.querySelectorAll!=="function")return;
   document.querySelectorAll(".pv-tab").forEach(b=>b.classList.toggle("on",b.dataset.tab===k));
   document.querySelectorAll(".pv-pane").forEach(p=>p.classList.toggle("on",p.dataset.pane===k));
@@ -3090,6 +3092,10 @@ function pchatFrame(m){
     // reading rows' reports and a message still on its way up — and the proposal waiting for this
     // person's answer keeps its buttons (`_pc.staged`, drawn by `pchatStagedAlone` when no line
     // carries them): a repaint from the store never takes them from under somebody reading it.
+    // WHICH PROPOSAL WAITS IS THE SERVER'S TO SAY (#443), and this frame says it (`staged`): the
+    // page replaces its own with it. It kept the last token a reply carried until a click, so a
+    // proposal answered by a typed "sim" drew its buttons alone, under no question, hours later.
+    if("staged" in m)pchatStaged(m.staged);
     // …AND WHAT THE STORE NOW HOLDS IS NOT KEPT TWICE (#402), told by identity and never by the
     // words: a message still on its way up whose id is a line of the history, and a click's answer
     // whose click the history shows answered. Keeping them regardless drew the same answer twice
@@ -3106,6 +3112,7 @@ function pchatFrame(m){
     const named=(m.turns||[]).find(t=>t.role==="agent"&&t.actor);
     if(named&&named.actor!=="product")_pc.agentName=named.actor;
   }
+  else if(m.kind==="staged"){pchatStaged(m.staged)}   // what waits changed on the server (#443)
   else if(m.kind==="said"){
     const own=m.id&&_pc.items.find(i=>i.id===m.id);
     if(own)own.pending=false;
@@ -3133,10 +3140,13 @@ function pchatFrame(m){
 }
 //: THE ROLE SPOKE — an event announced, an answer given — so what it owes may have changed: the
 //: product page reads its agenda again (#267 slice 3). Once per reply, never on a clock; nothing
-//: on any other page, which shows no agenda.
+//: on any other page, which shows no agenda. AND ITS BOARD (#440): the role files, closes and
+//: removes cards by speaking, and a board read once when the page opened said "No open cards"
+//: beside a card the role had just filed and a job had already taken to its pull request.
 function pchatAgendaMoved(){
   if(typeof _prod!=="object"||curProduct()===null||_prod.project!==_pc.project)return;
   loadAgenda();
+  pvBoardLoad();
 }
 //: One message up the socket, WITH THE PAGE IT WAS WRITTEN ON. Shown at once, marked as on its way
 //: until the server acknowledges it; `false` when it could not be sent, so the box keeps the words.
@@ -3187,6 +3197,11 @@ function pchatNote(m){
   if(m.pending)return`<div class="sub" style="margin-top:6px">sending…</div>`;
   if(m.ack)return`<div class="sub" style="margin-top:6px">${esc(m.ack)}</div>`;
   return"";
+}
+//: What waits for this person's answer, AS THE SERVER NAMES IT (#443): replaced, never merged —
+//: a token the server did not name is not kept, whoever set it.
+function pchatStaged(s){
+  _pc.staged=(s&&s.token)?{token:s.token,approve:s.approve||"approve",reject:s.reject||"reject"}:null;
 }
 function pchatButtons(){
   const s=_pc.staged;if(!s)return"";
@@ -3786,6 +3801,10 @@ function refreshProject(){
     :mw.action.auto
     ?`⏳ auto-merge armed — ${VOCAB.merge_wait.auto}`
     :`PR ready — waiting for <b>your</b> review &amp; merge (<a href="${esc(safeUrl(mw.action.pr_url||"#"))}" target="_blank">open PR ↗</a>)`;}
+  // AN APPROVAL THE WORKER REFUSED (`gate_seal`). The dialog said "approved"; the gate is still
+  // waiting, and this is the only place a person looking at the card learns why.
+  const refusedJob=engine.jobs.find(j=>j.project==name && j.refused);
+  if(refusedJob&&mnow){mnow.innerHTML=`⚠ your production approval was not acted on — ${esc(refusedJob.refused)}`;}
   // A parked impediment/decision has NO live feed either — a crashed/timed-out job's Fargate task
   // is gone, so the card would otherwise sit forever on a stale "▸ Repairing" as if work
   // continues (the #394 confusion). State the truth on the card itself, not just the top banner.

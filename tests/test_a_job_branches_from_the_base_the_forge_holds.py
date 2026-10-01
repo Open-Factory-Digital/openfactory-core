@@ -258,7 +258,7 @@ def test_the_suppression_re_read_after_a_repair_is_the_jobs_own(behind):
 def test_the_re_review_after_a_review_repair_reads_the_jobs_own_change(behind):
     """A blocking review rejects, the executor repairs, and the diff is read again for the guard
     and the re-review — the third reader of the same range."""
-    from openfactory.contracts import Finding, ReviewResult
+    from openfactory.contracts import AcceptanceCheck, Finding, ReviewResult
     from tests.test_walking_skeleton import FakeAgent, FakeTracker, _runner
 
     forge, clone, seed, tmp = behind
@@ -270,7 +270,11 @@ def test_the_re_review_after_a_review_repair_reads_the_jobs_own_change(behind):
             if len(seen) == 1:
                 return ReviewResult(decision="rejected", score=40, summary="name it",
                                     findings=[Finding(severity="high", description="rename")])
-            return ReviewResult(decision="approved", score=90, findings=[], summary="ok")
+            # cited to the gate that ran, so the change is verified and merges by itself (#447)
+            return ReviewResult(decision="approved", score=90, findings=[], summary="ok",
+                                acceptance=[AcceptanceCheck(criterion="feature.py exists",
+                                                            status="passed",
+                                                            evidence="gate:test — ran")])
 
     class _Repairs(FakeAgent):
         def repair(self, *, sandbox, workspace, context, failure_log):

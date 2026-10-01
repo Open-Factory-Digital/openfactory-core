@@ -711,6 +711,46 @@ def _named_release(text: str, loops: list) -> object | None:
 _UNSET = object()
 
 
+#: WHAT THE PEN SAYS WHEN IT FILES A CARD A PERSON ASKED FOR OR REPORTED, per language (#429) —
+#: the replies of `file_ticket` and `file_defect`, which reach the person under the frame the
+#: conversation's language chose.
+_FILING = {
+    "pt-BR": {
+        "no_title": "preciso de um título para abrir o cartão.",
+        "title_too_long_ticket": ("o título passa de {limit} caracteres — escreva um mais curto; "
+                                  "nada foi aberto."),
+        "title_too_long_defect": "o título passa de {limit} caracteres — nada foi registrado.",
+        "ticket_exists": "já existe um cartão com esse título",
+        "defect_exists": "já registrei esse problema antes",
+        "ticket_failed": ("não consegui abrir o cartão agora. Nada foi escrito — o time foi "
+                          "avisado e resolve."),
+        "defect_failed": ("não consegui registrar esse problema agora. Nada foi escrito — o time "
+                          "foi avisado e resolve."),
+        "ticket_unplaced": ("abri o cartão, mas ainda não consegui posicioná-lo no quadro — o "
+                            "time foi avisado e posiciona."),
+        "defect_unplaced": ("registrei o problema, mas ainda não consegui posicionar o cartão no "
+                            "quadro — o time foi avisado e posiciona."),
+    },
+    "en": {
+        "no_title": "I need a title to open the card.",
+        "title_too_long_ticket": ("the title is longer than {limit} characters — write a shorter "
+                                  "one; nothing was opened."),
+        "title_too_long_defect": ("the title is longer than {limit} characters — nothing was "
+                                  "registered."),
+        "ticket_exists": "a card with that title already exists",
+        "defect_exists": "I registered that problem before",
+        "ticket_failed": ("I could not open the card just now. Nothing was written — the team has "
+                          "been told and will sort it out."),
+        "defect_failed": ("I could not register that problem just now. Nothing was written — the "
+                          "team has been told and will sort it out."),
+        "ticket_unplaced": ("I opened the card, but could not place it on the board yet — the "
+                            "team has been told and will place it."),
+        "defect_unplaced": ("I registered the problem, but could not place the card on the board "
+                            "yet — the team has been told and will place it."),
+    },
+}
+
+
 def _could_not(sentence: str, *, act: str, cause: object = "", ref: str = "") -> WriteResult:
     """The one way this module reports a write that did not happen.
 
@@ -2747,7 +2787,8 @@ class ProductModule:
         return results
 
     def compose_card(self, *, request: str, conversation: str = "", reply: str = "",
-                     intake: str = "", title: str = "", answered=None, kind: str = "ticket"):
+                     intake: str = "", title: str = "", answered=None, kind: str = "ticket",
+                     language: str | None = None):
         """The card a person asked for, drafted from the conversation, checked and judged — a
         `cards.Composed` — before anything is staged for their yes (#383).
 
@@ -2755,9 +2796,15 @@ class ProductModule:
         semaphore. The product role's engine drafts, and the judge stands on the reviewer's axis
         (`cards.build_judge`); both in a room with nothing to open (`cards.in_a_room`), because
         the prompt carries the conversation the card is written from. The template and the rubric
-        are the product's when its context repository carries them."""
+        are the product's when its context repository carries them.
+
+        IN THE CONVERSATION'S LANGUAGE (#429): `language` is the one the engine's frames around
+        the card are chosen in, and the project's when a caller has none — the layout, the
+        drafter's instruction and the floor all follow it, so the card reads in the language of
+        the question under it."""
         from openfactory.product import cards
 
+        lang = language or getattr(self.project, "language", None)
         ctx = self.context()
         if not ctx.available:
             return cards.Composed()
@@ -2772,9 +2819,10 @@ class ProductModule:
         return cards.compose(
             draft=draft, judge=judge,
             rubric=cards.load_rubric(ctx.docs_path),
-            template=cards.load_template(ctx.docs_path, kind),
+            template=cards.load_template(ctx.docs_path, kind, lang),
             conversation=conversation, request=request, reply=reply, intake=intake, title=title,
-            project_name=getattr(self.project, "name", "") or "", answered=answered, kind=kind)
+            project_name=getattr(self.project, "name", "") or "", answered=answered, kind=kind,
+            language=lang)
 
     def file_ticket(self, *, title: str, described: str, reported_by: str, source: str = "",
                     tracker=None, board=_UNSET, seen: int | None = None,
@@ -2798,16 +2846,19 @@ class ProductModule:
         is repairable."""
         from openfactory.product.authoring import ticket_body
         from openfactory.product.cards import TITLE_LIMIT
+        from openfactory.product.voice import _pick
+        lang = getattr(getattr(self, "project", None), "language", None)
+        said = _pick(_FILING, lang)
         ctx = self.context()
         name = title.strip().rstrip(".")
         if not name:
-            return _could_not("preciso de um título para abrir o cartão.", act="file a ticket")
+            return _could_not(said["no_title"], act="file a ticket")
         if len(name) > TITLE_LIMIT:
             # NEVER SLICED (#383): a cut title is one nobody confirmed. The gesture's card is
             # checked against the bound before it is staged, so this refuses only a caller that
             # wrote a title by hand — and says so, rather than filing the first 80 characters.
-            return _could_not(f"o título passa de {TITLE_LIMIT} caracteres — escreva um mais "
-                              f"curto; nada foi aberto.", act="file a ticket")
+            return _could_not(said["title_too_long_ticket"].format(limit=TITLE_LIMIT),
+                              act="file a ticket")
         tracker = tracker or self._tracker()
 
         def _open() -> WriteResult:
@@ -2815,11 +2866,11 @@ class ProductModule:
             if existing:
                 return WriteResult(ok=True, ref=str(existing), existed=True,
                                    url=self._issue_url(tracker, str(existing)),
-                                   detail="já existe um cartão com esse título")
+                                   detail=said["ticket_exists"])
             made = tracker.create_ticket(
                 title=name,
                 body=ticket_body(described=described, reported_by=reported_by, source=source,
-                                 docs_repo=ctx.link.docs_repo, card=card,
+                                 docs_repo=ctx.link.docs_repo, card=card, language=lang,
                                  requester_forge=forge_identity_for(
                                      getattr(self, "project", None), reported_by, tracker)))
             return WriteResult(ok=True, ref=str(made), url=self._issue_url(tracker, made))
@@ -2830,8 +2881,7 @@ class ProductModule:
                 write=_open, saved=_saved_on_the_board, judge=self._same_as,
                 found=_the_card_just_asked_for)
         except Exception as exc:  # noqa: BLE001 — a chat listener must never see a traceback
-            return _could_not("não consegui abrir o cartão agora. Nada foi escrito — o time foi "
-                              "avisado e resolve.", act="file a ticket", cause=exc)
+            return _could_not(said["ticket_failed"], act="file a ticket", cause=exc)
         if not opened.ok or opened.existed:
             return opened
         ref, url = opened.ref, opened.url
@@ -2850,8 +2900,7 @@ class ProductModule:
                 log.warning("OPENFACTORY_PRODUCT_TICKET_NOT_PLACED ref=%s column=%s — the card "
                             "exists but has no column, so the queue cannot see it until a person "
                             "places it", ref, self.FILING_COLUMN)
-                detail = ("abri o cartão, mas ainda não consegui posicioná-lo no quadro — o time "
-                          "foi avisado e posiciona.")
+                detail = said["ticket_unplaced"]
         return WriteResult(ok=True, ref=str(ref), url=url, detail=detail)
 
     def file_defect(self, *, restated: str, reported_by: str, violates: int | None,
@@ -2872,15 +2921,18 @@ class ProductModule:
         a board the client cannot see is indistinguishable from being ignored."""
         from openfactory.product.authoring import defect_body
         from openfactory.product.cards import TITLE_LIMIT
+        from openfactory.product.voice import _pick
 
+        lang = getattr(getattr(self, "project", None), "language", None)
+        said = _pick(_FILING, lang)
         ctx = self.context()
         # THE DRAFTED TITLE, WHOLE (#392), when the report went through the card loop; the first
         # 80 characters of what the person typed only for an entry staged before it did
         if title.strip():
             title = title.strip().rstrip(".")
             if len(title) > TITLE_LIMIT:
-                return _could_not(f"o título passa de {TITLE_LIMIT} caracteres — nada foi "
-                                  f"registrado.", act="file a defect")
+                return _could_not(said["title_too_long_defect"].format(limit=TITLE_LIMIT),
+                                  act="file a defect")
         else:
             title = restated.strip().rstrip(".")[:80]
         tracker = tracker or self._tracker()
@@ -2894,11 +2946,11 @@ class ProductModule:
             existing = tracker.find_ticket(title=title)
             if existing:
                 return WriteResult(ok=True, ref=str(existing), existed=True,
-                                   detail="já registrei esse problema antes")
+                                   detail=said["defect_exists"])
             made = tracker.create_ticket(
                 title=title,
                 body=defect_body(restated=restated, reported_by=reported_by,
-                                 severity=severity, source=source, card=card,
+                                 severity=severity, source=source, card=card, language=lang,
                                  requester_forge=forge_identity_for(
                                      getattr(self, "project", None), reported_by, tracker),
                                  requirement=cited,
@@ -2916,9 +2968,7 @@ class ProductModule:
                 write=_open, saved=_saved_on_the_board, judge=self._same_as,
                 found=_the_card_just_asked_for)
         except Exception as exc:  # noqa: BLE001 — a chat listener must never see a traceback
-            return _could_not("não consegui registrar esse problema agora. Nada foi escrito — o "
-                              "time foi avisado e resolve.",
-                              act="file a defect", cause=exc)
+            return _could_not(said["defect_failed"], act="file a defect", cause=exc)
         if not filed.ok or filed.existed:
             return filed
         ref = filed.ref
@@ -2944,8 +2994,7 @@ class ProductModule:
                             "exists "
                             "but has no column, so the queue cannot see it until a person places "
                             "it", ref, self.FILING_COLUMN)
-                detail = ("registrei o problema, mas ainda não consegui posicionar o cartão no "
-                          "quadro — o time foi avisado e posiciona.")
+                detail = said["defect_unplaced"]
         if number:
             self._track_defect(number, conversation=conversation, requester=requester)
         return WriteResult(ok=True, ref=str(ref), detail=detail)
@@ -4650,6 +4699,10 @@ _ALSO_CALLED: dict[str, tuple[str, ...]] = {
     "acceptance criteria": ("Critérios de aceite", "Criterios de aceite"),
     "out of scope": ("Fora de escopo",),
     "open questions": ("Em aberto",),
+    # THE SECTION A CORRECTION REWRITES, IN EVERY LANGUAGE A CARD IS WRITTEN IN (#429): the card
+    # templates ship per language, and a card written in Portuguese before or after is one card
+    "what was asked": ("O que foi pedido",),
+    "what is happening": ("O que está acontecendo",),
 }
 
 
@@ -4718,8 +4771,10 @@ def _without_section(body: str, heading: str) -> str:
 
 
 #: The section that holds what a request asked for, or what a defect reports — the part of the card
-#: `correct_card` replaces. The headings `authoring.ticket_body` and `defect_body` write.
-_WHAT_WAS_ASKED = {"request": "O que foi pedido", "defect": "O que está acontecendo"}
+#: `correct_card` replaces. AN IDENTITY, NOT A LITERAL (#429): the name here is the section's key,
+#: and `_section_re` reads it under every name in `_ALSO_CALLED` — the card templates write it in
+#: the conversation's language, so a correction finds it in whichever one the card was written in.
+_WHAT_WAS_ASKED = {"request": "What was asked", "defect": "What is happening"}
 
 #: The sections `_with_criteria` appends when `refine` writes criteria from a card's own text.
 _REFINED_FROM_THE_TEXT = ("Acceptance criteria", "Out of scope", "Open questions")
@@ -4739,7 +4794,10 @@ def _corrected(body: str, kind: str, text: str) -> tuple[str, str, int | None]:
     heading = _WHAT_WAS_ASKED[kind]
     old = _section_of(body, heading)
     old_text = old.split("\n", 1)[1].strip() if "\n" in old else ""
-    after = _with_section(body, heading, f"## {heading}\n\n{text.strip()}")
+    # THE CARD KEEPS THE NAME IT WAS WRITTEN WITH (#429): a correction to a Portuguese card
+    # rewrites its `## O que foi pedido`, never renames the section into another language
+    named = old.split("\n", 1)[0].lstrip("#").strip() if old else heading
+    after = _with_section(body, heading, f"## {named}\n\n{text.strip()}")
     removed: int | None = None
     if any(_section_of(after, section) for section in _REFINED_FROM_THE_TEXT):
         removed = len(parse_ticket_body(id="", title="", body=body, repo="").acceptance_criteria)
@@ -4771,7 +4829,8 @@ def _rewritten(body: str, canonical: str, headings: tuple[str, ...]) -> str:
 #: The heading `authoring.defect_body` writes over the promise a defect breaks. A HEADING, matched
 #: as a whole line: a defect filed before its `## Source` existed cites its requirement here and
 #: nowhere else, and it is as much a card of that requirement as one filed from it (#265 §6.1).
-_DEFECT_CITES_RE = re.compile(r"^## A promessa violada — REQ-(\d{4})\s*$", re.MULTILINE)
+_DEFECT_CITES_RE = re.compile(r"^## (?:A promessa violada|The broken promise) — REQ-(\d{4})\s*$",
+                              re.MULTILINE)
 
 
 def _cited_requirement(body: str) -> int | None:

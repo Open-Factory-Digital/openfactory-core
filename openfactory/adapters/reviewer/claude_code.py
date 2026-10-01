@@ -15,7 +15,12 @@ from openfactory.adapters.agent.base import (
     json_envelope,
     stage_prompt,
 )
-from openfactory.adapters.reviewer.base import ReviewerAdapter, ReviewInput
+from openfactory.adapters.reviewer.base import (
+    ACCEPTANCE_SHAPE,
+    EVIDENCE_RULE,
+    ReviewerAdapter,
+    ReviewInput,
+)
 from openfactory.adapters.sandbox.base import SandboxAdapter, Workspace
 from openfactory.contracts import ReviewResult
 
@@ -26,11 +31,11 @@ Return ONLY a JSON object (no prose, no code fences) with this shape:
 {
   "decision": "approved" | "approved_with_findings" | "rejected",
   "score": 0-100,
-  "acceptance": [{"criterion": str, "status": "passed"|"failed"|"unknown", "evidence": str|null}],
+__ACCEPTANCE__
   "findings": [{"severity": "low"|"medium"|"high"|"critical", "description": str,
                 "file": str|null, "line": int|null, "criterion": str|null}],
   "summary": str
-}"""
+}""".replace("__ACCEPTANCE__", ACCEPTANCE_SHAPE)
 
 
 def _extract_json(text: str) -> str:
@@ -135,7 +140,8 @@ class ClaudeCodeReviewer(ReviewerAdapter):
             "only the specification, the diff, and the platform's validation results. Do "
             "not modify anything. Your job is to find evidence the change is wrong or "
             "incomplete: map each acceptance criterion to concrete evidence, hunt for "
-            "regressions and unrequested scope, and check the constraints are not violated.",
+            "regressions and unrequested scope, and check the constraints are not violated. "
+            + EVIDENCE_RULE,
             f"\n# Ticket {t.id}: {t.title}\n## Objective\n{t.objective}",
             f"\n## Acceptance criteria\n{crits}",
             f"\n## Platform validation results\n{vals}",

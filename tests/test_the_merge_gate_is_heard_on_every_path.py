@@ -30,6 +30,7 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
+from gate_answers import SEAL_CHECK, answer_merge_gate, seal_checks_done
 from temporalio import activity
 from temporalio.client import Client, WorkflowHandle
 from temporalio.contrib.pydantic import pydantic_data_converter
@@ -198,7 +199,7 @@ async def mock_say(inp) -> None:
     return None
 
 
-MOCKS = [mock_run_job, mock_force_refused, mock_open, mock_red, mock_red_word, mock_update,
+MOCKS = [SEAL_CHECK, mock_run_job, mock_force_refused, mock_open, mock_red, mock_red_word, mock_update,
          mock_repair, mock_close, mock_merge, mock_merge_now, mock_blocked, mock_settle, mock_mark, mock_diagnose,
          mock_title, mock_refresh, mock_say]
 
@@ -257,7 +258,7 @@ async def test_a_discard_while_ci_is_red_closes_the_pull_request(env: WorkflowEn
     async with Worker(env.client, task_queue=TQ, workflows=[JobWorkflow], activities=MOCKS):
         h = await _start(env.client)
         await _napping_after_a_repair(h)
-        await h.signal(JobWorkflow.human_merge_gate, args=["discard", "", "a-person"])
+        await answer_merge_gate(h, "discard", "", "a-person")
         result = await h.result()
 
     assert _CLOSED == ["https://x/pr/1"], "Discard was accepted and the pull request stayed open"
@@ -275,11 +276,62 @@ async def test_a_merge_while_ci_is_red_reaches_the_forge(env: WorkflowEnvironmen
     async with Worker(env.client, task_queue=TQ, workflows=[JobWorkflow], activities=MOCKS):
         h = await _start(env.client)
         await _napping_after_a_repair(h)
-        await h.signal(JobWorkflow.human_merge_gate, args=["merge", "", "a-person"])
+        await answer_merge_gate(h, "merge", "", "a-person")
         result = await h.result()
 
     assert result.state == JobState.MERGED and _MERGED == ["https://x/pr/1"]
     assert len(_REPAIRS) == 1
+
+
+async def test_a_merge_sent_straight_to_the_engine_merges_nothing(env: WorkflowEnvironment):
+    """THE ADVISORY'S SECOND GATE. `human_merge_gate` trusted its `by` exactly as `approve_prod`
+    trusted its `approver`: a `merge` sent to the engine without the panel's seal is consumed and
+    dropped, and the watch goes on — the person's own answer after it is still heard."""
+    async with Worker(env.client, task_queue=TQ, workflows=[JobWorkflow], activities=MOCKS):
+        h = await _start(env.client)
+        await _napping_after_a_repair(h)
+        await h.signal(JobWorkflow.human_merge_gate, args=["merge", "", "mallory"])
+
+        async def judged():
+            return await seal_checks_done(h) >= 1
+        await _until("the unsealed answer being checked", judged)
+        gate = await h.query(JobWorkflow.awaiting_merge)
+        assert "carries no seal" in gate.get("refused", ""), gate
+        assert "not acted on" in gate.get("note", ""), (
+            f"the panel draws `note` beside the buttons, and it does not say why: {gate}")
+        await answer_merge_gate(h, "discard", "", "a-person")
+        result = await h.result()
+
+    assert _MERGED == [], "an answer nobody authenticated merged the pull request"
+    assert _CLOSED == ["https://x/pr/1"], "the person's own answer after it was not heard"
+    assert "closed without merging by a-person" in (result.note or "")
+
+
+async def test_a_sealed_answer_is_spent_once(env: WorkflowEnvironment):
+    """A seal travels in the signal, so anybody who can read the history can copy a fresh one. The
+    fields are bound — a copy can only repeat the same person's same answer — but an `adjust`
+    repeated inside the seal's ten minutes would run a second round nobody asked for. So it is
+    spent once: the copy is refused, and said to be."""
+    from openfactory import gate_seal
+
+    async with Worker(env.client, task_queue=TQ, workflows=[JobWorkflow], activities=MOCKS):
+        h = await _start(env.client)
+        await _napping_after_a_repair(h)
+        # `review` on a job with review off is consumed and leaves the gate open — an answer
+        # that is ACTED ON (it re-opens the gate with a note) without ending the job.
+        seal = gate_seal.seal(gate_seal.MERGE_GATE, h.id, "review", "", "a-person")
+        await h.signal(JobWorkflow.human_merge_gate, args=["review", "", "a-person", seal])
+
+        async def judged():
+            return await seal_checks_done(h) >= 1
+        await _until("the first answer being checked", judged)
+        await h.signal(JobWorkflow.human_merge_gate, args=["review", "", "a-person", seal])
+
+        async def refused():
+            return "already acted on" in await h.query(JobWorkflow.gate_refused)
+        await _until("the copied seal being refused", refused)
+        assert await seal_checks_done(h) == 1, "the copy was sent to the check instead of refused"
+        await h.result()
 
 
 async def test_an_answer_that_arrives_during_the_read_pre_empts_the_repair(
@@ -293,7 +345,7 @@ async def test_an_answer_that_arrives_during_the_read_pre_empts_the_repair(
         async def reading():
             return _READS[0] >= 1 and await h.query(JobWorkflow.awaiting_merge)
         await _until("the watch reading the checks", reading)
-        await h.signal(JobWorkflow.human_merge_gate, args=["discard", "", "a-person"])
+        await answer_merge_gate(h, "discard", "", "a-person")
         _HOLD_READ[0].set()
         await h.result()
 
@@ -320,7 +372,7 @@ async def test_the_gate_refuses_while_a_ci_repair_is_rewriting_the_pull_request(
         rested = await _napping_after_a_repair(h)
         assert view.gate_cannot_hear(rested) == "", (
             "the pass is over and the gate still refuses — it would never re-open")
-        await h.signal(JobWorkflow.human_merge_gate, args=["discard", "", "a-person"])
+        await answer_merge_gate(h, "discard", "", "a-person")
         await h.result()
     assert _CLOSED == ["https://x/pr/1"]
 
@@ -335,7 +387,7 @@ async def test_an_answer_wakes_the_nap_after_a_branch_update_too(env: WorkflowEn
         async def updated():
             return _UPDATES and await h.query(JobWorkflow.awaiting_merge)
         await _until("the watch resting after a branch update", updated)
-        await h.signal(JobWorkflow.human_merge_gate, args=["discard", "", "a-person"])
+        await answer_merge_gate(h, "discard", "", "a-person")
         await h.result()
     assert _CLOSED == ["https://x/pr/1"] and len(_UPDATES) == 1, (
         f"{len(_UPDATES)} branch updates ran before the answer was read")
@@ -354,7 +406,7 @@ async def test_an_answer_wakes_the_nap_after_a_refused_self_merge_too(env: Workf
         async def refused():
             return _FORCED and await h.query(JobWorkflow.awaiting_merge)
         await _until("the watch resting after a refused self-merge", refused)
-        await h.signal(JobWorkflow.human_merge_gate, args=["discard", "", "a-person"])
+        await answer_merge_gate(h, "discard", "", "a-person")
         await h.result()
     assert _CLOSED == ["https://x/pr/1"] and len(_FORCED) == 1
     waited = _AT["close"] - _AT["force"]
@@ -400,7 +452,7 @@ async def test_a_job_that_cannot_hear_says_so_and_replays_what_it_recorded(
             gate = await _napping_after_a_repair(h)
             assert "before an answer could be heard" in view.gate_cannot_hear(gate), (
                 "a gate nothing reads on this path is still published as answerable")
-            await h.signal(JobWorkflow.human_merge_gate, args=["discard", "", "a-person"])
+            await answer_merge_gate(h, "discard", "", "a-person")
             result = await h.result()  # red to the end: both repairs, then the hold
         history = await h.fetch_history()
     assert result.state == JobState.ON_HOLD and len(_REPAIRS) == 2 and _CLOSED == [], (
@@ -430,7 +482,7 @@ async def test_a_job_that_CAN_hear_is_not_told_it_cannot(env: WorkflowEnvironmen
         h = await _start(env.client)
         gate = await _napping_after_a_repair(h)
         assert "cannot_hear" not in gate and view.gate_cannot_hear(gate) == ""
-        await h.signal(JobWorkflow.human_merge_gate, args=["discard", "", "a-person"])
+        await answer_merge_gate(h, "discard", "", "a-person")
         await h.result()
 
 
@@ -446,7 +498,7 @@ async def test_a_discard_sends_the_card_back_to_the_backlog_and_says_who(env: Wo
     async with Worker(env.client, task_queue=TQ, workflows=[JobWorkflow], activities=MOCKS):
         h = await _start(env.client)
         await _napping_after_a_repair(h)
-        await h.signal(JobWorkflow.human_merge_gate, args=["discard", "", "a-person"])
+        await answer_merge_gate(h, "discard", "", "a-person")
         result = await h.result()
 
     assert _CLOSED[-1] == "https://x/pr/1"

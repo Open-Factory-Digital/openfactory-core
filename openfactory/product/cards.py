@@ -33,7 +33,8 @@ written — the trust contract the defect path already keeps with its restatemen
 
 THE BAR IS THE PRODUCT'S. The template and the rubric ship in `org_defaults/cards/`; a product
 replaces either by committing `cards/template.md` or `cards/rubric.yaml` to its context repository
-(`product.docs_repo`). A card is product guidance — a product of N source repositories has one
+(`product.docs_repo`) — or `cards/template.<language>.md`, one per language it speaks (#429).
+A card is product guidance — a product of N source repositories has one
 context repository, which is where the role already reads and writes requirements. A file that
 cannot be used is refused by name in the log and the shipped one is used instead.
 """
@@ -81,6 +82,11 @@ TEMPLATE_FILE = "template.md"
 #: layout differs where the card's readers look for different sections (`module._WHAT_WAS_ASKED`).
 _TEMPLATES = {"ticket": TEMPLATE_FILE, "defect": "defect-template.md"}
 _SECTION_OF = {"ticket": "request", "defect": "defect"}
+#: THE LAYOUT IS WRITTEN IN A LANGUAGE, AND THE MODEL WRITES IN THE LAYOUT'S (#429). The shipped
+#: templates were Portuguese only: a project speaking English got English frames around a card
+#: whose headings — and, following them, every sentence the drafter wrote — were Portuguese. So a
+#: template exists per language, `template.<language>.md` beside the unsuffixed one, which is in
+#: `voice.DEFAULT_LANGUAGE`; a language with no file of its own gets the default's.
 RUBRIC_FILE = "rubric.yaml"
 
 _DEFAULTS = Path(__file__).resolve().parent.parent / "org_defaults" / OVERRIDE_DIR
@@ -186,7 +192,7 @@ def _said(text: str) -> str:
 
 
 def floor(draft: CardDraft, body: str, *, request: str, conversation: str,
-          described: bool = True) -> list[str]:
+          described: bool = True, language: str | None = None) -> list[str]:
     """What is wrong with `draft` before any model looks at it — `[]` when nothing is.
 
     Written for the drafting model to read on its redraft, so each problem says what to change."""
@@ -224,7 +230,23 @@ def floor(draft: CardDraft, body: str, *, request: str, conversation: str,
     refused = spec_verdict(parse_ticket_body(id="draft", title=draft.title, body=body, repo=""))
     if refused:
         problems.append(f"the factory's pickup gate would refuse this card: {refused}")
+    # THE CARD IS IN THE LANGUAGE IT WAS ASKED FOR (#429). The layout and the instruction name it;
+    # this is what checks the model obeyed — an English conversation got a Portuguese card because
+    # nothing did. Only a CLEAR miss refuses (`language.written`): a refusal costs a redraft.
+    from openfactory.language.written import base, not_in
+
+    written = "\n".join([draft.title, draft.objective, draft.description, *draft.done_when])
+    other = not_in(written, language)
+    if other:
+        wanted = _LANGUAGE_NAMES.get(base(language), language)
+        problems.append(f"the card is written in {_LANGUAGE_NAMES.get(other, other)}, and the "
+                        f"conversation's language is {wanted} — write every field in {wanted}, "
+                        f"except the person's own words in source_quote")
     return problems
+
+
+#: The names the floor's feedback uses for a language `language.written` recognised.
+_LANGUAGE_NAMES = {"en": "English", "pt": "Portuguese"}
 
 
 # ── the rubric and the template: shipped, or the product's own ─────────────────────────────────
@@ -290,6 +312,21 @@ def _shipped(name: str) -> str:
     return (_DEFAULTS / name).read_text()
 
 
+def _in_language(name: str, language: str | None) -> str:
+    """`template.md` as `template.<language>.md`; the name itself for no language."""
+    lang = (language or "").strip()
+    if not lang:
+        return name
+    stem, dot, ext = name.rpartition(".")
+    return f"{stem}.{lang}.{ext}" if dot else f"{name}.{lang}"
+
+
+def _shipped_for(name: str, language: str | None) -> str:
+    """The shipped layout for `language` — its own file when one ships, the default's otherwise."""
+    own = _in_language(name, language)
+    return _shipped(own) if (_DEFAULTS / own).is_file() else _shipped(name)
+
+
 def _own(docs_path: str, name: str) -> Path | None:
     if not docs_path:
         return None
@@ -311,31 +348,36 @@ def load_rubric(docs_path: str = "") -> Rubric:
     return Rubric.parse(_shipped(RUBRIC_FILE), source="shipped")
 
 
-def load_template(docs_path: str = "", kind: str = "ticket") -> str:
+def load_template(docs_path: str = "", kind: str = "ticket", language: str | None = None) -> str:
     """The product's card template when its context repository has a usable one, the shipped one
-    otherwise.
+    otherwise — each in `language` when there is one in it (#429): the product's
+    `cards/template.<language>.md` first, then its `cards/template.md`, then the shipped layout in
+    that language. THE PRODUCT'S OWN STILL WINS over a shipped one in the right language: a product
+    that wrote its layout decided what its cards look like.
 
     USABLE IS MEASURED, NOT ASSUMED: a sample card is rendered through it and must keep every
     field, pass the pickup gate, and keep the section `correct_card` rewrites (#156). A template
     that renamed the criteria heading to one the parser does not know would otherwise make every
     card fail the floor — and the product would never get a card at all."""
     name = _TEMPLATES[kind]
-    own = _own(docs_path, name)
-    if own is not None:
+    for candidate in dict.fromkeys((_in_language(name, language), name)):
+        own = _own(docs_path, candidate)
+        if own is None:
+            continue
         text = own.read_text()
         problem = template_problem(text, kind)
         if not problem:
             return text
         log.warning("OPENFACTORY_CARD_TEMPLATE_REFUSED path=%s — %s; the shipped template is used",
                     own, problem)
-    return _shipped(name)
+    return _shipped_for(name, language)
 
 
 def template_problem(text: str, kind: str = "ticket") -> str:
     """Why `text` cannot be a template for a card of `kind` — `""` when it can."""
     from openfactory.adapters.tracker.parse import parse_ticket_body
     from openfactory.orchestrator.machine import spec_verdict
-    from openfactory.product.module import _WHAT_WAS_ASKED
+    from openfactory.product.module import _WHAT_WAS_ASKED, _section_re
 
     unknown = sorted(set(_placeholders(text)) - set(FIELDS))
     if unknown:
@@ -350,10 +392,13 @@ def template_problem(text: str, kind: str = "ticket") -> str:
     refused = spec_verdict(parse_ticket_body(id="sample", title="t", body=body, repo=""))
     if refused:
         return f"the pickup gate refuses what it renders: {refused}"
+    # FOUND BY WHAT IT MEANS, UNDER ANY NAME IT HAS (#429): `_section_re` is the reader a
+    # correction uses, so a layout it can read is one a correction can rewrite — in either language
     section = _WHAT_WAS_ASKED[_SECTION_OF[kind]]
-    if not re.search(rf"(?m)^#+\s*{re.escape(section)}\s*$", body):
-        return (f"it has no '## {section}' section around {{description}}, "
-                f"which is the section a correction of the card rewrites")
+    if not _section_re(section).search(body):
+        return (f"it has no '## {section}' section around {{description}} (or that section "
+                f"under another name the platform reads), which is the section a correction of "
+                f"the card rewrites")
     return ""
 
 
@@ -638,8 +683,18 @@ _ASKED = {
 
 
 def draft_prompt(*, conversation: str, request: str, reply: str, intake: str, title: str,
-                 template: str, feedback: list[str], kind: str = "ticket") -> str:
-    """What the role is asked when it drafts (or redrafts) a card."""
+                 template: str, feedback: list[str], kind: str = "ticket",
+                 language: str | None = None) -> str:
+    """What the role is asked when it drafts (or redrafts) a card — in `language` when one is
+    named (#429): "the person's language" left the model to infer it, and it inferred it from
+    the layout."""
+    from openfactory.product.voice import language_rules
+
+    written_in = (f"Write every field in {language}, the conversation's language — whatever "
+                  f"language the layout below or the documents are in — except `source_quote`, "
+                  f"which is the person's words as they said them."
+                  if language else "Write it in the person's language.")
+    rules = language_rules(language) if language else ""
     again = ""
     if feedback:
         again = ("\n\n## Your previous draft was not good enough\n\nChange exactly this, and keep "
@@ -650,8 +705,9 @@ def draft_prompt(*, conversation: str, request: str, reply: str, intake: str, ti
         "so everything the conversation established that an implementer needs must be on the card "
         "— what was observed or asked for, where, under which conditions, what an attached file "
         "showed, which earlier card it relates to and why — and nothing the conversation did not "
-        "establish. Write it in the person's language.\n\n"
-        "Rules:\n"
+        f"establish. {written_in}\n\n"
+        + (f"{rules}\n\n" if rules else "")
+        + "Rules:\n"
         f"- `title`: at most {TITLE_LIMIT} characters, naming the part of the product and the "
         "problem or wish. Never the request itself.\n"
         "- `description`: your restatement of the work. NEVER the message that asked for the card "
@@ -684,7 +740,8 @@ def draft_prompt(*, conversation: str, request: str, reply: str, intake: str, ti
 def compose(*, draft: Callable[[str], dict | None], judge: Judge | None, rubric: Rubric,
             template: str, conversation: str, request: str, reply: str = "", intake: str = "",
             title: str = "", project_name: str = "",
-            answered: Answered | None = None, kind: str = "ticket") -> Composed:
+            answered: Answered | None = None, kind: str = "ticket",
+            language: str | None = None) -> Composed:
     """Draft, check and judge one card — at most `ATTEMPTS` drafts — and say what came of it.
 
     `draft` is the role's JSON call (a prompt in, a dict or None out); `judge` the judge's text
@@ -713,14 +770,15 @@ def compose(*, draft: Callable[[str], dict | None], judge: Judge | None, rubric:
         progress.stage("card_draft", step=attempt, of=rounds)
         card = CardDraft.from_answer(draft(draft_prompt(
             conversation=conversation, request=request, reply=reply, intake=intake, title=title,
-            template=template, feedback=feedback, kind=kind)))
+            template=template, feedback=feedback, kind=kind, language=language)))
         if card is None:
             log.info("[%s] the card draft could not be read (attempt %s)", project_name, attempt)
             feedback = ["your answer was not the JSON object asked for"]
             continue
         body = render(card, template)
         last = Composed(draft=card, attempts=attempt, rubric=f"{rubric.id}@{rubric.version}")
-        problems = floor(card, body, request=request, conversation=conversation)
+        problems = floor(card, body, request=request, conversation=conversation,
+                         language=language)
         if problems:
             log_verdict(project_name, attempt, rubric, floor=problems)
             feedback = problems

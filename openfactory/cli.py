@@ -2297,6 +2297,9 @@ def doctor_cmd(name: str) -> None:
     # a fallback row's two variables set, no declaration, `NullNotifier` built and nothing in
     # any log). Derived from the notifier registry; the doctor names no vendor.
     typer.echo(f"· {doc.notifier_fallback_line()}")
+    # WHETHER THE WORKER WILL ACT ON AN APPROVAL MADE HERE (`gate_seal`). Two halves with
+    # different gate keys drop every answer while each looks healthy on its own.
+    typer.echo(f"· {doc.gate_key_line()}")
     typer.echo("")
     for f in report.findings:
         # NOT `f.mark`: this renders the DOCTOR's report, whose `Finding` is a different class in
