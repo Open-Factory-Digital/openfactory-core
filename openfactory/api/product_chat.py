@@ -70,6 +70,22 @@ ECHO_TURNS = 6
 #: answer, which is not a role with nothing to do.
 IDLE, THINKING, ANSWERING, OFFLINE = "idle", "thinking", "answering", "offline"
 
+#: A subscriber nobody has told yet what waits for it — distinct from None, which is "nothing".
+_UNTOLD = object()
+
+
+def staged_for(project, conversation: str, person: str) -> dict | None:
+    """What waits for `person`'s answer in `conversation` — `{token, approve, reject}` or None —
+    AS THE STORE SAYS IT (#443, `staging.waiting_in`).
+
+    THE PAGE REPLACES ITS OWN WITH THIS, never keeps a token this did not name. It kept the token
+    of the last reply that carried buttons until somebody clicked one, so a proposal answered any
+    other way — a typed "sim", a click in another tab, an expiry — left its buttons on the page,
+    and a history read after a restart drew them alone, under no question."""
+    from openfactory.product.staging import waiting_in
+
+    return waiting_in(project, conversation, person)
+
 
 @dataclass(eq=False)
 class Subscriber:
@@ -94,6 +110,9 @@ class Subscriber:
     echoes: list[tuple[str, str]] = field(default_factory=list)
     echo_until: float = 0.0
     presence: dict | None = None
+    #: The proposal this subscriber was last told is waiting (`staged_for`), so a `staged` frame
+    #: is said when it changes and never on every read. `_UNTOLD` until its history is read.
+    staged: object = field(default_factory=lambda: _UNTOLD)
 
 
 def may_receive(sub: Subscriber, *, product: str, conversation: str) -> bool:
@@ -211,6 +230,10 @@ class _Watch:
         # count below the cursor) is read from its beginning.
         if self.primed.is_set() or seq < self.cursor:
             self._deliver(entries)
+            if entries:
+                # SOMETHING WAS SAID OR ANSWERED: what waits may have changed — a proposal staged,
+                # or one answered by a typed yes the reply after it only thanks for (#443)
+                await self.hub.restage(self.product, self.conversation)
         self.cursor = seq
         self._present(got.get("presence") or {})
         raw = self.raw or {}
@@ -280,6 +303,30 @@ class ProductChat:
         watch = self._watches.pop(key, None)
         if watch is not None and watch.task is not None:
             watch.task.cancel()
+
+    async def restage(self, product: str, conversation: str) -> None:
+        """Tell every subscriber of this conversation what waits for its answer now, when that is
+        not what it was last told (#443). One store read per person, off the loop."""
+        from openfactory.registry import ProjectRegistry
+
+        subs = [s for s in list(self._subs)
+                if may_receive(s, product=product, conversation=conversation)
+                and s.staged is not _UNTOLD]
+        said: dict[tuple[str, str], dict | None] = {}
+        for sub in subs:
+            who = (sub.project, sub.person)
+            if who not in said:
+                def _read(name=sub.project, person=sub.person):
+                    try:
+                        project = ProjectRegistry().get(name)
+                    except KeyError:
+                        return None
+                    return staged_for(project, conversation, person)
+                said[who] = await asyncio.to_thread(_read)
+            now = said[who]
+            if now != sub.staged:
+                sub.staged = now
+                self._put(sub, {"kind": "staged", "staged": now})
 
     def poke(self, product: str, conversation: str) -> None:
         """Something was just sent into this conversation: read it now, not at the next tick."""
@@ -533,7 +580,9 @@ async def serve(ws, *, actor, watch, close_code) -> None:
         sub.echoes = [_echo_key(t["role"], t["id"] if t["role"] != "agent" else t["in_reply_to"],
                                 t["text"]) for t in turns[-ECHO_TURNS:]]
         sub.echo_until = time.monotonic() + ECHO_SECONDS
-        fan.release(sub, {"kind": "history", "turns": turns})
+        # …AND WHAT WAITS FOR THEIR ANSWER, from the store — the page replaces its own with it
+        sub.staged = await asyncio.to_thread(staged_for, project, key, actor.id)
+        fan.release(sub, {"kind": "history", "turns": turns, "staged": sub.staged})
 
     async def _say(asked: dict) -> None:
         from openfactory import actions

@@ -270,6 +270,55 @@ def _pending_from_store(thread: str, project) -> dict | None:
     return None
 
 
+def waiting_in(project, conversation: str, person: str = "", *,
+               now: float | None = None) -> dict | None:
+    """`{token, approve, reject}` of the proposal waiting for `person` in `conversation`, as the
+    DURABLE STORE says it — or None when nothing is (#443). What a page may draw buttons for.
+
+    THE STORE, NEVER `_PENDING`. This process's dictionary is its own copy: the panel thaws a row
+    into it on a read and keeps it, so a proposal answered in the worker by a typed "sim" is still
+    in it here. The store is the one record every process writes — a yes, a no, a click, an
+    expiry all answer the row (`consume`, `_answer_expired`) — so it is the one that can say what
+    is still waiting. A page that kept its own copy drew "Confirm and record" two hours after the
+    person had confirmed by typing, with no question above it.
+
+    Found as `find_waiting` finds it: this person's own key first, then the conversation's bare
+    key (a proposal staged for nobody in particular), each the latest ask the store holds for it.
+    A row older than `PROPOSAL_TTL_SECONDS` is waiting for nothing — its first read answers it
+    `expired` — and is said as None here. Never raises: an unreadable store is None, because
+    buttons nobody can confirm are the defect this exists to end."""
+    try:
+        from datetime import datetime
+
+        from openfactory.memory import messages as _panel_store
+        from openfactory.product.voice import confirm_labels
+
+        name = getattr(project, "name", "") or str(project or "")
+        conversation = str(conversation or "")
+        if not name or not conversation:
+            return None
+        rows = {q.token.partition("|")[0]: q for q in _panel_store.pending(name)}
+        clock = time.time() if now is None else now
+        for key in dict.fromkeys((key_for(conversation, person), conversation)):
+            q = rows.get(key)
+            if q is None:
+                continue
+            try:
+                if clock - datetime.fromisoformat(q.ts).timestamp() > PROPOSAL_TTL_SECONDS:
+                    continue
+            except ValueError:
+                pass  # a stamp the store did not write in its own format: its answer decides
+            # THE LABELS IT WAS ASKED WITH (`remember` mirrors them), the language's own when a
+            # row predates them
+            default = confirm_labels(language=getattr(project, "language", None))
+            return {"token": q.token,
+                    "approve": q.approve if q.approve not in ("", "Approve") else default[0],
+                    "reject": q.reject if q.reject not in ("", "Reject") else default[1]}
+    except Exception:  # noqa: BLE001 — no buttons is the safe reading of a store nobody can read
+        log.info("could not read what waits in %s", conversation, exc_info=True)
+    return None
+
+
 def _reset_for_tests() -> None:
     """Forget every staged proposal and every tombstone — the suite's isolation, in one place.
 

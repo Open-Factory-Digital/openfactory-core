@@ -3092,6 +3092,10 @@ function pchatFrame(m){
     // reading rows' reports and a message still on its way up — and the proposal waiting for this
     // person's answer keeps its buttons (`_pc.staged`, drawn by `pchatStagedAlone` when no line
     // carries them): a repaint from the store never takes them from under somebody reading it.
+    // WHICH PROPOSAL WAITS IS THE SERVER'S TO SAY (#443), and this frame says it (`staged`): the
+    // page replaces its own with it. It kept the last token a reply carried until a click, so a
+    // proposal answered by a typed "sim" drew its buttons alone, under no question, hours later.
+    if("staged" in m)pchatStaged(m.staged);
     // …AND WHAT THE STORE NOW HOLDS IS NOT KEPT TWICE (#402), told by identity and never by the
     // words: a message still on its way up whose id is a line of the history, and a click's answer
     // whose click the history shows answered. Keeping them regardless drew the same answer twice
@@ -3108,6 +3112,7 @@ function pchatFrame(m){
     const named=(m.turns||[]).find(t=>t.role==="agent"&&t.actor);
     if(named&&named.actor!=="product")_pc.agentName=named.actor;
   }
+  else if(m.kind==="staged"){pchatStaged(m.staged)}   // what waits changed on the server (#443)
   else if(m.kind==="said"){
     const own=m.id&&_pc.items.find(i=>i.id===m.id);
     if(own)own.pending=false;
@@ -3192,6 +3197,11 @@ function pchatNote(m){
   if(m.pending)return`<div class="sub" style="margin-top:6px">sending…</div>`;
   if(m.ack)return`<div class="sub" style="margin-top:6px">${esc(m.ack)}</div>`;
   return"";
+}
+//: What waits for this person's answer, AS THE SERVER NAMES IT (#443): replaced, never merged —
+//: a token the server did not name is not kept, whoever set it.
+function pchatStaged(s){
+  _pc.staged=(s&&s.token)?{token:s.token,approve:s.approve||"approve",reject:s.reject||"reject"}:null;
 }
 function pchatButtons(){
   const s=_pc.staged;if(!s)return"";
