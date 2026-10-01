@@ -174,6 +174,10 @@ MUTATIONS = [
      "                     in_backlog=backlog, language=getattr(proj, \"language\", None))",
      "                     in_backlog=False, language=getattr(proj, \"language\", None))"),
 
+    ("a caller that hands only its tracker judges the card without its column", PORTS,
+     "        self._board_known = board is not None\n",
+     "        self._board_known = True\n"),
+
     # ── the store ──────────────────────────────────────────────────────────────────────────────
     ("the store's conditional write overwrites, so two racing transitions both land", SQLITE,
      '                    "INSERT INTO metrics (pk, sk, kind, ts, ticket, expires_at, data)"\n',
