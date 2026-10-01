@@ -379,7 +379,9 @@ def inlined_document_bytes(manifest: Manifest, repo_path: Path, *,
     """The BYTES each declared document role would inline into every agent pass, AFTER the same
     `_MAX_DOC_CHARS` truncation `build_context` applies — because that is what actually reaches the
     prompt (#7). One entry per role, always present (0 when the role names nothing), so a per-role
-    line can point at the setting that changes it and the split cannot collapse into one number.
+    line can point at the setting that changes it and the split cannot collapse into one number —
+    and one more per component that names guidelines (`components.<name>.guidelines`, #417),
+    because that is a setting of its own.
 
     NO BOUND IS INVENTED HERE. This reports what IS — #364 decides whether the platform should cap
     the sum, and PR #359 (a summed cap) was closed as superseded. The reads mirror `build_context`
@@ -400,16 +402,24 @@ def inlined_document_bytes(manifest: Manifest, repo_path: Path, *,
     operator = operator_guidelines.gather()
     framework = _org_defaults(profile, repo, {p.name for p in operator.guideline_docs})
     operator_tier = _resolve_tier(operator.guideline_docs, profile, repo, source="operator's own")
-    project_docs: list[str] = []
+    # EACH GUIDELINE UNDER THE KEY THAT NAMES IT (#417). A component's own `guidelines` were
+    # counted under `docs.guidelines`: the total was right and the split sent an operator whose
+    # large file was `components.api.guidelines` to shrink the project-wide list instead. The key
+    # is the one `declared_guidelines` already carries, and `build_context` reads the same list,
+    # so the total does not move. `docs.guidelines` is always a line, like the four roles; a
+    # component is a line when it names a guideline (0 when the file is missing — what it
+    # declared, measured), never when it names none, which would be a 0 for a setting not there.
+    by_source: dict[str, list[str]] = {"docs.guidelines": []}
     for named_by, g in declared_guidelines(manifest):
+        texts = by_source.setdefault(named_by, [])
         doc = _inside(repo, g, named_by=named_by)
         if doc is not None and doc.is_file():
-            project_docs.append(doc.read_text()[:_MAX_DOC_CHARS])
+            texts.append(doc.read_text()[:_MAX_DOC_CHARS])
     return {
         "docs.constraints": _inlined_bytes(constraints),
         "framework baseline": _inlined_bytes(framework),
         "operator guidelines": _inlined_bytes(operator_tier),
-        "docs.guidelines": _inlined_bytes(project_docs),
+        **{source: _inlined_bytes(texts) for source, texts in by_source.items()},
     }
 
 

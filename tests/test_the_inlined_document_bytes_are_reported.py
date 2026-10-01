@@ -73,6 +73,38 @@ def test_each_role_is_its_own_line_and_they_do_not_collapse(tmp_path: Path, monk
                              "operator guidelines", "docs.guidelines"}
 
 
+def test_a_components_guidelines_are_reported_under_the_component_that_names_them(
+        tmp_path: Path, monkeypatch):
+    """A component's own `guidelines` are their own line, `components.<name>.guidelines` (#417).
+
+    They were counted under `docs.guidelines`: the total was right and the split pointed an
+    operator whose large file was the component's at the project-wide list. Each guideline is
+    reported under the key that names it, a component that names none has no line (it has no
+    setting to change), and the total is still exactly what `build_context` inlines."""
+    from openfactory.contracts import Ticket
+    from openfactory.orchestrator.context import _inlined_bytes, build_context
+
+    monkeypatch.delenv(og.ENV_VAR, raising=False)
+    (tmp_path / "rules").mkdir()
+    (tmp_path / "rules" / "house.md").write_text("y" * 40)
+    (tmp_path / "api").mkdir()
+    (tmp_path / "api" / "rules.md").write_text("z" * 25)
+    manifest = Manifest(
+        docs={"guidelines": ["rules/house.md"]},
+        components={"api": {"path": "api/**", "stack": "python", "guidelines": ["api/rules.md"]},
+                    "web": {"path": "web/**", "stack": "node"}})
+
+    per_role = inlined_document_bytes(manifest, tmp_path)
+
+    assert per_role["docs.guidelines"] == 40, "the component's bytes were folded into the project's"
+    assert per_role["components.api.guidelines"] == 25
+    assert "components.web.guidelines" not in per_role, "a 0 line for a setting nobody wrote"
+    job = build_context(manifest, tmp_path, Ticket(id="#1", title="t", objective="o", repo="o/x"),
+                        knowledge_map="")
+    assert sum(per_role.values()) == _inlined_bytes(job.constraints) + _inlined_bytes(
+        job.guidelines), "the split moved the total away from what the job inlines"
+
+
 # ── the note: only when it would not fit a box that cannot get it off argv ────────────────────────
 
 _OVER = MAX_ARG_STRLEN + 1
