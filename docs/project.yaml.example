@@ -112,6 +112,7 @@ validate:
 #   data:                              # run once the product is up, into fresh volumes
 #     api: "python manage.py migrate && python manage.py loaddata demo"
 #   exclude: [mailhog]                 # services a preview does not run
+#   entry: web                         # optional: the exposed service a person lands on
 
 # ── Test census: the one command whose STDOUT is read ────────────────────────
 # Enumerate this project's tests, ONE IDENTIFIER PER LINE. The platform runs it on the clean

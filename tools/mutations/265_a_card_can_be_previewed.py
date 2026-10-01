@@ -57,10 +57,11 @@ MUTATIONS = [
      "    expires = min(int(time.time()) + preview.LINK_TTL_SECONDS, found.expires_at)",
      "    expires = found.expires_at"),
     # re-pinned in slice 3: the order moved onto the record (`Preview.ordered`), so the card's
-    # buttons and the enter door's chain read one definition of it
+    # buttons and the enter door's chain read one definition of it; and on 2026-09-30 (#435) to
+    # the S11 term of its rank, which now follows the declared entry and built-before-pulled
     ("the service the change touched is listed first", PREVIEW,
-     "        return sorted(self.services, key=lambda s: (bool(self.from_change.get(s)), s))",
-     "        return sorted(self.services, key=lambda s: (not self.from_change.get(s), s))"),
+     "                    bool(self.from_change.get(s)), s)",
+     "                    not self.from_change.get(s), s)"),
     ("a product-scoped person cannot open a preview", APP,
      "    if path in _UNSCOPED_ROUTES or path.startswith(_EVERY_AREA_PREFIXES):",
      "    if path in _UNSCOPED_ROUTES:"),

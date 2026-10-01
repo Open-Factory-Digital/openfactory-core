@@ -993,6 +993,7 @@ preview:
   data:                                # run once it is up, into fresh volumes — never production data
     api: "python manage.py migrate && python manage.py loaddata demo"
   exclude: [mailhog]                   # services a preview does not run
+  entry: web                           # optional: the exposed service a person lands on
 ```
 
 - **Read from your base branch, never from the change.** The agent edits this repository, so the

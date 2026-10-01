@@ -373,6 +373,7 @@ def up(project, token: str, planned: PreviewPlan, *, runtime, world: World) -> P
         said = dict(
             services=dict(result.services), health=dict(result.health),
             from_change=dict(planned.from_change), commits=dict(planned.commits),
+            built=dict(planned.built), entry=planned.entry,
             heads={t.pr_url: t.change_commit for t in planned.layout.trees.values()
                    if t.has_change and t.pr_url},
             images=dict(result.images), base_moved=_base_moved(planned.layout),
