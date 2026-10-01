@@ -41,6 +41,36 @@ def _md_files(repo: Path, glob: str | None) -> list[Path]:
 
 ORG_DEFAULTS_DIR = Path(__file__).resolve().parent.parent / "org_defaults"
 
+#: Why `resolve_inside` refuses an entry. The job's warning branches on them and the doctor's
+#: `guidelines` line says them, so the two surfaces cannot drift into two vocabularies (#350).
+OUTSIDE = "outside the repository"
+ITSELF = "the repository itself, not a file"
+
+
+def resolve_inside(repo_path: Path, relative: str) -> tuple[Path, str]:
+    """Where `relative` resolves in the checkout, and why the job refuses it — `""` if it does not.
+
+    THE RULE WITHOUT ITS VOICE (#350). `_inside` is the job's door and says each refusal in its
+    log; `openfactory doctor` asks this same function of the project's checkout before the first
+    job and says the answer in its `guidelines` line. The doctor used to read the manifest's text
+    alone, so a guideline committed as a link out of the repository passed there while every job
+    refused it here and the agent ran without it — the shape of a deployment that symlinks its
+    central standards into each repository, the workaround #318 was filed about. One function
+    decides for both, so they cannot disagree again.
+
+    The resolved path comes back even when refused, so a refusal can say where a link leads.
+    Raises `OSError` when the join cannot be resolved; `_inside` reads that as a refusal."""
+    root = repo_path.resolve()
+    candidate = (repo_path / relative).resolve()
+    if candidate == root:
+        # THE ROOT IS NOT OUTSIDE, and saying so would send somebody looking for an escape that
+        # is not there (review of #346): `.`, `docs/..` or an empty entry names the repository
+        # itself, which is no file to read
+        return candidate, ITSELF
+    if not candidate.is_relative_to(root):
+        return candidate, OUTSIDE
+    return candidate, ""
+
 
 def _inside(repo_path: Path | None, relative: str, *, named_by: str = "a profile") -> Path | None:
     """`repo_path / relative`, or None if that escapes the checkout.
@@ -48,8 +78,8 @@ def _inside(repo_path: Path | None, relative: str, *, named_by: str = "a profile
     A profile is an asset and assets are read into the PROMPT. `../../../etc/passwd` as a
     `replace:` target would put whatever it found in front of the model, so the join is contained
     the way `util/scratch.py` contains its own: resolve, then require the result to still be under
-    the root. Resolving is what also refuses a link committed inside the repository that points
-    out of it.
+    the root (`resolve_inside`). Resolving is what also refuses a link committed inside the
+    repository that points out of it.
 
     `docs.guidelines` goes through the same door (#329). It is the repository's own content — the
     manifest lives in the tree the agent edits — so an absolute entry, or one that climbs out,
@@ -60,19 +90,15 @@ def _inside(repo_path: Path | None, relative: str, *, named_by: str = "a profile
     if repo_path is None:
         return None
     try:
-        root = repo_path.resolve()
-        candidate = (repo_path / relative).resolve()
+        candidate, refused = resolve_inside(repo_path, relative)
     except OSError:
         return None
-    if candidate == root:
-        # THE ROOT IS NOT OUTSIDE, and saying so would send somebody looking for an escape that
-        # is not there (review of #346): `.`, `docs/..` or an empty entry names the repository
-        # itself, which is no file to read
+    if refused == ITSELF:
         _log.warning(
             "%s names %r, which is the repository itself, not a file — REFUSED, and the agent "
             "runs WITHOUT it; name the guideline's file.", named_by, relative)
         return None
-    if not candidate.is_relative_to(root):
+    if refused == OUTSIDE:
         _log.warning(
             "%s names %r, which resolves outside the checkout — REFUSED, and the agent runs "
             "WITHOUT it. Guideline paths are read into the agent's prompt, so they stay inside "
