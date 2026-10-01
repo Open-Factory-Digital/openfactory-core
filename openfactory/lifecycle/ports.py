@@ -60,7 +60,11 @@ class Ports:
         self.name = getattr(project, "name", "") or ""
         self._tracker = tracker
         self._board = board
-        self._built = tracker is not None
+        # A CALLER THAT HANDS ONLY ITS TRACKER STILL GETS ITS BOARD READ. The product module holds
+        # a tracker and no board; built only alongside a missing tracker, the board stayed None for
+        # it, every open card read as one no board places, and the table's permissive row for
+        # that answered instead of the card's own column (found building #413).
+        self._board_known = board is not None
         self._columns = columns
 
     def _where(self) -> dict[str, str] | None:
@@ -73,26 +77,33 @@ class Ports:
     @property
     def tracker(self):
         if self._tracker is None:
-            self._build()
+            from openfactory.adapters.tracker.registry import build_tracker
+
+            self._tracker = build_tracker(self.project, token=self._token())
         return self._tracker
 
     @property
     def board(self):
-        if not self._built:
-            self._build()
+        if not self._board_known:
+            self._board_known = True
+            from openfactory.adapters.board import build_board
+
+            try:
+                self._board = build_board(self.project, token=self._token())
+            except Exception:  # noqa: BLE001 — no board read is "no board places it", said
+                log.warning("OPENFACTORY_CARD_BOARD_UNBUILT project=%s — the card is judged "
+                            "without its column", self.name, exc_info=True)
+                self._board = None
         return self._board
 
-    def _build(self) -> None:
-        from openfactory.adapters.board import build_board
-        from openfactory.adapters.tracker.registry import build_tracker
+    def _token(self) -> str | None:
         from openfactory.credentials import deployment_tracker_token, tracker_token_for
 
-        token = tracker_token_for(self.project) or deployment_tracker_token(self.project)
-        if self._tracker is None:
-            self._tracker = build_tracker(self.project, token=token)
-        if self._board is None:
-            self._board = build_board(self.project, token=token)
-        self._built = True
+        try:
+            return tracker_token_for(self.project) or deployment_tracker_token(self.project)
+        except Exception:  # noqa: BLE001 — a row that needs none builds without one
+            log.info("no tracker credential resolved for %s", self.name, exc_info=True)
+            return None
 
     def sink(self):
         from openfactory.lifecycle.record import keyed_sink
