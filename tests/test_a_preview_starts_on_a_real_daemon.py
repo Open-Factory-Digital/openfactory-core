@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from openfactory import preview
-from tests.one_live_preview import one_at_a_time
+from tests.one_live_preview import TheCard, one_at_a_time
 
 FIXTURE = Path(__file__).parent / "fixtures" / "preview" / "s1" / "tree"
 PR = "https://forge.local/acme/pull/12"
@@ -130,6 +130,10 @@ def test_an_offered_card_is_started_watched_and_ended_on_a_real_daemon(tmp_path,
                                        start_timeout=inp.start_timeout_minutes * 60)
 
     monkeypatch.setattr(activities, "_preview_unit", unit)
+    # THE CARD'S TRACKER IS THIS TEST'S (`one_live_preview.TheCard`): the project names no
+    # repository, and the real row commented on the repository the suite runs from
+    card = TheCard()
+    monkeypatch.setattr(activities, "_tracker_for", lambda project: card)
 
     def act(fn, arg):
         return asyncio.run(ActivityEnvironment().run(fn, arg))
@@ -146,6 +150,9 @@ def test_an_offered_card_is_started_watched_and_ended_on_a_real_daemon(tmp_path,
         up = act(activities.preview_up, PreviewUpInput(step=step, plan=planned.plan))
         live = preview.latest("acme", "12")
         assert up.ok, f"{up.why}\n{(Path(live.log_dir) / 'build.log').read_text()[-2000:]}"
+        # said on the card, once, through the project's tracker — and only there
+        ((ref, said),) = card.said
+        assert ref == "12" and said.startswith("Preview up: ") and "/p/acme/preview/12" in said
 
         assert live.state == preview.LIVE and live.started_by == "Ana"
         assert live.from_change == {"api": True, "web": False, "migrate": True, "db": False}

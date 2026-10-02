@@ -1819,7 +1819,7 @@ function inboxOptions(it){
   // reviewer has spoken, the cap is not spent. A list kept by hand on this page is the shape that
   // had already lost two states; the tiers below are styling, which is this page's own business.
   if(it.kind=="merge"){
-    const TIER={merge:"",adjust:" ghost",review:" ghost",discard:" plain"};
+    const TIER={merge:"",adjust:" ghost",address:" ghost",review:" ghost",discard:" plain"};
     const opts=(it.options&&it.options.length)?it.options:[
       {key:"merge",label:"Merge"},{key:"adjust",label:"Adjust"},{key:"discard",label:"Discard"}];
     return opts.map(o=>`<button class="btn sm${TIER[o.key]!==undefined?TIER[o.key]:" ghost"}"`+
@@ -1925,7 +1925,10 @@ function render(){
 //: is the card too, and walks into its preview when one is up (#405): the link a card's comment
 //: carries, which holds no credential of its own.
 function curBoard(){
-  const m=location.pathname.match(/^\/p\/([^/]+)\/(board|card|pr|preview)(?:\/([^/]+))?/);
+  // THE SEGMENT ENDS WHERE IT ENDS (#444): `pr` is a prefix of `preview`, and an alternation tried
+  // in order read `/p/x/preview/7` as `pr` with no ref — so the link a card's comment carries
+  // opened neither the preview nor the card, for anybody.
+  const m=location.pathname.match(/^\/p\/([^/]+)\/(board|card|pr|preview)(?=\/|$)(?:\/([^/]+))?/);
   return m?{project:decodeURIComponent(m[1]),
             card:(m[2]==="card"||m[2]==="preview")&&m[3]?decodeURIComponent(m[3]):"",
             pr:m[2]==="pr"&&m[3]?decodeURIComponent(m[3]):"",
@@ -2023,6 +2026,16 @@ async function bootProduct(){
   // NO FLOOR READS AT ALL on this path — a product credential is refused every one of them, and
   // firing them anyway would fill the console with 403s and the screen with nothing.
   let name=curProduct();
+  // THE LINKS THE ROLE SENDS THE REQUESTER (#444): `/p/<project>/preview/<ref>` and
+  // `/p/<project>/card/<ref>` are read here too. They were read only on the floor's path, which a
+  // product credential never reaches, so both were dead for exactly the person they are sent to.
+  // The project comes from the link, the address becomes the product page's own, and what the
+  // link names is opened below once the page is drawn.
+  const linked=(name===null)?curBoard():null;
+  if(linked&&linked.project){
+    name=linked.project;
+    history.replaceState({},"","/product/"+encodeURIComponent(name));
+  }
   if(!name){
     const list=await api("/api/product/projects").catch(()=>[]);
     name=(Array.isArray(list)&&list.length===1)?list[0].name:"";
@@ -2043,6 +2056,12 @@ async function bootProduct(){
   renderProduct(_prod.project);
   if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda();loadDocuments();pvBoardLoad()}
   if(_prod.project)loadSessions();
+  // …AND WHAT THE LINK NAMES: the preview, walked into with a key minted for this person now (the
+  // same call the floor makes), or the card on the Board tab (#384's own view of it).
+  if(linked&&linked.card&&_prod.project===linked.project){
+    if(linked.preview)openPreviewNow(linked.project,linked.card);
+    pvTab("board");pvCardOpen(linked.card);
+  }
 }
 
 // PENDING (#267 slice 3; ADR-0055 D11): what the product role is waiting for from the person — "you"
@@ -3855,6 +3874,8 @@ function refreshProject(){
           // nobody can take, which is the rule the tech-lead already lives under.
           (a.can_review?` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="review" title="reads the pull request AS IT STANDS and replaces the verdict on this card — it changes no code, and it costs a model pass">Re-review</button>`:"")+
           ` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="adjust" title="one more agent pass on the SAME branch and PR, against your own words">✏️ Adjust…</button>`+
+          // THE PULL REQUEST'S OWN COMMENTS (#330), where the forge keeps them — the server says.
+          (a.can_address?` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="address" title="one more agent pass on the SAME branch and PR, against the review comments people left on it that still stand">Address comments</button>`:"")+
           ` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="discard" title="close the PR without merging and free the floor — the branch and its commits stay">Discard</button>`+
           gatePreviewLine(name, parked.issue));
     } else if(parked){
@@ -4688,7 +4709,7 @@ async function mergeGate(project,issue,answer,instruction){
     const d=await r.json().catch(()=>({}));
     // The Outcome's own sentence, always — it is written to be read by a person and it is the
     // only thing that knows whether the forge accepted the merge or merely started trying.
-    const TOAST={merge:"Merging",adjust:"Sent back",review:"Reading it again",discard:"Discarded"};
+    const TOAST={merge:"Merging",adjust:"Sent back",address:"Sent back",review:"Reading it again",discard:"Discarded"};
     if(r.ok)toast(TOAST[answer]||answer,(d&&d.message)||"done","ok");
     else toast("Could not "+answer,(d&&d.detail)||"the gate did not accept that","err");
   }catch(e){toast("Error","could not answer the merge gate","err")}
@@ -5611,6 +5632,11 @@ function renderPreview(project, unit, card, id, r){
   for(const m of (r.missing||[])) out.push(line(m));
   for(const [repo, said] of Object.entries(r.base_moved||{})) out.push(line(`${repo}: ${said}`));
   for(const t of (r.notes||[])) out.push(line("note: "+t));
+  // THE CHANGE'S OWN SHAPE (#348): offered to a product admin, by the server, only while the
+  // base's is the one running — and it asks them to have read the shape first
+  if(r.can_allow_shape) out.push(`<div style="margin-top:8px"><button class="btn ghost" ${data} data-d="${esc(r.own_shape)}" onclick="previewOwnShape(this)">run this change's own shape</button>
+    <div class="sub" style="font-size:11px;margin-top:4px">only after reading the compose files and the <code>preview:</code> block it changes on the pull request (${esc(r.own_shape)})</div></div>`);
+  else if(r.shape_from === "change" && r.own_shape) out.push(line(`shape: this change's own (${r.own_shape})`));
   if(r.log_dir && (r.state==="failed" || r.state==="ended" || r.live)) out.push(line(`logs: ${r.log_dir} (openfactory preview logs ${project} ${unit})`));
   if(r.proposal_url) out.push(`<div style="margin-top:4px"><a href="${esc(safeUrl(r.proposal_url))}" target="_blank" rel="noopener">what would make this previewable ↗</a></div>`);
   return out.join("") || line("no preview of this card");
@@ -5632,6 +5658,10 @@ function gatePreviewLine(project, issue){
     }).catch(()=>{});
   }
   return `<span id="pvgate">${_pvGate[k].html}</span>`;
+}
+function previewOwnShape(btn){
+  if(!confirm(`Run this pull request's own preview shape (${btn.dataset.d})?\n\nThe preview will run the services, builds and settings the change's compose files and preview: block declare — admitted key by key like the base's. Read them on the pull request first. A push that changes them goes back to the base's shape.`)) return;
+  previewAct(btn, "own_shape");
 }
 async function previewAct(btn, verb){
   const {p, u, n, id, s} = btn.dataset;

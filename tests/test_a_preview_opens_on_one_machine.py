@@ -36,7 +36,7 @@ import httpx
 import pytest
 
 from openfactory import preview
-from tests.one_live_preview import one_at_a_time
+from tests.one_live_preview import TheCard, one_at_a_time
 
 ROOT =Path(__file__).resolve().parents[1]
 FIXTURE = Path(__file__).parent / "fixtures" / "preview" / "s1" / "tree"
@@ -235,6 +235,10 @@ def test_s1_opens_at_its_preview_host_through_a_host_process_panel(tmp_path, mon
                                        start_timeout=inp.start_timeout_minutes * 60)
 
     monkeypatch.setattr(activities, "_preview_unit", unit)
+    # THE CARD'S TRACKER IS THIS TEST'S (`one_live_preview.TheCard`): the project names no
+    # repository, and the real row commented on the repository the suite runs from
+    card = TheCard()
+    monkeypatch.setattr(activities, "_tracker_for", lambda project: card)
 
     def act(fn, arg):
         return asyncio.run(ActivityEnvironment().run(fn, arg))
@@ -264,6 +268,9 @@ def test_s1_opens_at_its_preview_host_through_a_host_process_panel(tmp_path, mon
         up = act(activities.preview_up, PreviewUpInput(step=step, plan=planned.plan))
         live = preview.latest("acme", "12")
         assert up.ok, f"{up.why}\n{(Path(live.log_dir) / 'build.log').read_text()[-2000:]}"
+        # said on the card, once, through the project's tracker — and only there
+        ((ref, said),) = card.said
+        assert ref == "12" and said.startswith("Preview up: ") and "/p/acme/preview/12" in said
         assert live.state == preview.LIVE
 
         # ── published on the loopback, and only there ──

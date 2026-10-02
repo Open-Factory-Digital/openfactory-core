@@ -182,6 +182,9 @@ def _said(loop: Loop, *, yours: bool, language: str | None = None) -> tuple[str,
         return agenda_said(key, yours=yours, language=language, **kw)
 
     if loop.kind == DELIVERY:
+        # A CARD SOMEBODY ASKED FOR NAMES NO REQUIREMENT (#481) — the item's `what` is its title
+        if ctx.get("ticket"):
+            return OWED, say("delivery_ticket")
         if ctx.get("defect"):
             return OWED, say("delivery_defect")
         return OWED, say("delivery", subject=loop.subject)
@@ -189,6 +192,8 @@ def _said(loop: Loop, *, yours: bool, language: str | None = None) -> tuple[str,
         issue = str(ctx.get("release_issue") or "")
         if issue:
             return AWAITED, say("release", issue=issue)
+        if ctx.get("ticket"):
+            return AWAITED, say("acceptance_ticket")
         if ctx.get("defect"):
             return AWAITED, say("acceptance_defect")
         return AWAITED, say("acceptance", subject=loop.subject)

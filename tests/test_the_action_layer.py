@@ -244,15 +244,19 @@ OWNED = {
     "execute_workflow": "ask",
     "PromotionRunner": "promote",            # running the release synchronously, in-process
     # The one seam every merge answer goes through — four of them since #181 added the
-    # re-review, and the marker stays ONE because the seam did: a front end that grew its
-    # own way to answer the gate would be a second definition of what the gate accepts.
-    "answer_merge_gate": "merge/adjust/discard/review",
+    # re-review, five since #330 added `address`, and the marker stays ONE because the seam did:
+    # a front end that grew its own way to answer the gate would be a second definition of what
+    # the gate accepts.
+    "answer_merge_gate": "merge/adjust/address/discard/review",
     # THE OTHER MERGE, and it is a different act (ADR-0049 D9). `merge` answers a gate a parked job
     # is waiting in; `pr_merge` PERFORMS the fast-forward on a pull request no job is waiting on —
     # the one a `run` or a `poll` left behind — and only on the forge for which that is the whole
     # act. The marker is the port call itself: a front end that reacquired `merge_pr` would be the
     # panel landing somebody's change with no row deciding whether it may.
     "merge_pr": "pr_merge",
+    # Letting a preview run its change's own shape (#348). The marker is the allowance's writer: a
+    # front end that reached it would be a second place deciding which digest a person read.
+    "allow_shape": "preview_own_shape",
     # Ending a RUNNING job (#127). The marker is the engine call itself: until this row existed,
     # the only exit from a wedged job was an operator opening Temporal and terminating by hand —
     # a raw-engine operation on the one surface this product promises they will never need. A
@@ -1484,6 +1488,7 @@ def test_the_panel_offers_the_three_answers_as_options_not_prose(client, monkeyp
 
     async def _jobs(_client, _ns):
         return [{"project": "demo", "issue": "7", "title": "t", "state": "awaiting_your_merge",
+                 "attention": True,  # a LIVE gate, as `view.list_jobs` flags it (#339)
                  "action": {"pr_url": "https://github.com/o/demo/pull/9", "auto": False}}]
 
     monkeypatch.setattr(tv, "list_jobs", _jobs)

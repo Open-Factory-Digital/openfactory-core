@@ -141,7 +141,8 @@ preview:
   run whatever the change declared — a privileged service, the host's network, the host's
   filesystem, the daemon's socket. So the files are read from a checkout of the base, the change's
   compose file is never opened, and a change that alters the shape itself is previewed with the old
-  one (said on the preview, not hidden).
+  one (said on the preview, not hidden). One exception, unlocked by a product admin for one digest
+  of the change's shape: see the amendment of 2026-10-02 below (#348).
 - **Merged by the compose CLI, admitted by the core.** The listed files are merged, validated and
   normalised by `docker compose config --no-interpolate --format json`, under an environment reduced
   to what the CLI needs to find itself (it contacts no daemon for this); the core reimplements no
@@ -196,6 +197,32 @@ measured on 2.32.4 and 2.40); and an override's relative paths resolve against t
 first file, not its own, so the drafted override for a compose file at the root says `context: .`.
 And admission runs after the services from the change are moved into the change's tree, so the
 on-disk checks see the tree each service runs from.
+
+**Amended (2026-10-02, #348): the one exception, unlocked by a person.** A change whose point is
+the shape (a new service, a new dependency between services, a new environment value) was
+previewed without its point, and seen running only after it merged. A product admin can now allow
+one unit's preview to run the change's own shape, and nothing else can:
+
+- **Bound to what was read.** When a change edits the shape (`assemble.shape_edits`), the job
+  reads the change's `preview:` block and every file it reads, `extends:` included, from the
+  change's checkout. It digests them and puts the digest on the card. Nothing it read reaches the
+  compose CLI. The allowance (`preview_own_shape`, by a person on `product.admins`) names that digest, taken
+  from the record and never typed. A push that changes any of those files is a different digest,
+  and the preview goes back to the base's shape until somebody looks again.
+- **The same admission.** An allowed shape's files are laid over the base tree in the preview's
+  own work directory. They are written only where every directory on the way is real and inside
+  the repository's tree, and a link there is replaced, never followed. The one reader then
+  pre-scans, canonicalises and admits them exactly as it does the base's. A key the base's shape
+  would be refused for is refused by name here too.
+- **D4 still holds.** Laid over the base tree, the change's shape runs the change only where the
+  change touched, and the base everywhere else.
+- **Said.** The card says which shape ran, whose allowance it was, and its digest. The pull
+  request is told when the allowance is given.
+- **Not for a product's shape yet.** A change to the context repository's `product.yaml` is
+  previewed with the base's, as before.
+
+Built as `openfactory/preview/own.py`, `adapters/preview/compose.py::_own_shape`, and the row
+`preview_own_shape`.
 
 ### D4 — The assembly: the change where it touched, the base everywhere else, fresh data always
 

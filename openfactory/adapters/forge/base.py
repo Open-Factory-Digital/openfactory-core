@@ -9,6 +9,7 @@ deploy with its own secrets (ADR-0001 D-12). Merge rights are governed by the fl
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
 
 log = logging.getLogger("openfactory.forge")
@@ -614,6 +615,56 @@ def merge_gates_of(forge: object, base: str) -> list[dict] | GatesNotListed | No
                  str(exc)[:160])
         return None
     return rows if isinstance(rows, list) else None
+
+
+@dataclass(frozen=True)
+class ReviewComment:
+    """One thing a person wrote on a pull request that still stands (#330).
+
+    `path` and `line` are where it was written, or `""` and `0` for a comment on the whole pull
+    request. `url` is where a reader can find it on the forge."""
+
+    author: str
+    body: str
+    path: str = ""
+    line: int = 0
+    url: str = ""
+
+
+class CommentsNotListed(RuntimeError):
+    """Why a pull request's review comments could not be listed, in one sentence (#330).
+
+    NEVER AN EMPTY LIST. "No comments" reads as "nothing to do", and a forge that could not look
+    has not said that. Handed on AS A VALUE by `review_comments_of`, like `GatesNotListed`."""
+
+
+def review_comments_of(forge: object, pr: str) -> list[ReviewComment] | CommentsNotListed:
+    """The comments people left on `pr` that still stand, or why they could not be listed (#330).
+
+    A ROW CAPABILITY, NOT A PORT METHOD, asked with `getattr` like `merge_gates`. A row that keeps
+    review threads answers `review_comments(pr=...)`:
+      · only what still stands: an unresolved thread, or a person's request for changes that
+        has not been withdrawn;
+      · never the platform's own, which the blocking review loop already feeds back;
+      · `[]` for "asked, and there are none".
+    A row without the method is answered BY NAME. So is a read that failed: an unreadable listing
+    is not an empty one. A test double is not an answer: only a list counts."""
+    name = display_name(forge)
+    ask = getattr(forge, "review_comments", None)
+    if not callable(ask):
+        return CommentsNotListed(f"{name} keeps no review comments this platform can read")
+    try:
+        rows = ask(pr=pr)
+    except CommentsNotListed as said:
+        return said
+    except Exception as exc:  # noqa: BLE001 — an unreadable listing is not an empty one
+        log.info("%s could not list the review comments on %s (%s)", type(forge).__name__, pr,
+                 str(exc)[:160])
+        return CommentsNotListed(f"{name} could not list the review comments on this pull "
+                                 f"request ({str(exc)[:160]})")
+    if not isinstance(rows, list) or not all(isinstance(r, ReviewComment) for r in rows):
+        return CommentsNotListed(f"{name} answered something that is not a list of comments")
+    return rows
 
 
 def display_name(forge: object) -> str:

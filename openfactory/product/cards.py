@@ -633,15 +633,21 @@ class OpenQuestion:
 
 #: HOW LONG A HELD QUESTION WAITS — the staged proposal's own TTL
 #: (`staging.PROPOSAL_TTL_SECONDS`), because a question is answered on the same clock a proposal
-#: is confirmed on; a guard holds the two together.
+#: is confirmed on; a guard holds the two together. WRITTEN ON THE RECORD as its deadline (#452),
+#: so every process ages a question by the deadline it was held with.
 QUESTION_TTL_SECONDS = 2 * 60 * 60
-#: One held question per person and conversation, the oldest evicted past the bound — an evicted
-#: question only costs its shortcut (see `hold_question`).
+#: This process's copy of the questions it held, one per person and conversation, the oldest
+#: evicted past the bound. A COPY (#452): the record is the store's (`hold_question`), and the copy
+#: is read only where there is no store to ask, or the store missed the hold's write.
 _OPEN: BoundedDict[str, OpenQuestion] = BoundedDict(500)
+
+#: How a held question's record is closed: taken by the answer, aged out on read, or replaced by a
+#: later hold of this process whose own record did not land.
+TAKEN, EXPIRED, REPLACED = "taken", "expired", "replaced"
 
 
 def hold_question(key: str, composed: Composed, request: str, *, kind: str = "ticket",
-                  extra: dict | None = None) -> None:
+                  extra: dict | None = None, project=None, conversation: str = "") -> None:
     """Keep the card a blocked loop ended with, so the person's next message ANSWERS its question.
 
     THE ANSWER USED TO START THE WHOLE TURN AGAIN. On the first live card the judge blocked twice
@@ -651,24 +657,149 @@ def hold_question(key: str, composed: Composed, request: str, *, kind: str = "ti
     here instead, under the person's own key in that conversation, and the answer goes straight to
     one redraft (`compose(answered=...)`).
 
-    IN THIS PROCESS, NOT IN THE STAGING STORE, ON PURPOSE. A staged entry is a proposal: it carries
-    buttons on the panel, a place in the product's write sequence and an intake transition, and a
-    question is none of those. What a restart loses is only the shortcut: the next message is then
-    answered as a conversation, as it always was."""
+    IN THE STORE, AS A HOLD — NOT IN THIS PROCESS ALONE, AND NOT AS A STAGED PROPOSAL (#452). It
+    was kept in this process on purpose, the cost written as "only the shortcut". Measured, the
+    cost was the answer: the worker restarted, the person's "it's the Home screen" arrived as a new
+    message, and the role started the card over — the question forgotten in public. A staged entry
+    is still the wrong record: it carries buttons on the panel, a place in the product's write
+    sequence and an intake transition, and a question is none of those. So it is a `held` row
+    (`messages.HELD`) under `waiting.question_token(key)`, carrying the request, the draft, the
+    findings and its written deadline, read by whichever process the answer reaches
+    (`held_question`). `conversation` is where it was asked, said on the record for the readers
+    that list a conversation's waits (`waiting.in_conversation`)."""
     if composed.draft is None:
         return
-    _OPEN[key] = OpenQuestion(
+    held = OpenQuestion(
         request=request, ask=composed.ask, draft=composed.draft,
         findings=tuple(composed.ruling.findings) if composed.ruling else (),
         at=time.time(), kind=kind, extra=tuple(sorted((extra or {}).items())))
+    _OPEN[key] = held
+    if project is None:
+        return
+    from openfactory.memory import messages
+    from openfactory.product.waiting import question_token
+
+    # THE ROW'S STAMP IS THE HOLD'S OWN MOMENT, so a copy and its record compare as one hold
+    if not messages.hold(getattr(project, "name", "") or "", held.ask,
+                         token=question_token(key), channel=conversation or key,
+                         payload=_freeze_question(held),
+                         expires=_iso(held.at + QUESTION_TTL_SECONDS), now=_iso(held.at)):
+        log.warning("the card question held for %s was not written — its answer reaches only "
+                    "this process, and a restart reads it as a new message", key)
 
 
-def take_question(key: str) -> OpenQuestion | None:
-    """The question held under `key`, removed — or None when there is none or it is too old."""
-    held = _OPEN.pop(key, None)
+def held_question(key: str, *, project=None) -> OpenQuestion | None:
+    """The question held under `key` — or None when there is none or it is too old. Read, not
+    taken: the answer closes it (`close_question`) once its redraft is in hand.
+
+    THE STORE'S RECORD FIRST (#452), so the process the answer reaches — a restarted worker, a
+    second one — finds the question another process asked. This process's copy decides only where
+    the store cannot (`_from_the_store`). One conversation's turns are taken one at a time
+    (`ConversationWorkflow`), so no second process reads the record between this read and the
+    write that closes it."""
+    local = _OPEN.get(key)
+    stored = _from_the_store(key, project, local)
+    if stored is not _NOT_ASKED:
+        if stored is None:
+            _OPEN.pop(key, None)
+        return stored
+    held = local
     if held is None or time.time() - held.at > QUESTION_TTL_SECONDS:
+        _OPEN.pop(key, None)
         return None
     return held
+
+
+def close_question(key: str, *, project=None) -> None:
+    """The question held under `key`, closed: answered, or declined.
+
+    CLOSED WITH THE REDRAFT IN HAND, NOT WHEN IT IS READ (#452). The redraft is a draft and a
+    judgement — one to four minutes of model calls — and a worker that dies in them has its turn
+    run again on another (`conversation.TURN_RETRY`). A question closed on read was gone for that
+    retry, and the person's answer reached it as a new message: the restart this record exists
+    for, inside one turn."""
+    _OPEN.pop(key, None)
+    if project is None:
+        return
+    from openfactory.memory import messages
+    from openfactory.product.waiting import question_token
+
+    messages.release(getattr(project, "name", "") or "", token=question_token(key), answer=TAKEN)
+
+
+#: The store had nothing to say about this key, and this process's copy decides.
+_NOT_ASKED = object()
+
+
+def _from_the_store(key: str, project, local: OpenQuestion | None):
+    """The held question as the store says it — the question, None, or `_NOT_ASKED` when there is
+    no store to ask, it holds nothing under `key`, or `local` was held after its latest record
+    (that hold's own write did not land; the older record is closed as `REPLACED`)."""
+    if project is None:
+        return _NOT_ASKED
+    from openfactory.memory import messages
+    from openfactory.product.waiting import past, question_token, seconds
+
+    name = getattr(project, "name", "") or ""
+    token = question_token(key)
+    try:
+        found = [(m, closed) for m, closed in messages.held(name) if m.token == token]
+    except Exception:  # noqa: BLE001 — a store that cannot be read leaves this process's copy
+        log.info("could not read the card question held for %s", key, exc_info=True)
+        return _NOT_ASKED
+    if not found:
+        return _NOT_ASKED
+    row, closed = found[-1]
+    asked_at = seconds(row.ts)
+    # the record is stamped with the hold's own moment (`hold_question`), to the microsecond the
+    # stamp keeps: a copy more than a millisecond younger is a later hold, never the same one
+    if local is not None and (asked_at is None or local.at > asked_at + 0.001):
+        if closed is None:
+            messages.release(name, token=token, answer=REPLACED)
+        return _NOT_ASKED
+    if closed is not None:
+        # TAKEN OR AGED OUT ELSEWHERE — a copy this process kept is that same question, stale
+        return None
+    if past(row.expires, time.time()):
+        messages.release(name, token=token, answer=EXPIRED)
+        return None
+    return _thaw_question(row.payload)
+
+
+def _iso(at: float) -> str:
+    return datetime.fromtimestamp(at, UTC).isoformat()
+
+
+def _freeze_question(held: OpenQuestion) -> str:
+    """The held question as JSON another process rebuilds whole (`_thaw_question`)."""
+    from dataclasses import asdict
+
+    return json.dumps({"request": held.request, "ask": held.ask, "draft": asdict(held.draft),
+                       "findings": list(held.findings), "at": held.at, "kind": held.kind,
+                       "extra": [list(pair) for pair in held.extra]},
+                      ensure_ascii=False, default=str)
+
+
+def _thaw_question(payload: str) -> OpenQuestion | None:
+    """The held question back, or None — never a half-built one: a redraft from a draft that lost
+    its criteria would be the card the person already answered for, worse."""
+    from dataclasses import fields
+
+    try:
+        raw = json.loads(payload)
+        kind = str(raw.get("kind") or "ticket")
+        if kind not in _TEMPLATES:
+            raise ValueError(f"no card of kind {kind!r}")
+        names = {f.name for f in fields(CardDraft)}
+        draft = CardDraft(**{k: v for k, v in dict(raw["draft"]).items() if k in names})
+        return OpenQuestion(request=str(raw["request"]), ask=str(raw.get("ask") or ""),
+                            draft=draft, findings=tuple(str(f) for f in raw.get("findings") or ()),
+                            at=float(raw["at"]), kind=kind,
+                            extra=tuple((str(k), v) for k, v in raw.get("extra") or ()))
+    except Exception:  # noqa: BLE001 — an unreadable record is a question gone, said
+        log.warning("could not read a held card question back — its answer is read as a new "
+                    "message", exc_info=True)
+        return None
 
 
 #: What the role is told it is writing, by kind — the one sentence that differs (#392).
