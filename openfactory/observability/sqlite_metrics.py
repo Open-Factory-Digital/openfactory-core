@@ -230,6 +230,26 @@ class SqliteMetricsSink:
             cur = conn.execute("DELETE FROM metrics WHERE pk = ? AND kind = ?", (project, kind))
             return cur.rowcount or 0
 
+    def backup(self, to: str | Path) -> Path:
+        """A consistent copy of the whole store at `to`, taken through SQLite's own online backup
+        — and RAISES, like `forget`, because it is the step a deletion stands on (#453).
+
+        NOT A FILE COPY. The worker writes this file while the panel reads it, in WAL mode, so the
+        rows of the last few seconds live in `-wal` beside it: a `shutil.copy` of the main file
+        alone is a backup missing exactly what was written last, and a copy taken mid-checkpoint
+        is a file that may not open. `Connection.backup` copies pages under SQLite's own locks and
+        restarts when a writer changes one underneath it, so what lands is one moment of the
+        store, whole."""
+        target = Path(to)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect(write=False) as conn:
+            copy = sqlite3.connect(target)
+            try:
+                conn.backup(copy)
+            finally:
+                copy.close()
+        return target
+
     def purge_expired(self, *, now: int | None = None) -> int:
         """Delete rows past their TTL, returning how many went. Filtering on read keeps the answer
         correct; only this keeps the promise — "we delete it" has to mean the bytes are gone."""

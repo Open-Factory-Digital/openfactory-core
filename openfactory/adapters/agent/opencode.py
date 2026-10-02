@@ -245,9 +245,14 @@ class OpenCodeAdapter:
         # <env> opencode run …` feeds the prompt on stdin, and the positional `-- <prompt>` is
         # dropped — so `--` (which only exists to stop a `-`-prefixed prompt being read as a flag)
         # goes with it. The `cat |` PRECEDES the env assignments, which must stay attached to
-        # `opencode` (they are its read-only profile and project-config lock, not `cat`'s).
-        # ASSUMED, not verified: the container binary is itself unverified (see the module
-        # docstring), exactly as its argument form was, and `box prove` is what confirms stdin.
+        # `opencode` (they are its read-only profile and project-config lock, not `cat`'s) — and
+        # only the PROCESS can say where they landed, because the command string holds every word
+        # in either order, so the guard reads them back from a stand-in's environment (#326).
+        # STDIN IS READ, and that is now read in the source rather than assumed (2026-10-01):
+        # `packages/opencode/src/cli/cmd/run.ts` at v1.18.13 (the pinned `HARNESS_OPENCODE`) and
+        # v1.18.28 reads `Bun.stdin.text()` whenever stdin is not a TTY, and with no positional
+        # message takes it AS the message (`resolveRunInput`). The Linux binary is still unrun
+        # (see the module docstring); `box prove` is what runs it, per deployment.
         # `prompt_path` is None for the smoke probe and a box with no channel and a small prompt.
         pipe = [f"cat {shlex.quote(prompt_path)} |"] if prompt_path else []
         cmd = [*pipe, *env, harness, "run", "--format", "json"]

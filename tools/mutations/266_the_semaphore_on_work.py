@@ -110,9 +110,10 @@ MUTATIONS = [
      '"described": ex.text.strip()[:1500], "seq": ex.seen,',
      '"described": ex.text.strip()[:1500], "seq": None,'),
 
+    # RE-PINNED 2026-10-02: the call hands where it was asked on after it (#481)
     ("the yes does not hand the staged sequence to the card it files", CONFIRM,
-     "        **_checked(module.file_ticket, entry))",
-     "        )"),
+     "        **_checked(module.file_ticket, entry),\n",
+     "        **{},\n"),
 
     ("the anonymous notice of a staged twin is never said", STAGING,
      "    return asked_close_to_this(language=lang)",

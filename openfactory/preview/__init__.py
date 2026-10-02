@@ -406,6 +406,10 @@ class Preview(BaseModel):
     #: is computed when the card is READ, from the forge's answer then, never frozen into the
     #: record. Empty: the base declares a shape.
     shape: dict[str, str] = {}
+    #: the digest of the change's OWN shape when the change edits it (#348), "" otherwise — what
+    #: `preview_own_shape` allows; and which shape the preview ran, "base" or "change"
+    own_shape: str = ""
+    shape_from: str = "base"
     why: str = ""
     log_dir: str = ""
     started_by: str = ""

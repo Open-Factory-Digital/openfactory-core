@@ -249,7 +249,7 @@ def assemble(doc: dict, *, cfg: PreviewConfig, unit: Unit, layout: Layout,
              scheme: str = "https", public_port: int | None = None,
              reach: Literal["network", "loopback"] = "network",
              loopback_range: tuple[int, int] | None = None, expires_at: int = 0,
-             prove: bool = False) -> PreviewPlan | Refused:
+             prove: bool = False, shape_said: str = "") -> PreviewPlan | Refused:
     """The plan for one unit's preview, from the BASE's canonical compose document — or every
     reason there is none.
 
@@ -325,9 +325,11 @@ def assemble(doc: dict, *, cfg: PreviewConfig, unit: Unit, layout: Layout,
     edits = shape_edits(layout.trees[shape_tree].diff_paths, cfg, manifest_path) \
         if shape_tree in layout.trees else []
     if edits:
-        notes.append(f"this change edits {', '.join(f'`{p}`' for p in edits)}; the preview runs "
-                     f"the base branch's version, never the change's — merge, and the next "
-                     f"preview runs the new shape.")
+        # WHICH SHAPE RAN, AND WHY, is the caller's to say when it measured the change's own
+        # (#348, `preview/own.py`); otherwise the base's, as D3 says
+        notes.append(f"this change edits {', '.join(f'`{p}`' for p in edits)}; " + (
+            shape_said or "the preview runs the base branch's version, never the change's — "
+                          "merge, and the next preview runs the new shape."))
 
     # what the operator sets
     ports: dict[str, int] = {}
