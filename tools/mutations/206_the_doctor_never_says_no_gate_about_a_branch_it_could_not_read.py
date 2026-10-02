@@ -151,8 +151,9 @@ MUTATIONS = [
      "            pass\n"),
 
     ("the port swallows the row's sentence", BASE,
-     "        return said\n",
-     "        return None\n", SEAM),
+     # re-pinned 2026-10-02: #330's `review_comments_of` hands its row's reason on the same way
+     "                 str(said)[:300])\n        return said\n",
+     "                 str(said)[:300])\n        return None\n", SEAM),
 
     ("the doctor guesses when the row said why", DOCTOR,
      '        why = str(rows).strip().rstrip(".") if isinstance(rows, GatesNotListed) else ""\n',

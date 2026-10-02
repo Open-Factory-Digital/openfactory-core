@@ -1697,6 +1697,22 @@ class JobRunner:
                     JobState.ON_HOLD, branch=branch,
                 ))
             self._commit(ws, ticket)
+            # A PERSON'S PASS IS GATED THE WAY THE FIRST ONE WAS (#448). An adjust pass rewrote
+            # the pull request, pushed, and went to re-review with none of the project's gates
+            # re-run in the box, and the requester was then handed a preview of a head nothing
+            # had built or tested. A check's repair is not gated here: the check it answers is
+            # re-run by the forge on the push, and that run is its gate.
+            validations: list[ValidationResult] = []
+            if human:
+                validations, held = self._the_adjusted_change_passes_its_gates(
+                    ticket, owner, ws, branch, rep)
+                if held is not None:
+                    # NOTHING WAS PUSHED, so the pull request is the one the reviewer read and
+                    # `code_changed` is False by construction rather than by `as_left`'s measure:
+                    # the workspace holds the failed commits, and the publish below is the only
+                    # way a pass reaches the forge. Its `Cost:` line still catches up.
+                    self._republish_review(pr_url)
+                    return held.model_copy(update={"code_changed": False})
             self.sandbox.publish_branch(workspace=ws, remote_url=self.forge.push_remote())
             # Gate-suppression guard (engineering.md #12) on the CI-repair path too: if the fix
             # SILENCED a gate (a noqa / pragma-no-cover / type-ignore / nosec suppression), a
@@ -1791,7 +1807,7 @@ class JobRunner:
                 self._set_state(ticket, JobState.REVIEWING)
                 review = self._review(
                     sandbox=self.sandbox, workspace=ws,
-                    review_input=ReviewInput(ticket=ticket, diff=diff, validations=[]),
+                    review_input=ReviewInput(ticket=ticket, diff=diff, validations=validations),
                 )
                 self._count_review(review)
                 self._emit(
@@ -1817,13 +1833,69 @@ class JobRunner:
             # pass ran on what it pushed — a whole reviewer pass — was on nobody's result.
             return as_left(self._charged(RunResult(
                 ticket_id=ticket.id, state=JobState.PR_OPEN, branch=branch,
-                auto_merge=True, review=review,
+                auto_merge=True, review=review, validations=validations,
             )))
         finally:
             self.sandbox.cleanup(workspace=ws)
             # the fetched knowledge bundle is a temp checkout — one leaked per job
             # would fill the worker's finite disk.
             self._drop_published_bundle()
+
+    def _the_adjusted_change_passes_its_gates(
+        self, ticket: Ticket, owner: str | None, ws: Workspace, branch: str,
+        rep: AgentRunResult,
+    ) -> tuple[list[ValidationResult], RunResult | None]:
+        """Run the project's gates on an adjust pass's commit, repair while they are red, and say
+        whether the change may be pushed (#448).
+
+        THE FIRST PASS'S RULES: the same `_validate`, no repair for a gate that could not run, the
+        same `repair_max_attempts`, cost ceiling and effort budget, and the same brief. The loop is
+        written again rather than lifted out of `run` because two things differ here:
+          · the spend it is held to starts at this pass, not at the job's plan;
+          · a pause mid-repair keeps its partial work in the workspace. `run` pushes it so a
+            resume continues; here that push would put a red head under the requester's preview.
+
+        Returns the validations, and a hold when the change may not be pushed. NOTHING IS PUSHED
+        on a hold, as on the first pass, whose red gates open no pull request. The pull request
+        and its preview stay what the requester was given, and a resume goes back to the merge
+        watch, the mark the empty-instruction hold uses.
+        """
+        _, validations = self._validate(ws, ticket)
+        self._account_for_gates_that_could_not_run(validations)
+        spent, attempts = rep.cost_usd or 0.0, 0
+        while (
+            not _all_passed(validations)
+            and not _never_ran(validations)
+            and attempts < self.manifest.repair_max_attempts
+            and not self._over_cost_ceiling(spent)
+            and not self._over_effort()
+        ):
+            attempts += 1
+            self._set_state(ticket, JobState.REPAIRING)
+            fix = self._repair(ws, self._build_context(ticket, ws), _gates_brief(validations))
+            for action in fix.actions:
+                self._emit(ticket, "agent_action", action, role="executor")
+            self._emit(ticket, "note", f"adjust repair {attempts}: {fix.summary[:150]}",
+                       cost_usd=fix.cost_usd, role="executor")
+            spent += fix.cost_usd or 0.0
+            self._count(fix, "repair")
+            if fix.pause_reason:
+                return validations, self._paused(ticket, fix.pause_reason, fix.retry_at,
+                                                 branch=branch)
+            self._commit(ws, ticket)
+            _, validations = self._validate(ws, ticket)
+        if _all_passed(validations):
+            return validations, None
+        reason = _never_ran_reason(validations) or (
+            self._cost_reason(spent) if self._over_cost_ceiling(spent) else
+            "the adjusted change fails the project's gates ("
+            + ", ".join(f"`{v.name}` exit {v.exit_code}" for v in validations
+                        if not v.passed and not v.advisory)
+            + f") after {attempts} repair attempt(s)")
+        return validations, self._hold(
+            ticket, owner,
+            f"{reason}. Nothing was pushed: the pull request and its preview are as they were",
+            JobState.ON_HOLD, branch=branch, validations=validations, merge_refused=True)
 
     def review_pr(self, ticket_ref: str, pr_url: str = "") -> RunResult:
         """Read the open pull request again, as it stands now, and publish a fresh verdict (#181).

@@ -38,7 +38,7 @@ CARD_LOOPS = frozenset({"DELIVERY", "CARD_QUESTION"})
 NOTICES = frozenset({"card_finished", "deliver", "ready_for_you", "ready_at_the_gate",
                      "card_moved"})
 
-#: Where a write is not a caller's, BY RULE — each a directory, with why.
+#: Where a write is not a caller's, BY RULE — each a directory or one file, with why.
 NOT_CALLERS = {
     "openfactory/lifecycle/": "the door itself",
     "openfactory/adapters/": "the ports the door writes through — a row implementing a close as "
@@ -47,6 +47,11 @@ NOT_CALLERS = {
                                 "can write at all, on a card it made for that",
     "openfactory/testing/": "the in-memory harness a contributor's adapter is run against — no "
                             "deployment's card",
+    # one file, not a directory: forgetting a project (#453) removes its closed cards as DATA,
+    # with the door's record of them (`forget.RECORD_KINDS`), because an operator asked for the
+    # project to be forgotten. No card's lifecycle goes on, and nobody is left to be told.
+    "openfactory/product/forget.py": "forgetting a project erases its closed cards and their "
+                                     "record together — data removal, not a card's transition",
 }
 
 #: THE CEILING AND THE BASELINE, committed. Slice 1 ended at 27: the writers slices 2 and 3 own;
@@ -77,7 +82,7 @@ BASELINE = frozenset({
     ("openfactory/product/module.py", "file_defect", "set_column"),
     ("openfactory/product/module.py", "_file_one", "set_column"),
     ("openfactory/product/module.py", "promote", "set_column"),
-    ("openfactory/product/module.py", "_track_defect", "open_loop"),
+    ("openfactory/product/module.py", "_follow_card", "open_loop"),
     ("openfactory/product/followup.py", "deliveries_to_open", "open_loop"),
 })
 
@@ -164,7 +169,7 @@ def test_the_walk_reads_the_package_and_sees_a_writer_planted_in_it(tmp_path):
     _, read = card_writes(ROOT / "openfactory", rel_to=ROOT)
     assert read > 240, f"the walk read {read} files"
     for where in NOT_CALLERS:
-        assert (ROOT / where).is_dir(), f"{where} is excused by rule and does not exist"
+        assert (ROOT / where).exists(), f"{where} is excused by rule and does not exist"
 
     rogue = tmp_path / "openfactory" / "product" / "rogue.py"
     rogue.parent.mkdir(parents=True)

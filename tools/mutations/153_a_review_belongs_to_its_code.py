@@ -57,8 +57,9 @@ MUTATIONS = [
 
     # ── the engine marking it ───────────────────────────────────────────────────────────────────
     ("an adjust pass rewrites the pull request and says nothing about the review", WORKFLOW,
-     '        self._the_reviewed_code_is_gone(f"{who} asked for a change and a pass rewrote the '
-     'pull "\n                                        f"request")\n', ""),
+     # re-pinned 2026-10-02: #330's `address` shares the line
+     '        self._the_reviewed_code_is_gone(f"{who} {asked} and a pass rewrote the pull request")\n',
+     ""),
 
     ("a CI-repair pass rewrites it and says nothing", WORKFLOW,
      '                self._the_reviewed_code_is_gone(\n'
@@ -67,8 +68,7 @@ MUTATIONS = [
 
     ("the mark lands AFTER the push, so a worker that dies between leaves a confident verdict",
      WORKFLOW,
-     '        self._the_reviewed_code_is_gone(f"{who} asked for a change and a pass rewrote the '
-     'pull "\n                                        f"request")\n'
+     '        self._the_reviewed_code_is_gone(f"{who} {asked} and a pass rewrote the pull request")\n'
      '        passed = await workflow.execute_activity(\n            adjust_pr,',
      '        passed = await workflow.execute_activity(\n            adjust_pr,'),
 

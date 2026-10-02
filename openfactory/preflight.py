@@ -48,7 +48,7 @@ from dataclasses import dataclass, field
 # saying what to do about it — so importing it is importing the rule, while re-declaring three
 # one-line constructors here would be re-declaring the rule and letting it drift.
 from openfactory.listeners import LISTENERS
-from openfactory.onboarding.deployment import UnusableHome
+from openfactory.onboarding.deployment import UnusableHome, UnusableWorkDir
 from openfactory.onboarding.readiness import LOCAL, Finding, _fail, _ok, _unanswered
 
 log = logging.getLogger("openfactory.preflight")
@@ -95,7 +95,9 @@ class Probes:
     #: Free bytes on the filesystem Docker stores images on, or None where that cannot be read.
     free_disk: Callable[[], int | None]
     #: The job workspace this deployment will use, and whether it can be created and written
-    #: WITHOUT root — the property P0.4 exists to deliver, checked rather than assumed.
+    #: WITHOUT root — the property P0.4 exists to deliver, checked rather than assumed. None when
+    #: `$HOME` gives no place to put it; `UnusableWorkDir` RAISED when a declared value cannot be
+    #: bound, which carries the value so the finding can name it (#367).
     work_dir: Callable[[], str | None]
     writable_without_root: Callable[[str], tuple[bool, str]]
     #: `True`/`False`/`None`, and the None is the point: with no daemon there is no answer, and a
@@ -286,7 +288,21 @@ def _disk(p: Probes) -> Finding:
 
 
 def _work_dir(p: Probes) -> Finding:
-    where = p.work_dir()
+    try:
+        where = p.work_dir()
+    except UnusableWorkDir as exc:
+        # THE VALUE SOMEBODY DECLARED IS THE CAUSE, SO THE FINDING NAMES IT (#367). The probe used
+        # to catch this as its parent and answer None, and a declared `~/work` was reported by the
+        # branch below — "$HOME is not a directory this process can write under", on a machine
+        # whose `$HOME` was fine, with a remedy to set the variable just set (measured on
+        # 34c91c7, 2026-10-01). It fails rather than going unanswered: compose would bind it, and
+        # the box would mount an empty directory.
+        return _fail(
+            "work_dir", f"OPENFACTORY_WORK_DIR={exc.declared} is not a path compose can bind: "
+                        "compose resolves a relative bind source against the directory `up` ran "
+                        "in and expands no `~`, so the box would mount an empty directory",
+            "write the whole path — e.g. OPENFACTORY_WORK_DIR=$HOME/.local/share/openfactory/work "
+            "— and run this again", on=LOCAL)
     if not where:
         # NOT A FAILING CHECK, because nothing about this deployment is wrong: the question cannot
         # be answered where it was asked. `$HOME` is `/` (Docker's answer for a uid with no passwd
@@ -586,8 +602,12 @@ def _probe_work_dir() -> str:
     # RETURNS None WHEN NO WORKSPACE CAN BE CHOSEN, so `_work_dir` can say WHY rather than reporting
     # a permission error about `/.local/share/openfactory/work` — a path that is not a mistake in
     # the deployment but a `$HOME` of `/`, which is what Docker hands a numeric uid.
+    # A DECLARED VALUE COMPOSE CANNOT BIND IS LET THROUGH, because its cause is not `$HOME` and
+    # `_work_dir` names it (#367); it is the subtype, so it is asked first.
     try:
         return default_work_dir()
+    except UnusableWorkDir:
+        raise
     except UnusableHome as exc:
         log.warning("no job workspace can be chosen here: %s", exc)
         return None

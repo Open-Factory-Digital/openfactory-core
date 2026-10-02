@@ -143,4 +143,29 @@ def delete(project, *, conversation: str) -> Deleted:
                    complete=complete)
 
 
-__all__ = ["FIRST", "MAX_TITLE", "Deleted", "clean_title", "delete", "rename", "titles"]
+def forget_names(key: str) -> int:
+    """Every name anybody gave a conversation of the product, deleted — and how many people's
+    files went (#453, `openfactory project forget`). A name is a person's words about their own
+    conversation; `delete` drops the one of the conversation it erases, and this is the same for
+    every conversation at once. Under each file's own lock, as `_write` takes it; RAISES on a
+    lock or a file that will not be had."""
+    from openfactory.paths import product_state_dir
+    from openfactory.util.filelock import lock_beside
+
+    folder = product_state_dir(key) / "sessions"
+    if not folder.is_dir():
+        return 0
+    gone = 0
+    for one in sorted(folder.glob("*.json")):
+        lock = lock_beside(one)
+        lock.acquire(timeout=WAIT_SECONDS)
+        try:
+            one.unlink(missing_ok=True)
+        finally:
+            lock.release()
+        gone += 1
+    return gone
+
+
+__all__ = ["FIRST", "MAX_TITLE", "Deleted", "clean_title", "delete", "forget_names", "rename",
+           "titles"]
