@@ -235,7 +235,16 @@ class UnusableWorkDir(UnusableHome):
     never expanded into a path the caller did not write (#367). Compose resolves a relative bind
     source against the directory `up` ran in, and expands no tilde: `~/work` creates a directory
     called `~` and mounts an empty box, which is the "box saw 0 entries" defect reached by the
-    declared road — the kept road was closed by #366, and this one was left as it always was."""
+    declared road — the kept road was closed by #366, and this one was left as it always was.
+
+    IT CARRIES THE VALUE IT REFUSED, because the subtype alone did not reach the person in
+    `preflight`: caught there as its parent, a declared `~/work` was reported as "$HOME is not a
+    directory this process can write under", the wrong cause, with a remedy to set the variable
+    they had just set (measured on 34c91c7, 2026-10-01)."""
+
+    def __init__(self, message: str, declared: str) -> None:
+        super().__init__(message)
+        self.declared = declared
 
 
 class UnknownAnswer(ValueError):
@@ -356,7 +365,7 @@ def default_work_dir() -> str:
                 "`up` ran in, and expands no tilde, so it would create a directory called `~` and "
                 "mount an empty box. Write the whole path — for example "
                 "OPENFACTORY_WORK_DIR=$HOME/.local/share/openfactory/work — and run this again. "
-                "Nothing was written.")
+                "Nothing was written.", declared)
         return declared
 
     base = (os.environ.get("XDG_DATA_HOME") or "").strip()

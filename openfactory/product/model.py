@@ -59,6 +59,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from openfactory.product.conversation import PRIVATE_PREFIXES
 from openfactory.util.bounded import BoundedDict
 
 log = logging.getLogger("openfactory.product")
@@ -312,8 +313,12 @@ PEOPLE_KEYS = frozenset({"person", "asked_by", "said_by", "reported_by", "reques
                          "requester_forge", "by", "actor"})
 
 #: A PRIVATE conversation's key (`conversation.py`: `person:<id>`, `visitor:<id>`) carries a
-#: person's id, and rides in a loop's `about` and `channel`.
-_PRIVATE_KEY = re.compile(r"\b(?:person|visitor):[^\s,;)\]}>\"'`]+")
+#: person's id, and rides in a loop's `about` and `channel`. ITS PREFIX IS FOUND WHATEVER ITS
+#: CASE, as `is_private` reads it, and from the same definition (#347): matched in lower case
+#: only, `Person:bruno` was no key here, and a pack whose people did not include bruno handed Ana
+#: `said in Person:bruno` — his key and his id — measured on `34c91c7`.
+_PRIVATE_KEY = re.compile(r"\b(?i:" + "|".join(re.escape(p) for p in PRIVATE_PREFIXES)
+                          + r")[^\s,;)\]}>\"'`]+")
 SOMEONE, YOU = "[a person]", "[you]"
 THEIR_REQUESTER, YOUR_OWN = "its requester", "you (the person speaking)"
 
@@ -353,7 +358,8 @@ class Names:
         key = match.group(0)
         from openfactory.product.conversation import person_of
 
-        # the OWNER's id, whichever of their sessions the key names (#335)
+        # the OWNER's id, whichever of their sessions the key names (#335) — and only in the
+        # spelling a surface mints: a case-variant key is nobody's, the speaker's included (#347)
         mine = self.speaker and person_of(key) == self.speaker
         return "[your private conversation]" if mine else "[a private conversation]"
 

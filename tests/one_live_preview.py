@@ -28,3 +28,20 @@ def one_at_a_time() -> Iterator[None]:
             yield
         finally:
             fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+class TheCard:
+    """The card's tracker, for a live preview test: what the preview says on the card is kept here.
+
+    THESE TESTS REGISTER `Project(name="acme")`, whose GitHub row names no repository, and the step
+    that brings a preview up comments on the card through the project's tracker. Through the real
+    row that comment went to the repository the suite runs from, under the operator's own `gh`
+    login: 31 "Preview up" comments on `openfactory-core#12` between 2026-09-29 and 2026-10-01
+    (`adapters/github_cli.py`). Each test installs this in place of `activities._tracker_for`, and
+    asserts what was said."""
+
+    def __init__(self) -> None:
+        self.said: list[tuple[str, str]] = []
+
+    def comment(self, ref: str, body: str) -> None:
+        self.said.append((str(ref), body))

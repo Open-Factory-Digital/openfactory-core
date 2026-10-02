@@ -349,3 +349,30 @@ def next_ref(conn: sqlite3.Connection, project: str) -> int:
         "  UNION ALL SELECT MAX(ref) AS top FROM removed_cards WHERE project = ?)",
         (project, project)).fetchone()
     return int(row["top"] or 0) + 1
+
+
+def backup(to: str | os.PathLike[str], path: str | os.PathLike[str] | None = None) -> Path | None:
+    """A consistent copy of the whole board at `to` through SQLite's online backup — or None when
+    this machine holds no board file at all, which is nothing to copy rather than a failure. RAISES
+    on anything else: a deletion stands on this copy (#453).
+
+    THE BACKUP API, NOT A FILE COPY, for the reason `connect` is WAL: three processes write this
+    file, the newest rows sit in `-wal` beside it, and a copy of the main file alone would miss
+    exactly what was written last. And it never CREATES the file it was asked to copy — `connect`
+    would, schema and all — so a deployment with no local board does not grow one by being backed
+    up."""
+    source = Path(db_path(path))
+    if not source.is_file():
+        return None
+    target = Path(to)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(source, timeout=BUSY_TIMEOUT_MS / 1000)
+    try:
+        copy = sqlite3.connect(target)
+        try:
+            conn.backup(copy)
+        finally:
+            copy.close()
+    finally:
+        conn.close()
+    return target

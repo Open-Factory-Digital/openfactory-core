@@ -60,8 +60,9 @@ OUTSIDE_THE_DOOR: dict[tuple[str, str, str], tuple[str, str]] = {
     (MODULE, "file_defect", "set_column"): ("the product role files a defect (`filed`)", "3"),
     (MODULE, "_file_one", "set_column"): ("the product role files a requirement's card", "3"),
     (MODULE, "promote", "set_column"): ("the product role queues a card (`promoted`)", "3"),
-    (MODULE, "_track_defect", "open_loop"):
-        ("the delivery a reported defect is owed (`filed`)", "3"),
+    # one helper since #481 opens the delivery a defect and a card somebody asked for are owed
+    (MODULE, "_follow_card", "open_loop"):
+        ("the delivery a reported defect, or a card somebody asked for, is owed (`filed`)", "3"),
     ("openfactory/product/followup.py", "deliveries_to_open", "open_loop"):
         ("the delivery a requirement's cards are owed (`filed`)", "3"),
 }

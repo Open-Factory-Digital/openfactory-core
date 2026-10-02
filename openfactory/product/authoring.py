@@ -1605,6 +1605,115 @@ def record_distillate(*, docs_repo: str, clone_url: str, path: str, text: str, a
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+#: How a requirement the product role wrote from a conversation is told from one somebody else
+#: wrote — the subject and the line `propose_requirement` commits it with, and no other writer
+#: does. Read off the history, because the file itself cannot say who wrote it.
+_ROLE_REQUIREMENT = re.compile(r"^REQ-(\d{4,}): ")
+_ROLE_REQUIREMENT_LINE = "Proposed from a product conversation"
+
+
+@dataclass(frozen=True)
+class ContextForgotten:
+    """What `forget_distillates` removed from the context repository, and what it found and left.
+
+    `requirements` are the ones the role wrote from conversations, still on the base, each as
+    `REQ-NNNN path` — REPORTED, never removed (see `forget_distillates`)."""
+
+    ok: bool
+    distillates: tuple[str, ...] = ()
+    requirements: tuple[str, ...] = ()
+    detail: str = ""
+
+
+def _role_requirements(checkout: Path) -> list[str]:
+    """`REQ-NNNN path` for every requirement the role wrote from a conversation that is still in
+    `checkout` — the files each such commit ADDED, read off the history. [] for a history that
+    cannot be read: this is a report, and an empty one says nothing was found, not that none
+    exist — the caller's sentence says which."""
+    rc, out = _git(["log", "--format=%H%x1f%s%x1f%b%x1e"], cwd=checkout)
+    if rc != 0:
+        return []
+    found: list[str] = []
+    for record in out.split("\x1e"):
+        sha, _, rest = record.strip().partition("\x1f")
+        subject, _, body = rest.partition("\x1f")
+        number = _ROLE_REQUIREMENT.match(subject)
+        if not sha or not number or _ROLE_REQUIREMENT_LINE not in body:
+            continue
+        rc, added = _git(["show", "--diff-filter=A", "--name-only", "--format=", sha],
+                         cwd=checkout)
+        for path in (added.splitlines() if rc == 0 else []):
+            if path.strip() and (checkout / path.strip()).is_file():
+                found.append(f"REQ-{int(number.group(1)):04d} {path.strip()}")
+    return sorted(dict.fromkeys(found))
+
+
+def forget_distillates(*, docs_repo: str, clone_url: str, base: str = "main") -> ContextForgotten:
+    """The conversations' distillates removed from the context repository's base in one commit —
+    and the requirements the role wrote from conversations FOUND AND LEFT (#453).
+
+    WHAT GOES IS WHAT THE PLATFORM READ OUT OF THE CONVERSATIONS: every file at a distillate's own
+    path (`documents/record.py::distillate_of` — `conversations/<room|direct>/<digest>/…`), the
+    model's reading of a span, "evidence, never a decision" (`distil.py`). It is derived from the
+    lines `forget` deletes, written by no person's yes and cited by nothing, so it goes with them.
+    A file merely under `conversations/` at another path is somebody's, and stays.
+
+    WHAT STAYS IS WHAT A PERSON'S YES MADE THE PRODUCT'S (`sessions.py`: "what the conversation
+    already became stays"). A requirement the role wrote is a numbered promise an open card may
+    cite — `project forget` keeps the open cards — and one that superseded another stamped that one
+    retired IN THE SAME COMMIT (`_mark_superseded`), so removing the file alone leaves a requirement
+    retired by one that no longer exists. They are listed, by number and path, for a person to
+    retire the way requirements are retired: dropped, with a yes.
+
+    Straight to the base like every distillate write (`record_distillate`), through the project's
+    own clone URL and credential; a base that refuses a direct commit is said, and nothing changed.
+    """
+    import shutil
+
+    tmp = Path(tempfile.mkdtemp(prefix="openfactory-forget-"))
+    try:
+        rc, out = _git(["clone", "--branch", base, clone_url, str(tmp)])
+        if rc != 0:
+            return ContextForgotten(ok=False,
+                                    detail=f"could not clone {docs_repo}: {_scrub(out)[-200:]}")
+        from openfactory.product.documents.record import DISTILLATES, distillate_of
+
+        rc, listed = _git(["ls-files", "-z", "--", DISTILLATES], cwd=tmp)
+        if rc != 0:
+            return ContextForgotten(ok=False, detail=f"could not list {DISTILLATES}/ in "
+                                                     f"{docs_repo}: {_scrub(listed)[-200:]}")
+        distillates = tuple(p for p in listed.split("\0") if p and distillate_of(p) is not None)
+        requirements = tuple(_role_requirements(tmp))
+        if not distillates:
+            return ContextForgotten(ok=True, requirements=requirements)
+        rc, out = _git(["rm", "-q", "--", *distillates], cwd=tmp)
+        if rc != 0:
+            return ContextForgotten(ok=False, requirements=requirements,
+                                    detail=f"could not remove the distillates: "
+                                           f"{_scrub(out)[-200:]}")
+        refused = _refused_staging(tmp, [DISTILLATES], docs_repo=docs_repo,
+                                   writer="forget_distillates")
+        if refused:
+            return ContextForgotten(ok=False, requirements=requirements, detail=refused.detail)
+        rc, out = _git(["commit", "-m", f"the conversations' distillates, forgotten\n\n"
+                                        f"{len(distillates)} file(s) the platform read out of "
+                                        f"conversations an operator asked it to forget."],
+                       cwd=tmp)
+        if rc != 0:
+            return ContextForgotten(ok=False, requirements=requirements,
+                                    detail=f"nothing to commit: {_scrub(out)[-200:]}")
+        rc, out = _git(["push", clone_url, f"HEAD:{base}"], cwd=tmp)
+        if rc != 0:
+            return ContextForgotten(ok=False, requirements=requirements,
+                                    detail=f"the repository does not take a direct commit on "
+                                           f"{base} ({_scrub(out)[-120:]}) — nothing there changed")
+        log.warning("OPENFACTORY_PRODUCT_DISTILLATES_FORGOTTEN repo=%s files=%d", docs_repo,
+                    len(distillates))
+        return ContextForgotten(ok=True, distillates=distillates, requirements=requirements)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 #: The one folder a file filed from a conversation goes to (#336): the platform's, like
 #: `requirements/` and `domain/`. Every company arranges its context repository its own way, and a
 #: file brought in a conversation has no place in that arrangement the platform could know — the

@@ -36,7 +36,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict
 
 from openfactory.contracts.manifest import PreviewConfig
-from openfactory.preview.plan import Layout, Refused
+from openfactory.preview.plan import Layout, Refused, Side
 
 #: The only variables the compose CLI is run with. `--env-file /dev/null` keeps the project's
 #: `.env` out of interpolation, and a reduced environment keeps the worker's own out: a
@@ -304,6 +304,56 @@ def _read_inside(root: str, path: str) -> str | None:
         return fh.read()
 
 
+def texts_of(layout: Layout, cfg: PreviewConfig, *, tree: str, side: Side = "base",
+             of: str = "this preview", remedy: str = REMEDY
+             ) -> tuple[dict[str, str], Prescan] | Refused:
+    """Every file a shape reads, layout-relative → its text, and what the pre-scan found — the
+    files `cfg.compose` names and every file an `extends:` reaches, each scanned with its own
+    directory, the way the CLI resolves them — or every reason not.
+
+    ONE SIDE AT A TIME. `shape()` asks the base, always. The change's side is asked only to
+    measure a change's own shape (`preview/own.py`, #348): what is read there is digested and
+    compared, and reaches the compose CLI only after a product admin allowed that digest."""
+    root = layout.root(tree, side)
+    side_all = posixpath.join(layout.workdir, side)
+    whose = "base branch" if side == "base" else "change"
+    texts: dict[str, str] = {}
+    missing: list[str] = []
+    repo = layout.trees[tree].repo if tree in layout.trees else tree
+    for f in cfg.compose:
+        text = _read_inside(root, posixpath.join(root, f))
+        if text is None:
+            missing.append(f)
+        else:
+            texts[posixpath.normpath(posixpath.join(tree, f))] = text
+    if missing:
+        return Refused(reasons=tuple(
+            f"`{f}` is not a file of `{repo}`'s base branch — `preview.compose` names it, and a "
+            f"preview reads the base branch's files only." if side == "base" else
+            f"`{f}` is not a file of `{repo}`'s change — its `preview.compose` names it."
+            for f in missing))
+    found = prescan(texts, layout_dirs=layout.trees, of=of, remedy=remedy)
+    seen = set(texts)
+    queue = [p for p in found.extends if p not in seen]
+    while queue:
+        rel = queue.pop(0)
+        seen.add(rel)
+        text = _read_inside(side_all, posixpath.join(side_all, rel))
+        if text is None:
+            found = found + Prescan(refused=(
+                f"`{rel.split('/', 1)[-1]}` is named by an `extends:` and is not a file of the "
+                f"{whose}.",))
+            continue
+        texts[rel] = text
+        more = prescan({rel: text}, layout_dirs=layout.trees, relative_to=posixpath.dirname(rel),
+                       of=of, remedy=remedy)
+        found = found + more
+        queue += [p for p in more.extends if p not in seen and p not in queue]
+    if found.refused:
+        return Refused(reasons=found.refused)
+    return texts, found
+
+
 def shape(layout: Layout, cfg: PreviewConfig, *, tree: str,
           run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
           of: str = "this preview", remedy: str = REMEDY) -> Shape | Refused:
@@ -315,38 +365,12 @@ def shape(layout: Layout, cfg: PreviewConfig, *, tree: str,
     a directory that is not a tree of the layout is refused as not a repository `of` it, with
     `remedy` (a product's names `dirs:`)."""
     base = layout.root(tree, "base")
-    base_all = posixpath.join(layout.workdir, "base")
-    texts: dict[str, str] = {}
-    missing: list[str] = []
-    repo = layout.trees[tree].repo if tree in layout.trees else tree
-    for f in cfg.compose:
-        text = _read_inside(base, posixpath.join(base, f))
-        if text is None:
-            missing.append(f)
-        else:
-            texts[posixpath.normpath(posixpath.join(tree, f))] = text
-    if missing:
-        return Refused(reasons=tuple(
-            f"`{f}` is not a file of `{repo}`'s base branch — `preview.compose` names it, and a "
-            f"preview reads the base branch's files only." for f in missing))
-    found = prescan(texts, layout_dirs=layout.trees, of=of, remedy=remedy)
-    seen = set(texts)
-    queue = [p for p in found.extends if p not in seen]
-    while queue:
-        rel = queue.pop(0)
-        seen.add(rel)
-        text = _read_inside(base_all, posixpath.join(base_all, rel))
-        if text is None:
-            found = found + Prescan(refused=(
-                f"`{rel.split('/', 1)[-1]}` is named by an `extends:` and is not a file of the "
-                f"base branch.",))
-            continue
-        more = prescan({rel: text}, layout_dirs=layout.trees, relative_to=posixpath.dirname(rel),
-                       of=of, remedy=remedy)
-        found = found + more
-        queue += [p for p in more.extends if p not in seen and p not in queue]
-    if found.refused:
-        return Refused(reasons=found.refused)
+    read = texts_of(layout, cfg, tree=tree, side="base", of=of, remedy=remedy)
+    if isinstance(read, Refused):
+        return read
+    texts, found = read
+    texts = {k: v for k, v in texts.items()
+             if k in {posixpath.normpath(posixpath.join(tree, f)) for f in cfg.compose}}
     doc = canonicalise(base, cfg.compose, run=run)
     if isinstance(doc, Refused):
         return doc

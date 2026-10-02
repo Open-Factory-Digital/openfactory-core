@@ -225,6 +225,23 @@ def wait_is_over(wakes_at: object, kind: str, now: datetime) -> bool:
     return wakes_at is None and kind not in SELF_CLEARING
 
 
+def waits_on_a_person(job: dict) -> bool:
+    """WHETHER this run is waiting on a person at all — the engine's own two flags, read (#339).
+
+    BOTH ARE ANSWERED WITH `live`, once, in `view.list_jobs`: `attention` is a live run in a state
+    that needs a human, `wedged` is a live run nothing can advance. A run that is not live is
+    waiting on nobody — a terminated or completed workflow answers no signal, so every verb
+    offered about it is one the engine refuses.
+
+    THE INBOX RE-TESTED `state` INSTEAD, and `state` outlives the run. Measured (#339), the engine
+    listing both runs of one workflow id: the newer `completed`/`merged`, the older
+    `terminated`/`failed`, both `attention: false` — and the older one asked in `/api/inbox` with
+    `resume` and `skip`, each refused `conflict: … is not parked waiting for anybody`, while this
+    floor, reading the flags, said Armed. One predicate, so the inbox and rung 5 cannot part.
+    """
+    return job.get("attention") is True or job.get("wedged") is True
+
+
 def need_kind(job: dict) -> str:
     """WHY this job needs a person, from the row itself (#148).
 
@@ -440,7 +457,7 @@ def causes(inputs: FloorInputs, project: str = "") -> list[Cause]:
                   "kind": need_kind(j),
                   "note": (j.get("action") or {}).get("note") or ""}
                  for j in jobs
-                 if (j.get("attention") is True or j.get("wedged") is True)
+                 if waits_on_a_person(j)
                  and not _machine_still_owns(j, now)]
     seen = {(str(i.get("project")), str(i.get("issue"))) for i in needs}
     needs += [{"project": j.get("project"), "issue": j.get("issue"), "kind": "overdue"}

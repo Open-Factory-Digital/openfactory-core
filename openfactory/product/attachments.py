@@ -297,6 +297,39 @@ def forget_conversation(key: str, conversation: str) -> int:
     return erased
 
 
+def forget_product(key: str) -> int:
+    """EVERY file sent in any conversation of the product, erased — bytes, claims and all — and how
+    many (#453, `openfactory project forget`). Each under its own lock, like `forget_conversation`;
+    RAISES `filelock.Waited` when one stays locked past the wait, so a forgetting that did not
+    reach a file is never reported as done.
+
+    THE PRODUCT'S CONVERSATIONS ALL GO, SO EVERY CLAIM GOES: a file is kept only for the
+    conversations it was sent in, and a deletion of one conversation already erases a file nobody
+    else holds (`sessions.py`'s table, #335). What a person FILED into the context repository is
+    the product's there, and stays; this copy, kept for the conversation, does not."""
+    from openfactory.util.filelock import lock_beside
+
+    root = _root(key)
+    if not root.is_dir():
+        return 0
+    erased = 0
+    for meta in sorted(root.glob("*.json")):
+        lock = lock_beside(meta)
+        lock.acquire(timeout=10.0)
+        try:
+            meta.unlink(missing_ok=True)
+            erased += 1
+        finally:
+            lock.release()
+    # THE BYTES, ALL OF THEM, ONCE: every file's claims went above, so no blob here is any
+    # conversation's any more — a blob whose claims an interrupted `store` never wrote included
+    blobs = root / "blobs"
+    for blob in sorted(blobs.glob("*")) if blobs.is_dir() else ():
+        blob.unlink(missing_ok=True)
+    log.warning("OPENFACTORY_PRODUCT_ATTACHMENTS_FORGOTTEN product=%s files=%d", key, erased)
+    return erased
+
+
 # ── what a turn reads ───────────────────────────────────────────────────────────────────────────
 
 def read(project, attachment: Attachment, data: bytes):
@@ -396,4 +429,5 @@ def for_the_turn(project, attachments: list[Attachment], *, conversation: str,
 
 __all__ = ["IMAGES", "MAX_PER_MESSAGE", "Attachment", "Refused", "accepted_suffixes",
            "clean_name", "data_of", "discard", "find", "for_the_turn", "forget_conversation",
-           "listed_in", "mark_filed", "max_bytes", "read", "resolve", "sent_earlier", "store"]
+           "forget_product", "listed_in", "mark_filed", "max_bytes", "read", "resolve",
+           "sent_earlier", "store"]
