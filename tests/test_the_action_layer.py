@@ -296,6 +296,9 @@ OWNED = {
                      # #384: the product view's cards, and the control on a card, reach the role
                      # through the same seam — the module decides who may drop a card
                      "product_board/product_withdraw_card/"
+                     # #448: another pass from the card, through the same seam — the module
+                     # decides who may send a card's change back
+                     "product_adjust/"
                      "product_record_decision/product_note_fact/product_file_defect/product_file_ticket/"
                      "product_reorder/product_say/"
                      # `product_pending` LISTS rather than acts, and is here for the gate rather

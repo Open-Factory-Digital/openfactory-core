@@ -77,9 +77,10 @@ MUTATIONS = [
     ("the review pass runs inline for a remote add-on box", ACT,
      "    if not installed_box_traits(inp.sandbox).remote:  # a local box reads it inline",
      "    if True:  # a local box reads it inline"),
+    # re-pinned 2026-10-01 (#448): the project's pass budget is stamped on the next line
     ("start_jobs stops stamping the traits (the fallback always runs)", ACT,
-     "language=str(getattr(project, \"language\", \"\") or \"\"), box=traits),",
-     "language=str(getattr(project, \"language\", \"\") or \"\")),"),
+     "language=str(getattr(project, \"language\", \"\") or \"\"), box=traits,",
+     "language=str(getattr(project, \"language\", \"\") or \"\"),"),
     # re-pinned 2026-09-09: the durable refusal moved in beside the stamp (ADR-0049 D3), so the
     # two lines are no longer adjacent. The claim is unchanged — a plugin box refused at the
     # stamp's only writer — and it is now doubly true, because the refusal reads the same table.

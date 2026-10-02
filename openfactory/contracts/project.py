@@ -139,6 +139,18 @@ class BoxConfig(BaseModel):
 
 log = logging.getLogger("openfactory.contracts.project")
 
+#: HOW MANY MORE PASSES ONE CHANGE MAY BE SENT BACK FOR at the merge gate, when the project says
+#: nothing (#448). It was `JobWorkflow._ADJUST_MAX = 2`, hard-coded, and a third pass was refused
+#: with "2 adjust passes already spent" — measured live on 2026-09-30, a requester who rarely gets
+#: it right in one try met the wall on the loop the preview exists for. The default stays 2 so a
+#: project that says nothing, and every job already in flight (`JobParams.adjust_passes` defaults
+#: to it), behaves exactly as before.
+ADJUST_PASSES = 2
+#: The most a registry may ask for. Each pass is a paid agent run holding the project's one floor,
+#: and "an unbounded loop spends without a person noticing" (#448, *Not the fix*): a mistyped
+#: `adjust_passes: 100` is clamped here, said in the log, and is never a budget nobody chose.
+ADJUST_PASSES_CEILING = 10
+
 #: Names a preview may never be handed, whatever the registry lists — the factory's own
 #: credentials. Prefixes are matched by `startswith`; `ProjectRegistry.list()` also refuses every
 #: project's `token_env`, which only the registry as a whole knows.
@@ -431,6 +443,33 @@ class Project(BaseModel):
     #: What the operator decides about this project's previews (ADR-0050). Absent is the default
     #: policy; the MANIFEST's `preview:` block is what says a project can be previewed at all.
     preview: PreviewPolicy | None = None
+
+    #: How many more passes one change may be sent back for once its pull request waits on a
+    #: person — by the requester from the conversation or the card, or by an operator from the
+    #: floor (#448). THE OPERATOR'S, in the registry and never the manifest, for the reason
+    #: `preview.required` is (ADR-0050 D9): it bounds what the factory SPENDS, and the agent edits
+    #: the manifest.
+    #: Stamped on `JobParams` when a job starts, because the workflow may not read the registry
+    #: (ADR-0037 D4): a job in flight keeps the budget it started with. `0` is a project where every
+    #: "not yet" goes straight to a person.
+    adjust_passes: int = ADJUST_PASSES
+
+    @field_validator("adjust_passes", mode="before")
+    @classmethod
+    def _adjust_passes_in_bounds(cls, v):
+        """Clamped to [0, ADJUST_PASSES_CEILING], and the default when it is not a number — one bad
+        line in a registry nobody can open must not make every project unloadable (`BoxConfig`)."""
+        try:
+            wanted = int(v)
+        except (TypeError, ValueError):
+            log.warning("OPENFACTORY_ADJUST_PASSES_REFUSED %r is not a number of passes — the "
+                        "default of %d is used", v, ADJUST_PASSES)
+            return ADJUST_PASSES
+        kept = min(max(wanted, 0), ADJUST_PASSES_CEILING)
+        if kept != wanted:
+            log.warning("OPENFACTORY_ADJUST_PASSES_CLAMPED %d is outside [0, %d] — %d is used",
+                        wanted, ADJUST_PASSES_CEILING, kept)
+        return kept
 
     @model_validator(mode="before")
     @classmethod
