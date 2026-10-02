@@ -117,8 +117,10 @@ MUTATIONS = [
      "    if not waiting:\n        resumed = resume_card(ex, arrival_ts=arrival_ts)",
      "    if False:\n        resumed = resume_card(ex, arrival_ts=arrival_ts)"),
 
+    # RE-PINNED 2026-10-02 (#452): the hold names the store it is written to, on a second line
     ("a blocked card holds no question, so its answer has nothing to resume", ENGINE,
-     "        cards.hold_question(ex.key, composed, request, kind=kind, extra=extra)\n",
+     "        cards.hold_question(ex.key, composed, request, kind=kind, extra=extra,\n"
+     "                            project=project, conversation=ex.thread)\n",
      ""),
 
     ("the answer runs the whole loop again instead of one redraft", CARDS,

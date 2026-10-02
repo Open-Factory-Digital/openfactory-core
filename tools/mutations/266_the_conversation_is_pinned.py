@@ -314,14 +314,19 @@ MUTATIONS = [
 
     # ── 6. an expired proposal ───────────────────────────────────────────────────────────────────
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-10-02 (#452): the notice is read from the store too; `project=` wraps the line
     ("a late yes on an expired proposal is answered by the model", ENGINE,
-     "    if not waiting and (is_yes(text) or is_no(text)) and _expired_recently(thread, channel):",
+     "    if not waiting and (is_yes(text) or is_no(text)) and _expired_recently(thread, channel,\n"
+     "                                                                           project=project):",
      "    if False:"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-10-02 (#452): as the row above
     ("a late no on an expired proposal hears nothing about it", ENGINE,
-     "    if not waiting and (is_yes(text) or is_no(text)) and _expired_recently(thread, channel):",
-     "    if not waiting and is_yes(text) and _expired_recently(thread, channel):"),
+     "    if not waiting and (is_yes(text) or is_no(text)) and _expired_recently(thread, channel,\n"
+     "                                                                           project=project):",
+     "    if not waiting and is_yes(text) and _expired_recently(thread, channel,\n"
+     "                                                          project=project):"),
 
     ("the expiry notice is owed to every later yes, not to one", STAGING,
      "            if key and _EXPIRED_TOMBSTONES.pop(key, None) is not None:",
@@ -342,10 +347,11 @@ MUTATIONS = [
     ("an expiry is recorded durably as a rejection (#274)", STAGING,
      'EXPIRED = "expired"', 'EXPIRED = "reject"'),
 
+    # RE-PINNED 2026-10-02 (#452): the fold moved into `messages.asked`, which `pending` reads
     ("an answer to a token closes every later asking of it — a re-ask after expiry is hidden "
      "(#274)", MESSAGES,
-     "            if answered_at.get(m.token, -1) < at]",
-     "            if m.token not in answered_at]"),
+     "        out.append((m, history[settled] if settled > at else None))",
+     "        out.append((m, history[settled] if settled >= 0 else None))"),
 
     ("an answer to an earlier asking is read as the new one's — a re-ask is refused as decided "
      "(#274)", MESSAGES,

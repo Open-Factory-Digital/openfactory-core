@@ -53,9 +53,11 @@ OUTSIDE_THE_DOOR: dict[tuple[str, str, str], tuple[str, str]] = {
          "3"),
     ("openfactory/orchestrator/promotion.py", "_state", "set_state"):
         ("the box's promotion: merged, staged, released — outcomes handed back", "3"),
-    (MODULE, "_track_defect", "open_loop"):
-        ("the delivery a reported defect is owed (`filed`): opened beside the door until the "
-         "promise a filing opens is the door's `Loops` effect", "3"),
+    # one helper since #481 opens the delivery a defect and a card somebody asked for are owed
+    (MODULE, "_follow_card", "open_loop"):
+        ("the delivery a reported defect, or a card somebody asked for, is owed (`filed`): "
+         "opened beside the door until the promise a filing opens is the door's `Loops` effect",
+         "3"),
     ("openfactory/product/followup.py", "deliveries_to_open", "open_loop"):
         ("the delivery a requirement's cards are owed (`filed`) — one promise over several cards, "
          "the reused ones among them, which no single card's filing can open alone", "3"),

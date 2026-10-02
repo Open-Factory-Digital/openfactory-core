@@ -202,9 +202,10 @@ def test_a_sparse_row_still_produces_a_line():
 
 def test_the_three_realities_are_told_apart():
     snap = conversation.state_snapshot([
-        # (a) closed ticket + still-parked workflow → ORPHANED, skip to clean up
+        # (a) closed ticket + still-parked workflow → ORPHANED, skip to clean up. STILL PARKED is
+        # `attention`, which only a live run carries (#339): a closed run has nothing to skip.
         {"issue": "69", "state": "failed", "title": "Plan 88.1 — Spreadsheet import",
-         "ticket_state": "closed", "board": "Done"},
+         "ticket_state": "closed", "board": "Done", "attention": True},
         # (b) closed + terminal → truly resolved, no flag
         {"issue": "393", "state": "merged", "title": "Plan 92a", "ticket_state": "closed"},
         # (c) open + parked → genuine attention, and the board column shows

@@ -48,9 +48,11 @@ MUTATIONS = [
 
     ("the margin for the rest of the command goes, so a prompt just under the cap overflows it "
      "once the harness path, the flags and the model are added",
+     # RE-PINNED (#418): the margin moved into `ARGV_PROMPT_CEILING`, the one line the refusal and
+     # the doctor's note both read; the cut is the same one, made where the margin now lives.
      "openfactory/adapters/agent/base.py",
-     "    if _argv_bytes(prompt) > MAX_ARG_STRLEN - _COMMAND_MARGIN:",
-     "    if _argv_bytes(prompt) > MAX_ARG_STRLEN:"),
+     "ARGV_PROMPT_CEILING = MAX_ARG_STRLEN - _COMMAND_MARGIN",
+     "ARGV_PROMPT_CEILING = MAX_ARG_STRLEN"),
 
     # ── kimi: the row whose CLI cannot read a staged prompt ──────────────────────────────────────
     ("kimi asks for the channel again, so `-p -` hands the model the one-character task `-` on "

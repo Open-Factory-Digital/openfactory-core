@@ -314,10 +314,11 @@ class Probes:
     #: RUN anything in a missing box does: `box answer` read that exit 1 as the harness refusing,
     #: and recorded a spend for a call nobody made.
     box_start_error: Callable[[], str] = lambda: ""
-    #: `(per_role_bytes, overflow_note)` — how many BYTES each declared document role would inline
-    #: into every pass (after `_MAX_DOC_CHARS` truncation) and, when it would not fit a box that
-    #: cannot hand the prompt over off argv, the note that says so (#7). None = an older Probes, or
-    #: a checkout/manifest this call could not read; the station is skipped rather than invented.
+    #: `(per_role_bytes, note)` — how many BYTES each declared document role would inline into
+    #: every pass (after `_MAX_DOC_CHARS` truncation) and, on a box or harness that keeps the prompt
+    #: on the command line, how the prompt a pass carries compares with the line it refuses at (#7,
+    #: #418). None = an older Probes, or a checkout/manifest this call could not read; the station
+    #: is skipped rather than invented.
     inlined_documents: Callable[[], tuple[dict[str, int], str] | None] | None = None
 
 
@@ -1361,7 +1362,7 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
         return {n: "1" for n in found}
 
     def _inlined_documents() -> tuple[dict[str, int], str] | None:
-        """Per-role inlined bytes and, when it would not fit this box off argv, the note (#7).
+        """Per-role inlined bytes and, when this box keeps the prompt on argv, the note (#7).
 
         MEASURED ON THE SAME CHECKOUT AND MANIFEST the proof runs against, so the number is the one
         the job will pay. Whether the box stages input is read off the real box instance the way
@@ -1372,6 +1373,7 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
         from openfactory.orchestrator.context import (
             inlined_document_bytes,
             inlined_document_overflow,
+            prompt_floor_bytes,
         )
         from openfactory.policy.profiles import resolve_profile
 
@@ -1382,12 +1384,16 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
             # `ProfileError` is caught by the same `except` below: unmeasurable, not a number.
             profile = resolve_profile(manifest.profile, project_dir=repo)
             per_role = inlined_document_bytes(manifest, repo, profile=profile)
+            # THE PROMPT A PASS CARRIES, NOT THE DOCUMENTS ALONE (#418) — what `stage_prompt` will
+            # measure, so the note cannot call fitting a project the pass refuses at pickup.
+            floor = prompt_floor_bytes(manifest, repo, profile=profile)
         except Exception as exc:  # a diagnostic never breaks on a doc it can't read
             log.info("could not measure %s's inlined documents (%s)",
                      getattr(project, "name", "?"), str(exc)[:120])
             return None
         stages = callable(getattr(box, "stage_input", None))
-        note = inlined_document_overflow(sum(per_role.values()), stages_input=stages,
+        note = inlined_document_overflow(sum(per_role.values()), prompt_bytes=floor,
+                                         stages_input=stages,
                                          harness=harness_kind(project, "executor"))
         return per_role, note
 

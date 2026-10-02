@@ -56,11 +56,23 @@ ANSWERED = "answered"
 #: the factory has said. It is NOT `answered`, which closes a specific `ask` by token; this is
 #: somebody starting a conversation.
 TOLD = "told"
+#: WHAT THE PRODUCT ROLE HOLDS FOR A PERSON'S WORDS (#452) — a wait that is not a question with
+#: two buttons, so it is not `ASKED`: the one question a card was held on (ADR-0054 D4), and the
+#: notice a late yes is owed once its proposal aged out. Both lived in the worker's memory
+#: (`cards._OPEN`, `staging._EXPIRED_TOMBSTONES`), so a restart, a redeploy or a second worker
+#: forgot them and the person's answer arrived as an ordinary message — measured on `main`: a
+#: question held, the worker's state dropped, the answer started the role's whole turn again.
+#:
+#: ITS OWN KIND, AND NOT AN `ASKED` ROW WITHOUT OPTIONS: `pending` is the list every surface draws
+#: Approve / Reject for (the panel's inbox, `staging.waiting_in`), and a question answered in words
+#: has nothing to press. A hold is opened by a row with no `answer` and closed by a later row of
+#: the same token that carries one (`held`) — the store stays append-only, like the rest of it.
+HELD = "held"
 
 #: Every kind a row may carry. The reader gates on this set, so a kind added above and left out
 #: here would be written and never read back — which is exactly what `TOLD` did for the hour
 #: between adding it and writing the guard.
-KINDS = frozenset({SAID, ASKED, ANSWERED, TOLD})
+KINDS = frozenset({SAID, ASKED, ANSWERED, TOLD, HELD})
 
 
 @dataclass(frozen=True)
@@ -85,6 +97,10 @@ class Message:
     #: product proposal travels here, frozen, so the process that answers — the panel, a
     #: different service — can reconstruct exactly what was staged. The store never reads it.
     payload: str = ""
+    #: For `held`: the moment the hold stops meaning anything, as an ISO stamp — WRITTEN, so every
+    #: process that reads the hold ages it by the same deadline (#452). "" for one that ends only
+    #: when it is answered.
+    expires: str = ""
 
 
 @dataclass
@@ -114,6 +130,7 @@ def _row(message: Message) -> dict:
         "by": message.by,
         "said_ts": message.ts,
         "payload": message.payload,
+        "expires": message.expires,
     }
 
 
@@ -140,6 +157,7 @@ def _message(extra: dict) -> Message | None:
             answer=str(extra.get("answer") or ""),
             by=str(extra.get("by") or ""),
             payload=str(extra.get("payload") or ""),
+            expires=str(extra.get("expires") or ""),
         )
     except Exception as exc:  # noqa: BLE001 — one bad row must not cost the history
         log.warning("skipping an unreadable message row (%s)", exc)
@@ -283,6 +301,20 @@ def pending(project: str, *, scan=None) -> list[Pending]:
     refused by `staging.consume` as decided elsewhere. The same was already true after a no.
     Read in order, like the loop ledger's fold: the latest ask per key is open until an answer
     to its token comes after it."""
+    return [Pending(token=m.token, text=m.text, ts=m.ts, channel=m.channel,
+                    approve=m.approve or "Approve", reject=m.reject or "Reject",
+                    payload=m.payload)
+            for m, answered in asked(project, scan=scan) if answered is None]
+
+
+def asked(project: str, *, scan=None) -> list[tuple[Message, Message | None]]:
+    """The latest ask under each conversation key, oldest first, with the answer that settled it
+    — None while it is open. `pending` is this list's open half, folded by the same rule.
+
+    THE SETTLED HALF IS WHAT A SECOND PROCESS NEEDS (#452). A worker that staged a proposal keeps
+    its own copy, and a copy cannot say that the proposal was answered — or replaced — in another
+    process since. Only this can: the copy is believed while the store's latest ask under its key
+    is the same proposal, still open (`staging.pending_for`)."""
     history = read(project, scan=scan)
     latest_per_key: dict[str, int] = {}
     answered_at: dict[str, int] = {}
@@ -291,12 +323,56 @@ def pending(project: str, *, scan=None) -> list[Pending]:
             latest_per_key[m.token.partition("|")[0]] = at
         elif m.kind == ANSWERED and m.token:
             answered_at[m.token] = at
-    return [Pending(token=m.token, text=m.text, ts=m.ts, channel=m.channel,
-                    approve=m.approve or "Approve", reject=m.reject or "Reject",
-                    payload=m.payload)
-            for at in sorted(latest_per_key.values())
-            for m in (history[at],)
-            if answered_at.get(m.token, -1) < at]
+    out: list[tuple[Message, Message | None]] = []
+    for at in sorted(latest_per_key.values()):
+        m = history[at]
+        settled = answered_at.get(m.token, -1)
+        out.append((m, history[settled] if settled > at else None))
+    return out
+
+
+def hold(project: str, text: str, *, token: str, channel: str = "", payload: str = "",
+         expires: str = "", sink=None, now: str | None = None) -> bool:
+    """Record a wait the product role holds for a person's WORDS (#452). Returns whether it landed.
+
+    `token` names the wait and is what closes it (`release`); a later hold of the same token
+    replaces it, the way a later ask replaces an ask. `expires` is its written deadline ("" for
+    none). Best-effort at every caller, like the staging mirror: a hold that could not be written
+    is kept in that process's memory as before, and a restart then loses it — said in the log."""
+    return write(project, [Message(kind=HELD, text=text, ts=now or _stamp(), channel=channel,
+                                   token=token, payload=payload, expires=expires)],
+                 sink=sink, now=now) == 1
+
+
+def release(project: str, *, token: str, answer: str, by: str = "", sink=None,
+            now: str | None = None) -> bool:
+    """Close the hold named `token` — `answer` says how it ended (taken, expired, told). Returns
+    whether it landed. A row of its own, never an edit: what was held survives being answered."""
+    return write(project, [Message(kind=HELD, text="", ts=now or _stamp(), token=token,
+                                   answer=answer or "closed", by=by)],
+                 sink=sink, now=now) == 1
+
+
+def held(project: str, *, scan=None) -> list[tuple[Message, Message | None]]:
+    """Every hold's latest opening, oldest first, with the row that closed it — None while it is
+    open. Folded like `asked`: the latest opening of a token is open until a closing row of that
+    token comes after it, so a hold opened again after it was answered is a new, open hold."""
+    history = read(project, scan=scan)
+    opened: dict[str, int] = {}
+    closed: dict[str, int] = {}
+    for at, m in enumerate(history):
+        if m.kind != HELD or not m.token:
+            continue
+        if m.answer:
+            closed[m.token] = at
+        else:
+            opened[m.token] = at
+    out: list[tuple[Message, Message | None]] = []
+    for at in sorted(opened.values()):
+        m = history[at]
+        ended = closed.get(m.token, -1)
+        out.append((m, history[ended] if ended > at else None))
+    return out
 
 
 #: How long the tech-lead's staged suggestion stays clickable. Long enough to survive a refresh, a

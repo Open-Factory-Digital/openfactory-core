@@ -63,11 +63,12 @@ MUTATIONS = [
     ("THE CI REPAIR AS IT WAS: the repair's own price, no review, no rows", MACHINE,
      "            return as_left(self._charged(RunResult(\n"
      "                ticket_id=ticket.id, state=JobState.PR_OPEN, branch=branch,\n"
-     "                auto_merge=True, review=review,\n"
+     "                auto_merge=True, review=review, validations=validations,\n"
      "            )))\n",
      "            return as_left(RunResult(\n"
      "                ticket_id=ticket.id, state=JobState.PR_OPEN, branch=branch,\n"
      "                auto_merge=True, total_cost_usd=rep.cost_usd, review=review,\n"
+     "                validations=validations,\n"
      "            ))\n"),
 
     ("THE RE-REVIEW AS IT WAS: the total, and not the row it is made of", MACHINE,

@@ -54,10 +54,11 @@ MUTATIONS = [
     ("the merge wait stays a gate through the whole repair pass — the original defect", WORKFLOW,
      # re-pinned 2026-09-07: #151 gave the fresh-review path the same first line; the note tells
      # the repair pass's wait from it
+     # re-pinned 2026-10-02: #330's `address` shares the line, its words in `asked`
      '        self._merge_wait = {"pr_url": pr_url, "auto": False, "working": True,\n'
-     '                            "note": f"{who} asked for a change — one more pass on the same PR"}',
+     '                            "note": f"{who} {asked} — one more pass on the same PR"}',
      '        self._merge_wait = {"pr_url": pr_url, "auto": False,\n'
-     '                            "note": f"{who} asked for a change — one more pass on the same PR"}'),
+     '                            "note": f"{who} {asked} — one more pass on the same PR"}'),
 
     ("the view stops reading the flag, so the gate reopens over a moving branch", VIEW,
      '                if mw.get("working"):\n'

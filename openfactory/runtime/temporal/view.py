@@ -659,6 +659,20 @@ async def job_detail(client: Client, project: str, issue: str, namespace: str) -
     return out
 
 
+def _lists_review_comments(project: str) -> bool:
+    """Whether `project`'s forge can list a pull request's review comments (#330); False when the
+    project cannot be read, because a button nobody can use is worse than none."""
+    try:
+        from openfactory.adapters.forge.registry import lists_review_comments
+        from openfactory.registry import ProjectRegistry
+
+        return lists_review_comments(ProjectRegistry().get(project))
+    except Exception as exc:  # noqa: BLE001 — unknown is not able
+        log.info("could not ask whether %s's forge lists review comments (%s)", project,
+                 str(exc)[:120])
+        return False
+
+
 def _ci_provider(project: str) -> str:
     """Whose CI these checks came from, for the panel's own heading.
 
@@ -1052,6 +1066,12 @@ async def list_jobs(
         # its refusal travels on the row.
         row["refused"] = (await _gate_refusal(client, wf.id, wf.run_id)
                           if row["state"] == "awaiting_prod_approval" else "")
+        # WHETHER `address` IS REAL AT THIS GATE (#330) is the forge's to say, and the job cannot:
+        # a workflow does not know its project's forge row. Asked only of a job at a merge gate,
+        # and asking builds the row without a call.
+        if row["state"] == "awaiting_your_merge" and isinstance(row["action"], dict):
+            row["action"] = {**row["action"],
+                             "can_address": _lists_review_comments(row.get("project") or "")}
         # Reconcile the visibility status (which LAGS) with the truth: the panel paints an
         # 'in production' machine card for any job whose status=='running', so a lagged
         # 'running' on an already-closed workflow was the frozen ghost. Only a genuinely live
@@ -1264,8 +1284,8 @@ async def answer_merge_gate(client: Client, project: str, issue: str, *, answer:
     THE MERGE GATE IS NOT A PARK, which is why this exists at all rather than reusing `act_job`.
     During the merge watch `_paused` is never set, so `awaiting_action` is None and every existing
     answer path refuses. `awaiting_merge` is the gate's own query and this is its own signal."""
-    if answer not in ("merge", "adjust", "discard", "review"):
-        raise ValueError("answer must be 'merge', 'adjust', 'discard' or 'review'")
+    if answer not in ("merge", "adjust", "address", "discard", "review"):
+        raise ValueError("answer must be 'merge', 'adjust', 'address', 'discard' or 'review'")
     from openfactory import gate_seal
 
     wf_id = job_id(project, issue)
@@ -1280,6 +1300,14 @@ async def answer_merge_gate(client: Client, project: str, issue: str, *, answer:
     seal = gate_seal.seal(gate_seal.MERGE_GATE, wf_id, answer, instruction, by)
     await handle.signal(JobWorkflow.human_merge_gate, args=[answer, instruction, by, seal])
     return dict(gate)
+
+
+async def merge_gate_of(client: Client, project: str, issue: str) -> dict | None:
+    """The merge-wait a job is holding, or None when it is not at the merge gate — asked, never
+    answered. For a row that must read the pull request before it decides to answer (#330)."""
+    gate = await client.get_workflow_handle(job_id(project, issue)).query(
+        JobWorkflow.awaiting_merge)
+    return dict(gate) if gate else None
 
 
 class GateDeaf(RuntimeError):
