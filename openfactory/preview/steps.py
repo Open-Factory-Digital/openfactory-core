@@ -378,13 +378,15 @@ def up(project, token: str, planned: PreviewPlan, *, runtime, world: World) -> P
                    if t.has_change and t.pr_url},
             images=dict(result.images), base_moved=_base_moved(planned.layout),
             notes=tuple(dict.fromkeys([*planned.notes, *result.notes])), log_dir=result.log_dir,
-            expires_at=int(planned.expires_at), why="", stale=())
+            expires_at=int(planned.expires_at), why="", stale=(),
+            own_shape=planned.own_shape, shape_from=planned.shape_from)
         if planned.pr_urls:
             said["pr_urls"] = tuple(planned.pr_urls)
         world.write(name, token, preview.LIVE, **said)
         return result
     world.write(name, token, preview.FAILED, why=result.why, log_dir=result.log_dir,
-                notes=tuple(planned.notes), ended_at=int(world.clock()))
+                notes=tuple(planned.notes), ended_at=int(world.clock()),
+                own_shape=planned.own_shape, shape_from=planned.shape_from)
     if runtime.watch(planned.compose_project) is None:
         runtime.down(planned.compose_project, planned.workdir)
     return result

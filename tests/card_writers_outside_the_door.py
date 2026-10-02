@@ -6,9 +6,13 @@ committed ceiling on its length and a baseline of its entries: a new writer outs
 the suite until somebody raises the ceiling and widens the baseline in the same change, visibly, in
 review. An entry whose call is gone fails too, so the list never claims a writer that moved in.
 
-Keyed by `(file, function, call)`. Slice 1 (#412) moved the endings a person causes; slice 2 (#413)
-moves the job's endings; slice 3 (#414) moves filing, promotion, edits and the box's outcomes, and
-ends with this list empty.
+Keyed by `(file, function, call)`. Slice 1 (#412) moved the endings a person causes. Slice 2 (#413)
+moved the job's park, settle, sweeps and adjust passes, and LEFT the twelve writers below that it
+did not reach: a split's children and parent, the gather's question, the delivery announcements
+and the ready-for-you tellings. Slice 3's first part (#414) moved filing, promotion, edits and the
+stale-pickup healer. What remains is slice 3's to finish (#414's second part): those twelve, the
+box's outcomes, and the promise a filing opens. #414 is done when this list is empty (D9), and
+not before.
 """
 
 from __future__ import annotations
@@ -17,41 +21,43 @@ ACTIVITIES = "openfactory/runtime/temporal/activities.py"
 MODULE = "openfactory/product/module.py"
 
 OUTSIDE_THE_DOOR: dict[tuple[str, str, str], tuple[str, str]] = {
-    # ── slice 2 (#413): the job's endings, from the workflow and the worker ─────────────────────
+    # ── left by slice 2 (#413), moved by slice 3's second part (#414): the job's endings ──────
     (ACTIVITIES, "_child_to_todo", "set_state"):
-        ("a split's children queued, on a tracker with no board", "2"),
+        ("a split's children queued, on a tracker with no board", "3"),
     (ACTIVITIES, "_child_to_todo", "set_status"):
-        ("a split's children queued, on the board", "2"),
+        ("a split's children queued, on the board", "3"),
     (ACTIVITIES, "_do_split", "close_ticket"):
-        ("the split parent closed as not delivered: its work lives in its children", "2"),
+        ("the split parent closed as not delivered: its work lives in its children", "3"),
     (ACTIVITIES, "_do_gather", "set_state"):
-        ("a question to the requester before the plan: the card parks (`question_asked`)", "2"),
+        ("a question to the requester before the plan: the card parks (`question_asked`)", "3"),
     (ACTIVITIES, "_do_gather", "open_loop"):
-        ("the CARD_QUESTION that question opens (`question_asked`)", "2"),
+        ("the CARD_QUESTION that question opens (`question_asked`)", "3"),
     (ACTIVITIES, "_a_card_was_finished", "card_finished"):
-        ("a job that ended with its card done announces the delivery (`delivered`)", "2"),
+        ("a job that ended with its card done announces the delivery (`delivered`)", "3"),
     (ACTIVITIES, "_product_followup", "deliver"):
-        ("the weekly catch-all of the delivery announcement (`delivered`)", "2"),
+        ("the weekly catch-all of the delivery announcement (`delivered`)", "3"),
     (ACTIVITIES, "_product_followup", "close_by_observation"):
-        ("the weekly sweep closes the loops the board resolved (`delivered`)", "2"),
+        ("the weekly sweep closes the loops the board resolved (`delivered`)", "3"),
     (ACTIVITIES, "_tell", "ready_for_you"):
-        ("a pull request a person must decide entered the merge watch (`pr_opened`)", "2"),
+        ("a pull request a person must decide entered the merge watch (`pr_opened`)", "3"),
     (ACTIVITIES, "_pull_requests_waiting", "ready_at_the_gate"):
-        ("the hourly round's catch-all of the same (`pr_opened`)", "2"),
+        ("the hourly round's catch-all of the same (`pr_opened`)", "3"),
     ("openfactory/product/events.py", "deliver", "close_by_observation"):
-        ("a delivery announced closes its loop (`delivered`)", "2"),
+        ("a delivery announced closes its loop (`delivered`)", "3"),
     ("openfactory/ops/impediment.py", "resolved", "close_ticket"):
         ("the factory closes its own impediment card when the impediment is gone — a platform "
-         "ending", "2"),
+         "ending", "3"),
     # ── slice 3 (#414): the box's outcomes (its second part), and the promise a filing opens ────
     ("openfactory/orchestrator/machine.py", "_set_state", "set_state"):
         ("the box: its outcomes are handed back to the worker; its progress marks stay, by rule",
          "3"),
     ("openfactory/orchestrator/promotion.py", "_state", "set_state"):
         ("the box's promotion: merged, staged, released — outcomes handed back", "3"),
-    (MODULE, "_track_defect", "open_loop"):
-        ("the delivery a reported defect is owed (`filed`): opened beside the door until the "
-         "promise a filing opens is the door's `Loops` effect", "3"),
+    # one helper since #481 opens the delivery a defect and a card somebody asked for are owed
+    (MODULE, "_follow_card", "open_loop"):
+        ("the delivery a reported defect, or a card somebody asked for, is owed (`filed`): "
+         "opened beside the door until the promise a filing opens is the door's `Loops` effect",
+         "3"),
     ("openfactory/product/followup.py", "deliveries_to_open", "open_loop"):
         ("the delivery a requirement's cards are owed (`filed`) — one promise over several cards, "
          "the reused ones among them, which no single card's filing can open alone", "3"),

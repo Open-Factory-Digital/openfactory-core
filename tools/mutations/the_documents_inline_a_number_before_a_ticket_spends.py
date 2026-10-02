@@ -35,13 +35,16 @@ MUTATIONS = [
     ("the per-role split collapses into one total, so the report is a single number that cannot "
      "point at the role — `docs.constraints` vs the framework baseline vs `docs.guidelines` — an "
      "operator would change to shrink it",
+     # RE-PINNED (#417): the guidelines are grouped by the key that names them (`by_source`), so
+     # the last line of the split is a comprehension over those groups; the cut is the same one.
      "openfactory/orchestrator/context.py",
      '        "docs.constraints": _inlined_bytes(constraints),\n'
      '        "framework baseline": _inlined_bytes(framework),\n'
      '        "operator guidelines": _inlined_bytes(operator_tier),\n'
-     '        "docs.guidelines": _inlined_bytes(project_docs),',
+     "        **{source: _inlined_bytes(texts) for source, texts in by_source.items()},",
      '        "documents": _inlined_bytes(\n'
-     "            constraints + framework + operator_tier + project_docs),"),
+     "            constraints + framework + operator_tier\n"
+     "            + [t for texts in by_source.values() for t in texts]),"),
 
     ("the note fires for a deployment that CAN hand the prompt over off argv, so a working staging "
      "box with a stdin-capable harness is told it has a problem it does not have — the false alarm "

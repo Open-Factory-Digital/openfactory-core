@@ -68,7 +68,6 @@ from openfactory.product.staging import (  # noqa: F401,E402 — re-exported for
     _entry_models,
     _expired_recently,
     _freeze,
-    _pending_from_store,
     _proposal_summary,
     _thaw,
     consume,

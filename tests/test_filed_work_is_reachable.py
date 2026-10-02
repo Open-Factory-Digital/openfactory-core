@@ -112,7 +112,9 @@ def test_a_filed_card_is_placed_in_the_filing_column():
     # the literal on purpose: computing the expectation from FILING_COLUMN would bless whatever
     # the constant is changed to — including the column that spends money
     assert board.placed == [("88", "Backlog")]
-    assert mod._board_tracked == [88], "the filed defect never opened its delivery follow-up"
+    # THE TRACKER'S OWN REF, as `_track_defect` is typed (#479) — the int it was handed until then
+    # wrote the same `defeito-88` row, and was 0 for a Jira key
+    assert mod._board_tracked == ["88"], "the filed defect never opened its delivery follow-up"
 
 
 def test_a_defect_that_cannot_be_placed_is_still_filed():

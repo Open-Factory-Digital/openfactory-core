@@ -248,9 +248,11 @@ MUTATIONS = [
      "        (Path(project_memory_dir(project)) / INDEX_FILE).unlink(missing_ok=True)",
      "        pass", STEP),
 
-    ("the deletion command never reaches the derived stores", "openfactory/cli.py",
-     "        lines = forget_conversations(where.key, members)",
-     "        lines = 0", STEP),
+    # RE-PINNED 2026-10-02 (#453): the deletion command's call moved into the conversations
+    # layer both `project forget-conversations` and `project forget` delete through
+    ("the deletion command never reaches the derived stores", "openfactory/product/forget.py",
+     '        counts["index lines"] = forget_conversations(where.key, list(members))',
+     '        counts["index lines"] = 0', STEP),
 
     # ── 7. exact terms beat semantic neighbours ───────────────────────────────────────────────
     ("the exact-term tier is not the first key of the order", SEARCH,

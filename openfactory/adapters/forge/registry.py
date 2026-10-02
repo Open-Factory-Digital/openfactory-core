@@ -25,6 +25,7 @@ It is not harmless now, which is why the builder resolves the credential per pro
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 
 from openfactory import plugins
@@ -229,3 +230,19 @@ def build_forge(project, *, token=None, token_provider=None):
             f"as a confusing auth error rather than as the configuration mistake it is."
         )
     return builder(project, token=token, token_provider=token_provider)
+
+
+def lists_review_comments(project) -> bool:
+    """Whether `project`'s forge row can list a pull request's review comments (#330).
+
+    ASKED OF THE ROW IT BUILDS, and building one makes no call: the surfaces that offer `address`
+    ask this to decide whether to show it, and a button offered on a forge that keeps no comments
+    is advice nobody can take. A row that cannot be built cannot list either."""
+    try:
+        forge = build_forge(project)
+    except Exception as exc:  # noqa: BLE001 — not built is not able
+        logging.getLogger("openfactory.forge").info(
+            "the forge of %s could not be built to ask whether it lists review comments (%s)",
+            getattr(project, "name", "?"), str(exc)[:160])
+        return False
+    return callable(getattr(forge, "review_comments", None))
