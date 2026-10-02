@@ -2885,14 +2885,17 @@ class ProductModule:
         if not opened.ok or opened.existed:
             return opened
         ref, url = opened.ref, opened.url
-        number = _as_ticket_number(ref)
+        # THE TRACKER'S OWN REF, NEVER A NUMBER ONLY SOME TRACKERS MINT (#479): read as one, a
+        # Jira key was 0 and the card was never placed — nor was that said, the warning below
+        # sat inside the skipped block. The board port takes the provider's ref (C-05).
+        key = canonical_ref(ref)
         board = self._board_or_default(board)
         detail = ""
-        if board is not None and number:
+        if board is not None and key:
             placed = False
             try:
                 board.add_item(issue_url=url)
-                placed = bool(board.set_column(issue=str(number), issue_url=url,
+                placed = bool(board.set_column(issue=key, issue_url=url,
                                                name=self.FILING_COLUMN))
             except Exception as exc:  # noqa: BLE001 — the card exists; placement is repairable
                 log.info("card %s opened but not placed on the board (%s)", ref, exc)
@@ -2973,15 +2976,17 @@ class ProductModule:
             return filed
         ref = filed.ref
 
-        number = _as_ticket_number(ref)
+        # KEYED ON THE TRACKER'S OWN REF, the placement and the follow-up alike (#479) — see
+        # `file_ticket`: a Jira key was 0, so a reported defect was neither placed nor followed
+        key = canonical_ref(ref)
         board = self._board_or_default(board)
         detail = ""
-        if board is not None and number:
+        if board is not None and key:
             placed = False
             try:
                 url = self._issue_url(tracker, ref)
                 board.add_item(issue_url=url)
-                placed = bool(board.set_column(issue=str(number), issue_url=url,
+                placed = bool(board.set_column(issue=key, issue_url=url,
                                                name=self.FILING_COLUMN))
             except Exception as exc:  # noqa: BLE001 — the issue exists; placement is repairable
                 log.info("defect %s filed but not placed on the board (%s)", ref, exc)
@@ -2995,8 +3000,8 @@ class ProductModule:
                             "but has no column, so the queue cannot see it until a person places "
                             "it", ref, self.FILING_COLUMN)
                 detail = said["defect_unplaced"]
-        if number:
-            self._track_defect(number, conversation=conversation, requester=requester)
+        if key:
+            self._track_defect(key, conversation=conversation, requester=requester)
         return WriteResult(ok=True, ref=str(ref), detail=detail)
 
     def _track_defect(self, number: str, *, conversation: str = "",
@@ -3004,8 +3009,9 @@ class ProductModule:
         """A delivery loop on the fix, so 'consertamos o que você reportou' gets said unprompted —
         in the conversation it was reported in, when there is one (#267 slice 3).
 
-        Subject `defeito-N` rather than a requirement number: the loop closes when THIS issue
-        closes, and the sweep's delivered() pass already knows how to watch a set of issues."""
+        Subject `defeito-<ref>` rather than a requirement number: the loop closes when THIS issue
+        closes, and the sweep's delivered() pass already knows how to watch a set of issues. The
+        ref is the tracker's own — `defeito-88` on GitHub, `defeito-CONT-412` on Jira (#479)."""
         try:
             from datetime import UTC, datetime
 
@@ -3418,26 +3424,25 @@ class ProductModule:
             # in the Backlog. `file_defect` already reports them through a single flag; the branch
             # here was written twice and the raising half answered in English with the exception
             # inside it. One state, one sentence, one place to change it.
-            from openfactory.contracts.refs import ref_number, split_repo_ref
+            from openfactory.contracts.refs import split_repo_ref
 
             placed = False
-            # a card filed in another repository of the product comes back QUALIFIED (C-18); its
-            # number is the part after the repository
-            number = ref_number(split_repo_ref(ref)[1])
-            if number is None:
-                # `BoardAdapter` is typed with an integer issue id (C-05). Until that changes, a
-                # non-numeric ref cannot be placed — but the issue EXISTS, so this reports the same
-                # way a board refusal does rather than raising over a courtesy.
-                log.warning("OPENFACTORY_PRODUCT_CARD_NOT_PLACED ref=%s reason=non-numeric — the "
-                            "board "
-                            "port takes an integer issue id", ref)
+            # a card filed in another repository of the product comes back QUALIFIED (C-18); the
+            # board is asked for the part after the repository — the tracker's own ref, a number
+            # on GitHub and a key on Jira, which the port takes since C-05 (#479)
+            key = split_repo_ref(ref)[1]
+            if not key:
+                # NO REF, NO CARD TO MOVE — but the tracker said it filed one, so this reports the
+                # same way a board refusal does rather than raising over a courtesy
+                log.warning("OPENFACTORY_PRODUCT_CARD_NOT_PLACED ref=%r reason=no-ref — the "
+                            "tracker answered no ref for the card it filed", ref)
                 return WriteResult(ok=True, ref=str(ref),
                                    detail="criado, mas o quadro não aceitou a colocação — o "
                                           "cartão está sem coluna e o time foi avisado.")
             try:
                 url = self._issue_url(tracker, ref)
                 board.add_item(issue_url=url)
-                placed = bool(board.set_column(issue=str(number), issue_url=url,
+                placed = bool(board.set_column(issue=key, issue_url=url,
                                                name=self.FILING_COLUMN))
             except Exception as exc:  # noqa: BLE001 — the issue exists; placement is repairable
                 log.info("work %s filed but not placed on the board (%s)", ref, exc)
@@ -5044,14 +5049,3 @@ def _req_number(ref: str) -> int:
     """`REQ-0041` → 41; 0 when the ref carries no number."""
     digits = re.sub(r"[^0-9]", "", str(ref or ""))
     return int(digits) if digits else 0
-
-
-def _as_ticket_number(ref) -> int:
-    """A ref as a number, or 0 when it carries none.
-
-    Kept returning 0 for its existing callers, which compare against it. `ref_number` is the
-    honest primitive — it returns None, because 0 reads as a real issue number all the way down —
-    and this is the thin shim for the call sites that still expect the old contract (C-05)."""
-    from openfactory.contracts.refs import ref_number
-
-    return ref_number(ref) or 0
