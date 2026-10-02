@@ -730,6 +730,10 @@ _FILING = {
                             "time foi avisado e posiciona."),
         "defect_unplaced": ("registrei o problema, mas ainda não consegui posicionar o cartão no "
                             "quadro — o time foi avisado e posiciona."),
+        "queue_retried": ("não consegui colocar o #{number} na fila agora — ficou anotado, e eu "
+                          "tento de novo dentro de uma hora."),
+        "queue_refused": ("não consegui colocar o #{number} na fila agora. O time foi avisado e "
+                          "resolve."),
     },
     "en": {
         "no_title": "I need a title to open the card.",
@@ -747,6 +751,10 @@ _FILING = {
                             "team has been told and will place it."),
         "defect_unplaced": ("I registered the problem, but could not place the card on the board "
                             "yet — the team has been told and will place it."),
+        "queue_retried": ("I could not put #{number} in the queue just now — it is noted, and I "
+                          "try again within the hour."),
+        "queue_refused": ("I could not put #{number} in the queue just now. The team has been "
+                          "told and will sort it out."),
     },
 }
 
@@ -2781,7 +2789,7 @@ class ProductModule:
                     cause="breakdown budget spent"))
                 continue
             results.append(self._file_one(draft, requirement, tracker, board, vet=vet,
-                                          known_open=known_open))
+                                          known_open=known_open, by=actor))
         self._open_delivery(requirement, results, conversation=conversation,
                             requester=requester)
         return results
@@ -2888,14 +2896,9 @@ class ProductModule:
         number = _as_ticket_number(ref)
         board = self._board_or_default(board)
         detail = ""
-        if board is not None and number:
-            placed = False
-            try:
-                board.add_item(issue_url=url)
-                placed = bool(board.set_column(issue=str(number), issue_url=url,
-                                               name=self.FILING_COLUMN))
-            except Exception as exc:  # noqa: BLE001 — the card exists; placement is repairable
-                log.info("card %s opened but not placed on the board (%s)", ref, exc)
+        if number:
+            placed = self._filed_through_the_door(str(ref), by=reported_by, tracker=tracker,
+                                                  board=board)
             if not placed:
                 log.warning("OPENFACTORY_PRODUCT_TICKET_NOT_PLACED ref=%s column=%s — the card "
                             "exists but has no column, so the queue cannot see it until a person "
@@ -2976,15 +2979,9 @@ class ProductModule:
         number = _as_ticket_number(ref)
         board = self._board_or_default(board)
         detail = ""
-        if board is not None and number:
-            placed = False
-            try:
-                url = self._issue_url(tracker, ref)
-                board.add_item(issue_url=url)
-                placed = bool(board.set_column(issue=str(number), issue_url=url,
-                                               name=self.FILING_COLUMN))
-            except Exception as exc:  # noqa: BLE001 — the issue exists; placement is repairable
-                log.info("defect %s filed but not placed on the board (%s)", ref, exc)
+        if number:
+            placed = self._filed_through_the_door(str(ref), by=reported_by, tracker=tracker,
+                                                  board=board)
             if not placed:
                 # A `False` FROM THE BOARD IS THE INVISIBLE-CARD STATE, NOT A QUIETER SUCCESS.
                 # `promote` checks this same bool; discarding it here meant a column-less card
@@ -3379,7 +3376,7 @@ class ProductModule:
                               getattr(requirement, "asked_by", "") or "", tracker))
 
     def _file_one(self, draft, requirement, tracker, board,
-                  *, known_open: set[str] | None = None, vet=None) -> WriteResult:
+                  *, known_open: set[str] | None = None, vet=None, by: str = "") -> WriteResult:
         reused = self._reused_card(draft, requirement, tracker, known_open)
         if reused:
             return WriteResult(ok=True, ref=f"#{reused}", existed=True,
@@ -3420,7 +3417,6 @@ class ProductModule:
             # inside it. One state, one sentence, one place to change it.
             from openfactory.contracts.refs import ref_number, split_repo_ref
 
-            placed = False
             # a card filed in another repository of the product comes back QUALIFIED (C-18); its
             # number is the part after the repository
             number = ref_number(split_repo_ref(ref)[1])
@@ -3434,24 +3430,43 @@ class ProductModule:
                 return WriteResult(ok=True, ref=str(ref),
                                    detail="criado, mas o quadro não aceitou a colocação — o "
                                           "cartão está sem coluna e o time foi avisado.")
-            try:
-                url = self._issue_url(tracker, ref)
-                board.add_item(issue_url=url)
-                placed = bool(board.set_column(issue=str(number), issue_url=url,
-                                               name=self.FILING_COLUMN))
-            except Exception as exc:  # noqa: BLE001 — the issue exists; placement is repairable
-                log.info("work %s filed but not placed on the board (%s)", ref, exc)
-            if not placed:
-                log.warning("OPENFACTORY_PRODUCT_CARD_NOT_PLACED ref=%s column=%s — the "
-                            "card exists "
-                            ""
-                            "but "
-                            "has no column, so the queue cannot see it until a person places it",
-                            ref, self.FILING_COLUMN)
-                return WriteResult(ok=True, ref=str(ref),
-                                   detail="criado, mas o quadro recusou a colocação — o cartão "
-                                          "está sem coluna e o time foi avisado.")
+        placed = self._filed_through_the_door(str(ref), by=by, tracker=tracker, board=board)
+        if board is not None and not placed:
+            log.warning("OPENFACTORY_PRODUCT_CARD_NOT_PLACED ref=%s column=%s — the card exists "
+                        "but has no column, so the queue cannot see it until a person places it",
+                        ref, self.FILING_COLUMN)
+            return WriteResult(ok=True, ref=str(ref),
+                               detail="criado, mas o quadro recusou a colocação — o cartão "
+                                      "está sem coluna e o time foi avisado.")
         return WriteResult(ok=True, ref=str(ref), detail=elsewhere)
+
+    def _filed_through_the_door(self, ref: str, *, by: str, tracker, board) -> bool:
+        """THE CARD JUST WRITTEN GOES THROUGH ITS DOOR (ADR-0055, #414): `filed` puts it in the
+        filing column — by the column's name, the board's own write it always was — and forgets
+        the role's snapshot, recorded like every other change of a card. Returns whether it was
+        placed; `False` is the column-less card no queue can see (finding 56), which the caller
+        says. A placement the board refused is a failed effect of a RECORDED transition, so the
+        hourly round places it again — "placement is repairable" used to be a comment.
+
+        `columns={}`: a card its caller wrote a moment ago is on no column the caller put it in,
+        so the door does not read a hosted board for an answer this already has. `board=None` is
+        "deliberately do not place" (`_board_or_default`): the card is still filed, on its
+        tracker alone."""
+        from openfactory.lifecycle import CardEvent, transition
+
+        try:
+            moved = transition(getattr(self, "project", None), ref, CardEvent.FILED,
+                               by=str(by or "") or "the product role",
+                               facts={"column": "backlog" if board is not None else "",
+                                      "column_name": self.FILING_COLUMN},
+                               tracker=tracker, board=board, columns={})
+        except Exception as exc:  # noqa: BLE001 — the card exists; its placement is repairable
+            log.info("card %s filed, and its door could not be gone through (%s)", ref, exc)
+            return False
+        if moved.refused:
+            log.info("card %s filed, and its door refused it: %s", ref, moved.refused)
+            return False
+        return board is None or moved.outcome("place").startswith("placed")
 
     def _filing_repo(self, draft, tracker) -> tuple[str, str]:
         """`(repository, said)` — where a card of this draft is filed: the repository the role
@@ -3865,22 +3880,40 @@ class ProductModule:
         if board is None:
             return [WriteResult(ok=False, detail="não consegui acessar o quadro")]
 
-        from openfactory.product.board import forget_board
+        from openfactory.lifecycle import CardEvent, transition
+        from openfactory.product.voice import _pick
 
-        # what we cached describes a board we are about to change
-        forget_board(getattr(self.project, "name", ""))
-        # ONE tracker for the whole batch: it is only consulted for the card's URL, and building
-        # one per number would authenticate once per card moved.
+        # ONE tracker for the whole batch, and ONE read of where the cards are: the door asks it
+        # for each card (`promoted` is allowed from the backlog, the queue and a park — ADR-0055
+        # D2), and a read per card would read the whole board once per card moved.
         tracker = self._tracker()
+        try:
+            where = board.columns()
+        except Exception:  # noqa: BLE001 — unread is what the door reads again, and refuses on
+            log.info("could not read the board before queueing", exc_info=True)
+            where = None
         out: list[WriteResult] = []
         for number in numbers:
             try:
-                url = self._issue_url(tracker, number)
-                board.add_item(issue_url=url)
-                moved = board.set_column(issue=str(number), issue_url=url,
-                                         name=self.QUEUE_COLUMN)
-                out.append(WriteResult(ok=bool(moved), ref=f"#{number}",
-                                       detail="" if moved else "o quadro recusou a movimentação"))
+                # THROUGH THE CARD'S DOOR (ADR-0055, #414): placed in the queue by the column's
+                # name, as before, recorded, and the role's snapshot forgotten by the transition
+                # that changed the board — not by hand, before anything had
+                moved = transition(self.project, f"#{number}", CardEvent.PROMOTED, by=actor,
+                                   facts={"column_name": self.QUEUE_COLUMN}, tracker=tracker,
+                                   board=board, columns=where)
+                if moved.refused:
+                    out.append(WriteResult(ok=False, ref=f"#{number}", detail=moved.refused))
+                    continue
+                if moved.outcome("place").startswith("placed"):
+                    out.append(WriteResult(ok=True, ref=f"#{number}"))
+                    continue
+                # A PLACEMENT THE BOARD REFUSED IS A FAILED EFFECT OF A RECORDED TRANSITION: the
+                # hourly round applies it again, and the sentence says so rather than "no"
+                said = _pick(_FILING, getattr(self.project, "language", None))
+                out.append(_could_not(
+                    said["queue_retried" if moved.recorded else "queue_refused"].format(
+                        number=str(number).lstrip("#")),
+                    act="queue approved work", cause=moved.outcome("place"), ref=f"#{number}"))
             except Exception as exc:  # noqa: BLE001 — one failure must not lose the rest
                 # A CLIENT READS THIS ONE. Both branches of the reply speak it — the whole-failure
                 # branch as the entire message, the partial one under a pt-BR headline — so

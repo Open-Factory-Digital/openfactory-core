@@ -82,12 +82,20 @@ def test_the_two_call_sites_go_through_it_rather_than_calling_the_port_directly(
 
     BOTH SITES, since slice 3e: the healer was named in this file's own first paragraph and left
     out of its only reachability assertion, so the half of the property that lives in `scan_todo`
-    was never held."""
+    was never held.
+
+    THE HEALER'S MOVE IS THE CARD DOOR'S SINCE #414 (an observed close, ADR-0055 D8), so its half
+    is held where the move now happens: the door's port asks the link the same guarded way, and
+    the healer composes nothing."""
     import inspect
 
+    from openfactory.lifecycle.ports import Ports
     from openfactory.runtime.temporal import activities
 
-    for fn in (activities._child_to_todo, activities.scan_todo):
-        src = inspect.getsource(fn)
-        assert "_ticket_url(" in src, f"{fn.__name__} composes or calls the port directly"
-        assert "tracker.ticket_url(" not in src, f"{fn.__name__} calls the port unguarded"
+    src = inspect.getsource(activities._child_to_todo)
+    assert "_ticket_url(" in src, "_child_to_todo composes or calls the port directly"
+    assert "tracker.ticket_url(" not in src, "_child_to_todo calls the port unguarded"
+    healer = inspect.getsource(activities.scan_todo)
+    assert "_a_closed_card_in_the_queue" in healer and "ticket_url" not in healer
+    for tracker in (_Silent(), _Raising(), _Empty()):
+        assert Ports(object(), tracker=tracker, board=None)._url("7") == "", tracker

@@ -14,6 +14,8 @@ take down and the door says so).
     filed → promoted → pull request → discarded → promoted again
     filed → removed
     pull request → closed → reopened
+    opened → queued → back to the backlog → corrected, on the board's own rows (#414)
+    closed on the vendor's own screen → observed: its promise cancelled, its requester told (#414)
 """
 
 from __future__ import annotations
@@ -126,9 +128,14 @@ def _act(name: str, *, who: str, product: bool = False, **params):
     return asyncio.run(actions.perform(name, by=by, **params))
 
 
-# ── the steps the door does not own yet (slices 2 and 3), as their writers do them ────────────
+# ── a card as every card on a board stood before its door owned these steps ─────────────────
+#
+# Filed and queued by direct writes, with NO RECORD of its own — the shape every card on a live
+# board has the day #414 lands, and the one the board sweep must still read (`observe` holds a card
+# by its promise when nothing recorded it). Filing and moves through the door are driven below by
+# their real rows (`card_create`, `card_move`, `card_edit`).
 
-def _filed(project, *, by_the_product_role: bool = True) -> str:
+def _filed(project, *, by_the_product_role: bool = True, promised: str = "7") -> str:
     """A card the product role filed for ASKER from what they asked in CONVERSATION, and the
     delivery it promised them — as `module._open_delivery` records it."""
     from openfactory.adapters.board_db import now_iso
@@ -143,7 +150,7 @@ def _filed(project, *, by_the_product_role: bool = True) -> str:
     ref = tracker.create_ticket(title="A monthly report", body=body, requester=ASKER)
     _board(project).set_column(issue=ref, issue_url="", name="Backlog")
     loop_store.write(project.name, [open_loop(
-        DELIVERY, "7", owner="product", ts=now_iso(),
+        DELIVERY, promised, owner="product", ts=now_iso(),
         context={"issues": ref.lstrip("#"), **delivered_to(CONVERSATION, ASKER)})])
     return ref
 
@@ -544,3 +551,263 @@ def test_a_pass_with_a_live_preview_tells_its_requester_where_to_try_it(deployme
 
     [told] = _told(heard, about=bare)
     assert f"/p/acme/preview/{bare}" in told, told
+
+
+# ── filing, the moves between the operator's columns, and edits through the door (#414) ──────
+
+_A_CARD = ("## Objective\n\nExport the monthly report\n\n## Acceptance criteria\n\n"
+           "- the export is a CSV\n")
+
+
+def test_a_card_opened_queued_and_corrected_on_the_board_goes_through_its_door_every_time(
+        deployment):
+    """The board's own three verbs (ADR-0049 D6) on the real local board: each is a transition,
+    recorded, and the role's read of the board is the board as it now is (#393)."""
+    opened = _act("card_create", who="rob", project="acme", title="Export", body=_A_CARD)
+    assert opened.ok, opened.message
+    ref = opened.data["issue"]
+    assert _column(deployment, ref) == "backlog"
+    assert _on_the_role_s_board(deployment, ref)
+
+    queued = _act("card_move", who="rob", project="acme", issue=ref, column="TO-DO")
+    assert queued.ok and queued.data["event"] == "promoted", queued.message
+    assert _column(deployment, ref) == "todo"
+
+    back = _act("card_move", who="rob", project="acme", issue=ref, column="Backlog")
+    assert back.ok and back.data["event"] == "reordered", back.message
+    assert _column(deployment, ref) == "backlog"
+
+    edited = _act("card_edit", who="rob", project="acme", issue=ref, title="Export it")
+    assert edited.ok and edited.data["event"] == "edited", edited.message
+    # THE NOTE IS THE DOOR'S COMMENT, once, on the local board too
+    [said] = _said_on_the_card(deployment, ref)
+    assert "edited the title" in said, said
+
+    assert [(r.event, r.by) for r in _history(deployment, ref)] == [
+        (event, "Rob (via panel)") for event in ("filed", "promoted", "reordered", "edited")]
+
+
+def test_a_person_moves_a_card_only_between_the_backlog_and_the_queue(deployment):
+    """The factory's four columns are written by its jobs: a drag that says a card no job holds is
+    in progress — or that takes a card a job holds out from under it — is refused, and nothing
+    moves or is recorded."""
+    from openfactory.contracts import JobState
+
+    ref = _act("card_create", who="rob", project="acme", title="Export", body=_A_CARD
+               ).data["issue"]
+
+    into = _act("card_move", who="rob", project="acme", issue=ref, column="In progress")
+    assert not into.ok and into.code == "conflict" and "factory's column" in into.message
+    assert _column(deployment, ref) == "backlog"
+
+    _tracker(deployment).set_state(ref, JobState.IMPLEMENTING)     # a job took it up
+    out = _act("card_move", who="rob", project="acme", issue=ref, column="Backlog")
+    assert not out.ok and out.code == "conflict", out.message
+    assert _column(deployment, ref) == "in_progress"
+    assert [r.event for r in _history(deployment, ref)] == ["filed"]
+
+
+# ── a change made in the vendor's own interface (D8, #414) ────────────────────────────────────
+
+def _a_hosted_row(project):
+    """A DOUBLE OF A HOSTED ROW: the real local store underneath, the capabilities of a hosted
+    tracker (no deletion it can tell from a failed read), and a close made on the vendor's own
+    screen — `vendor_close` writes the card and runs nothing of ours, the column staying where it
+    was, as an issue's project column does on GitHub."""
+    from openfactory.adapters.tracker.github import GitHubIssuesTracker
+    from openfactory.adapters.tracker.local import LocalTracker
+    from openfactory.contracts import JobState
+
+    class _Hosted(LocalTracker):
+        observes = GitHubIssuesTracker.observes
+
+        def vendor_close(self, ref: str, *, delivered: bool, stays_in: JobState | None = None):
+            LocalTracker.close_ticket(self, ref, "closed on the vendor's screen",
+                                      delivered=delivered)
+            if stays_in is not None:
+                LocalTracker.set_state(self, ref, stays_in)
+
+    return _Hosted(project.name)
+
+
+def test_a_card_closed_on_the_vendors_screen_cancels_its_promise_as_a_close_through_the_platform(
+        deployment, heard):
+    """#414's scenario. Two cards a requester asked for: one closed through the platform, one
+    closed on the vendor's own screen, where no code of ours runs. The board sweep hands the second
+    to the door as an observed close, and every consumer says what it said of the first."""
+    from openfactory.lifecycle import observe
+    from openfactory.lifecycle.ports import Ports
+    from openfactory.memory.ledger import CANCELLED, DELIVERY
+
+    hosted = _a_hosted_row(deployment)
+    by_us = _filed(deployment, promised="7")
+    outside = _filed(deployment, promised="8")
+
+    assert _act("card_close", who="rob", project="acme", issue=by_us, reason="out of scope").ok
+    hosted.vendor_close(outside, delivered=False)
+
+    said = observe(deployment, ports=Ports(deployment, tracker=hosted))
+
+    assert [line.split(" ", 1)[0] for line in said] == [f"#{outside.lstrip('#')}"], said
+    for ref in (by_us, outside):
+        [delivery] = [x for x in _loops(deployment, DELIVERY)
+                      if x.context["issues"] == ref.lstrip("#")]
+        assert not delivery.waiting and delivery.outcome == CANCELLED, (ref, delivery)
+    [told_by_us] = _told(heard, about=by_us.lstrip("#"))
+    [told_outside] = _told(heard, about=outside.lstrip("#"))
+    assert told_outside.replace(outside.lstrip("#"), "N") == \
+        told_by_us.replace(by_us.lstrip("#"), "N"), (told_by_us, told_outside)
+    [row] = _history(deployment, outside)
+    assert (row.event, row.by, row.facts.get("observed")) == ("closed", "observed", True)
+    # NOTHING WRITTEN TO THE CARD: the vendor's own close is the only thing said on it
+    assert _said_on_the_card(deployment, outside) == ["closed on the vendor's screen"]
+
+    # the next round finds the record holding it, and says nothing twice
+    assert observe(deployment, ports=Ports(deployment, tracker=hosted)) == []
+    assert len(_told(heard, about=outside.lstrip("#"))) == 1
+
+
+def test_a_card_moved_into_the_queue_on_the_vendors_screen_is_promoted_and_one_that_was_split_is_not_withdrawn(  # noqa: E501
+        deployment, heard):
+    """A move between the operator's columns is a person's too; the close of a card some other card
+    was split from is the splitter's — its work lives in its children, and its promise stands."""
+    from openfactory.adapters.tracker.local import LocalTracker
+    from openfactory.contracts import JobState
+    from openfactory.lifecycle import observe
+    from openfactory.lifecycle.ports import Ports
+    from openfactory.memory.ledger import DELIVERY
+
+    hosted = _a_hosted_row(deployment)
+    queued = _act("card_create", who="rob", project="acme", title="Export", body=_A_CARD
+                  ).data["issue"]
+    LocalTracker.set_state(hosted, queued, JobState.TODO)          # dragged on the vendor's screen
+    split = _filed(deployment, promised="9")
+    hosted.create_ticket(title=f"Its first half [auto-split of {split}]", body=_A_CARD)
+    hosted.vendor_close(split, delivered=False)
+
+    said = observe(deployment, ports=Ports(deployment, tracker=hosted))
+
+    assert said == [f"#{queued.lstrip('#')} promoted, observed: forget=forgotten"], said
+    assert [r.event for r in _history(deployment, queued)] == ["filed", "promoted"]
+    [delivery] = [x for x in _loops(deployment, DELIVERY) if x.subject == "9"]
+    assert delivery.waiting, "the split card's promise was cancelled"
+    assert _told(heard, about=split.lstrip("#")) == []
+
+
+def test_a_card_closed_outside_while_it_sat_in_the_queue_is_healed_through_its_door(deployment,
+                                                                                   heard):
+    """The stale-pickup healer (#413) now hands the door what it finds: the card goes where its
+    close puts it, and — withdrawn — its promise is cancelled and its requester told, which the
+    healer's own move never did."""
+    from openfactory.contracts import JobState
+    from openfactory.memory.ledger import CANCELLED, DELIVERY
+    from openfactory.runtime.temporal.activities import _a_closed_card_in_the_queue
+
+    hosted = _a_hosted_row(deployment)
+    ref = _filed(deployment)
+    hosted.vendor_close(ref, delivered=False, stays_in=JobState.TODO)
+
+    said = _a_closed_card_in_the_queue(deployment, hosted, _board(deployment), ref)
+
+    assert "Backlog" in said and "moved" in said, said
+    ticket = _tracker(deployment).get_ticket(ref)
+    assert (ticket.state, ticket.state_reason) == ("closed", "not_planned")
+    [delivery] = _loops(deployment, DELIVERY)
+    assert delivery.outcome == CANCELLED
+    assert "will not be built" in _told(heard, about=ref.lstrip("#"))[0]
+    assert [(r.event, r.by) for r in _history(deployment, ref)] == [("closed", "observed")]
+
+
+def test_the_healer_leaves_a_split_cards_close_and_its_promise_alone(deployment, heard):
+    """The splitter closes the card it split as not delivered; its children carry the work, so its
+    promise stands (`triage.delivered_numbers`) — the healer's close is not a person's."""
+    from openfactory.contracts import JobState
+    from openfactory.memory.ledger import DELIVERY
+    from openfactory.runtime.temporal.activities import _a_closed_card_in_the_queue
+
+    hosted = _a_hosted_row(deployment)
+    parent = _filed(deployment)
+    child = hosted.create_ticket(title=f"Its half [auto-split of {parent}]", body=_A_CARD)
+    hosted.link_child(parent, child)
+    hosted.vendor_close(parent, delivered=False, stays_in=JobState.TODO)
+
+    said = _a_closed_card_in_the_queue(deployment, hosted, _board(deployment), parent)
+
+    assert "split" in said, said
+    [delivery] = _loops(deployment, DELIVERY)
+    assert delivery.waiting, "the split card's promise was cancelled"
+    assert _told(heard, about=parent.lstrip("#")) == [] and not _history(deployment, parent)
+
+
+def test_the_hourly_round_observes_a_card_closed_outside_the_platform(deployment, heard):
+    """On the real local row, through the hourly round's own hook (`techlead_watch`): what the
+    record does not hold is observed before what failed is converged."""
+    from openfactory.adapters.tracker.base import close_ticket
+    from openfactory.memory.ledger import CANCELLED, DELIVERY
+    from openfactory.runtime.temporal.activities import _converge_card_transitions
+
+    ref = _filed(deployment)
+    close_ticket(_tracker(deployment), ref, "closed by hand, outside", delivered=False)
+
+    _converge_card_transitions(deployment)
+
+    [delivery] = _loops(deployment, DELIVERY)
+    assert delivery.outcome == CANCELLED
+    assert [(r.event, r.by) for r in _history(deployment, ref)] == [("closed", "observed")]
+
+
+def test_a_row_reports_only_the_changes_it_declares(deployment, heard):
+    """A deletion on a hosted row reads as a failed read, so no hosted row declares it, and the
+    sweep does not take a card it cannot find for one that was removed. The local row reads its
+    own store, and does."""
+    from openfactory.adapters.tracker.base import observes
+    from openfactory.lifecycle import observe
+    from openfactory.lifecycle.ports import Ports
+    from openfactory.memory.ledger import CANCELLED, DELIVERY
+
+    class _Silent:
+        """A row from before the capability — and a double is not a declaration."""
+
+    assert observes(_Silent()) == frozenset()
+    hosted = _a_hosted_row(deployment)
+    assert "removed" not in observes(hosted) and "removed" in observes(_tracker(deployment))
+
+    ref = _filed(deployment)
+    _tracker(deployment).remove_ticket(ref, "deleted on the vendor's screen", by="someone")
+
+    assert observe(deployment, ports=Ports(deployment, tracker=hosted)) == []
+    [delivery] = _loops(deployment, DELIVERY)
+    assert delivery.waiting, "a row that cannot tell a deletion read one"
+
+    [said] = observe(deployment, ports=Ports(deployment, tracker=_tracker(deployment)))
+    assert "removed, observed" in said, said
+    [delivery] = _loops(deployment, DELIVERY)
+    assert delivery.outcome == CANCELLED
+
+
+def test_a_parked_card_is_queued_by_hand_only_when_no_job_waits_on_it(deployment, monkeypatch):
+    """A card left in Needs Action with no job on it goes back to the queue by hand; one a job
+    still waits on is answered instead, or it would be queued under a job still holding it."""
+    from openfactory.actions import catalog
+    from openfactory.contracts import JobState
+
+    ref = _act("card_create", who="rob", project="acme", title="Export", body=_A_CARD
+               ).data["issue"]
+    _tracker(deployment).set_state(ref, JobState.ON_HOLD)
+    assert _column(deployment, ref) == "needs_action"
+
+    async def a_job_waits(project, issue):
+        return catalog._JobOnTheCard(running=True, waiting_on="a decision", answer_it="resume")
+
+    monkeypatch.setattr(catalog, "_job_on_the_card", a_job_waits)
+    held = _act("card_move", who="rob", project="acme", issue=ref, column="TO-DO")
+    assert not held.ok and "`resume`" in held.message, held.message
+    assert _column(deployment, ref) == "needs_action"
+
+    async def no_job(project, issue):
+        return catalog._JobOnTheCard()
+
+    monkeypatch.setattr(catalog, "_job_on_the_card", no_job)
+    queued = _act("card_move", who="rob", project="acme", issue=ref, column="TO-DO")
+    assert queued.ok, queued.message
+    assert _column(deployment, ref) == "todo"

@@ -8,7 +8,10 @@ THE EVENT SET IS CLOSED AND WHOLE FROM THE FIRST SLICE. All of D1's events are n
 event no slice has decided yet is REFUSED IN EVERY STATE and has no row of consequences: D2's
 default is refusal, so an event becomes possible only when somebody writes where it may happen and
 what follows it — in the same change, here. Slice 1 (#412) decides the endings a person causes:
-`discarded`, `skipped`, `stopped`, `closed`, `withdrawn`, `removed`, `reopened`.
+`discarded`, `skipped`, `stopped`, `closed`, `withdrawn`, `removed`, `reopened`; slice 2 (#413)
+the job's endings; slice 3 (#414) a card's filing, its moves between the operator's columns and
+its edits — `filed`, `promoted`, `reordered`, `edited` — and what follows a change somebody made
+in the vendor's own interface (`OBSERVED`, D8).
 """
 
 from __future__ import annotations
@@ -123,6 +126,24 @@ ALLOWED: dict[CardEvent, frozenset[State]] = {
     CardEvent.DELIVERED: frozenset({State.RUNNING, State.WAITING_ON_A_PERSON}),
     # A PASS A PERSON ASKED FOR, BACK AT THE MERGE GATE (#413 part 3, #448 slice 2)
     CardEvent.ADJUSTED: frozenset({State.RUNNING, State.WAITING_ON_A_PERSON}),
+    # A CARD JUST WRITTEN, PUT IN THE COLUMN IT IS FILED IN (#414). Read the moment after it was
+    # created: on no column yet (a hosted board holds an issue only once it is added), already in
+    # the backlog (the local board files there), or in TO-DO where a row's first status is the
+    # queue's — which is why filing moves it out: cards land in the backlog (ADR-0019 §5)
+    CardEvent.FILED: frozenset({State.BACKLOG, State.TODO}),
+    # A PERSON QUEUES IT — the one gesture that spends (ADR-0019 §5). From the backlog, from the
+    # queue itself (a move to where it is changes nothing and refuses nothing), and from a park:
+    # a card left in Needs Action with no job on it is put back in the queue by hand, and whether a
+    # job still waits there is the engine's to answer (`catalog._card_move`), as for a close
+    CardEvent.PROMOTED: frozenset({State.BACKLOG, State.TODO, State.WAITING_ON_A_PERSON}),
+    # A PERSON RE-ARRANGES THE OPERATOR'S COLUMNS without spending: out of the queue, back to the
+    # backlog. Never out of the factory's columns — a card a job holds is ended by `stop`, `skip`
+    # or `discard`, which tell the job; a drag would leave it running with nothing telling it
+    CardEvent.REORDERED: frozenset({State.BACKLOG, State.TODO}),
+    # THE TEXT IS CORRECTED BEFORE THE FACTORY READS IT (#150): an agent works from the text it
+    # read at pickup, so after it the card is the factory's and a correction is a comment. A card
+    # corrected at the merge gate, judged again with its review marked out of date, is #448 slice 1
+    CardEvent.EDITED: frozenset({State.BACKLOG, State.TODO}),
 }
 
 #: The events that need the card CLOSED on its tracker, whatever its state says. `delivered` is a
@@ -138,7 +159,14 @@ ONLY_ON_A_CLOSED_CARD: frozenset[CardEvent] = frozenset({CardEvent.REOPENED})
 WHERE_NO_BOARD_PLACES_IT: frozenset[CardEvent] = frozenset({
     CardEvent.DISCARDED, CardEvent.SKIPPED, CardEvent.STOPPED, CardEvent.CLOSED,
     CardEvent.WITHDRAWN, CardEvent.REMOVED, CardEvent.QUESTION_ANSWERED, CardEvent.PARKED,
-    CardEvent.DELIVERED, CardEvent.ADJUSTED})
+    CardEvent.DELIVERED, CardEvent.ADJUSTED, CardEvent.FILED, CardEvent.PROMOTED,
+    CardEvent.REORDERED, CardEvent.EDITED})
+
+#: Who `by` is when nobody of ours made the change: the board sweep found it on the tracker, made
+#: in the vendor's own interface, and the record did not hold it (D8). The door judges such an
+#: event against what the platform last KNEW of the card — the tracker already shows the change —
+#: and applies what follows MINUS THE WRITES TO THE TRACKER AND THE BOARD, which already happened.
+OBSERVED = "observed"
 
 
 @dataclass(frozen=True)
@@ -166,6 +194,18 @@ def allowed(state: State | None, event: CardEvent, *, open_card: bool = True) ->
 @dataclass(frozen=True)
 class Column:
     """The card moves to the column with this neutral key."""
+
+    key: str
+
+
+@dataclass(frozen=True)
+class Place:
+    """The card is put on the board, in the column with this neutral key — the BOARD's own write,
+    by the column's name, for a person's gesture that places a card rather than a job's state that
+    moves it: filing, a promotion, a move between the operator's columns. `Column` is a job's state
+    reflected through the tracker's one writer (`set_state`), whose map has no state for "written
+    down, not started" (`github_project.set_column`). On a deployment with no board there is
+    nowhere to place a card, and that is the outcome, not a failure."""
 
     key: str
 
@@ -223,7 +263,12 @@ class Forget:
     """What this process remembers of the board is dropped (#393)."""
 
 
-Effect = Column | Close | Remove | Reopen | Comment | Loops | Tell | Preview | Forget
+Effect = Column | Place | Close | Remove | Reopen | Comment | Loops | Tell | Preview | Forget
+
+#: The effects that write the card where the vendor keeps it — its tracker or its board. An
+#: OBSERVED change already made them, in the vendor's own interface (D8); what follows it is the
+#: rest: the promise, the conversation, the preview, the snapshot.
+_WRITES_THE_CARD = (Column, Place, Close, Remove, Reopen, Comment)
 
 #: What the requester is told, by which way the work ended — and, for a pass a person asked for,
 #: that the pass is ready to try.
@@ -243,8 +288,26 @@ def consequences(event: CardEvent, facts: Mapping[str, object] | None = None) ->
 
     `facts` carries what the event knows. One fact changes a row: whether a close is of finished
     work (`delivered`). A delivered close cancels nothing and tells nobody that something will not
-    be built — the delivery is the delivery's to announce."""
+    be built — the delivery is the delivery's to announce.
+
+    AN OBSERVED CHANGE (`facts["observed"]`, D8) is followed exactly as the same change made
+    through the platform, minus the writes to the card the vendor's interface already made — with
+    one exception, THE BOARD FOLLOWING A CLOSE: a card closed while it sits in the pickup column is
+    filed where its close puts it, which is what the stale-pickup healer did by hand (#413). Only
+    from TO-DO: on a row whose column IS its status (Jira, Azure Boards) a closed card is never in
+    it, and moving a closed card into a column there would reopen it."""
     facts = facts or {}
+    row = _row(event, facts)
+    if not facts.get("observed"):
+        return row
+    kept = tuple(e for e in row if not isinstance(e, _WRITES_THE_CARD))
+    if event is CardEvent.CLOSED and str(facts.get("column") or "") == "todo":
+        return (Column("done" if facts.get("delivered") else "backlog"), *kept)
+    return kept
+
+
+def _row(event: CardEvent, facts: Mapping[str, object]) -> tuple[Effect, ...]:
+    """The row of `consequences` for a change made through the platform."""
     if event in _BACK_TO_THE_BACKLOG:
         # the promise stays open, and the requester is told the card is back in the backlog (D10)
         return (Column("backlog"), Comment(), Tell(STOPPED_WORK), Preview("stop"), Forget())
@@ -281,6 +344,21 @@ def consequences(event: CardEvent, facts: Mapping[str, object] | None = None) ->
             return (Column("todo"), Comment(), Loops("answer"), Forget())
         # somebody already moved it on — answered, and left where it is
         return (Comment(), Loops("answer"))
+    if event is CardEvent.FILED:
+        # PLACED WHERE IT IS FILED, and nothing said: the card's own body says who asked for it,
+        # and the conversation that asked was answered there. `""` is a caller with no board — a
+        # card is still filed on a tracker alone, and there is nowhere to place it
+        key = _filed_in(facts)
+        return (*((Place(key),) if key else ()), Forget())
+    if event is CardEvent.PROMOTED:
+        # NO COMMENT AND NOBODY TOLD (#414): the vendor's own history records a move, and a queue
+        # position is not a promise — what the requester hears next is the work's own news
+        return (Place("todo"), Forget())
+    if event is CardEvent.REORDERED:
+        return (Place("backlog"), Forget())
+    if event is CardEvent.EDITED:
+        # the note says which parts moved (`card_edit_note`), on every row — the door's comment
+        return (Comment(), Forget())
     raise KeyError(f"no slice has decided what follows {event.value!r} — it is refused in every "
                    f"state until one does (ADR-0055 D2)")
 
@@ -303,7 +381,29 @@ def after(event: CardEvent, facts: Mapping[str, object] | None = None) -> State:
         return State.WAITING_ON_A_PERSON
     if event is CardEvent.DELIVERED:
         return State.DELIVERED
+    if event is CardEvent.FILED:
+        return BY_COLUMN.get(_filed_in(facts) or "backlog", State.BACKLOG)
+    if event is CardEvent.PROMOTED:
+        return State.TODO
+    if event is CardEvent.REORDERED:
+        return State.BACKLOG
+    if event is CardEvent.EDITED:
+        # the text moved and the card did not; one no board places is, to its life, unstarted
+        before = str(facts.get("before") or "")
+        return State(before) if before else State.BACKLOG
     raise KeyError(f"no slice has decided where {event.value!r} leaves a card")
+
+
+#: The columns a card may be FILED into: the backlog, or — a person's own choice on the board — the
+#: queue. Never a column the factory writes: a card nobody started is not in progress.
+FILING_COLUMNS = frozenset({"backlog", "todo"})
+
+
+def _filed_in(facts: Mapping[str, object]) -> str:
+    """The neutral key a filed card is placed in: the caller's `column`, `backlog` when it named
+    none, and `""` when it said there is no board to place it on (`column=""`)."""
+    key = facts.get("column", "backlog")
+    return str(key) if key in FILING_COLUMNS else ""
 
 
 #: The events some slice has decided — those allowed somewhere. The derived test holds that every

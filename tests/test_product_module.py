@@ -227,6 +227,12 @@ class _Tracker:
         self.created.append((title, body))
         return f"#{500 + len(self.created)}"
 
+    def get_ticket(self, ref):
+        """The card just written, as its door reads it before it files it (ADR-0055, #414)."""
+        from types import SimpleNamespace
+
+        return SimpleNamespace(title="a card", state="open", raw="")
+
 
 class _Board:
     def __init__(self):

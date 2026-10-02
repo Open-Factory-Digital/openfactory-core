@@ -51,16 +51,16 @@ NOT_CALLERS = {
 
 #: THE CEILING AND THE BASELINE, committed. Slice 1 ended at 27: the writers slices 2 and 3 own;
 #: 25 since #413's first part moved the card-question sweep through the door; 23 since its
-#: second moved the job's park and settle.
+#: second moved the job's park and settle; 16 since #414's first part moved filing, the moves
+#: between the operator's columns and the stale-pickup healer (an observed change, D8).
 #: Each slice lowers the ceiling and drops what it moved in from both; slice 3 ends at zero.
-CEILING = 23
+CEILING = 16
 BASELINE = frozenset({
     ("openfactory/runtime/temporal/activities.py", "_child_to_todo", "set_state"),
     ("openfactory/runtime/temporal/activities.py", "_child_to_todo", "set_status"),
     ("openfactory/runtime/temporal/activities.py", "_do_split", "close_ticket"),
     ("openfactory/runtime/temporal/activities.py", "_do_gather", "set_state"),
     ("openfactory/runtime/temporal/activities.py", "_do_gather", "open_loop"),
-    ("openfactory/runtime/temporal/activities.py", "scan_todo", "set_status"),
     ("openfactory/runtime/temporal/activities.py", "_a_card_was_finished", "card_finished"),
     ("openfactory/runtime/temporal/activities.py", "_product_followup", "deliver"),
     ("openfactory/runtime/temporal/activities.py", "_product_followup", "close_by_observation"),
@@ -70,12 +70,6 @@ BASELINE = frozenset({
     ("openfactory/ops/impediment.py", "resolved", "close_ticket"),
     ("openfactory/orchestrator/machine.py", "_set_state", "set_state"),
     ("openfactory/orchestrator/promotion.py", "_state", "set_state"),
-    ("openfactory/actions/catalog.py", "_open", "set_column"),
-    ("openfactory/actions/catalog.py", "_card_move", "set_column"),
-    ("openfactory/product/module.py", "file_ticket", "set_column"),
-    ("openfactory/product/module.py", "file_defect", "set_column"),
-    ("openfactory/product/module.py", "_file_one", "set_column"),
-    ("openfactory/product/module.py", "promote", "set_column"),
     ("openfactory/product/module.py", "_track_defect", "open_loop"),
     ("openfactory/product/followup.py", "deliveries_to_open", "open_loop"),
 })

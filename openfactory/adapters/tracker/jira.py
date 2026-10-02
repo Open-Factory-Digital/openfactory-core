@@ -159,6 +159,13 @@ def _jql_since(stamp: str) -> str:
 class JiraTracker:
     """Jira Cloud REST v3. Satisfies `TrackerAdapter`."""
 
+    #: WHAT THIS ROW CAN REPORT OF A CHANGE MADE ON JIRA ITSELF (ADR-0055 D8,
+    #: `tracker/base.py::observes`): a close — and why, where the deployment named its "not
+    #: delivered" resolution or status (`_closed_reason`); unnamed, a close reads as finished work —
+    #: a reopen, and a move between the operator's two columns. Not a deletion: a deleted issue
+    #: answers 404 the way one the credential cannot see does.
+    observes = frozenset({"closed", "reopened", "promoted", "reordered"})
+
     def __init__(self, *, site: str, project_key: str, email: str, token: str | None = None,
                  status_map: dict[str, str] | None = None, issue_type: str = "Task",
                  not_delivered_resolution: str = "", not_delivered_status: str = "",
@@ -290,13 +297,14 @@ class JiraTracker:
         """Transition the issue, if this deployment mapped the state.
 
         UNMAPPED IS A NO-OP WITH A WARNING, never a guess: every Jira project has its own workflow,
-        and an invented transition either fails or moves the card somewhere nobody expects."""
+        and an invented transition either fails or moves the card somewhere nobody expects.
+
+        `reason` IS NOT WRITTEN (ADR-0055 D6, #414): a transition's comment is the card's door's,
+        the same on every row. This row wrote it for one state of all of them."""
         match = self._transition_for(ref, state, needs_person=needs_person)
         if match is None:
             return False
         self._call("POST", f"issue/{ref}/transitions", {"transition": {"id": match["id"]}})
-        if reason and state == JobState.NEEDS_REFINEMENT:
-            self.comment(ref, reason)
         return True
 
     def _transition_for(self, ref: str, state: JobState | None = None, *,

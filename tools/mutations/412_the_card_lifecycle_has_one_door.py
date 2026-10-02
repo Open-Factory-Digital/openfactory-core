@@ -175,7 +175,8 @@ MUTATIONS = [
      "                     in_backlog=False, language=getattr(proj, \"language\", None))"),
 
     ("a caller that hands only its tracker judges the card without its column", PORTS,
-     "        self._board_known = board is not None\n",
+     # RE-PINNED 2026-10-02 (#414): a caller that hands `columns` has read its board already
+     "        self._board_known = board is not None or columns is not None\n",
      "        self._board_known = True\n"),
 
     # ── the store ──────────────────────────────────────────────────────────────────────────────
@@ -196,7 +197,8 @@ MUTATIONS = [
      GUARD_TEST),
 
     ("the ceiling is raised quietly, so the list can grow", GUARD_TEST,
-     "CEILING = 23\n",
-     "CEILING = 24\n",
+     # RE-PINNED 2026-10-02 (#414): the ceiling is 16 since #414's first part
+     "CEILING = 16\n",
+     "CEILING = 17\n",
      GUARD_TEST),
 ]

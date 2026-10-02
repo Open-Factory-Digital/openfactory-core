@@ -185,21 +185,21 @@ async def _skip(*, project: str, issue: str, by: Actor) -> Outcome:
 
 async def _through_the_door(proj, issue: str, event, *, by: Actor, why: str = "",
                             facts: dict | None = None, act=None, tracker=None, board=None,
-                            stage: _Stage | None = None):
+                            stage: _Stage | None = None, columns: dict[str, str] | None = None):
     """`lifecycle.transition`, from an async row. The door reads and writes through blocking
     ports, so it runs on a thread; `act` — the engine's half of the decision, a coroutine function
     returning an `Outcome` — runs back on THIS loop, where the row's engine client lives, between
     the door's `allowed` and its record. A refused act is returned untouched as the answer.
 
     `stage` is where the row's own gate read the card (`_withdraw_refusal`): handed to the door as
-    the board's answer, so the gate and the door judge one read, not two (#162)."""
+    the board's answer, so the gate and the door judge one read, not two (#162). `columns` is the
+    same answer for a row that read no stage — a card it has just written is on no column yet."""
     import asyncio
 
     from openfactory.contracts.refs import canonical_ref
     from openfactory.lifecycle import transition
 
     loop = asyncio.get_running_loop()
-    columns = None
     if stage is not None and not stage.cannot_tell:
         columns = {canonical_ref(issue): stage.column} if stage.column else {}
 
@@ -4074,12 +4074,23 @@ async def _card_create(*, project: str, title: str, by: Actor, body: str = "",
     """Open a card on this project's board."""
     import asyncio
 
+    from openfactory.lifecycle import CardEvent
+
     proj, tracker, board, bad = _board_pair(project)
     if bad:
         return bad
     name = (title or "").strip()
     if not name:
         return refused(INVALID, "say what the card is called — an empty title opens nothing.")
+    # WHERE IT IS FILED IS ASKED BEFORE ANYTHING IS WRITTEN (#414): the backlog unless the person
+    # named the queue. A card opened into a column the factory writes would be a card nobody
+    # started shown as started, and refusing it after the write would leave it on no column
+    wanted = (column or "").strip()
+    key = "backlog"
+    if wanted and board is not None:
+        key, bad = await asyncio.to_thread(_operators_column, proj, board, wanted)
+        if bad:
+            return bad
 
     def _open() -> str:
         # THE REQUESTER IS WHOEVER FILED IT (ADR-0049 D7). A row whose namespace is the platform's
@@ -4096,24 +4107,71 @@ async def _card_create(*, project: str, title: str, by: Actor, body: str = "",
             # with exactly those. The card then carries what the body says, which is what a
             # hosted deployment has always had.
             ref = tracker.create_ticket(title=name, body=(body or "").strip())
-        if board is not None:
-            wanted = (column or "").strip()
-            if wanted:
-                board.set_column(issue=ref, issue_url=tracker.ticket_url(ref), name=wanted)
         return ref
 
     try:
         ref = await asyncio.to_thread(_open)
     except Exception as exc:  # noqa: BLE001 — a board that refused is an outcome, not a traceback
         return refused(UNAVAILABLE, f"the card was not opened: {exc}")
-    said, gate = _as_pickup_would(f"opened {ref} on {proj.name}'s board ({by})",
-                                  await asyncio.to_thread(_pickup_says, tracker, ref))
-    return done(said, project=proj.name, issue=str(ref), url=tracker.ticket_url(ref), **gate)
+    # THROUGH THE CARD'S DOOR (ADR-0055, #414): `filed`, placed in the column it is filed in —
+    # named, where a hosted board otherwise holds a new item with no status of its own — and the
+    # role's snapshot forgotten. Opened is opened: what of the filing did not land is said after
+    # it, never as a refusal of a card that exists.
+    moved = await _through_the_door(proj, ref, CardEvent.FILED, by=by,
+                                    facts={"column": key if board is not None else ""},
+                                    tracker=tracker, board=board, columns={})
+    line = f"opened {ref} on {proj.name}'s board ({by})"
+    if moved.refused:
+        line += f" — and it was not placed: {moved.refused}"
+    said, gate = _as_pickup_would(line, await asyncio.to_thread(_pickup_says, tracker, ref))
+    out = done(said, project=proj.name, issue=str(ref), url=tracker.ticket_url(ref), **gate)
+    return out if moved.refused else _after_the_door(moved, out)
+
+
+def _operators_column(proj, board, wanted: str) -> tuple[str, Outcome | None]:
+    """`(key, None)` when `wanted` is one of the operator's two columns — the backlog or the queue —
+    else `("", the refusal)`. THE OTHER FOUR ARE THE FACTORY'S (#414): a card is in progress, in
+    review, waiting on a person or done because a job put it there, and a drag that says so of a
+    card no job holds — or that takes one a job holds out from under it — is the board telling a
+    story nobody lived. A column this platform does not map cannot be judged, as in `_stage`."""
+    from openfactory.adapters.board.base import stage_key, stage_option
+
+    key = stage_key(board, wanted)
+    if key in ("backlog", "todo"):
+        return key, None
+    try:
+        known = board.column_names()
+    except Exception:  # noqa: BLE001 — the names are for the sentence; unread says so
+        log.info("%s's board could not list its columns for a move", proj.name, exc_info=True)
+        known = None
+    if not key and wanted not in (known or []):
+        names = ", ".join(known) if known else "the board could not say"
+        return "", refused(NOT_FOUND, f"{proj.name}'s board has no column {wanted!r} — its "
+                                      f"columns are: {names}.")
+    if not key:
+        named = stage_option(board)
+        repair = (f"Map it with the project's tracker option `{named}`" if named else
+                  "Map it in the project's tracker options")
+        return "", refused(CONFLICT, f"{wanted!r} is not a column this platform maps, so it "
+                                     f"cannot tell where a card there is in its life. {repair}. "
+                                     f"Nothing was changed.")
+    return "", refused(CONFLICT, (
+        f"{wanted!r} is the factory's column — a card is there because a job put it there. A "
+        f"person puts a card in the queue or back in the backlog; the work on one is ended with "
+        f"`stop`, `skip` or `discard`, which tell its job, and a card is finished by closing it. "
+        f"Nothing was changed."))
 
 
 async def _card_move(*, project: str, issue: str, column: str, by: Actor) -> Outcome:
-    """Move a card to a column by name — the queueing gesture."""
+    """Move a card to a column by name — the queueing gesture.
+
+    THROUGH THE CARD'S DOOR (ADR-0055, #414): to the queue is `promoted`, the one gesture that
+    spends; to the backlog is `reordered`. Either is recorded and forgets the role's snapshot, and
+    neither is allowed out of a column the factory holds the card in — that is ending a job, and
+    `stop`, `skip` and `discard` are the verbs that tell it."""
     import asyncio
+
+    from openfactory.lifecycle import CardEvent
 
     proj, tracker, board, bad = _board_pair(project)
     if bad:
@@ -4124,16 +4182,35 @@ async def _card_move(*, project: str, issue: str, column: str, by: Actor) -> Out
     wanted = (column or "").strip()
     if not wanted:
         return refused(INVALID, "say which column to move it to — the board's own name for it.")
+    key, bad = await asyncio.to_thread(_operators_column, proj, board, wanted)
+    if bad:
+        return bad
+    stage = await asyncio.to_thread(_stage, proj, board, issue)
+    if stage.cannot_tell:
+        return refused(CONFLICT, stage.cannot_tell)
+    event = CardEvent.PROMOTED if key == "todo" else CardEvent.REORDERED
 
-    moved = await asyncio.to_thread(
-        lambda: board.set_column(issue=issue, issue_url=tracker.ticket_url(issue), name=wanted))
-    if not moved:
-        known = board.column_names()
-        names = ", ".join(known) if known else "the board could not say"
-        return refused(NOT_FOUND, f"{proj.name}'s board did not move {issue} to {wanted!r} — its "
-                                  f"columns are: {names}.")
-    return done(f"moved {issue} to {wanted} on {proj.name}'s board ({by})",
-                project=proj.name, issue=str(issue), column=wanted)
+    async def no_job_waits() -> Outcome | None:
+        """A parked card goes back to the queue by hand only when no job waits on it: one that does
+        is answered (`resume`, `skip`), or it would be queued under a job still holding it."""
+        job = await _job_on_the_card(proj.name, issue)
+        if job.cannot_tell:
+            return refused(CONFLICT, job.cannot_tell)
+        if job.running:
+            how = f"`{job.answer_it}`" if job.answer_it else "`resume` or `skip`"
+            return refused(CONFLICT, f"{issue} is in {stage.column!r} and its job is still "
+                                     f"waiting on {job.waiting_on or 'a person'} — answer it with "
+                                     f"{how}; queueing the card would not reach that job.")
+        return None
+
+    parked = event is CardEvent.PROMOTED and stage.key == "needs_action"
+    moved = await _through_the_door(proj, issue, event, by=by, act=no_job_waits if parked else None,
+                                    tracker=tracker, board=board, stage=stage)
+    bad = _refusal_of(moved)
+    if bad:
+        return bad
+    return _after_the_door(moved, done(f"moved {issue} to {wanted} on {proj.name}'s board ({by})",
+                                       project=proj.name, issue=str(issue), column=wanted))
 
 
 @dataclass(frozen=True)
@@ -4436,8 +4513,9 @@ async def _card_edit(*, project: str, issue: str, by: Actor, title: str = "",
     # WHOSE CARD AND WHICH STAGE FIRST, then whether this tracker can rename: a card the product
     # role opened is refused for that, which is the reason a person can act on, rather than for a
     # capability that would not have mattered (review of #153).
+    stage = await asyncio.to_thread(_stage, proj, board, issue)
     refusal = (await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="changes")
-               or await asyncio.to_thread(lambda: _stage_refusal(proj, board, issue)))
+               or _stage_refusal(proj, board, issue, stage=stage))
     if refusal:
         return refused(CONFLICT, refusal)
 
@@ -4448,78 +4526,100 @@ async def _card_edit(*, project: str, issue: str, by: Actor, title: str = "",
                        f"the description. Rename it in the tracker's own screen, or send this "
                        f"edit without a title.")
 
-    def _write() -> tuple[list[str], str, bool]:
-        """`(what changed, why the rest did not, whether the note recording it was left)`.
+    def _plan() -> tuple[bool, list[str]]:
+        """`(whether the title moves, the sections of the body that do)`.
 
-        EACH WRITE IS ITS OWN OUTCOME (review of #153). The rename, the body and the note are
-        separate tracker calls — two `gh` invocations on GitHub — and one `except` around all three
-        answered "nothing was changed" over a card already renamed, with no note saying so; a retry
-        then found the title matching and the rename was never recorded at all. What landed is
-        reported and noted whatever failed after it."""
+        ONLY WHAT MOVED IS WRITTEN, AND NAMED (#150). The panel's form sends the title and the
+        whole body on every save, so writing what was sent recorded every save as a rewrite of
+        both. The card as it stands is read first; a title that is the same is not renamed, a
+        body that says the same thing is not rewritten, and the note lists the sections that did
+        change. A save that changes nothing writes nothing, leaves no note and goes through no
+        door: nothing happened to the card."""
         from openfactory.adapters.tracker.parse import changed_sections
-        from openfactory.product.voice import card_edit_note
 
-        # ONLY WHAT MOVED IS WRITTEN, AND NAMED (#150). The panel's form sends the title and the
-        # whole body on every save, so writing what was sent recorded every save as a rewrite of
-        # both. The card as it stands is read first; a title that is the same is not renamed, a
-        # body that says the same thing is not rewritten, and the note lists the sections that did
-        # change. A save that changes nothing writes nothing and leaves no note.
         current = tracker.get_ticket(issue)
-        changed: list[str] = []
-        failure = ""
-        try:
-            if wanted_title and wanted_title != (current.title or "").strip():
-                rename(issue, wanted_title)
-                changed.append("title")
-            sections = changed_sections(getattr(current, "raw", "") or "", wanted_body) \
-                if wanted_body else []
-            if sections:
-                tracker.update_body(issue, wanted_body)
-                changed += sections
-        except Exception as exc:  # noqa: BLE001 — what landed before it is still reported
-            failure = str(exc) or type(exc).__name__
-        if not changed:
-            return changed, failure, False
-        # EVERY EDIT LEAVES A RECORD, in the platform's own voice rather than the person's: this
-        # is a note ABOUT what somebody did, not something they said, and the tech-lead reads the
-        # thread. `update_body` is a separate port method precisely so that rewriting somebody
-        # else's text is visible, and a silent rewrite would take that back.
-        #
-        # AND IN THE PROJECT'S LANGUAGE, asked of the catalogue rather than written here (#160):
-        # a sentence composed at a call site is how an English-configured client received
-        # Portuguese and a Portuguese-configured one received English, from code sitting beside a
-        # working per-language catalogue.
-        try:
-            tracker.comment(issue, card_edit_note(who=str(by), parts=changed,
-                                                  language=getattr(proj, "language", None)))
-        except Exception as exc:  # noqa: BLE001 — the edit landed; only its record did not
-            log.warning("OPENFACTORY_CARD_EDIT_UNNOTED card=%s: %s changed and the note recording "
-                        "it could not be left — %s", issue, ",".join(changed), exc)
-            return changed, failure, False
-        return changed, failure, True
-
-    from openfactory.product.voice import card_edit_parts
+        renamed = bool(wanted_title and wanted_title != (current.title or "").strip())
+        sections = (changed_sections(getattr(current, "raw", "") or "", wanted_body)
+                    if wanted_body else [])
+        return renamed, sections
 
     try:
-        changed, failure, noted = await asyncio.to_thread(_write)
+        renamed, sections = await asyncio.to_thread(_plan)
     except Exception as exc:  # noqa: BLE001 — the card could not be read, so nothing was written
         return refused(UNAVAILABLE, f"nothing was changed on {issue}: {exc}")
+    if not renamed and not sections:
+        line = (f"nothing to change on {issue} — its title and description already say what was "
+                f"sent ({by})")
+        said, gate = _as_pickup_would(line, await asyncio.to_thread(_pickup_says, tracker, issue))
+        return done(said, project=proj.name, issue=str(issue), changed="", **gate)
+
+    landed: dict[str, object] = {"changed": [], "failure": ""}
+    # THE NOTE IS THE WRITE'S TO NAME: which parts moved is known only once the write ran, inside
+    # the door (`act`), so it fills these facts there — the door reads them after its `act`
+    facts: dict[str, object] = {}
+
+    async def write() -> Outcome | None:
+        """The text, written between the door's `allowed` and its record (ADR-0055, #414).
+
+        EACH WRITE IS ITS OWN OUTCOME (review of #153). The rename and the body are separate
+        tracker calls — two `gh` invocations on GitHub — and one `except` around them answered
+        "nothing was changed" over a card already renamed; a retry then found the title matching
+        and the rename was never recorded at all. What landed is the transition, and its note — the
+        door's comment, in the project's language (#160) — says which parts; a write that landed
+        nothing is refused, and nothing is recorded."""
+        from openfactory.product.voice import card_edit_note
+
+        def _write() -> tuple[list[str], str]:
+            changed: list[str] = []
+            try:
+                if renamed:
+                    rename(issue, wanted_title)
+                    changed.append("title")
+                if sections:
+                    tracker.update_body(issue, wanted_body)
+                    changed.extend(sections)
+            except Exception as exc:  # noqa: BLE001 — what landed before it is still reported
+                return changed, str(exc) or type(exc).__name__
+            return changed, ""
+
+        changed, failure = await asyncio.to_thread(_write)
+        landed.update(changed=changed, failure=failure)
+        if not changed:
+            return refused(UNAVAILABLE, f"nothing was changed on {issue}: {failure}")
+        facts["note"] = card_edit_note(who=str(by), parts=changed,
+                                       language=getattr(proj, "language", None))
+        return None
+
+    from openfactory.lifecycle import CardEvent
+    from openfactory.product.voice import card_edit_parts
+
+    moved = await _through_the_door(proj, issue, CardEvent.EDITED, by=by, facts=facts, act=write,
+                                    tracker=tracker, board=board, stage=stage)
+    bad = _refusal_of(moved)
+    if bad:
+        return bad
+    changed, failure = list(landed["changed"]), str(landed["failure"])
     what = card_edit_parts(changed, language="en")
-    if failure and not changed:
-        return refused(UNAVAILABLE, f"nothing was changed on {issue}: {failure}")
+    # EVERY EDIT LEAVES A RECORD, in the platform's own voice rather than the person's: the note is
+    # ABOUT what somebody did, and `update_body` is a port method of its own so that rewriting
+    # somebody else's text is visible. A note the tracker refused is a failed effect of a recorded
+    # transition, and the hourly round leaves it.
+    noted = not moved.outcome("comment").startswith("failed")
+    if not noted:
+        log.warning("OPENFACTORY_CARD_EDIT_UNNOTED card=%s: %s changed and the note recording it "
+                    "could not be left — %s", issue, ",".join(changed), moved.outcome("comment"))
     if failure:
         record = ("the thread records what did" if noted
-                  else "and nothing on the thread records it")
+                  else "and nothing on the thread records it yet")
         return refused(UNAVAILABLE, f"only {what} of {issue} changed — the rest of the edit did "
                                     f"not: {failure}. {record[0].upper()}{record[1:]}.",
                        project=proj.name, issue=str(issue), changed=",".join(changed))
     unnoted = "" if noted else ", but the note recording it could not be left on the card"
-    line = (f"edited {what} of {issue} ({by}){unnoted}" if changed else
-            f"nothing to change on {issue} — its title and description already say what was sent "
-            f"({by})")
+    line = f"edited {what} of {issue} ({by}){unnoted}"
     said, gate = _as_pickup_would(line, await asyncio.to_thread(_pickup_says, tracker, issue))
-    return done(said,  # the operator's line
-                project=proj.name, issue=str(issue), changed=",".join(changed), **gate)
+    return _after_the_door(moved, done(said,  # the operator's line
+                                       project=proj.name, issue=str(issue),
+                                       changed=",".join(changed), **gate))
 
 
 async def _withdraw_refusal(proj, board, issue: str, *, remove: bool) -> tuple[_Stage, str]:

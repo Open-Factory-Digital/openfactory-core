@@ -8,7 +8,10 @@ THE ONLY WAY A CARD CHANGES STATE — for the events a slice has moved through i
      click) is answered from its own row: nothing is decided twice, and a retry is never refused
      for a transition that in fact succeeded (D5, the event id first);
   2. the card is read where it is (`Ports.seen`) and `allowed` is asked: a refused transition
-     changes nothing and says why, in the project's language (D2);
+     changes nothing and says why, in the project's language (D2). A change somebody made in the
+     vendor's own interface (`by=OBSERVED`, D8) is judged against where the record last placed
+     the card instead, since the tracker already shows the change, and what follows it writes
+     nothing to the card (`table.consequences`);
   3. `act`, when the caller has one, runs — the engine's half of a person's decision (a signal to
      a parked job, a merge gate's answer, a terminate). Its refusal is the caller's to return, and
      nothing is recorded or applied;
@@ -29,10 +32,11 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from openfactory.lifecycle import executor, record
 from openfactory.lifecycle.table import (
+    OBSERVED,
     CardEvent,
     State,
     after,
@@ -40,6 +44,10 @@ from openfactory.lifecycle.table import (
     consequences,
     name_of,
 )
+
+#: The states a card is in once it is no longer open — what an observed reopen is judged from. A
+#: `delivered` card is closed on every row since #413 (the local row's Done closes it as well).
+_NOT_OPEN = frozenset({State.CLOSED, State.REMOVED, State.DELIVERED})
 
 log = logging.getLogger("openfactory.lifecycle.card")
 
@@ -113,6 +121,7 @@ def transition(project, card: str, event: CardEvent, *, by: str, why: str = "",
 
     card = canonical_ref(card)
     event = CardEvent(event)
+    observed = by == OBSERVED
     ports = ports or Ports(project, tracker=tracker, board=board, columns=columns)
     language = getattr(project, "language", None)
     sink = _sink(ports)
@@ -139,6 +148,15 @@ def transition(project, card: str, event: CardEvent, *, by: str, why: str = "",
         seen = ports.seen(card)
         if seen.cannot_tell:
             return Transition(card=card, event=event, refused=seen.cannot_tell)
+        if observed:
+            # WHAT THE PLATFORM LAST KNEW, NOT WHAT THE TRACKER SHOWS NOW (D8): the tracker already
+            # shows the change, so asked of it a close would be refused as the close of a closed
+            # card. The record's latest transition says where the card was; with no record, the
+            # sweep's own reading of what was promised about it (`facts["before"]`)
+            latest = history.latest
+            seen = replace(seen, state=_state(latest.after) if latest is not None else
+                           _state(str((facts or {}).get("before") or "")))
+            seen = replace(seen, open=seen.state not in _NOT_OPEN)
         refusal = allowed(seen.state, event, open_card=seen.open)
         if refusal is not None and acted and seen.state is after(event, {**(facts or {}),
                                                                         "before": ""}):
@@ -162,6 +180,8 @@ def transition(project, card: str, event: CardEvent, *, by: str, why: str = "",
         known = dict(facts or {})
         # where the card was, for the rows whose consequences turn on it (`question_answered`)
         known["before"] = seen.state.value if seen.state else ""
+        if observed:
+            known["observed"] = True
         known.setdefault("title", seen.title)
         known.setdefault("opened_by", seen.opened_by)
         # WHERE THE REQUESTER ASKED, READ BEFORE ANYTHING IS APPLIED: the card's delivery loop

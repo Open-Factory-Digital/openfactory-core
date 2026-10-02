@@ -949,6 +949,8 @@ def _filing(registry, **overrides) -> SimpleNamespace:
         _vetter=lambda requirement, tracker: None,
         _open_delivery=lambda req, results, **kw: handed.setdefault("_open_delivery", kw),
         _track_defect=lambda number, **kw: handed.setdefault("_track_defect", kw),
+        # the card's door, which files it (#414) — not this case's subject
+        _filed_through_the_door=lambda ref, **kw: True,
         _checked_write=lambda **_k: WriteResult(ok=True, ref="#88"), _same_as=None,
         _cannot_see_the_product=lambda: None)
     for name, value in overrides.items():

@@ -28,9 +28,6 @@ OUTSIDE_THE_DOOR: dict[tuple[str, str, str], tuple[str, str]] = {
         ("a question to the requester before the plan: the card parks (`question_asked`)", "2"),
     (ACTIVITIES, "_do_gather", "open_loop"):
         ("the CARD_QUESTION that question opens (`question_asked`)", "2"),
-    (ACTIVITIES, "scan_todo", "set_status"):
-        ("the stale-pickup healer, which files a card closed as not planned under Done — the "
-         "other error the inventory found", "2"),
     (ACTIVITIES, "_a_card_was_finished", "card_finished"):
         ("a job that ended with its card done announces the delivery (`delivered`)", "2"),
     (ACTIVITIES, "_product_followup", "deliver"):
@@ -46,22 +43,16 @@ OUTSIDE_THE_DOOR: dict[tuple[str, str, str], tuple[str, str]] = {
     ("openfactory/ops/impediment.py", "resolved", "close_ticket"):
         ("the factory closes its own impediment card when the impediment is gone — a platform "
          "ending", "2"),
-    # ── slice 3 (#414): filing, promotion, edits, and the box's outcomes ───────────────────────
+    # ── slice 3 (#414): the box's outcomes (its second part), and the promise a filing opens ────
     ("openfactory/orchestrator/machine.py", "_set_state", "set_state"):
         ("the box: its outcomes are handed back to the worker; its progress marks stay, by rule",
          "3"),
     ("openfactory/orchestrator/promotion.py", "_state", "set_state"):
         ("the box's promotion: merged, staged, released — outcomes handed back", "3"),
-    ("openfactory/actions/catalog.py", "_open", "set_column"):
-        ("a card opened on the board (`filed`)", "3"),
-    ("openfactory/actions/catalog.py", "_card_move", "set_column"):
-        ("a person moves a card between columns (`promoted`, `reordered`)", "3"),
-    (MODULE, "file_ticket", "set_column"): ("the product role files a card (`filed`)", "3"),
-    (MODULE, "file_defect", "set_column"): ("the product role files a defect (`filed`)", "3"),
-    (MODULE, "_file_one", "set_column"): ("the product role files a requirement's card", "3"),
-    (MODULE, "promote", "set_column"): ("the product role queues a card (`promoted`)", "3"),
     (MODULE, "_track_defect", "open_loop"):
-        ("the delivery a reported defect is owed (`filed`)", "3"),
+        ("the delivery a reported defect is owed (`filed`): opened beside the door until the "
+         "promise a filing opens is the door's `Loops` effect", "3"),
     ("openfactory/product/followup.py", "deliveries_to_open", "open_loop"):
-        ("the delivery a requirement's cards are owed (`filed`)", "3"),
+        ("the delivery a requirement's cards are owed (`filed`) — one promise over several cards, "
+         "the reused ones among them, which no single card's filing can open alone", "3"),
 }
