@@ -36,6 +36,8 @@ LIVE_CREDENTIALS = (
     "OPENFACTORY_BOT_TOKEN",
     "GITHUB_TOKEN",
     "GH_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
     # the channel: post to a client's workspace
     "SLACK_BOT_TOKEN",
     "SLACK_APP_TOKEN",
@@ -168,6 +170,14 @@ def _isolate_the_operator(suite_home: Path, workerinput: dict | None = None) -> 
     suite_home.mkdir(parents=True, exist_ok=True)
     _carry_dockers_plugins(suite_home)
     os.environ["HOME"] = str(suite_home)
+    # AND THE `gh` CLI'S OWN LOGIN, which is not only under `HOME`: `GH_CONFIG_DIR`, else
+    # `XDG_CONFIG_HOME/gh`, else `~/.config/gh`. Re-homing hid it only while neither variable was
+    # set in the operator's shell, and with it found, a test whose project names no repository
+    # commented on the repository the suite runs from (`adapters/github_cli.py`, 31 times on
+    # `openfactory-core#12`). Pointed at an empty directory of the suite's own, whatever was set.
+    gh_config = suite_home / ".config" / "gh"
+    gh_config.mkdir(parents=True, exist_ok=True)
+    os.environ["GH_CONFIG_DIR"] = str(gh_config)
 
 
 def _digest(value: str) -> str:
