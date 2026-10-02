@@ -228,6 +228,7 @@ def test_a_refused_approval_is_said_in_the_inbox():
         async def list_jobs(_c, _ns):
             return [{"project": "acme", "issue": "1", "title": "t",
                      "state": "awaiting_prod_approval", "action": None, "wedged": False,
+                     "attention": True,  # a LIVE gate, as `view.list_jobs` flags it (#339)
                      "refused": "the answer's seal does not match"}]
 
         @staticmethod

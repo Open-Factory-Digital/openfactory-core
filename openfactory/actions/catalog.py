@@ -2123,21 +2123,44 @@ async def _product_answer(*, project: str, token: str, answer: str, by: Actor,
     client, bad_engine = await _connected()
     if bad_engine:
         return bad_engine
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
     from openfactory.runtime.temporal import TASK_QUEUE
     from openfactory.runtime.temporal.io import ProductAnswerInput
 
+    # KEYED BY THE TOKEN, which already carries the conversation AND the fingerprint of exactly
+    # what was staged. Two people answering the same proposal collide on purpose — the second gets
+    # the first one's result rather than performing it twice — while a replacement, having a
+    # different fingerprint, is a different workflow.
+    answering = f"openfactory-product-answer-{proj.name}-{_workflow_safe(tok)}"
     try:
         raw = await client.execute_workflow(
             "ProductAnswerWorkflow",
             ProductAnswerInput(project=proj.name, token=tok, approved=(said == "approve"),
                                actor=by.id, via=getattr(by, "via", "") or "",
                                message_id=minted),
-            # KEYED BY THE TOKEN, which already carries the conversation AND the fingerprint of
-            # exactly what was staged. Two people answering the same proposal collide on purpose —
-            # the second gets the first one's result rather than performing it twice — while a
-            # replacement, having a different fingerprint, is a different workflow.
-            id=f"openfactory-product-answer-{proj.name}-{_workflow_safe(tok)}",
-            task_queue=TASK_QUEUE)
+            id=answering, task_queue=TASK_QUEUE)
+    except WorkflowAlreadyStartedError:
+        # THE COLLISION ABOVE WAS PROMISED AND NEVER KEPT (#456). The engine does not hand a second
+        # start the running execution's result: it refuses the start. That refusal fell into the
+        # generic branch below, so a second answer while the first was still running — a double
+        # click, two tabs, the CLI beside the page, for up to the answer's 12-minute bound — was
+        # told "nothing was performed" as an HTTP 500, while the first answer was performing it
+        # (measured on the live bed, 2026-10-01). Waiting on THE SAME execution makes the second
+        # answer read exactly what the first one reads, and performs nothing a second time.
+        try:
+            raw = await client.get_workflow_handle(answering).result()
+        except Exception as exc:  # noqa: BLE001 — a write path must report, never raise
+            # STILL NOT "NOTHING WAS PERFORMED": the earlier answer holds the proposal and may
+            # have performed it. A conflict with an answer already given, and where to look.
+            log.warning("a second answer to %s could not read the first one's outcome (%s)",
+                        answering, exc)
+            return refused(
+                CONFLICT,
+                "That proposal was already being answered when this answer arrived, so this one "
+                "was not performed a second time. The earlier answer's reply goes to whoever gave "
+                "it, and `product_pending` stops listing the proposal once it is taken; one still "
+                "listed can be answered again.", project=proj.name)
     except Exception as exc:  # noqa: BLE001 — a write path must report, never raise
         # THE EXCEPTION DOES NOT GO IN THE SENTENCE: a Temporal timeout rendered to a client is
         # the same leak a repo slug would be.

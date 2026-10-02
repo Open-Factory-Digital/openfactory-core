@@ -2237,10 +2237,17 @@ class ProductModule:
             return ""
         try:
             sandbox, ws = self._workspace()
+            marks = loop.context or {}
+            if marks.get("ticket"):
+                # A CARD SOMEBODY ASKED FOR IS NOT A REQUIREMENT (#481): the judge is told about
+                # the card, as the person was — the loop's subject is only a handle
+                title = str(marks.get("title") or "")
+                delivered = "the card they asked for" + (f": {title}" if title else "")
+            else:
+                delivered = f"requisito {loop.subject}" + (
+                    " (um defeito reportado)" if marks.get("defect") else "")
             verdict = self._role().judge_acceptance(
-                sandbox=sandbox, workspace=ws, reply=text,
-                delivered=f"requisito {loop.subject}" + (
-                    " (um defeito reportado)" if (loop.context or {}).get("defect") else ""))
+                sandbox=sandbox, workspace=ws, reply=text, delivered=delivered)
         except Exception:  # noqa: BLE001
             log.warning("could not judge an acceptance", exc_info=True)
             return ""
@@ -2826,7 +2833,8 @@ class ProductModule:
 
     def file_ticket(self, *, title: str, described: str, reported_by: str, source: str = "",
                     tracker=None, board=_UNSET, seen: int | None = None,
-                    card: str = "") -> WriteResult:
+                    card: str = "", conversation: str = "",
+                    requester: str = "") -> WriteResult:
         """Open the card a person asked for, as described — the first of the three verbs at the
         frontier (#33: create, reorder, move to `To Do`), and until now the one that did not exist:
         `file_defect` filed a broken promise and `breakdown` filed work from a matched gesture, and
@@ -2843,7 +2851,14 @@ class ProductModule:
         title lookup and the create now happen inside the semaphore, and a card saved by another
         conversation after this one's check (`seen`) that is the same request comes back as it —
         linked, with nobody's name. The placement is after: the card exists, and where it sits
-        is repairable."""
+        is repairable.
+
+        AND FOLLOWED UP WHERE IT WAS ASKED (#481). Every event about a card finds its requester
+        through the card's open delivery loop (`events.requester_conversation`), and this verb
+        opened none — so the person who asked was told nothing: not that the change was theirs to
+        try, not that it shipped, not that it was withdrawn. A card asked for in a conversation
+        (`conversation`, `requester`: the staged record's, as for a defect) now opens one; a card
+        filed with no conversation — the panel's and the API's row — opens nothing, as before."""
         from openfactory.product.authoring import ticket_body
         from openfactory.product.cards import TITLE_LIMIT
         from openfactory.product.voice import _pick
@@ -2904,6 +2919,8 @@ class ProductModule:
                             "exists but has no column, so the queue cannot see it until a person "
                             "places it", ref, self.FILING_COLUMN)
                 detail = said["ticket_unplaced"]
+        if str(conversation or "").strip():
+            self._track_ticket(ref, title=name, conversation=conversation, requester=requester)
         return WriteResult(ok=True, ref=str(ref), url=url, detail=detail)
 
     def file_defect(self, *, restated: str, reported_by: str, violates: int | None,
@@ -3012,25 +3029,25 @@ class ProductModule:
         Subject `defeito-<ref>` rather than a requirement number: the loop closes when THIS issue
         closes, and the sweep's delivered() pass already knows how to watch a set of issues. The
         ref is the tracker's own — `defeito-88` on GitHub, `defeito-CONT-412` on Jira (#479)."""
-        try:
-            from datetime import UTC, datetime
+        _follow_card(self.project, f"defeito-{number}", number, {"defect": "1"},
+                     conversation=conversation, requester=requester)
 
-            from openfactory.memory import store as loop_store
-            from openfactory.memory.ledger import DELIVERY, open_loop, waiting
-            from openfactory.product.followup import delivered_to
+    def _track_ticket(self, ref: str, *, title: str = "", conversation: str = "",
+                      requester: str = "") -> None:
+        """A delivery loop on a card a person asked for (#481), so the events about it — the
+        change is theirs to try, it is in the product, it was withdrawn — are said to them, in the
+        conversation they asked in.
 
-            ledger = loop_store.read(self.project.name)
-            already = {x.subject for x in waiting(ledger) if x.kind == DELIVERY}
-            subject = f"defeito-{number}"
-            if subject in already:
-                return
-            loop_store.write(self.project.name, [open_loop(
-                DELIVERY, subject, owner="product", ts=datetime.now(UTC).isoformat(),
-                context={"issues": str(number), "defect": "1",
-                         **delivered_to(conversation, requester)})])
-        except Exception as exc:  # noqa: BLE001 — the defect was filed; only the courtesy is lost
-            log.warning("could not start tracking defect #%s (%s) — the fix will ship without "
-                        "anyone announcing it to the reporter", number, exc)
+        `ticket` BESIDE A DEFECT'S `defect`: the staged kind that filed it, which is what every
+        sentence the loop leads to reads, so none of them calls the card a requirement. The title
+        travels because nothing else on the loop says what the card is.
+
+        KEYED ON THE TRACKER'S OWN REF, never on a number only some trackers mint: the ledger
+        compares refs as the provider wrote them (`events.issues_of`, C-05)."""
+        ref = canonical_ref(ref)
+        _follow_card(self.project, f"cartao-{ref}", ref,
+                     {"ticket": "1", "title": str(title or "")[:120]},
+                     conversation=conversation, requester=requester)
 
     def note_fact(self, *, term: str, body: str, said_by: str, where: str = "",
                   seen: int | None = None) -> WriteResult:
@@ -5026,6 +5043,30 @@ def _refine_note(answer: dict, *, agent: str = "") -> str:
 #: A card is a card: a request and a defect asked for the same thing are one piece of work, and
 #: the second of them is linked to the first rather than filed beside it.
 _CARD_KINDS = ("ticket", "defect")
+
+
+def _follow_card(project, subject: str, ref: str, marks: dict[str, str], *,
+                 conversation: str, requester: str) -> None:
+    """ONE DELIVERY LOOP PER CARD, DEDUPLICATED BY ITS SUBJECT — a reported defect's and a card
+    somebody asked for (#481), opened one way so the two cannot drift. Never raises: the card was
+    filed, and only the courtesy is lost — said in the log."""
+    try:
+        from datetime import UTC, datetime
+
+        from openfactory.memory import store as loop_store
+        from openfactory.memory.ledger import DELIVERY, open_loop, waiting
+        from openfactory.product.followup import delivered_to
+
+        ledger = loop_store.read(project.name)
+        already = {x.subject for x in waiting(ledger) if x.kind == DELIVERY}
+        if subject in already:
+            return
+        loop_store.write(project.name, [open_loop(
+            DELIVERY, subject, owner="product", ts=datetime.now(UTC).isoformat(),
+            context={"issues": str(ref), **marks, **delivered_to(conversation, requester)})])
+    except Exception as exc:  # noqa: BLE001 — the card was filed; only the courtesy is lost
+        log.warning("could not start tracking %s (%s) — it will ship without anyone announcing it "
+                    "to whoever asked for it", subject, exc)
 
 
 def _saved_in_the_repository(result: WriteResult) -> tuple[str, str] | None:
