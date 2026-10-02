@@ -56,6 +56,12 @@ class _Tracker:
         self.created.append((title, body))
         return f"#{500 + len(self.created)}"
 
+    def get_ticket(self, ref):
+        """The card just written, as its door reads it before it files it (ADR-0055, #414)."""
+        from types import SimpleNamespace
+
+        return SimpleNamespace(title=self.created[-1][0], state="open", raw="")
+
 
 class _Board:
     """`accepts=False` is the state finding 56 is about: `set_column` returns False (a rate-limited

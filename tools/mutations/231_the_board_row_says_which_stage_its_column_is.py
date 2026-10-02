@@ -80,8 +80,14 @@ MUTATIONS = [
 
     ("the refusal goes back to naming one option, which on a Jira board is a remedy that changes "
      "nothing", CATALOG,
-     "        named = stage_option(board)",
-     "        named = \"columns\""),
+     # RE-PINNED 2026-10-02 (#414): `card_move`'s own gate names the option the same way, so
+     # the anchor carries the sentence that is `_stage`'s alone
+     "        named = stage_option(board)\n"
+     "        repair = (f\"Map it with the project's tracker option `{named}`\" if named else\n"
+     "                  \"Map it in the project's tracker options, the way",
+     "        named = \"columns\"\n"
+     "        repair = (f\"Map it with the project's tracker option `{named}`\" if named else\n"
+     "                  \"Map it in the project's tracker options, the way"),
 
     ("a row that declares no option has one invented for it", BASE,
      "    return named.strip() if isinstance(named, str) else \"\"",

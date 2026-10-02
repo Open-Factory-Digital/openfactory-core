@@ -56,16 +56,17 @@ NOT_CALLERS = {
 
 #: THE CEILING AND THE BASELINE, committed. Slice 1 ended at 27: the writers slices 2 and 3 own;
 #: 25 since #413's first part moved the card-question sweep through the door; 23 since its
-#: second moved the job's park and settle.
-#: Each slice lowers the ceiling and drops what it moved in from both; slice 3 ends at zero.
-CEILING = 23
+#: second moved the job's park and settle; 16 since #414's first part moved filing, the moves
+#: between the operator's columns and the stale-pickup healer (an observed change, D8).
+#: Each slice lowers the ceiling and drops what it moved in from both; slice 3 ends at zero, and
+#: the sixteen left are its second part's (`card_writers_outside_the_door.py`).
+CEILING = 16
 BASELINE = frozenset({
     ("openfactory/runtime/temporal/activities.py", "_child_to_todo", "set_state"),
     ("openfactory/runtime/temporal/activities.py", "_child_to_todo", "set_status"),
     ("openfactory/runtime/temporal/activities.py", "_do_split", "close_ticket"),
     ("openfactory/runtime/temporal/activities.py", "_do_gather", "set_state"),
     ("openfactory/runtime/temporal/activities.py", "_do_gather", "open_loop"),
-    ("openfactory/runtime/temporal/activities.py", "scan_todo", "set_status"),
     ("openfactory/runtime/temporal/activities.py", "_a_card_was_finished", "card_finished"),
     ("openfactory/runtime/temporal/activities.py", "_product_followup", "deliver"),
     ("openfactory/runtime/temporal/activities.py", "_product_followup", "close_by_observation"),
@@ -75,12 +76,6 @@ BASELINE = frozenset({
     ("openfactory/ops/impediment.py", "resolved", "close_ticket"),
     ("openfactory/orchestrator/machine.py", "_set_state", "set_state"),
     ("openfactory/orchestrator/promotion.py", "_state", "set_state"),
-    ("openfactory/actions/catalog.py", "_open", "set_column"),
-    ("openfactory/actions/catalog.py", "_card_move", "set_column"),
-    ("openfactory/product/module.py", "file_ticket", "set_column"),
-    ("openfactory/product/module.py", "file_defect", "set_column"),
-    ("openfactory/product/module.py", "_file_one", "set_column"),
-    ("openfactory/product/module.py", "promote", "set_column"),
     ("openfactory/product/module.py", "_follow_card", "open_loop"),
     ("openfactory/product/followup.py", "deliveries_to_open", "open_loop"),
 })
@@ -159,7 +154,9 @@ def test_the_list_may_only_shrink():
 def test_every_writer_on_the_list_says_why_and_which_slice_moves_it():
     for key, (why, slice_) in OUTSIDE_THE_DOOR.items():
         assert len(why) > 20, f"{key}: no reason worth the name"
-        assert slice_ in ("2", "3"), f"{key}: slice 1 has landed, so its writers are not here"
+        # slices 1 and 2 have landed: what they did not move is slice 3's to finish, and the list
+        # says so rather than naming a slice that is over (review of #482)
+        assert slice_ == "3", f"{key}: slices 1 and 2 have landed, so their writers are not here"
 
 
 def test_the_walk_reads_the_package_and_sees_a_writer_planted_in_it(tmp_path):

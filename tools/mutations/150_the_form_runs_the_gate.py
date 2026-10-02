@@ -61,8 +61,9 @@ MUTATIONS = [
      '        return ""'),
 
     ("a correction no longer carries the verdict on the corrected card", CATALOG,
-     "                project=proj.name, issue=str(issue), changed=\",\".join(changed), **gate)",
-     "                project=proj.name, issue=str(issue), changed=\",\".join(changed))"),
+     # RE-PINNED 2026-10-02 (#414): the line is handed on through the card's door's outcome
+     "                                       changed=\",\".join(changed), **gate))",
+     "                                       changed=\",\".join(changed)))"),
 
     ("the new-card button goes back to asking for a title only", PANEL,
      '  _bd.form = _blank("new");\n  paintForm();\n  _bgate();',

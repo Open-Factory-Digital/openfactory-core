@@ -50,10 +50,13 @@ VOICE = "openfactory/product/voice.py"
 
 MUTATIONS = [
     # ── 1. the edit gate ───────────────────────────────────────────────────────────────────────
+    # RE-PINNED 2026-10-02 (#414): the stage is read once, and handed to the gate and the door.
+    # The door's table refuses the edit too (`edited` only before pickup), in its own words — the
+    # guard asserts the gate's, which names the column and says what to do instead.
     ("THE RULE ITSELF: a card the factory has taken up is edited anyway, so an agent's target "
      "moves under it with nobody seeing", CATALOG,
-     "               or await asyncio.to_thread(lambda: _stage_refusal(proj, board, issue)))",
-     "               or await asyncio.to_thread(lambda: ''))"),
+     "               or _stage_refusal(proj, board, issue, stage=stage))",
+     "               or \"\")"),
 
     ("every column reads as the operator's, so `in_progress` and `in_review` are editable too",
      COLUMNS,
@@ -73,12 +76,13 @@ MUTATIONS = [
      "    key = stage_key(board, column)\n    if False:"),
 
     # ── 2. the record ──────────────────────────────────────────────────────────────────────────
+    # RE-PINNED 2026-10-02 (#414): the note is the card's door's comment, one row of its table
     ("an edit leaves no record, so somebody else's text is rewritten with nothing in the thread",
-     CATALOG,
-     '            tracker.comment(issue, card_edit_note(who=str(by), parts=changed,\n'
-     '                                                  language=getattr(proj, "language", '
-     'None)))',
-     "            pass"),
+     "openfactory/lifecycle/table.py",
+     "        # the note says which parts moved (`card_edit_note`), on every row — the door's comment\n"
+     "        return (Comment(), Forget())\n",
+     "        # the note says which parts moved (`card_edit_note`), on every row — the door's comment\n"
+     "        return (Forget(),)\n"),
 
     # ── 3. closing ─────────────────────────────────────────────────────────────────────────────
     ("a card an operator withdrew is recorded as delivered work, which is what eleven cards closed "
@@ -110,12 +114,13 @@ MUTATIONS = [
      "    if False:"),
 
     # ── 5. the product owner's cards ───────────────────────────────────────────────────────────
+    # RE-PINNED 2026-10-02 (#414): the stage is read once, and handed to the gate and the door
     ("THE DECISION ITSELF: a card the product role opened is edited from the board like any other",
      CATALOG,
      '    refusal = (await asyncio.to_thread(_product_owned_refusal, tracker, issue, '
      'act="changes")\n'
-     "               or await asyncio.to_thread(lambda: _stage_refusal(proj, board, issue)))",
-     "    refusal = await asyncio.to_thread(lambda: _stage_refusal(proj, board, issue))"),
+     "               or _stage_refusal(proj, board, issue, stage=stage))",
+     "    refusal = _stage_refusal(proj, board, issue, stage=stage)"),
 
     # RETIRED 2026-09-28 (#384): "a card the product role opened is closed from the board" was a
     # claim #384 reversed on purpose — the board's close of such a card now goes THROUGH the
@@ -177,17 +182,19 @@ MUTATIONS = [
      '  const edit = where === "board"\n'),
 
     # ── 6. the note says which part moved ──────────────────────────────────────────────────────
+    # RE-PINNED 2026-10-02 (#414): what moved is read before the door (`_plan`), and written
+    # inside it (`write`), so a save that changes nothing goes through no door at all
     ("THE NOTE AGAIN: every save is recorded as a rewrite of the whole description", CATALOG,
-     "            changed += sections\n",
-     '            changed += ["description"]\n'),
+     "                    changed.extend(sections)\n",
+     '                    changed.append("description")\n'),
 
     ("a title sent unchanged is renamed and recorded as edited", CATALOG,
-     '        if wanted_title and wanted_title != (current.title or "").strip():',
-     "        if wanted_title:"),
+     '        renamed = bool(wanted_title and wanted_title != (current.title or "").strip())',
+     "        renamed = bool(wanted_title)"),
 
     ("a save that changes nothing still leaves a note claiming it did", CATALOG,
-     "        if not changed:\n            return changed",
-     "        if False:\n            return changed"),
+     "    if not renamed and not sections:\n        line = (",
+     "    if False:\n        line = ("),
 
     ("a blank line counts as a change, so a reformatted body is recorded as rewritten", PARSE,
      '    return "\\n".join(line.rstrip() for line in (text or "").strip().splitlines() '
@@ -218,17 +225,19 @@ MUTATIONS = [
      '    refusal = _stage_refusal(proj, board, issue, act="close", stage=stage)',
      "    refusal = None"),
 
+    # RE-PINNED 2026-10-02 (#414): the writes run inside the door, and the note is its effect
     ("a body that failed after the rename answers \"nothing was changed\" over a renamed card",
      CATALOG,
-     "        except Exception as exc:  # noqa: BLE001 — what landed before it is still reported\n"
-     "            failure = str(exc) or type(exc).__name__",
-     "        except Exception:\n"
-     "            raise"),
+     "            except Exception as exc:  # noqa: BLE001 — what landed before it is still reported\n"
+     "                return changed, str(exc) or type(exc).__name__",
+     "            except Exception:\n"
+     "                raise"),
 
     ("an edit whose note failed is reported as an edit that did not happen", CATALOG,
-     "        except Exception as exc:  # noqa: BLE001 — the edit landed; only its record did "
-     "not\n",
-     "        except ZeroDivisionError as exc:\n"),
+     '    unnoted = "" if noted else ", but the note recording it could not be left on the card"\n',
+     "    if not noted:\n"
+     '        return refused(UNAVAILABLE, f"nothing was changed on {issue}")\n'
+     '    unnoted = ""\n'),
 
     # RE-PINNED 2026-10-01 (#412): the reopen and its note are two effects of the card's door, and
     # the row reads their outcomes — the cut makes ANY failed effect read as a card still closed

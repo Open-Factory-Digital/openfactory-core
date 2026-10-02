@@ -64,7 +64,12 @@ class Ports:
         # a tracker and no board; built only alongside a missing tracker, the board stayed None for
         # it, every open card read as one no board places, and the table's permissive row for
         # that answered instead of the card's own column (found building #413).
-        self._board_known = board is not None
+        #
+        # A CALLER THAT HANDS `columns` HAS READ ITS BOARD ALREADY — the board it holds, or none:
+        # the product role files with `board=None` to mean "do not place" (`_board_or_default`),
+        # and a card it has just written is on no column it put it in (`columns={}`). Building a
+        # board here would read a hosted one for an answer the caller already gave (#414).
+        self._board_known = board is not None or columns is not None
         self._columns = columns
 
     def _where(self) -> dict[str, str] | None:
@@ -208,6 +213,37 @@ class Ports:
         if self.tracker.set_state(card, states.get(key) or JobState(key)) is False:
             raise RuntimeError(f"the tracker did not move the card to {key}")
         return "moved"
+
+    def place(self, card: str, key: str, *, name: str = "") -> str:
+        """Put `card` on the board in the column `key` — by `name`, the board's own name for it,
+        when the caller holds one (what a person named on the board, the product role's constant),
+        else through the board's own map of a state to its column (C-14: a board whose columns
+        were renamed has no column called by the platform's name). Added first: on a hosted board
+        an issue is a card only once it is put on it, and adding is idempotent everywhere."""
+        from openfactory.contracts import JobState
+
+        board = self.board
+        if board is None:
+            return "nowhere to place it: this project keeps no board"
+        url = self._url(card)
+        board.add_item(issue_url=url)
+        if name:
+            moved = board.set_column(issue=card, issue_url=url, name=name)
+        else:
+            state = {"backlog": JobState.SKIPPED, "todo": JobState.TODO}.get(key) or JobState(key)
+            moved = board.set_status(issue=card, issue_url=url, state=state)
+        if not moved:
+            raise RuntimeError(f"the board did not place the card in {name or key!r}")
+        return f"placed in {name or key}"
+
+    def _url(self, card: str) -> str:
+        """Where a person opens `card` — asked of the tracker; `""` when it cannot say, which every
+        board's `add_item` and `set_column` already tolerate."""
+        try:
+            return str(self.tracker.ticket_url(card) or "")
+        except Exception:  # noqa: BLE001 — a link is a courtesy; the placement is not
+            log.info("the tracker could not name a URL for #%s", card, exc_info=True)
+            return ""
 
     def close(self, card: str, *, delivered: bool, note: str) -> str:
         from openfactory.adapters.tracker.base import close_ticket

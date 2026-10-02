@@ -26,6 +26,7 @@ from openfactory.lifecycle.table import (
     Effect,
     Forget,
     Loops,
+    Place,
     Preview,
     Remove,
     Reopen,
@@ -54,6 +55,10 @@ def _one(ports, row: record.Row, effect: Effect, *, carried: bool) -> str:
     note = str(facts.get("note") or "")
     if isinstance(effect, Column):
         return ports.column(row.card, effect.key)
+    if isinstance(effect, Place):
+        # the board's own name for the column when the caller holds it (what the person named,
+        # or the module's constant); else the port asks the platform's own name for the key
+        return ports.place(row.card, effect.key, name=str(facts.get("column_name") or ""))
     if isinstance(effect, Close):
         return ports.close(row.card, delivered=effect.delivered, note=note)
     if isinstance(effect, Remove):

@@ -65,10 +65,9 @@ class InMemoryTracker:
 
     def set_state(self, ref: str, state: JobState, reason: str | None = None, *,
                   needs_person: bool | None = None) -> bool:
+        # `reason` is not written, as on every row (ADR-0055 D6): the comment is the card's door's
         col = {JobState.TODO: "TO-DO"}.get(state, state.value)
         self._tickets[self._bare(ref)]["column"] = col
-        if reason:
-            self.comments.append((ref, f"[{state.value}] {reason}"))
         return True
 
     def comment(self, ref: str, body: str) -> None:

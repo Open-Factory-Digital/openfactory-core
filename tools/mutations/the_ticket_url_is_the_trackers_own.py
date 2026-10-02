@@ -55,12 +55,14 @@ MUTATIONS = [
      '            issue_url=(_ticket_url(tracker, num)\n'
      '                       or f"https://github.com/{repo}/issues/{num}"),', SLICE),
 
-    ("the composed literal comes back on the healing path, resolved through the FORGE's "
-     "repository — the defect this slice closed", ACT,
-     "            healed_url = _ticket_url(tracker, ref)",
-     "            heal_repo, heal_bare = _ref_repo(project, ref)\n"
-     '            healed_url = (_ticket_url(tracker, ref)\n'
-     '                          or f"https://github.com/{heal_repo}/issues/{heal_bare}")', SLICE),
+    # RE-PINNED 2026-10-02 (#414): the healer hands the card's door an observed close, whose column
+    # is the tracker's own `set_state` — no URL is handed on that path any more. The place the door
+    # still asks for a link is its board placement (`Ports._url`), and the guess is cut there.
+    ("the composed literal comes back where the card's door places a card, resolved through the "
+     "FORGE's repository — the defect this slice closed", "openfactory/lifecycle/ports.py",
+     '            return str(self.tracker.ticket_url(card) or "")\n',
+     '            return str(self.tracker.ticket_url(card) or "") or '
+     'f"https://github.com/{self.name}/issues/{card}"\n', MOVES),
 
     # ── 3. the helper ──────────────────────────────────────────────────────────────────────────
     ("a tracker without the method is answered with a guess instead of nothing", ACT,

@@ -3077,6 +3077,10 @@ _CARD_NOTE = {
         "parked": "_Parado à espera de uma pessoa._{why}",
         "delivered": "_Entregue._{why}",
         "adjusted": "_Mais uma passagem, pedida por {who}._{why}",
+        "filed": "_Registrado por {who}._{why}",
+        "promoted": "_Colocado na fila por {who}._{why}",
+        "reordered": "_Tirado da fila por {who}: voltou para o backlog._{why}",
+        "edited": "_Editado por {who}._{why}",
     },
     "en": {
         "discarded": ("_Pull request closed without merging by {who}._{why} Nothing was "
@@ -3091,6 +3095,10 @@ _CARD_NOTE = {
         "parked": "_Parked, waiting on a person._{why}",
         "delivered": "_Delivered._{why}",
         "adjusted": "_One more pass, asked for by {who}._{why}",
+        "filed": "_Filed by {who}._{why}",
+        "promoted": "_Queued by {who}._{why}",
+        "reordered": "_Taken out of the queue by {who}: back in the backlog._{why}",
+        "edited": "_Edited by {who}._{why}",
     },
 }
 _CARD_NOTE_WHY = {"pt-BR": " Motivo: {why}", "en": " Reason: {why}"}
@@ -3158,10 +3166,12 @@ _CARD_WHERE = {
 _CARD_DONE_TO = {
     "pt-BR": {"discarded": "descartado", "skipped": "pulado", "stopped": "parado",
               "closed": "fechado", "withdrawn": "retirado", "removed": "removido",
-              "reopened": "reaberto"},
+              "reopened": "reaberto", "filed": "registrado", "promoted": "colocado na fila",
+              "reordered": "tirado da fila", "edited": "editado"},
     "en": {"discarded": "discarded", "skipped": "skipped", "stopped": "stopped",
            "closed": "closed", "withdrawn": "withdrawn", "removed": "removed",
-           "reopened": "reopened"},
+           "reopened": "reopened", "filed": "filed", "promoted": "queued",
+           "reordered": "taken out of the queue", "edited": "edited"},
 }
 _CARD_REFUSED = {
     "pt-BR": "O #{ref} está {where} — não pode ser {done} a partir daí. Nada foi alterado.",

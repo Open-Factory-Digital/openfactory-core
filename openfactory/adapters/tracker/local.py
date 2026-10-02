@@ -90,6 +90,11 @@ class LocalTracker:
     #: and a test holds the two declarations together.
     whole_read_is_cheap = True
 
+    #: WHAT THIS ROW CAN REPORT OF A CHANGE NOBODY MADE THROUGH THE PLATFORM (ADR-0055 D8,
+    #: `tracker/base.py::observes`): everything — its store is read whole, a card gone from it is
+    #: gone (`get_ticket` raises `KeyError`), and a close keeps its reason (`closed_reason`).
+    observes = frozenset({"closed", "reopened", "removed", "promoted", "reordered"})
+
     def __init__(self, project: str, *, db_path=None, token=None, token_provider=None) -> None:
         self.project = (project or "").strip()
         self._db = db_path
@@ -322,7 +327,10 @@ class LocalTracker:
                   needs_person: bool | None = None) -> bool | None:
         """Move the card to the column this state belongs in. `False` when this board declares no
         such column — never a raise, which is what every other row on this axis promises and what
-        the gather's park path reads to decide whether to say the park did not land."""
+        the gather's park path reads to decide whether to say the park did not land.
+
+        `reason` is not written, as on every row (ADR-0055 D6): a transition's comment is the
+        card's door's."""
         key = column_key(state, needs_person=needs_person)
         if not key:
             return False

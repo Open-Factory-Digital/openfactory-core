@@ -70,6 +70,12 @@ class _Tracker:
         self.created.append(title)
         return "88"
 
+    def get_ticket(self, ref):
+        """The card just written, as its door reads it before it files it (ADR-0055, #414)."""
+        from types import SimpleNamespace
+
+        return SimpleNamespace(title=self.created[-1], state="open", raw="")
+
 
 def _defect_module(board):
     from types import SimpleNamespace

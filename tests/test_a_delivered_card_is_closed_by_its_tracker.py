@@ -190,13 +190,46 @@ def test_a_close_refused_because_the_issue_is_ALREADY_closed_is_not_a_failure(gh
     assert not gh.matching("issue", "comment")
 
 
-def test_the_reason_a_caller_gave_is_still_written(gh):
+def test_the_reason_a_caller_gave_is_the_doors_comment_and_the_close_still_happens(gh):
+    """`set_state(reason=…)` wrote the reason as a comment on this row and on one other, and on
+    the other two never; the card's door writes it now, the same on every row (ADR-0055 D6, #414,
+    `test_every_row_writes_only_the_doors_comment.py`). What this row still owes a delivery is
+    the close."""
     tracker = GitHubIssuesTracker("o/r")
 
     tracker.set_state("#7", JobState.DONE, "shipped in v2")
 
-    assert any("shipped in v2" in _flag(argv, "--body") for argv in gh.matching("issue", "comment"))
+    assert not gh.matching("issue", "comment"), "the row wrote a transition's comment of its own"
     assert gh.matching("issue", "close")
+
+
+# ── a close takes the card out of its column, and a read says why it was closed (#414) ─────────
+
+@pytest.mark.parametrize("delivered,column", [(True, "OPT_DONE"), (False, "OPT_BACKLOG")])
+def test_a_closed_card_leaves_its_column_with_its_close(gh, delivered, column):
+    """An issue's state and its project column are two objects here, so a card closed from the
+    panel stayed in TO-DO until the stale-pickup healer met it — and the healer now hands the card's
+    door a close the platform did NOT make (ADR-0055 D8). The row's close moves it, as the local
+    row's close does and as a Jira or Azure close is a move."""
+    tracker = GitHubIssuesTracker("o/r", board_owner="org", board_number="6")
+
+    tracker.close_ticket("#7", "withdrawn", delivered=delivered)
+
+    assert gh.matching("issue", "close")
+    assert gh.matching("updateProjectV2ItemFieldValue", column), (
+        "the closed card was left in the column it was in")
+
+
+def test_a_read_card_says_why_it_was_closed(gh):
+    """`withdrawn` (the healer, the card's door) reads WHY a card was closed; a field this row
+    never asked for read as "cannot say" — finished work — on every card here."""
+    gh.first = [("stateReason", json.dumps({
+        "number": 7, "title": "Export", "body": "## Objective\n\nx\n", "labels": [],
+        "author": {"login": "ana"}, "state": "CLOSED", "stateReason": "NOT_PLANNED"}))]
+
+    ticket = GitHubIssuesTracker("o/r").get_ticket("#7")
+
+    assert (ticket.state, ticket.state_reason) == ("closed", "not_planned")
 
 
 # ── the owned pairing keeps what it had ─────────────────────────────────────────────────────────

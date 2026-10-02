@@ -194,6 +194,12 @@ class _Tracker:
     def ticket_url(self, ref: str) -> str:
         return f"https://forge/a/b/issues/{ref.lstrip('#')}"
 
+    def get_ticket(self, ref: str):
+        """The card just written, as its door reads it before it files it (ADR-0055, #414)."""
+        from types import SimpleNamespace
+
+        return SimpleNamespace(title="Exportar CSV", state="open", raw="")
+
 
 class _Board:
     def __init__(self, *, refuses: bool = False):

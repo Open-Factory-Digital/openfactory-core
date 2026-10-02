@@ -38,19 +38,16 @@ MUTATIONS = [
      "            key = split_repo_ref(ref)[1]\n",
      '            key = split_repo_ref(ref)[1] if split_repo_ref(ref)[1].isdigit() else ""\n'),
 
-    ("the card a person asked for is placed under the ref as typed — `#12`, not the `12` a "
-     "GitHub board was always asked for", MOD,
-     "        # sat inside the skipped block. The board port takes the provider's ref (C-05).\n"
-     "        key = canonical_ref(ref)\n",
-     "        # sat inside the skipped block. The board port takes the provider's ref (C-05).\n"
-     "        key = str(ref)\n"),
+    # RETIRED 2026-10-03, when #414's door met this fix: "the card a person asked for is placed
+    # under the ref as typed". The card is placed THROUGH ITS DOOR now, which canonicalises the ref
+    # it places (`#12` → `12`) itself; `key` here only says whether there is a card, so cutting its
+    # canonicalisation changes nothing — and the placement under `12` stays pinned by the test.
 
     ("a reported defect is followed as `defeito-#12`, a subject no earlier loop had", MOD,
      "            self._track_defect(key, conversation=conversation, requester=requester)\n",
      "            self._track_defect(str(ref), conversation=conversation, requester=requester)\n"),
 
-    ("a requirement's card is placed under the ref as filed, not the part after its repository",
-     MOD,
-     "            key = split_repo_ref(ref)[1]\n",
-     "            key = str(ref)\n"),
+    # RETIRED 2026-10-03, for the same reason: "a requirement's card is placed under the ref as
+    # filed, not the part after its repository". The door places the ref it is handed, qualified
+    # or not, and `key` here only refuses a filing the tracker answered no ref for.
 ]

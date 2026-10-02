@@ -3206,28 +3206,15 @@ async def scan_todo(inp: ScanInput) -> list[str]:
     tracker = _tracker_for(project)
     open_refs = await _open_refs(tracker, candidates)
     for ref in [r for r in candidates if r not in open_refs]:
-        from openfactory.contracts import JobState as _JS
-
-        target = await asyncio.to_thread(_where_a_closed_card_goes, project, tracker, board, ref)
-        activity.logger.warning(
-            "OPENFACTORY_STALE_PICKUP_CARD #%s is closed but sits in %r — not re-running it; "
-            "moving the card to %s", ref, inp.pickup_status,
-            "Done" if target is _JS.DONE else "Backlog")
         try:
-            # set_STATUS, not a literal column name: on a board whose columns the client renamed
-            # (C-14) the healing must speak the same map every other move speaks
-
-            # THE PROVIDER'S OWN URL SHAPE, with nothing composed behind it (slice 3e). The
-            # literal that used to stand here resolved the ref through `_ref_repo`, whose default
-            # is the FORGE's repository — so on a project whose issues and code live in different
-            # repositories it addressed an issue that is not there.
-            healed_url = _ticket_url(tracker, ref)
-            await asyncio.to_thread(
-                lambda r=ref, u=healed_url, t=target: board.set_status(
-                    issue=r, issue_url=u, state=t))
+            healed = await asyncio.to_thread(_a_closed_card_in_the_queue, project, tracker, board,
+                                             ref)
         except Exception:  # noqa: BLE001 — healing is a bonus; the filter already protected the money
-            activity.logger.warning("could not move the stale card #%s — it will be skipped "
-                                    "again next tick", ref)
+            activity.logger.info("the stale card #%s could not be healed", ref, exc_info=True)
+            healed = "it could not be moved — it will be skipped again next tick"
+        activity.logger.warning(
+            "OPENFACTORY_STALE_PICKUP_CARD #%s is closed but sits in %r — not re-running it; %s",
+            ref, inp.pickup_status, healed)
 
     # C-18'S HALF OF THE GATE (2026-08-13). The project-level gate at the top answered for the
     # DEFAULT repository — it runs before the board is read, so no card and therefore no repo is
@@ -5736,10 +5723,42 @@ def _where_a_closed_card_goes(project, tracker, board, ref: str) -> JobState:
     return JobState.SKIPPED if withdrawn(ticket) else JobState.DONE
 
 
-def _converge_card_transitions(project) -> None:
-    """`lifecycle.converge` on the hourly round, logged — see its call in `techlead_watch`."""
-    from openfactory.lifecycle import converge
+def _a_closed_card_in_the_queue(project, tracker, board, ref: str) -> str:
+    """The stale-pickup healer's card, THROUGH ITS DOOR (ADR-0055 D8, #414). A card closed while
+    it sat in the pickup column is a close the platform did not make there — every close of ours
+    takes the card out of the queue's column on every row — so it is handed to the door as an
+    observed `closed`: its promise cancelled and its requester told when it was withdrawn, exactly
+    as a close through the platform; and the board follows the close, filing the card where the
+    close puts it (`table.consequences`), with the map every other move speaks (C-14).
 
+    TWO CLOSES ARE NOT A PERSON'S, and neither is handed over: one the record already holds (the
+    door refuses it, and says so), and a SPLIT card's — the splitter closes it as not delivered
+    and its children carry its work, so its promise is not cancelled (`triage.delivered_numbers`).
+    Returns what happened, for the healer's line."""
+    from openfactory.lifecycle import OBSERVED, CardEvent, transition
+
+    if _children_safe(tracker, ref):
+        return "it was split, and its children carry its work — left where it is"
+    target = _where_a_closed_card_goes(project, tracker, board, ref)
+    moved = transition(project, ref, CardEvent.CLOSED, by=OBSERVED,
+                       facts={"delivered": target is JobState.DONE, "column": "todo",
+                              "before": "todo"},
+                       tracker=tracker, board=board)
+    if moved.refused:
+        return f"not moved: {moved.refused}"
+    where = "Done" if target is JobState.DONE else "Backlog"
+    return f"moving the card to {where} ({moved.outcome('column') or 'nothing to move'})"
+
+
+def _converge_card_transitions(project) -> None:
+    """`lifecycle.observe`, then `lifecycle.converge`, on the hourly round, logged — see their call
+    in `techlead_watch`. OBSERVED FIRST (ADR-0055 D8, #414): a card closed on the vendor's own
+    screen is a transition the record did not hold, and what follows it is converged like any
+    other's."""
+    from openfactory.lifecycle import converge, observe
+
+    for line in observe(project):
+        activity.logger.info("card change observed: %s", line)
     for line in converge(project):
         activity.logger.info("card transition converged: %s", line)
 

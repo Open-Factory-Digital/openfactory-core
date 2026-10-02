@@ -150,6 +150,12 @@ _COMMENT_PAGES = 25
 class AzureBoardsTracker:
     """Azure Boards work items. Satisfies `TrackerAdapter`."""
 
+    #: WHAT THIS ROW CAN REPORT OF A CHANGE MADE ON AZURE BOARDS ITSELF (ADR-0055 D8,
+    #: `tracker/base.py::observes`): a close and why (its state's category, `_closed_reason`), a
+    #: reopen, and a move between the operator's two columns. Not a deletion: a work item in the
+    #: recycle bin answers the way an unreachable one does.
+    observes = frozenset({"closed", "reopened", "promoted", "reordered"})
+
     def __init__(self, *, organization: str, project: str, token: str | None = None,
                  work_item_type: str = "Issue", state_map: dict[str, str] | None = None,
                  options: dict | None = None, client: AzureDevOpsClient | None = None,
@@ -333,8 +339,12 @@ class AzureBoardsTracker:
 
         NOTHING MAPPED IS A NO-OP WITH A WARNING, never a guess: an invented state name is a 400
         (`"The field 'State' contains the value 'Nope' that is not in the list"`) at best and a card
-        moved somewhere nobody watches at worst. The reason is still posted either way — a caller's
-        explanation dropped because the move could not be made is the silent half of a failure."""
+        moved somewhere nobody watches at worst.
+
+        `reason` IS NOT WRITTEN (ADR-0055 D6, #414). A transition's comment is the card's door's,
+        the same on every row; posted here it existed on two rows of four and was doubled where the
+        caller also commented. The explanation of a move that could not be made is not lost by
+        this: it is the door's `Comment`, applied whether or not the move landed."""
         key = _column_key(state, needs_person=needs_person)
         target = self._state_for_key(key or "")
         if not target:
@@ -343,8 +353,6 @@ class AzureBoardsTracker:
                         state, key, ref)
         else:
             self._patch(ref, [{"op": "add", "path": "/fields/System.State", "value": target}])
-        if reason:
-            self.comment(ref, f"[{state.value}] {reason}")
         return bool(target)
 
     def comment(self, ref: str, body: str) -> None:

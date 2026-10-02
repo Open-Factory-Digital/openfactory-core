@@ -81,6 +81,13 @@ class _Site:
             key = f"{KEY}-{len(self.status) + 1}"
             self.status[key] = TODO
             return _Answer({"id": str(10000 + len(self.status)), "key": key})
+        read = re.fullmatch(rf"issue/({KEY}-\d+)", path)
+        if read and method == "GET":
+            # the card just written, as its door reads it before it files it (ADR-0055, #414)
+            key = read.group(1)
+            return _Answer({"key": key, "fields": {
+                "summary": "Exportar CSV", "description": None, "reporter": None,
+                "status": {"name": self.status[key], "statusCategory": {"key": "new"}}}})
         moved = re.fullmatch(rf"issue/({KEY}-\d+)/transitions", path)
         if moved and method == "GET":
             offers = {TO_BACKLOG: BACKLOG, TO_TODO: TODO, TO_DOING: DOING}
@@ -217,6 +224,12 @@ class _Numbered:
 
     def find_ticket(self, *, title):
         return None
+
+    def get_ticket(self, ref):
+        """The card just written, as its door reads it before it files it (ADR-0055, #414)."""
+        from types import SimpleNamespace
+
+        return SimpleNamespace(title="Exportar CSV", state="open", raw="")
 
     def create_ticket(self, *, title, body, **_):
         return "#12"
