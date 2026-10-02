@@ -204,8 +204,8 @@ class Ports:
         # THE ONE COLUMN A PERSON'S ENDING WRITES, through the port's one writer of a card's state.
         # No `reason`: the door's comment is its own effect, and `set_state` writing it too is the
         # double comment D6 ends (two rows write `reason`, the local board drops it).
-        states = {"backlog": JobState.SKIPPED, "todo": JobState.TODO}
-        if self.tracker.set_state(card, states[key]) is False:
+        states = {"backlog": JobState.SKIPPED, "todo": JobState.TODO, "done": JobState.DONE}
+        if self.tracker.set_state(card, states.get(key) or JobState(key)) is False:
             raise RuntimeError(f"the tracker did not move the card to {key}")
         return "moved"
 

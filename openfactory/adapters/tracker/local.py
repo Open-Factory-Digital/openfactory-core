@@ -332,9 +332,20 @@ class LocalTracker:
             if conn.execute("SELECT 1 FROM columns WHERE project = ? AND key = ?",
                             (self.project, key)).fetchone() is None:
                 return False
-            changed = conn.execute(
-                "UPDATE cards SET column_key = ?, updated_at = ? WHERE project = ? AND ref = ?",
-                (key, when, self.project, bare)).rowcount
+            if state is JobState.DONE:
+                # DONE CLOSES THE CARD AS DELIVERED, as the GitHub row's does
+                # (`_close_as_delivered`). Left open in Done, a delivered card was never counted as
+                # delivered (`triage.Ticket.delivered` asks for a closed card), so on the local
+                # board the requester was never told "it is ready" until a person closed the card
+                # by hand — measured on #413, where #411's inventory had marked it "to verify".
+                changed = conn.execute(
+                    "UPDATE cards SET column_key = ?, updated_at = ?, state = 'closed', "
+                    "closed_reason = 'completed' WHERE project = ? AND ref = ?",
+                    (key, when, self.project, bare)).rowcount
+            else:
+                changed = conn.execute(
+                    "UPDATE cards SET column_key = ?, updated_at = ? WHERE project = ? AND ref = ?",
+                    (key, when, self.project, bare)).rowcount
         return bool(changed)
 
     def set_assignees(self, ref: str, logins: list[str]) -> None:
