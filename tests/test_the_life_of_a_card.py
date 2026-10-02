@@ -398,3 +398,23 @@ def test_a_caller_that_hands_the_door_only_its_tracker_still_has_the_card_placed
     seen = Ports(deployment, tracker=_tracker(deployment)).seen(ref.lstrip("#"))
 
     assert seen.state is State.WAITING_ON_A_PERSON, seen
+
+
+# ── the sweeps ask before they act (#413) ────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("delivered,where", [(True, "DONE"), (False, "SKIPPED")])
+def test_the_stale_pickup_healer_files_a_closed_card_where_its_close_put_it(deployment, delivered,
+                                                                           where):
+    """A closed card left in TO-DO was moved to Done whatever it was closed as, so a card withdrawn
+    as not planned was filed as delivered work (#411's inventory). Finished work goes to Done, and
+    anything else back to Backlog."""
+    from openfactory.adapters.tracker.base import close_ticket
+    from openfactory.contracts import JobState
+    from openfactory.runtime.temporal.activities import _where_a_closed_card_goes
+
+    tracker, board = _tracker(deployment), _board(deployment)
+    ref = tracker.create_ticket(title="Export", body="## Objective\n\nExport\n")
+    close_ticket(tracker, ref, "done with it", delivered=delivered)
+    board.set_column(issue=ref, issue_url="", name="TO-DO")     # the stale card the poller finds
+
+    assert _where_a_closed_card_goes(deployment, tracker, board, ref) is getattr(JobState, where)

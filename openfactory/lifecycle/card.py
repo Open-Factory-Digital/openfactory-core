@@ -154,13 +154,16 @@ def transition(project, card: str, event: CardEvent, *, by: str, why: str = "",
                 return Transition(card=card, event=event, before=seen.state, answer=answer)
             acted = True
         known = dict(facts or {})
+        # where the card was, for the rows whose consequences turn on it (`question_answered`)
+        known["before"] = seen.state.value if seen.state else ""
         known.setdefault("title", seen.title)
         known.setdefault("opened_by", seen.opened_by)
         # WHERE THE REQUESTER ASKED, READ BEFORE ANYTHING IS APPLIED: the card's delivery loop
         # says it, and a cancellation closes that loop — so a telling applied after it, or by the
         # sweep an hour later, would find nobody's conversation and say it to the room
         known.setdefault("conversation", ports.asked_in(card))
-        known.setdefault("note", card_note(event.value, who=by, why=why, language=language))
+        if "note" not in known:     # the caller's own words win, and only then is one composed
+            known["note"] = card_note(event.value, who=by, why=why, language=language)
         effects = consequences(event, known)
         row = record.Row(card=card, seq=history.next_seq, event_id=this_id, event=event.value,
                          by=by, why=why, before=seen.state.value if seen.state else "",

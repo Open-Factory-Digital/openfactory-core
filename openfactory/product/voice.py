@@ -3073,6 +3073,7 @@ _CARD_NOTE = {
         "stopped": ("_Parado por {who}._{why} O job foi encerrado no motor; nada foi mergeado e "
                     "nenhum branch foi apagado. O cartão voltou para o backlog e pode ser "
                     "retomado."),
+        "question_answered": "_Respondido por {who}._{why}",
     },
     "en": {
         "discarded": ("_Pull request closed without merging by {who}._{why} Nothing was "
@@ -3083,6 +3084,7 @@ _CARD_NOTE = {
         "stopped": ("_Stopped by {who}._{why} The job was terminated in the engine; nothing was "
                     "merged and no branch was deleted. The card is back in the backlog and can be "
                     "picked up again."),
+        "question_answered": "_Answered by {who}._{why}",
     },
 }
 _CARD_NOTE_WHY = {"pt-BR": " Motivo: {why}", "en": " Reason: {why}"}

@@ -1692,7 +1692,6 @@ def _do_card_question_sweep(project_name: str) -> str:  # noqa: C901 — one rou
         CARD_QUESTION,
         OPEN,
         chase_due,
-        close_by_observation,
         waiting,
     )
     from openfactory.techlead import voice as tl_voice
@@ -1758,18 +1757,29 @@ def _do_card_question_sweep(project_name: str) -> str:  # noqa: C901 — one rou
                                 at=now,
                                 gap_keys=[k.strip() for k in (ctx.get("gap_keys") or "").split("\n")
                                           if k.strip()])
-        moved = tracker.set_state(ref, JobState.TODO)
-        if moved is False:
-            activity.logger.warning("card questions: #%s answered but could not be returned to the "
-                                    "queue — left open, tried again next round", ref)
+        said = (tl_voice.say(tl_voice.NARRATION, "gather.answered", lang,
+                             who=hit.author, where="product context") if recorded else
+                tl_voice.say(tl_voice.NARRATION, "gather.on-card-only", lang,
+                             who=hit.author, why=(result.detail or "")[:160]))
+        # THROUGH THE CARD'S DOOR (ADR-0055, #413). The card went back to TO-DO from the ledger
+        # alone, so a card closed — or removed — while its question waited was put back in the
+        # queue by the answer. The door reads where the card is first: back to the queue only from
+        # the park the question put it in, the question closed as cancelled on a card that is
+        # gone. The id is the question's, so a round that dies after the door is answered from
+        # the record by the next one, never decided twice.
+        from openfactory.lifecycle import CardEvent, transition
+
+        moved = transition(project, ref, CardEvent.QUESTION_ANSWERED, by=hit.author or "",
+                           facts={"note": said, "about": loop.about}, tracker=tracker,
+                           event_id=f"question_answered-{ref}-{loop.about}-{loop.ts}")
+        if moved.refused:
+            activity.logger.warning("card questions: #%s answered, and its card could not be "
+                                    "read — left open, tried again next round (%s)", ref,
+                                    moved.refused[:160])
             continue
-        if recorded:
-            tracker.comment(ref, tl_voice.say(tl_voice.NARRATION, "gather.answered", lang,
-                                              who=hit.author, where="product context"))
-        else:
-            tracker.comment(ref, tl_voice.say(tl_voice.NARRATION, "gather.on-card-only", lang,
-                                              who=hit.author, why=(result.detail or "")[:160]))
-        rows += close_by_observation([loop], {(loop.kind, loop.subject, loop.about): "answered"})
+        if moved.outcome("column").startswith("failed") and not moved.recorded:
+            activity.logger.warning("card questions: #%s answered but could not be returned to the "
+                                    "queue, and nothing records it — left for a person", ref)
         answered += 1
     if rows:
         loop_store.write(project.name, rows)
@@ -3132,15 +3142,16 @@ async def scan_todo(inp: ScanInput) -> list[str]:
     tracker = _tracker_for(project)
     open_refs = await _open_refs(tracker, candidates)
     for ref in [r for r in candidates if r not in open_refs]:
-        state = "closed"
+        from openfactory.contracts import JobState as _JS
+
+        target = await asyncio.to_thread(_where_a_closed_card_goes, project, tracker, board, ref)
         activity.logger.warning(
-            "OPENFACTORY_STALE_PICKUP_CARD #%s is %s but sits in %r — not re-running delivered "
-            "work; "
-            "moving the card to Done", ref, state, inp.pickup_status)
+            "OPENFACTORY_STALE_PICKUP_CARD #%s is closed but sits in %r — not re-running it; "
+            "moving the card to %s", ref, inp.pickup_status,
+            "Done" if target is _JS.DONE else "Backlog")
         try:
             # set_STATUS, not a literal column name: on a board whose columns the client renamed
             # (C-14) the healing must speak the same map every other move speaks
-            from openfactory.contracts import JobState as _JS
 
             # THE PROVIDER'S OWN URL SHAPE, with nothing composed behind it (slice 3e). The
             # literal that used to stand here resolved the ref through `_ref_repo`, whose default
@@ -3148,8 +3159,8 @@ async def scan_todo(inp: ScanInput) -> list[str]:
             # repositories it addressed an issue that is not there.
             healed_url = _ticket_url(tracker, ref)
             await asyncio.to_thread(
-                lambda r=ref, u=healed_url: board.set_status(
-                    issue=r, issue_url=u, state=_JS.DONE))
+                lambda r=ref, u=healed_url, t=target: board.set_status(
+                    issue=r, issue_url=u, state=t))
         except Exception:  # noqa: BLE001 — healing is a bonus; the filter already protected the money
             activity.logger.warning("could not move the stale card #%s — it will be skipped "
                                     "again next tick", ref)
@@ -5619,6 +5630,27 @@ def _hours_since(iso: str) -> float:
         # ping somebody about a question asked a minute ago.
         activity.logger.info("could not read when a loop opened (%r) — not chasing it", iso)
         return 0.0
+
+
+def _where_a_closed_card_goes(project, tracker, board, ref: str) -> JobState:
+    """Where the stale-pickup healer moves a closed card (#413): Backlog for a card the tracker
+    says was closed as NOT delivered, Done otherwise.
+
+    HOW IT WAS CLOSED, NOT THAT IT WAS. The healer moved every closed card to Done, so a card
+    withdrawn as NOT PLANNED was filed as delivered work — `done`, the report that must stay
+    trustworthy. Where the tracker says so (`lifecycle.ports.withdrawn`: the local board and GitHub
+    keep the reason), the card goes to Backlog, where the tracker's own not-delivered close puts
+    one. Where it cannot say, the card goes to Done as it always did: the merged card left in
+    TO-DO that this healer was written for (2026-08-04) is the common case, and a row that keeps
+    no reason gives no ground to move it anywhere else."""
+    from openfactory.lifecycle.ports import withdrawn
+
+    try:
+        ticket = tracker.get_ticket(ref)
+    except Exception:  # noqa: BLE001 — unread is "cannot say": what it always did
+        activity.logger.info("could not read how #%s was closed", ref, exc_info=True)
+        return JobState.DONE
+    return JobState.SKIPPED if withdrawn(ticket) else JobState.DONE
 
 
 def _converge_card_transitions(project) -> None:

@@ -32,11 +32,6 @@ OUTSIDE_THE_DOOR: dict[tuple[str, str, str], tuple[str, str]] = {
         ("a question to the requester before the plan: the card parks (`question_asked`)", "2"),
     (ACTIVITIES, "_do_gather", "open_loop"):
         ("the CARD_QUESTION that question opens (`question_asked`)", "2"),
-    (ACTIVITIES, "_do_card_question_sweep", "set_state"):
-        ("an answered question returns the card to the queue — without asking whether it is "
-         "still open, one of the two errors the inventory found (`question_answered`)", "2"),
-    (ACTIVITIES, "_do_card_question_sweep", "close_by_observation"):
-        ("the CARD_QUESTION closed as answered (`question_answered`)", "2"),
     (ACTIVITIES, "scan_todo", "set_status"):
         ("the stale-pickup healer, which files a card closed as not planned under Done — the "
          "other error the inventory found", "2"),

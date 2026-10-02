@@ -68,6 +68,12 @@ class Ticket(BaseModel):
     #: stop. A promise the answer SHAPE cannot express is one no call site can keep.
     state: str | None = None
 
+    #: HOW a closed ticket was closed, in the row's own word (`completed`, `not_planned`) — `""`
+    #: when it is open or the row cannot say (#413). The card's lifecycle reads it to tell finished
+    #: work from withdrawn work: the stale-pickup healer filed every closed card under Done, so a
+    #: card closed as not planned was reported as delivered.
+    state_reason: str = ""
+
     # Board/issue labels — used to route special tickets (e.g. an `e2e` label means "just run
     # the e2e suite", no plan/execute — ADR-0008). Lowercased for stable matching.
     labels: list[str] = Field(default_factory=list)
