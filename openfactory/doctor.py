@@ -357,6 +357,12 @@ class Probes:
     #: refusal (#360) will one day quote, made knowable before the first pickup. None = an older
     #: Probes, or a checkout/manifest this deployment could not read; the check is skipped.
     inlined_documents: Callable[[], tuple[dict[str, int], str] | None] | None = None
+    #: The directory the manifest is read from — the project's checkout — or None when this
+    #: deployment cannot resolve one. The `guidelines` line resolves each entry in it by the job's
+    #: own rule, which is the only way to see a guideline committed as a link out of the
+    #: repository; the text alone cannot (#350). None = an older Probes, or no checkout at hand:
+    #: the line then reads the manifest's text and says so.
+    checkout: Callable[[], pathlib.Path | None] | None = None
 
 
 #: The remedy every check inherits when it could not run because the manifest is not written yet.
@@ -1073,29 +1079,51 @@ def _manifest(p: Probes) -> Finding:
 
 
 def _guidelines(p: Probes) -> Finding:
-    """Does the manifest name a guideline outside the repository (#329)?
+    """Does the manifest name a guideline the job will refuse (#329, #350)?
 
-    Every job refuses one — the manifest is the repository's own content, and a path out of it
-    would put a file of the worker into the agent's prompt — and a refusal nobody sees before the
-    first job is the quiet absence this check exists to prevent: the agent would simply run
-    without the standard the entry was meant to carry. Read from the manifest's text alone, so it
-    is said before any checkout exists; a link inside the repository that points out of it is
-    refused by the job, where the checkout can be resolved."""
+    Every job refuses one that leaves the repository — the manifest is the repository's own
+    content, and a path out of it would put a file of the worker into the agent's prompt — and a
+    refusal nobody sees before the first job is the quiet absence this check exists to prevent:
+    the agent would simply run without the standard the entry was meant to carry.
+
+    TWO READINGS, AND THE LINE SAYS WHICH IT MADE. The manifest's text answers before any checkout
+    exists, and it cannot see a guideline committed as a link out of the repository: that line
+    passed while every job refused the link (second review of #346). So when the project's
+    checkout is at hand, every entry is resolved in it by the job's own rule
+    (`context.resolve_inside`), links followed — in the tree the job resolves it in, since
+    `build_runner` hands `build_context` the same `resolve_repo_path`. When none is, the text is
+    read and the line says so."""
     import posixpath
 
-    from openfactory.orchestrator.context import declared_guidelines
+    from openfactory.orchestrator.context import (
+        ITSELF,
+        OUTSIDE,
+        declared_guidelines,
+        resolve_inside,
+    )
     from openfactory.orchestrator.operator_guidelines import ENV_VAR
 
     named = declared_guidelines(p.manifest())
-    # THE SAME SHAPES THE JOB REFUSES (review of #346): out of the repository, or the repository
-    # itself — `.`, `docs/..` and an empty entry name no file, and the job says so
+    checkout = p.checkout() if p.checkout else None
     out = []
     for where, path in named:
+        if checkout is not None:
+            # THE JOB'S RULE IN THE JOB'S TREE, NOT A SECOND COPY OF EITHER (#350): it sees what
+            # the text cannot — a link committed in the repository — and it admits what the job
+            # admits, so the two answers cannot drift apart the way the text's did
+            target, refused = resolve_inside(checkout, path)
+            if refused == OUTSIDE:
+                out.append(f"{where}: {path} ({OUTSIDE}: it resolves to {target})")
+            elif refused:
+                out.append(f"{where}: {path!r} ({refused})")
+            continue
+        # THE SAME SHAPES THE JOB REFUSES (review of #346): out of the repository, or the
+        # repository itself — `.`, `docs/..` and an empty entry name no file, and the job says so
         norm = posixpath.normpath(path)
         if posixpath.isabs(path) or norm.split("/")[0] == "..":
-            out.append(f"{where}: {path} (outside the repository)")
+            out.append(f"{where}: {path} ({OUTSIDE})")
         elif norm == ".":
-            out.append(f"{where}: {path!r} (the repository itself, not a file)")
+            out.append(f"{where}: {path!r} ({ITSELF})")
     if out:
         return Finding(
             "guidelines", False,
@@ -1104,14 +1132,20 @@ def _guidelines(p: Probes) -> Finding:
             f"a guideline the manifest names is a file read from the repository the agent edits. "
             f"Put an organisation's central guidelines in the directory {ENV_VAR} names (the "
             f"operator's setting, docs/configuration.md) and drop the entry, or copy the file "
-            f"into the repository and name it by its path there; an entry that names the "
-            f"repository itself names the guideline's file instead")
+            f"into the repository, in place of the link if it is one, and name it by its path "
+            f"there; an entry that names the repository itself names the guideline's file instead")
+    if checkout is not None:
+        return Finding("guidelines", True,
+                       f"every guideline the manifest names resolves inside the repository "
+                       f"({len(named)} named) — resolved in the checkout at {checkout}, links "
+                       f"followed, by the rule every job applies")
     # SAID FOR WHAT WAS CHECKED (review of #346): the manifest's text, and nothing it points at —
-    # a link committed in the repository is the job's to refuse, and a green line must not claim it
+    # with no checkout at hand a link is the job's to refuse, and a green line must not claim it
     return Finding("guidelines", True,
                    f"no guideline the manifest names is a path outside the repository "
-                   f"({len(named)} named) — read from the manifest's text: a link committed in "
-                   f"the repository that points out of it is refused by the job, not seen here")
+                   f"({len(named)} named) — read from the manifest's text, with no checkout of "
+                   f"the project at hand: a link committed in the repository that points out of "
+                   f"it is refused by the job, not seen here")
 
 
 def _operator_guidelines(p: Probes) -> Finding:
@@ -2423,6 +2457,22 @@ def probes_for(project) -> Probes:
                                          harness=harness_kind(project, "executor"))
         return per_role, note
 
+    def _checkout() -> pathlib.Path | None:
+        """The tree the manifest is read from, or None when it cannot be resolved here (#350).
+
+        THE JOB'S OWN TREE: `build_runner` resolves the same `resolve_repo_path` and hands it to
+        `build_context`, which resolves every guideline in it — so a link this line follows here
+        is the link the job refuses there."""
+        from openfactory.factory import resolve_repo_path
+
+        try:
+            root = pathlib.Path(resolve_repo_path(project))
+        except Exception as exc:  # noqa: BLE001 — a diagnostic never breaks on a probe
+            log.info("could not resolve %s's checkout to resolve its guidelines in (%s)",
+                     getattr(project, "name", "?"), str(exc)[:120])
+            return None
+        return root if root.is_dir() else None
+
     return Probes(
         docker_running=_docker_running,
         ci_checks=_ci_checks,
@@ -2455,6 +2505,7 @@ def probes_for(project) -> Probes:
         operator_guidelines=lambda: _operator_guidelines_tier(),
         product_reading=_reading_probe if getattr(project, "product", None) else None,
         inlined_documents=_inlined_documents,
+        checkout=_checkout,
     )
 
 
