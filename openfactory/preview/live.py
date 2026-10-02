@@ -58,13 +58,19 @@ def is_up(found: preview.Preview | None, *, now: float | None = None) -> bool:
     return found is not None and found.live and not found.expired(now)
 
 
-def link_for(project: str, card: str, *, latest=None, now: float | None = None) -> str:
+def link_for(project, card: str, *, latest=None, now: float | None = None) -> str:
     """THE HOOK (#405): the link that opens `card`'s preview while it is up, `""` while it is not.
 
     For whatever tells a person their card's change is ready — the product role's message (#401)
     passes it as `preview_url` — so the sentence can say "try it here" instead of "open the card
     and start one". Never raises: a message is never lost over a preview store that cannot be
-    read."""
+    read.
+
+    THE PROJECT OR ITS NAME. Both callers — the merge watch's `tell_the_requester` and the round's
+    `ready_at_the_gate` — hand it the registry's project, and it compared that object to the
+    record's project NAME: never equal, so every "ready for you" said "start the preview from the
+    card" while one was up (measured building #413, 2026-10-02)."""
+    project = str(getattr(project, "name", project) or "")
     number = preview.card_of(card)
     if not number:
         return ""
