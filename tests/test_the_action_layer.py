@@ -1470,6 +1470,7 @@ def test_the_panel_offers_the_three_answers_as_options_not_prose(client, monkeyp
 
     async def _jobs(_client, _ns):
         return [{"project": "demo", "issue": "7", "title": "t", "state": "awaiting_your_merge",
+                 "attention": True,  # a LIVE gate, as `view.list_jobs` flags it (#339)
                  "action": {"pr_url": "https://github.com/o/demo/pull/9", "auto": False}}]
 
     monkeypatch.setattr(tv, "list_jobs", _jobs)

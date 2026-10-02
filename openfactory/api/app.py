@@ -1581,11 +1581,20 @@ async def inbox() -> list[dict]:
         raise HTTPException(
             status_code=503, detail=f"durable engine unreachable: {str(exc)[:150]}"
         ) from exc
-    from openfactory.floor.ladder import need_kind
+    from openfactory.floor.ladder import need_kind, waits_on_a_person
 
     out: list[dict] = []
     waiting: list[tuple[dict, dict]] = []  # (the job, its item's `review`), filled after the loop
     for j in await tv.list_jobs(client, ns):
+        # WHETHER IT ASKS AT ALL IS THE ENGINE'S ANSWER, read once (#339); the branches below
+        # decide only what can be answered. The generic branch tested `state` alone, and a run's
+        # state outlives the run: a stopped job whose ticket a later run merged kept asking here
+        # with `resume` and `skip`, both refused by an engine with nothing live to signal, while
+        # its own row said `attention: false` and the floor said Armed. Driven through the real
+        # `view.list_jobs` with both runs listed (2026-10-01): one such item before this line,
+        # none after, and the live run of the same ticket still listed when there is one.
+        if not waits_on_a_person(j):
+            continue
         state, act = j.get("state"), (j.get("action") or {})
         items_before = len(out)
         # WHAT THIS PLATFORM'S OWN REVIEWER FOUND, on the one screen where somebody is deciding
