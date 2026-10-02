@@ -5601,6 +5601,11 @@ function renderPreview(project, unit, card, id, r){
   for(const m of (r.missing||[])) out.push(line(m));
   for(const [repo, said] of Object.entries(r.base_moved||{})) out.push(line(`${repo}: ${said}`));
   for(const t of (r.notes||[])) out.push(line("note: "+t));
+  // THE CHANGE'S OWN SHAPE (#348): offered to a product admin, by the server, only while the
+  // base's is the one running — and it asks them to have read the shape first
+  if(r.can_allow_shape) out.push(`<div style="margin-top:8px"><button class="btn ghost" ${data} data-d="${esc(r.own_shape)}" onclick="previewOwnShape(this)">run this change's own shape</button>
+    <div class="sub" style="font-size:11px;margin-top:4px">only after reading the compose files and the <code>preview:</code> block it changes on the pull request (${esc(r.own_shape)})</div></div>`);
+  else if(r.shape_from === "change" && r.own_shape) out.push(line(`shape: this change's own (${r.own_shape})`));
   if(r.log_dir && (r.state==="failed" || r.state==="ended" || r.live)) out.push(line(`logs: ${r.log_dir} (openfactory preview logs ${project} ${unit})`));
   if(r.proposal_url) out.push(`<div style="margin-top:4px"><a href="${esc(safeUrl(r.proposal_url))}" target="_blank" rel="noopener">what would make this previewable ↗</a></div>`);
   return out.join("") || line("no preview of this card");
@@ -5622,6 +5627,10 @@ function gatePreviewLine(project, issue){
     }).catch(()=>{});
   }
   return `<span id="pvgate">${_pvGate[k].html}</span>`;
+}
+function previewOwnShape(btn){
+  if(!confirm(`Run this pull request's own preview shape (${btn.dataset.d})?\n\nThe preview will run the services, builds and settings the change's compose files and preview: block declare — admitted key by key like the base's. Read them on the pull request first. A push that changes them goes back to the base's shape.`)) return;
+  previewAct(btn, "own_shape");
 }
 async function previewAct(btn, verb){
   const {p, u, n, id, s} = btn.dataset;

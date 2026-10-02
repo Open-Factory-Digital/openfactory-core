@@ -486,7 +486,9 @@ async def preview_link(project: str, unit: str, request: Request):
     forge = await asyncio.to_thread(lambda: demand.forge_state(owner, unit, found))
     judged = demand.judge(found, kind=default_preview_runtime(), forge=forge,
                           required=bool(getattr(policy, "required", False)))
+    from openfactory.actions.catalog import _a_product_admin
     from openfactory.preview import live as pv_live
+    from openfactory.preview.own import short as own_short
 
     language = getattr(owner, "language", None)
     body = {"unit": unit, "state": found.state if found else "", "live": False, "services": [],
@@ -514,7 +516,14 @@ async def preview_link(project: str, unit: str, request: Request):
             "pr_urls": list(found.pr_urls) if found else [],
             "started_by": found.started_by if found else "",
             "who": pv_live.started_by_said(found, language),
-            "can_start": judged.can_start}
+            "can_start": judged.can_start,
+            # THE CHANGE'S OWN SHAPE (#348): its digest when the change edits the shape, which shape
+            # ran, and whether this viewer may allow the change's — a product admin, and only
+            # while the base's is the one running
+            "own_shape": own_short(found.own_shape) if found else "",
+            "shape_from": found.shape_from if found else "base",
+            "can_allow_shape": bool(found and found.own_shape and found.shape_from != "change"
+                                    and _a_product_admin(owner, _actor(request)))}
     if found is not None and found.shape and not found.live:
         # THE BASE DECLARES NO SHAPE (#265 slice 4): which proposal is open is the forge's answer
         # NOW — a person merges it after the job wrote this record — so the sentence naming it is
@@ -3268,6 +3277,13 @@ async def preview_rebuild(project: str, unit: str, request: Request) -> JSONResp
     """Build this unit's preview again from its pull request's head — the `preview_rebuild` row;
     a unit with nothing up is started."""
     return await _preview_act("preview_rebuild", project, unit, request)
+
+
+@app.post("/api/preview/{project}/{unit}/own_shape", dependencies=_AUTH)
+async def preview_own_shape(project: str, unit: str, request: Request) -> JSONResponse:
+    """Let this unit's preview run its change's own shape, at the digest its card shows, and build
+    it again — the `preview_own_shape` row (#348)."""
+    return await _preview_act("preview_own_shape", project, unit, request)
 
 
 async def _preview_act(name: str, project: str, unit: str, request: Request) -> JSONResponse:
