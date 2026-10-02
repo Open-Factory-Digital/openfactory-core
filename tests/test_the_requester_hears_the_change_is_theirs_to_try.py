@@ -112,6 +112,8 @@ def told(registry, ledger, monkeypatch) -> list[dict]:
     monkeypatch.setattr(events, "_title_of", lambda project, card: "Relatório mensal")
     monkeypatch.setattr(events, "_card_url", lambda project, card: CARD_URL)
     monkeypatch.setattr(events, "_preview_offered", lambda project, card: True)
+    # the button case unless a test says the deployment starts previews itself (#437)
+    monkeypatch.setattr(events, "_preview_starts_itself", lambda project: False)
     return said
 
 
@@ -193,6 +195,51 @@ def test_a_preview_already_up_is_IN_the_message_instead_of_start_the_preview(reg
     assert events.ready_for_you(registry, card="500", pr_url=PR, preview_url=live)
     text = told[0]["text"]
     assert "https://web--books--500.preview.example" in text and "inicie a prévia" not in text
+
+
+@pytest.mark.parametrize("language,waits,button", [
+    ("pt-BR", "aguardar a prévia, que está subindo sozinha", "abra o cartão e inicie a prévia"),
+    ("en", "wait for the preview, which is starting on its own", "open the card and start the "
+                                                                 "preview"),
+])
+def test_a_preview_that_starts_itself_is_awaited_not_started_by_hand(language, waits, button):
+    """The preview started itself when the pull request opened (#405) and was not up yet when
+    this was said: the person was told to start it from the card, and a minute later its link
+    arrived (#437). Said now: it is on its way, and the card's button is the fallback."""
+    said = voice.ready_for_you(ref="500", title="Relatório mensal", card_url=CARD_URL,
+                               preview=True, preview_starts_itself=True, language=language)
+    assert waits in said and button not in said, said
+    assert ("pelo cartão" if language == "pt-BR" else "from the card") in said, (
+        "the fallback must stay: a cap may hold the start back, and the card then offers it")
+    # AN UP PREVIEW STILL WINS: its link is the sentence, whatever the policy
+    up = voice.ready_for_you(ref="500", preview=True, preview_starts_itself=True,
+                             preview_url="https://web--books--500.preview.example/",
+                             language=language)
+    assert "https://web--books--500.preview.example" in up and waits not in up
+    # NOTHING OFFERED, nothing to wait for — whatever the policy
+    none = voice.ready_for_you(ref="500", preview=False, preview_starts_itself=True,
+                               language=language)
+    assert waits not in none
+
+
+def test_the_event_asks_the_same_policy_the_start_obeys(registry, ledger, told, monkeypatch):
+    ledger.rows = [_defect()]
+    monkeypatch.setattr(events, "_preview_starts_itself", lambda project: True)
+    assert events.ready_for_you(registry, card="500", pr_url=PR)
+    assert "aguardar a prévia" in told[0]["text"] and "inicie a prévia" not in told[0]["text"]
+
+
+@pytest.mark.parametrize("auto_start,kind,expected", [
+    (True, "compose", True), (False, "compose", False), (True, "none", False), (True, "", False),
+])
+def test_it_starts_itself_only_where_should_start_would_let_it(monkeypatch, auto_start, kind,
+                                                               expected):
+    from openfactory.contracts.project import PreviewPolicy
+    from openfactory.runtime.temporal import io
+
+    monkeypatch.setattr(io, "default_preview_runtime", lambda: kind)
+    project = SimpleNamespace(name="books", preview=PreviewPolicy(auto_start=auto_start))
+    assert events._preview_starts_itself(project) is expected
 
 
 def test_with_no_preview_on_offer_it_never_sends_them_to_a_button_that_is_not_there(
