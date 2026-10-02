@@ -14,6 +14,7 @@ import urllib.parse
 
 from openfactory.adapters.forge.base import ForgeAdapter, ReviewEvent
 from openfactory.adapters.forge.base import truncated as _truncated
+from openfactory.adapters.github_cli import no_repository_named, refused
 
 log = logging.getLogger("openfactory.forge.github")
 
@@ -215,6 +216,11 @@ class GitHubForge(ForgeAdapter):
         return env
 
     def _gh(self, args: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str]:
+        # NEVER A GUESSED REPOSITORY (`adapters/github_cli.py`), as the tracker's row
+        why = no_repository_named(args)
+        if why:
+            log.warning("OPENFACTORY_GH_NO_REPOSITORY %s", why)
+            return refused(args, why)
         return subprocess.run(
             ["gh", *args], capture_output=True, text=True, timeout=timeout, env=self._env()
         )
