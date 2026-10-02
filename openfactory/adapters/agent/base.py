@@ -167,6 +167,13 @@ HARNESSES_WITHOUT_STAGED_PROMPT = frozenset({"kimi"})
 #: actually carry, with room for what is built around the prompt (review of #360).
 _COMMAND_MARGIN = 4096
 
+#: The most a prompt may cost as ONE argv element, quoted, before `stage_prompt` refuses it: the
+#: per-argument ceiling less the rest of the command. ONE NUMBER, read by that refusal and by the
+#: note `doctor` and `box prove` print before any pickup, so the line the note warns about is the
+#: line the pass refuses at (#418): the note measured against the raw `MAX_ARG_STRLEN`, 4,096
+#: bytes looser than the refusal before anything else in the prompt was counted.
+ARGV_PROMPT_CEILING = MAX_ARG_STRLEN - _COMMAND_MARGIN
+
 
 def _argv_bytes(prompt: str) -> int:
     """How many bytes the prompt costs as ONE argv element — quoted, the way every builder here
@@ -237,7 +244,7 @@ def stage_prompt(
         path = stage(workspace=workspace, text=prompt)
         if path:
             return path
-    if _argv_bytes(prompt) > MAX_ARG_STRLEN - _COMMAND_MARGIN:
+    if _argv_bytes(prompt) > ARGV_PROMPT_CEILING:
         raise PromptTooLarge(_prompt_too_large_finding(prompt, phase=phase, project=project))
     return None
 

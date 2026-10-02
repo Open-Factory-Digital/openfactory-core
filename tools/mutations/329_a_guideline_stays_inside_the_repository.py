@@ -27,11 +27,11 @@ MUTATIONS = [
      "        doc = _inside(repo_path, g, named_by=named_by)",
      "        doc = repo_path / g"),
 
+    # RE-PINNED 2026-10-01 (#350): the rule moved, unchanged, into `resolve_inside`, which the
+    # doctor now asks too; the `except OSError` stayed in `_inside`
     ("the path is contained without being resolved, so `..` and a link out walk past it", CONTEXT,
-     "        candidate = (repo_path / relative).resolve()\n    except OSError:\n        return None\n"
-     "    if candidate == root",
-     "        candidate = (repo_path / relative).absolute()\n    except OSError:\n        return None\n"
-     "    if candidate == root"),
+     "    candidate = (repo_path / relative).resolve()\n    if candidate == root",
+     "    candidate = (repo_path / relative).absolute()\n    if candidate == root"),
 
     ("a component's guidelines are left out of what is read and checked", CONTEXT,
      '        named += [(f"components.{name}.guidelines", g) for g in comp.guidelines]',
@@ -67,9 +67,11 @@ MUTATIONS = [
      "    if not candidate.is_relative_to(root):\n        # THE ROOT IS NOT OUTSIDE"),
 
     # THE ROW THE LABEL MEANT (review of #351): the pre-#346 combined condition, which is what
-    # calls the root an escape — the anchor spans both branches so the root's own one is gone
+    # calls the root an escape — the anchor spans both branches so the root's own one is gone.
+    # RE-PINNED 2026-10-01 (#350): the branches live in `resolve_inside` now, the warnings in
+    # `_inside` keyed on what it returns — the same cut, the root answered as OUTSIDE
     ("the job calls the repository itself an escape", CONTEXT,
-     '    if candidate == root:\n        # THE ROOT IS NOT OUTSIDE, and saying so would send somebody looking for an escape that\n        # is not there (review of #346): `.`, `docs/..` or an empty entry names the repository\n        # itself, which is no file to read\n        _log.warning(\n            "%s names %r, which is the repository itself, not a file — REFUSED, and the agent "\n            "runs WITHOUT it; name the guideline\'s file.", named_by, relative)\n        return None\n    if not candidate.is_relative_to(root):',
+     "    if candidate == root:\n        # THE ROOT IS NOT OUTSIDE, and saying so would send somebody looking for an escape that\n        # is not there (review of #346): `.`, `docs/..` or an empty entry names the repository\n        # itself, which is no file to read\n        return candidate, ITSELF\n    if not candidate.is_relative_to(root):",
      "    if candidate == root or not candidate.is_relative_to(root):"),
 
     ("the doctor's pass claims a containment it did not check", DOCTOR,

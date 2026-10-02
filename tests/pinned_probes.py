@@ -143,6 +143,10 @@ GREEN_ANSWERS: dict[str, Any] = {
     # (#7) — an `ok` finding either way. A test about an overflowing corpus names its own sizes.
     "inlined_documents": lambda: ({"docs.constraints": 20_000, "framework baseline": 8_066,
                                    "operator guidelines": 0, "docs.guidelines": 1_500}, ""),
+    # No checkout at hand (#350): a checkout is a directory on this machine, and nothing in this
+    # set reads the machine. The `guidelines` line then reads the manifest's text and says so — an
+    # `ok` finding. A test about a link committed in the repository builds a real one and names it.
+    "checkout": lambda: None,
 }
 
 

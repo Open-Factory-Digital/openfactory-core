@@ -82,9 +82,13 @@ def _wf(issue: str) -> str:
 
 
 def _job(issue: str, state: str, **more) -> dict:
-    return {"workflow_id": _wf(issue), "run_id": f"run-{issue}", "project": "demo",
-            "issue": issue, "title": f"ticket {issue}", "state": state, "status": "running",
-            "action": None, "wedged": False, "start_time": "2026-09-19T10:00:00+00:00", **more}
+    row = {"workflow_id": _wf(issue), "run_id": f"run-{issue}", "project": "demo",
+           "issue": issue, "title": f"ticket {issue}", "state": state, "status": "running",
+           "action": None, "wedged": False, "start_time": "2026-09-19T10:00:00+00:00", **more}
+    # `attention` AS `view.list_jobs` ANSWERS IT — only a live run asks for a person, and the inbox
+    # reads that flag rather than the state (#339).
+    row.setdefault("attention", row["status"] == "running" and state in tv.ATTENTION_STATES)
+    return row
 
 
 def _at_the_gate(issue: str) -> dict:

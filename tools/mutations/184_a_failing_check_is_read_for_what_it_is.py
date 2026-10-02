@@ -128,7 +128,10 @@ MUTATIONS = [
 
     # ── claim 4: the point of action ──────────────────────────────────────────────────────────
     ("the repair launches whatever the table says", ACTIVITIES,
+     # re-pinned 2026-10-02: #330's adjust pass holds with the same two lines
+     "        held, evidence = _nothing_to_repair(project, inp)\n"
      "        if held is not None:\n            return held\n",
+     "        held, evidence = _nothing_to_repair(project, inp)\n"
      "        if held is not None:\n            pass\n"),
 
     ("an unreadable forge is repaired blind instead of held", REPAIRABLE,

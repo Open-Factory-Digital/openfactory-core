@@ -704,7 +704,10 @@ def settle(project, *, text: str, user: str, thread: str, module, channel: str =
     # a polite answer to a confirmation of nothing, with the person left believing they confirmed.
     # After the acceptance check on purpose: with a delivery loop open, a bare "sim" answers "did
     # it work?", and the ledger read first.
-    if not waiting and (is_yes(text) or is_no(text)) and _expired_recently(thread, channel):
+    # THE NOTICE IS READ FROM THE STORE TOO (#452): the expiry may have been found before a restart,
+    # or by another worker, and a late yes reaching this process is owed it all the same
+    if not waiting and (is_yes(text) or is_no(text)) and _expired_recently(thread, channel,
+                                                                           project=project):
         from openfactory.product.voice import proposal_expired
 
         return Settled(proposal_expired(language=lang), waiting)
@@ -1237,7 +1240,9 @@ def _offer_card(ex: Exchange, composed, *, request: str, preamble: str = "",
     if not composed.ok:
         if composed.draft is None and not composed.ask:
             return preamble + card_not_drafted(language=lang)
-        cards.hold_question(ex.key, composed, request, kind=kind, extra=extra)
+        # HELD IN THE STORE (#452), so the process the answer reaches finds it — not only this one
+        cards.hold_question(ex.key, composed, request, kind=kind, extra=extra,
+                            project=project, conversation=ex.thread)
         return preamble + card_needs(ask=composed.ask, language=lang)
     title = composed.draft.title
     disputed = composed.ruling.findings if composed.disputed and composed.ruling else ()
@@ -1297,8 +1302,11 @@ def resume_card(ex: Exchange, *, arrival_ts: str = "") -> Reply | str | None:
     from openfactory.product import cards
     from openfactory.product import case as _case
 
-    held = cards.take_question(ex.key)
+    held = cards.held_question(ex.key, project=ex.project)
     if held is None or is_no(ex.text):
+        if held is not None:
+            # DECLINED ("não", "esquece"): closed as an answer closes it
+            cards.close_question(ex.key, project=ex.project)
         return None
     compose = getattr(ex.module, "compose_card", None)
     if not callable(compose):
@@ -1312,6 +1320,10 @@ def resume_card(ex: Exchange, *, arrival_ts: str = "") -> Reply | str | None:
                        answered=cards.Answered(question=held.ask, answer=ex.text,
                                                draft=held.draft, findings=held.findings),
                        kind=held.kind, language=ex.lang)
+    # CLOSED NOW, WITH THE REDRAFT IN HAND (#452) — not when it was read: a worker that died in the
+    # redraft's minutes left it for the turn's retry. Before `_offer_card`, which may hold the
+    # question again under the same key, and that new hold must stay open.
+    cards.close_question(ex.key, project=ex.project)
     return _offer_card(ex, composed, request=held.request, kind=held.kind,
                        extra=dict(held.extra))
 

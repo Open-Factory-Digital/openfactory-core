@@ -91,7 +91,8 @@ def test_the_client_side_refuses_a_verb_the_workflow_would_drop():
                     if isinstance(node, ast.Compare) and isinstance(node.ops[0], ast.NotIn))
     words = {c.value for c in accepted.comparators[0].elts}
 
-    assert words == {"merge", "adjust", "discard", "review"}, (
+    # `address` since #330: the adjust pass on the pull request's own comments
+    assert words == {"merge", "adjust", "address", "discard", "review"}, (
         f"the client and the signal disagree about what can be answered: {sorted(words)}")
 
 

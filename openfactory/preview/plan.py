@@ -166,6 +166,11 @@ class PreviewPlan(BaseModel):
     expires_at: int = 0
     pr_urls: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
+    #: the digest of the change's OWN shape when the change edits the shape (#348), "" otherwise —
+    #: what a product admin's allowance names
+    own_shape: str = ""
+    #: which shape this plan runs: "base", or "change" once that digest was allowed
+    shape_from: Literal["base", "change"] = "base"
 
 
 class PreviewUp(BaseModel):

@@ -53,7 +53,7 @@ MUTATIONS = [
 
     # ── and the gates are not claimed ───────────────────────────────────────────────────────────
     ("the fresh verdict says nothing about the gates it did not run", WORKFLOW,
-     '        if self._verdict is not None:\n'
+     '        if self._verdict is not None and not getattr(result, "validations", None):\n'
      '            self._verdict = {**self._verdict,\n'
      '                             "gates_note": "the forge\'s own CI is the live check"}',
      "        if False:\n"

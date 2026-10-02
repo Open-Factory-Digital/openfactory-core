@@ -424,6 +424,27 @@ def test_the_link_for_a_card_is_there_while_its_preview_is_up_and_only_then(sink
     assert live.link_for("acme", "no number") == ""
 
 
+def test_the_link_is_found_whether_it_is_asked_for_by_the_project_or_by_its_name(sink, monkeypatch):
+    """Both callers hand the hook the registry's PROJECT, and it compared that to the record's
+    project NAME — never equal — so every "ready for you" said "start the preview from the card"
+    while one was up (measured building #413). The hook answers the same for either, and the
+    round's catch-all carries the link to the requester's message."""
+    from types import SimpleNamespace
+
+    from openfactory.product import events
+
+    preview.record(_up())
+    project = SimpleNamespace(name="acme")
+    assert live.link_for(project, "#12") == live.link_for("acme", "#12") == "/p/acme/preview/12"
+
+    asked: list[str] = []
+    monkeypatch.setattr(events, "ready_for_you",
+                        lambda project, *, card, pr_url, preview_url="", **kw:
+                        asked.append(preview_url) or True)
+    assert events.ready_at_the_gate(project, [("12", "https://x/pr/1")]) == ["12"]
+    assert asked == ["/p/acme/preview/12"], asked
+
+
 def test_the_link_of_a_requirements_card_opens_that_card(sink):
     preview.record(_up(unit="req0012", kind="requirement", cards=("12",)))
     assert live.link_for("acme", "12") == "/p/acme/preview/12"

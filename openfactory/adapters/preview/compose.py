@@ -72,7 +72,7 @@ from pydantic import BaseModel, ConfigDict
 
 from openfactory import namespace, preview
 from openfactory.adapters.preview.base import PREFIX, refusals
-from openfactory.preview.assemble import url_var
+from openfactory.preview.assemble import shape_edits, url_var
 from openfactory.preview.plan import (
     Layout,
     PreviewPlan,
@@ -760,18 +760,75 @@ def plan(layout: Layout, unit: Unit, project, *, cfg=None, policy=None, now: flo
                                 f"by the `preview:` block of `.openfactory/project.yaml` "
                                 f"(docs/project.yaml.example shows it).",))
     policy = policy or getattr(project, "preview", None) or PreviewPolicy()
+    said, own_digest, shape_from = "", "", "base"
+    if (not layout.context and shape_tree in layout.trees
+            and layout.trees[shape_tree].has_change
+            and shape_edits(layout.trees[shape_tree].diff_paths, cfg, project.manifest_path)):
+        said, own_digest, shape_from, cfg = _own_shape(layout, project, unit, shape_tree, cfg)
     found = shape(layout, cfg, tree=shape_tree, run=_as_run,
                   of="this product" if layout.context else "this preview", remedy=remedy)
     if isinstance(found, Refused):
         return found
     scheme, port = panel_address()
     now = time.time() if now is None else now
-    return assemble(found.doc, cfg=cfg, unit=unit, layout=layout, policy=policy,
-                    shape_tree=shape_tree, manifest_path=project.manifest_path,
-                    domain=preview.domain(), scheme=scheme, public_port=port,
-                    reach="loopback" if reach_kind() == "loopback" else "network",
-                    loopback_range=loopback_range(),
-                    expires_at=int(now) + policy.hours * 3600, prove=prove)
+    planned = assemble(found.doc, cfg=cfg, unit=unit, layout=layout, policy=policy,
+                       shape_tree=shape_tree, manifest_path=project.manifest_path,
+                       domain=preview.domain(), scheme=scheme, public_port=port,
+                       reach="loopback" if reach_kind() == "loopback" else "network",
+                       loopback_range=loopback_range(),
+                       expires_at=int(now) + policy.hours * 3600, prove=prove, shape_said=said)
+    if isinstance(planned, Refused):
+        return planned
+    return planned.model_copy(update={"own_shape": own_digest, "shape_from": shape_from})
+
+
+def _own_shape(layout: Layout, project, unit: Unit, tree: str, base_cfg):
+    """`(what the card says, the change's own digest, which shape runs, the block it runs with)`
+    for a change that edits the shape (#348, `preview/own.py`).
+
+    THE BASE'S, UNLESS A PRODUCT ADMIN ALLOWED EXACTLY THIS SHAPE. The change's block and files are
+    read and digested; an allowance naming that digest lays them over the base tree, and the one
+    reader admits them as it admits the base's. Anything else (no allowance, an allowance for a
+    shape the change has since moved past, a shape that cannot be read or laid) runs the base's,
+    and the card says which and why."""
+    from openfactory.loader import load_manifest
+    from openfactory.preview import own
+
+    # THE CHANGE'S MANIFEST IS THE AGENT'S, so it is read only where it really is in the change's
+    # checkout — a link out of it would hand the reader any file on the worker — and a failure is
+    # said WITHOUT the reader's words, which can quote the file they could not parse
+    root = os.path.realpath(layout.root(tree, "change"))
+    where = os.path.realpath(os.path.join(root, project.manifest_path))
+    if not where.startswith(root + os.sep) or not os.path.isfile(where):
+        return ("the change's manifest is not a file inside its checkout, so the preview runs the "
+                "base branch's version.", "", "base", base_cfg)
+    try:
+        manifest = load_manifest(project, repo_root=Path(root))
+        change_cfg = getattr(manifest, "preview", None)
+    except Exception as exc:  # noqa: BLE001 — an unreadable manifest is the base's shape, said
+        log.info("[%s] the change's manifest could not be read (%s)", project.name,
+                 type(exc).__name__)
+        return ("the change's manifest could not be read, so the preview runs the base branch's "
+                "version.", "", "base", base_cfg)
+    found = own.of_the_change(layout, tree=tree, change_cfg=change_cfg)
+    if isinstance(found, str):
+        return f"{found}.", "", "base", base_cfg
+    allowance = own.allowed(project.name, unit.token)
+    if allowance and allowance[0] == found.digest:
+        why = own.overlay(layout, tree=tree, texts=found.texts)
+        if why:
+            return (f"{why}, and the preview runs the base branch's version.", found.digest,
+                    "base", base_cfg)
+        return (f"the preview runs the change's own shape ({own.short(found.digest)}), allowed by "
+                f"{allowance[1] or 'a product admin'} and admitted key by key as the base's is. A "
+                f"push that changes the shape again goes back to the base's until somebody looks "
+                f"again.", found.digest, "change", found.cfg)
+    moved = (f" It has changed since {allowance[1] or 'a product admin'} allowed "
+             f"{own.short(allowance[0])}." if allowance else "")
+    return (f"the preview runs the base branch's version, never the change's unasked.{moved} A "
+            f"product admin who has read the change's shape on the pull request can allow it "
+            f"({own.short(found.digest)}), and the next start runs it.", found.digest, "base",
+            base_cfg)
 
 
 # ── 3–4. the runtime ─────────────────────────────────────────────────────────────────────────────

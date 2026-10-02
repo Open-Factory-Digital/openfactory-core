@@ -257,6 +257,16 @@ class AdjustInput(BaseModel):
     attempt: int = 1
     #: what the human asked for, verbatim and already bounded by the caller.
     instruction: str = ""
+    #: where the pass's words come from (#330): `""`, a person's own instruction above; or
+    #: `REVIEW_THREAD`, the comments people left on the pull request, read by the worker when
+    #: the pass starts. A history from before this field carries `""` and means what it meant.
+    source: str = ""
+    #: who asked for the pass, for the note the pull request carries about it.
+    by: str = ""
+
+
+#: `AdjustInput.source` for a pass whose words are the pull request's review comments (#330).
+REVIEW_THREAD = "review_thread"
 
 
 class ReviewPassInput(BaseModel):

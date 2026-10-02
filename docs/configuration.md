@@ -368,7 +368,10 @@ This keeps prompts small while the full knowledge base stays reachable.
 the agent edits, and each guideline is inlined into the prompt, so an entry is resolved and must
 stay inside the checkout: an absolute path, one that climbs out with `..`, or a link that points
 out of the repository is **refused**. The job's log names each refused entry, and
-`openfactory doctor` fails the project on its `guidelines` line before the first job. An
+`openfactory doctor` fails the project on its `guidelines` line before the first job: it resolves
+each entry in the project's checkout by the job's own rule, links followed, so a guideline
+committed as a link out of the repository fails there too. Where no checkout can be resolved,
+the line reads the manifest's text and says so, and a link is then left to the job (#350). An
 organisation's central standards belong in `OPENFACTORY_GUIDELINES_DIR`, the operator's setting
 (see `docs/reference/configuration.md`), not in a path the manifest points out to.
 

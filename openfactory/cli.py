@@ -495,21 +495,23 @@ def project_forget_conversations(
     """Delete every recorded conversation turn for a project's product (a data-deletion request).
 
     Irreversible and deliberately awkward: it asks first, prints the count, and touches ONLY the
-    client's conversation — never the platform's operational memory for that project. The
-    conversations are the PRODUCT's, shared by every registry project of it, so those are named
-    before it asks and theirs go too. A name no longer registered deletes what is recorded under
-    that name alone.
+    client's conversation — what was said, what was derived from it, the files sent in it and the
+    names people gave it — never the platform's operational memory for that project (`project
+    forget` is the command for all of it). The conversations are the PRODUCT's, shared by every
+    registry project of it, so those are named before it asks and theirs go too. A name no longer
+    registered deletes what is recorded under that name alone.
     """
     from openfactory.memory import transcript
-    from openfactory.registry import ProjectRegistry
+    from openfactory.product import forget
 
     # THE DELETION FOLLOWS THE KEY (ADR-0051, #266 slice 3): memory is the product's, so forgetting
     # one registry project's conversations forgets its product's — and the rows written before the
     # move, still under each member's own name, with them.
     try:
-        where = transcript.partition(ProjectRegistry().get(name))
+        found = forget.target(name)
+        where, members = found.where, found.members
     except KeyError:
-        where = transcript.Partition(key=name)
+        where, members = transcript.Partition(key=name), ()
     shared = [m for m in where.members if m != name]
     if shared:
         typer.echo(f"'{name}' shares its product's conversations with {', '.join(shared)} — one "
@@ -517,29 +519,95 @@ def project_forget_conversations(
     if not yes:
         typer.echo(f"This permanently deletes ALL recorded conversation for '{name}'.")
         typer.confirm("Proceed?", abort=True)
+    # THE CONVERSATIONS LAYER OF `project forget` (#453), not a copy of it: the rows, and — for a
+    # product's partition — what was derived from them (#269 slice 2, ADR-0053 D6: the index's
+    # lines, the search record's queries, each member's recall index; the next turn rebuilds them
+    # from a store that no longer has the rows) and what they carried (the files sent in them and
+    # the names people gave them, which deleting ONE conversation already erased, #335). A store
+    # that cannot delete is refused by name here too; it used to end in a traceback.
     try:
-        gone = transcript.forget(where)
-    except ValueError as exc:
+        counts = forget.conversations(where, members)
+    except forget.Unforgettable as exc:
         typer.echo(f"✗ {exc}")
         raise typer.Exit(2) from None
-    typer.echo(f"deleted {gone} conversation row(s) for {name}")
-    # AND WHAT WAS DERIVED FROM THEM (#269 slice 2, ADR-0053 D6): the product's index holds the
-    # lines and its search record the queries, and each member's recall index the lines again —
-    # derived, so deleted; the next turn rebuilds them from a store that no longer has the rows. A
-    # partition named outright has no product of its own and nothing derived under one.
+    typer.echo(f"deleted {counts['conversation rows']} conversation row(s) for {name}")
     if where.marked:
-        from openfactory.product.index.retrieval import forget_conversations
+        typer.echo(f"deleted {counts['index lines']} line(s) from the product's index, its search "
+                   f"record and {len(members)} recall index(es)")
+        named = counts["people who named them"]
+        typer.echo(f"erased {counts['files sent in them']} file(s) sent in them, and the names "
+                   f"{named} person(s) gave them")
 
-        registry = ProjectRegistry()
-        members = []
-        for member in where.members:
-            try:
-                members.append(registry.get(member))
-            except KeyError:
-                continue
-        lines = forget_conversations(where.key, members)
-        typer.echo(f"deleted {lines} line(s) from the product's index, its search record and "
-                   f"{len(members)} recall index(es)")
+
+@project_app.command("forget")
+def project_forget(
+    name: str,
+    yes: bool = typer.Option(False, "--yes", help="skip the confirmation"),
+    with_context: bool = typer.Option(
+        False, "--with-context", help="also remove the conversations' distillates from the "
+                                      "context repository"),
+    keep_closed_cards: bool = typer.Option(
+        False, "--keep-closed-cards", help="leave the closed cards on the board"),
+    no_backup: bool = typer.Option(
+        False, "--no-backup", help="take no backup first — for a deletion request, where a backup "
+                                   "keeps exactly what was asked to be deleted"),
+) -> None:
+    """Forget everything the product role remembers about a project, layer by layer — to run it
+    again as new, or to answer a request that it be forgotten.
+
+    The conversations (the product's — shared registry projects are named first), the loop
+    ledger, the card verdicts, preview records and panel messages, the intake cases and what the
+    role told, the closed cards, and — with --with-context — the conversations' distillates in the
+    context repository. Each through its own store's deletion; what this deployment cannot forget
+    is refused by name, never reported as done.
+
+    Refused while a job or a conversation turn runs on the project. Says what it keeps before it
+    asks, takes a backup beside the registry first (unless --no-backup), and ends with what went,
+    layer by layer — and that the worker and the panel restart."""
+    import asyncio
+
+    from openfactory.product import forget
+
+    try:
+        found = forget.target(name)
+    except KeyError:
+        typer.echo(f"✗ no project named {name!r} — `openfactory project list` shows what this "
+                   f"deployment drives. For a name no longer registered, `openfactory project "
+                   f"forget-conversations {name}` deletes what is recorded under it")
+        raise typer.Exit(2) from None
+    flight = asyncio.run(forget.in_flight(found))
+    if flight.refusal():
+        typer.echo(f"✗ {flight.refusal()}")
+        raise typer.Exit(1)
+    flags = {"with_context": with_context, "keep_closed_cards": keep_closed_cards}
+    typer.echo(f"'{name}' — what the product role remembers, and what goes:")
+    for line in forget.plan(found, **flags):
+        typer.echo(f"  - {line}")
+    typer.echo("Kept, all of it:")
+    for line in forget.KEPT:
+        typer.echo(f"  - {line}")
+    if not flight.engine:
+        typer.echo("(no durable engine is declared here, so nothing can be running in one)")
+    if not yes:
+        typer.echo(f"This permanently deletes what the product role remembers about '{name}'.")
+        typer.confirm("Proceed?", abort=True)
+    if no_backup:
+        typer.echo("no backup taken (--no-backup)")
+    else:
+        try:
+            kept_at = forget.backup(found)
+        except forget.CannotBackUp as exc:
+            typer.echo(f"✗ {exc}")
+            raise typer.Exit(1) from None
+        typer.echo(f"backup: {kept_at} — it holds everything forgotten here; delete it once the "
+                   f"run is confirmed, because a request to be forgotten is not answered while "
+                   f"it exists")
+    went = forget.forget(found, **flags)
+    for one in went:
+        typer.echo(one.line())
+    if any(w.state in (forget.REFUSED, forget.FAILED) for w in went):
+        typer.echo("✗ not everything was forgotten — the layers marked ✗ above say why")
+        raise typer.Exit(1)
 
 
 @project_app.command("remove")

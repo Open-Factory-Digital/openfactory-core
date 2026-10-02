@@ -24,6 +24,17 @@ caller's own key?" now asks "is its OWNER the caller's own key?" (`owner_of`), s
 closed to Bruno as Ana's first conversation always was, and a session id nobody could mint for
 Ana is refused like any other private name. Ana's first conversation keeps its key, unchanged, so
 what she said before sessions existed is still where it was.
+
+ONE READING OF A KEY'S CASE (#347). "Is it private?" reads the prefix whatever its case
+(`is_private`): it refuses, and a wide refusal is the cautious one. "Whose is it?" reads the key
+only as a surface mints it (`owner_of`, and every reader through it — `person_of`, `key_for`,
+the socket, the agenda, a decision's scope, recall, the distillate, the read model): it grants,
+and it must read narrow. No surface mints `Person:bruno` (`api/app.py::_conversation_of` spells
+`PERSON`), and v0.2.0 to v0.3.0 read it as a ROOM, so a store upgraded from them can hold turns
+anybody wrote under that spelling; folding its case would hand those to Bruno as his own private
+conversation. A case-variant key is therefore private and nobody's. Measured on `34c91c7`:
+`person_of("Person:bruno")` was "bruno" while `owner_of` kept `Person:bruno`, so `key_for`
+refused Bruno that key and the read model was ready to call it his.
 """
 
 from __future__ import annotations
@@ -72,7 +83,9 @@ def key_for(*, named: str, own: str) -> str | None:
 def owner_of(key: str) -> str:
     """The person's own key a private conversation belongs to — `person:ana` for
     `person:ana~k3f9a2` and for `person:ana` itself. Any other key is returned as it is: a room
-    has no owner. A suffix that is not a session id is part of the key, never cut off."""
+    has no owner. A suffix that is not a session id is part of the key, never cut off. Its case
+    is never folded (#347, the module's docstring): `Person:ana` is owned by no key a surface
+    mints, so it is nobody's."""
     key = str(key or "").strip()
     if not is_private(key) or SESSION_SEP not in key:
         return key
@@ -99,6 +112,9 @@ def session_of(key: str) -> str:
 
 def person_of(key: str) -> str:
     """The person a `person:` key belongs to — the owner's id, whichever of their conversations
-    the key names — or "" for a room, a visitor, or nothing."""
+    the key names — or "" for a room, a visitor, nothing, or a key no surface minted.
+
+    READ OFF `owner_of`'S ANSWER, WITH NO CASE RULE OF ITS OWN (#347): this tested the prefix
+    lower-cased, so `Person:bruno` was Bruno's here and nobody's to `owner_of` and `key_for`."""
     owner = owner_of(key)
-    return owner[len(PERSON):] if owner.lower().startswith(PERSON) else ""
+    return owner[len(PERSON):] if owner.startswith(PERSON) else ""
