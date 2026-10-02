@@ -72,7 +72,8 @@ def _one(ports, row: record.Row, effect: Effect, *, carried: bool) -> str:
                           title=str(facts.get("title") or ""),
                           removed=row.event == CardEvent.REMOVED.value,
                           opened_by=str(facts.get("opened_by") or ""),
-                          conversation=str(facts.get("conversation") or ""))
+                          conversation=str(facts.get("conversation") or ""),
+                          pass_number=int(facts.get("pass_number") or 0))
     if isinstance(effect, Preview):
         return ports.preview(row.card, action=effect.action, by=row.by)
     if isinstance(effect, Forget):

@@ -492,3 +492,55 @@ def test_the_jobs_settle_after_a_persons_discard_writes_nothing_twice(deployment
         "already-settled"
     assert len(_said_on_the_card(deployment, ref)) == 1
     assert [r.event for r in _history(deployment, ref)] == ["discarded"]
+
+
+# ── every pass ends the way the first did (#413 part 3, #448 slice 2) ─────────────────────────
+
+def test_every_adjust_pass_is_told_to_its_requester_numbered_and_none_is_folded_away(deployment,
+                                                                                     heard):
+    """Measured on a live run (#448): the second pass's "it is ready" was deduplicated away —
+    `ready_for_you` is keyed on the card and the pull request, which a pass does not change. Each
+    pass is `adjusted` through the door, keyed by its number: told, commented, recorded."""
+    from openfactory.runtime.temporal.activities import card_adjusted
+    from openfactory.runtime.temporal.io import AdjustedInput
+
+    ref = _filed(deployment)
+    _at_the_merge_gate(deployment, ref)
+
+    for n, asked in ((1, "the button on the right"), (2, "and bigger")):
+        out = asyncio.run(card_adjusted(AdjustedInput(project="acme", issue=ref.lstrip("#"),
+                                                      pr_url="https://x/pr/1", pass_number=n,
+                                                      by="ana", instruction=asked)))
+        assert "tell:pass_ready=told" in out, out
+
+    told = _told(heard, about=ref.lstrip("#"))
+    assert [("Pass 1" in t, "Pass 2" in t) for t in told] == [(True, False), (False, True)], told
+    assert all("/p/acme/card/" in t or "/p/acme/preview/" in t for t in told), (
+        "the requester was not told where to try it")
+    said = _said_on_the_card(deployment, ref)
+    assert sum("One more pass, asked for by ana" in s for s in said) == 2, said
+    assert [r.event for r in _history(deployment, ref)] == ["adjusted", "adjusted"]
+
+
+def test_a_pass_with_a_live_preview_tells_its_requester_where_to_try_it(deployment, heard):
+    """The preview's own link, not the card's, while the preview is up: `link_for` reads the
+    project's NAME, and the callers that handed it the project got "" for every card — so this
+    asks for the link the way `link_for` reads it, and holds that it arrives."""
+    import time
+
+    from openfactory import preview
+    from openfactory.runtime.temporal.activities import card_adjusted
+    from openfactory.runtime.temporal.io import AdjustedInput
+
+    ref = _filed(deployment)
+    _at_the_merge_gate(deployment, ref)
+    bare = ref.lstrip("#")
+    assert preview.record(preview.Preview(project="acme", unit=bare, cards=(bare,),
+                                          state=preview.LIVE,
+                                          expires_at=int(time.time()) + 3600))
+
+    asyncio.run(card_adjusted(AdjustedInput(project="acme", issue=bare, pr_url="https://x/pr/1",
+                                            pass_number=1, by="ana", instruction="bigger")))
+
+    [told] = _told(heard, about=bare)
+    assert f"/p/acme/preview/{bare}" in told, told

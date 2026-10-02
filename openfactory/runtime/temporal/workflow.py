@@ -38,6 +38,7 @@ with workflow.unsafe.imports_passed_through():
     )
     from openfactory.runtime.temporal.activities import (
         adjust_pr,
+        card_adjusted,
         card_question_sweep,
         check_ci_status,
         check_deploy_status,
@@ -95,6 +96,7 @@ with workflow.unsafe.imports_passed_through():
     )
     from openfactory.runtime.temporal.io import (
         REVIEW_THREAD,
+        AdjustedInput,
         AdjustInput,
         AskInput,
         CiRepairInput,
@@ -2304,7 +2306,32 @@ class JobWorkflow:
         # act on the instruction (#178) is the commonest way to get here having changed nothing,
         # and it must not cost the person the verdict they came to the gate to read.
         self._the_reviewed_code_is_still_here(passed)
+        # …AND A PASS THAT REWROTE THE PULL REQUEST ENDS THE WAY THE FIRST ONE DID (#413, #448):
+        # the card's door records `adjusted`, the live preview is rebuilt from the new head, and
+        # the requester hears that this pass is theirs to try. PATCHED: a new command on a path
+        # jobs are already sitting in (TMPRL1100); a job whose history predates it carries on as
+        # it recorded, and its requester hears nothing new — as before.
+        if passed.code_changed is True and workflow.patched("an-adjust-pass-ends-like-the-first"):
+            await self._the_pass_is_ready(params, pr_url, who,
+                                          str(gate.get("instruction") or ""))
         return None  # the pass pushed to the same PR; keep watching, the gate re-opens
+
+    async def _the_pass_is_ready(self, params: JobParams, pr_url: str, who: str,
+                                 instruction: str) -> None:
+        """`card_adjusted`, best-effort: the pass is pushed and the gate re-opens whatever is said;
+        a telling that failed is the door's record, which the hourly round applies again."""
+        try:
+            await workflow.execute_activity(
+                card_adjusted,
+                AdjustedInput(project=params.project, issue=params.issue, pr_url=pr_url,
+                              pass_number=self._adjust_passes, by=who,
+                              instruction=instruction[:_ADJUST_CHARS]),
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=_ONCE,
+            )
+        except Exception:  # noqa: BLE001 — never block the watch on a courtesy
+            workflow.logger.warning("#%s: adjust pass %s was not recorded as such — the round "
+                                    "applies it", params.issue, self._adjust_passes)
 
     async def _refresh_knowledge(self, params: JobParams) -> None:
         """Post-merge Knowledge Pipeline (§11): reality changed, so regenerate the project's

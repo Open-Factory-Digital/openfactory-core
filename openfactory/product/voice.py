@@ -3076,6 +3076,7 @@ _CARD_NOTE = {
         "question_answered": "_Respondido por {who}._{why}",
         "parked": "_Parado à espera de uma pessoa._{why}",
         "delivered": "_Entregue._{why}",
+        "adjusted": "_Mais uma passagem, pedida por {who}._{why}",
     },
     "en": {
         "discarded": ("_Pull request closed without merging by {who}._{why} Nothing was "
@@ -3089,6 +3090,7 @@ _CARD_NOTE = {
         "question_answered": "_Answered by {who}._{why}",
         "parked": "_Parked, waiting on a person._{why}",
         "delivered": "_Delivered._{why}",
+        "adjusted": "_One more pass, asked for by {who}._{why}",
     },
 }
 _CARD_NOTE_WHY = {"pt-BR": " Motivo: {why}", "en": " Reason: {why}"}
@@ -3112,24 +3114,32 @@ _CARD_MOVED = {
         "stopped_work": ("{sig}O trabalho no cartão #{ref}{title} parou e nada dele foi entregue: "
                          "o cartão voltou para o backlog até alguém retomá-lo."),
         "back": "{sig}O cartão #{ref}{title} foi reaberto e voltou para o backlog.",
+        "pass_ready": ("{sig}A passagem {pass_number} do #{ref}{title} está pronta para você "
+                       "experimentar: {link}\n\nMe diga se agora é o que você pediu, ou o que "
+                       "ainda falta."),
     },
     "en": {
         "stopped_work": ("{sig}The work on #{ref}{title} stopped, and nothing of it was delivered: "
                          "the card is back in the backlog until somebody picks it up again."),
         "back": "{sig}#{ref}{title} was reopened and is back in the backlog.",
+        "pass_ready": ("{sig}Pass {pass_number} of #{ref}{title} is ready for you to try: {link}"
+                       "\n\nTell me whether it is what you asked for now, or what is still "
+                       "missing."),
     },
 }
 
 
 def card_moved(notice: str, *, ref: str, title: str = "", removed: bool = False,
-               language: str | None = None, agent_name: str = "") -> str:
+               language: str | None = None, agent_name: str = "", pass_number: int = 0,
+               link: str = "") -> str:
     """What the requester is told, once, when the door moved their card (ADR-0055 D10)."""
     if notice == "will_not_be_built":
         return card_withdrawn(ref=ref, title=title, removed=removed, language=language,
                               agent_name=agent_name)
     title = (title or "").strip()
     return _pick(_CARD_MOVED, language)[notice].format(
-        sig=_sig(agent_name), ref=str(ref).lstrip("#"), title=f" ({title})" if title else "")
+        sig=_sig(agent_name), ref=str(ref).lstrip("#"), title=f" ({title})" if title else "",
+        pass_number=pass_number, link=link)
 
 
 #: Why the door refused: where the card is, and what cannot happen to it from there (D2).
