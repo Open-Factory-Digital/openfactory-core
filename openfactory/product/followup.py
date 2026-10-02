@@ -30,7 +30,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from openfactory.contracts.refs import canonical_ref
+from openfactory.contracts.refs import canonical_ref, canonical_refs
 from openfactory.memory.ledger import ACCEPTANCE, DELIVERY, QUESTION, Loop, open_loop
 
 OWNER = "product"
@@ -157,17 +157,24 @@ def answered(waiting: list[Loop], live_keys: set[str]) -> dict[tuple[str, str, s
 
 def deliveries_to_open(filed: dict[int, list[str]], waiting: list[Loop], *,
                        ts: str, conversation: str = "", requester: str = "") -> list[Loop]:
-    """A loop per requirement that just became work. `filed` is `requirement → issue numbers`.
+    """A loop per requirement that just became work. `filed` is `requirement → the refs its cards
+    landed under`, as the tracker answered them.
+
+    KEYED ON THE TRACKER'S OWN REFS, never on the numbers only some trackers mint (#485): `CONT-412`
+    on Jira and `owner/web#3` for a card filed in another repository of the product are cards this
+    loop waits for like any other. Written in the one spelling its readers compare
+    (`refs.canonical_refs`, `events._deliveries_of`), so `#12` and `12` are one card.
 
     `conversation` is where the requester asked for it, and `requester` a digest of who
     (`delivered_to`) — so "está pronto" is said in THEIR conversation when the work is done, not
     in the project's room at the next sweep (#267 slice 3)."""
     already = {loop.subject for loop in waiting if loop.kind == DELIVERY}
+    keyed = {req: canonical_refs(refs) for req, refs in filed.items()}
     return [
         open_loop(DELIVERY, str(req), owner=OWNER, ts=ts,
-                  context={"issues": ",".join(str(i) for i in issues),
+                  context={"issues": ",".join(issues),
                            **delivered_to(conversation, requester)})
-        for req, issues in sorted(filed.items())
+        for req, issues in sorted(keyed.items())
         if str(req) not in already and issues
     ]
 
@@ -598,13 +605,19 @@ def requirement_behind(issue: str, waiting: list[Loop]) -> str:
 
     NOR DOES A CARD SOMEBODY ASKED FOR, OR A DEFECT (#481): their loops' subjects are handles
     (`cartao-12`, `defeito-88`), and the release question read one as "do requisito defeito-88".
+
+    COMPARED IN THE ONE SPELLING (#485), as every other reader of the loop compares
+    (`events._deliveries_of`): this was the one that matched the ref as typed, so `#12` asked
+    about the card the loop holds as `12` found no requirement behind it.
     """
+    want = canonical_ref(issue)
     for loop in waiting:
         marks = loop.context or {}
         if loop.kind != DELIVERY or marks.get("ticket") or marks.get("defect"):
             continue
-        issues = str(marks.get("issues") or "").split(",")
-        if str(issue) in [i.strip() for i in issues]:
+        issues = {canonical_ref(i) for i in str(marks.get("issues") or "").split(",")
+                  if i.strip()}
+        if want in issues:
             return loop.subject
     return ""
 
