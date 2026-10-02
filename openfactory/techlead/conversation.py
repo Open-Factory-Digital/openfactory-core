@@ -147,6 +147,9 @@ _RENDERED = frozenset({
     "issue", "title", "state", "attention", "action", "deploy",
     "board", "board_unread", "ticket_state", "ticket_unread",
     "verdict", "verdict_unread", "wedged", "refused",
+    # #448 slice 3: the requester's "that's it" at a merge gate a person is asked — asked "can I
+    # merge this?", the one fact a reader of the diff cannot see is that its requester tried it
+    "accepted",
 })
 
 _NOT_RENDERED: dict[str, str] = {
@@ -775,6 +778,13 @@ def state_snapshot(jobs: list[dict]) -> str:
         refused = str(j.get("refused") or "").strip()
         if refused:
             parts.append(f" [APPROVAL NOT ACTED ON: {refused}]")
+        # THE REQUESTER'S "THAT'S IT" (#448 slice 3), with the head it stands for — never a later
+        # push. The sentence is the one the floor and the inbox show (`accept.line`).
+        accepted = j.get("accepted") or {}
+        if isinstance(accepted, dict) and str(accepted.get("said") or "").strip():
+            parts.append(f" [ACCEPTED: {str(accepted['said']).strip()} — the person who asked for "
+                         f"the card tried that head in its preview and said it is what they asked "
+                         f"for]")
         if j.get("wedged"):
             # A JOB NOTHING CAN ADVANCE, and the one state where `stop` is the right answer. The
             # tech-lead has to be able to tell it from a job that is merely slow, or it proposes
@@ -1294,6 +1304,14 @@ def gather_jobs(project) -> list[dict]:
                 j["verdict_unread"] = True
             elif got:
                 j["verdict"] = got
+    # THE REQUESTER'S ACCEPTANCE AT EACH GATE A PERSON IS ASKED (#448 slice 3), from the platform's
+    # own store — the same read the floor and the inbox make (`accept.at_the_gates`), which never
+    # raises: an unread store is a gate shown as it was, and the reader logs why
+    from openfactory.product.accept import at_the_gates
+
+    for j, said in zip(jobs, at_the_gates(jobs), strict=True):
+        if said:
+            j["accepted"] = said
     _attach_diffs(project, jobs)
     return jobs
 

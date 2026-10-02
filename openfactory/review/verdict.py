@@ -167,6 +167,31 @@ def not_verified(verdict: dict | None) -> bool:
     return tally["total"] == 0 or tally["unverified"] > 0
 
 
+def still_admits_the_merge(verdict: dict | None, *, judged: str = "") -> bool:
+    """Whether the reading standing NOW still admits a merge nobody presses (#448 slice 3).
+
+    THE MACHINE JUDGED THE FIRST READING, AND A PASS MAY HAVE REPLACED IT. `should_auto_merge`
+    decided "the look is the only hold" when the pull request opened, on that review (`judged`, its
+    decision). A pass the requester asked for since rewrote the change and handed back its own
+    reading, which nothing re-judged — so the factory merging on their acceptance must not ride
+    over what that reading says:
+
+        stale        a pass pushed and no reviewer read what it pushed
+        not verified nothing executed what the card asks for (#447) — `should_auto_merge` refuses
+                     it in any review mode
+        rejected     the reviewer now rejects a change it did not reject when the machine judged
+                     it. In advisory mode a rejection never held the first judgement, so one that
+                     was rejected then is not a new hold now
+
+    PURE, on the shape the `verdict` query returns: the workflow asks it while it builds its merge
+    wait, which is state, never a command. No verdict at all is a project that runs no review, and
+    `should_auto_merge` already admitted that."""
+    v = verdict if isinstance(verdict, dict) else {}
+    if v.get("stale") or not_verified(v):
+        return False
+    return v.get("decision") != "rejected" or judged == "rejected"
+
+
 def headline(verdict: dict | None, *, unread: bool = False) -> dict:
     """What somebody about to press Merge needs in one glance.
 

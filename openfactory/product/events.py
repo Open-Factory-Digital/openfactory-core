@@ -33,6 +33,9 @@ line on that conversation — behind the turn in progress, never inside one.
     card_withdrawn      `module.py::withdraw_card` (#384) — a card closed, or removed before
                         the factory took it up, from the card itself on either surface; the
                         conversation that asked for it hears it is off the table
+    merged              `activities.tell_the_requester_it_merged` — the job, the moment its pull
+                        request merged, whoever merged it (#448 slice 3); not where the delivery
+                        says it at that same moment
 
 WHERE AN EVENT IS SAID (`conversation_for`). About a card: to the conversation its REQUESTER asked
 in — recorded on the card's delivery loop when the work was filed, from what they had staged
@@ -75,14 +78,15 @@ from datetime import UTC, datetime
 
 log = logging.getLogger("openfactory.product.events")
 
-#: The kinds of event (#267 slice 3; `card_withdrawn` since #384; `ready_for_you` since #401). A
-#: closed set: each has its sentence, its routing and its record of having been said, and a kind
-#: nobody knows how to say is one nobody should tell.
+#: The kinds of event (#267 slice 3; `card_withdrawn` since #384; `ready_for_you` since #401;
+#: `merged` since #448). A closed set: each has its sentence, its routing and its record of having
+#: been said, and a kind nobody knows how to say is one nobody should tell.
 DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED, CARD_WITHDRAWN, READY_FOR_YOU = (
     "delivered", "ci_red", "pr_waiting", "preview_up", "document_ingested", "card_withdrawn",
     "ready_for_you")
+MERGED = "merged"
 KINDS = (DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED, CARD_WITHDRAWN,
-         READY_FOR_YOU)
+         READY_FOR_YOU, MERGED)
 
 #: Which producer tells each kind on this branch — "" for a kind whose producer lives elsewhere.
 #: The guard reads this, so a producer claimed here is a call that exists.
@@ -94,6 +98,7 @@ PRODUCERS = {
     DOCUMENT_INGESTED: "openfactory/product/documents/ingest.py::announce",
     CARD_WITHDRAWN: "openfactory/product/module.py::withdraw_card",
     READY_FOR_YOU: "openfactory/runtime/temporal/activities.py::tell_the_requester",
+    MERGED: "openfactory/runtime/temporal/activities.py::tell_the_requester_it_merged",
 }
 
 #: Whose loops these are.
@@ -616,9 +621,82 @@ def ready_at_the_gate(project, gates: list[tuple[str, str]]) -> list[str]:
 
 
 
+# ── the change went in ───────────────────────────────────────────────────────────────────────────
 
-__all__ = ["CARD_WITHDRAWN", "CI_RED", "DELIVERED", "DOCUMENT_INGESTED", "KINDS", "PREVIEW_UP",
-           "PRODUCERS", "PR_WAITING", "PR_WAIT_HOURS", "READY_FOR_YOU", "card_finished",
-           "card_withdrawn", "ci_went_red", "conversation_for", "deliver", "document_ingested",
-           "issues_of", "preview_up", "pull_requests_at_the_gate", "ready_at_the_gate",
-           "ready_for_you", "requester_conversation", "room_of", "say_to", "to_room"]
+def _accepted_where(project, card: str, pr_url: str) -> str:
+    """The conversation the requester accepted this pull request in (`accept.standing`), or "" —
+    the way to them when no delivery of the card names one: a card the role opened from a request
+    opens no delivery loop. Best-effort: an unread store is a vaguer route, never a raise."""
+    try:
+        from openfactory.product.accept import standing
+
+        acc = standing(getattr(project, "name", "") or "", card, pr_url)
+        return acc.where if acc is not None else ""
+    except Exception:  # noqa: BLE001 — the delivery's conversation is still asked first
+        log.info("could not read #%s's acceptance to find its requester's conversation", card,
+                 exc_info=True)
+        return ""
+
+
+def _the_delivery_says_it(project, card: str, rows) -> bool:
+    """Whether a delivery of `card` completes with this merge, and so says "it is ready" at the
+    job's end (`card_finished`, #267) — the requester then hears THAT, not a second message. The
+    board as read now plus this card: the job has not moved it to Done yet, and an unreadable
+    board counts this card alone, so a single-card delivery is never told twice."""
+    from openfactory.contracts.refs import canonical_ref
+    from openfactory.product import followup
+
+    loops = _deliveries_of(rows, card)
+    if not loops:
+        return False
+    return bool(followup.delivered(loops, (_delivered_now(project) or set())
+                                   | {canonical_ref(card)}))
+
+
+def merged_for_you(project, *, card: str, pr_url: str, stages_follow: bool = False) -> bool:
+    """THE CHANGE A CARD'S REQUESTER ASKED FOR WENT IN, and they hear it (#448 slice 3) — in the
+    conversation they asked in, once per card and pull request, WHOEVER MERGED IT: a person on the
+    floor or the forge, the factory on its own, or the requester's acceptance when the look was all
+    that held it. Returns whether it was told now. Never raises.
+
+    MEASURED BEFORE IT WAS ADDED. With no stage declared, the job ends Done at the merge and
+    `card_finished` announces every delivery that completes — "what you asked for is ready, did it
+    work?" — to the same conversation, so this says nothing where that does (`_the_delivery_says_
+    it`). Everywhere else the requester heard nothing at the merge: a project with stages announces
+    its delivery only once the last one is through, a card of a requirement whose other cards are
+    still open completes no delivery, and a card the role opened from a request opens none.
+
+    ONLY WHERE SOMEBODY ASKED: the delivery's conversation, else the one the requester accepted it
+    in. A card nobody asked for in a conversation is the room's card comment, as for
+    `ready_for_you`."""
+    if not _speaks(project) or not str(card or "").strip() or not str(pr_url or "").strip():
+        return False
+    try:
+        from openfactory.memory import store as loop_store
+
+        rows = loop_store.read(getattr(project, "name", "") or "")
+        where = requester_conversation(project, card, rows=rows) or _accepted_where(
+            project, card, pr_url)
+        if not where:
+            return False
+        if not stages_follow and _the_delivery_says_it(project, card, rows):
+            return False
+    except Exception:  # noqa: BLE001 — the merge stands; only its telling is lost
+        log.exception("[%s] could not tell #%s's requester it went in",
+                      getattr(project, "name", "?"), card)
+        return False
+    from openfactory.product import voice
+
+    return _once(project, _event_id(MERGED, project, card, pr_url), lambda: (
+        where,
+        voice.merged_for_you(ref=card, title=_title_of(project, card),
+                             stages_follow=stages_follow, language=_language(project),
+                             agent_name=_agent(project))))
+
+
+__all__ = ["CARD_WITHDRAWN", "CI_RED", "DELIVERED", "DOCUMENT_INGESTED", "KINDS", "MERGED",
+           "PREVIEW_UP", "PRODUCERS", "PR_WAITING", "PR_WAIT_HOURS", "READY_FOR_YOU",
+           "card_finished", "card_withdrawn", "ci_went_red", "conversation_for", "deliver",
+           "document_ingested", "issues_of", "merged_for_you", "preview_up",
+           "pull_requests_at_the_gate", "ready_at_the_gate", "ready_for_you",
+           "requester_conversation", "room_of", "say_to", "to_room"]

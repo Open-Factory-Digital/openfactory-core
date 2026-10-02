@@ -1568,6 +1568,21 @@ def _verdict_of(read: dict, job: dict) -> dict:
     return verdict_read.headline(raw)
 
 
+async def _stamp_the_acceptances(jobs: list[dict]) -> None:
+    """THE REQUESTER'S "THAT'S IT" ON EVERY MERGE GATE A PERSON IS ASKED (#448 slice 3): `accepted`
+    on each such job — who, on which head, and the one sentence (`accept.line`) — read from the
+    platform's own store, once per project, off the event loop. Never raises: a gate shown without
+    it is the gate as it was, and the reader logs why."""
+    import asyncio
+
+    from openfactory.product.accept import at_the_gates
+
+    found = await asyncio.to_thread(at_the_gates, jobs)
+    for job, accepted in zip(jobs, found, strict=True):
+        if accepted:
+            job["accepted"] = accepted
+
+
 @app.get("/api/inbox")
 async def inbox() -> list[dict]:
     """THE single 'what needs a human right now' feed — one shape for every channel (panel,
@@ -1585,7 +1600,9 @@ async def inbox() -> list[dict]:
 
     out: list[dict] = []
     waiting: list[tuple[dict, dict]] = []  # (the job, its item's `review`), filled after the loop
-    for j in await tv.list_jobs(client, ns):
+    jobs = await tv.list_jobs(client, ns)
+    await _stamp_the_acceptances(jobs)
+    for j in jobs:
         state, act = j.get("state"), (j.get("action") or {})
         items_before = len(out)
         # WHAT THIS PLATFORM'S OWN REVIEWER FOUND, on the one screen where somebody is deciding
@@ -1662,6 +1679,9 @@ async def inbox() -> list[dict]:
                 })
             out.append({**base, "kind": kind,
                         "options": options,
+                        # THE REQUESTER'S "THAT'S IT", where the person merging decides (#448 slice
+                        # 3): who accepted, on which head — absent when nobody has
+                        **({"accepted": j["accepted"]} if j.get("accepted") else {}),
                         "answer": {"method": "POST",
                                    "url": "/api/act/<merge|adjust|discard|review>",
                                    "body": {"params": {"project": j.get("project"),
@@ -2728,6 +2748,7 @@ async def temporal_jobs() -> dict:
     try:
         client = await tv.connect()
         jobs = await tv.list_jobs(client, ns)
+        await _stamp_the_acceptances(jobs)
         return {
             "connected": True, "address": addr, **_engine_ui(tv), "build": build,
             "jobs": jobs,

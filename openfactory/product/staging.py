@@ -756,7 +756,7 @@ _SUMMARY_LABELS = {
         "in_favour_of": "em favor de", "requirement": "requisito", "reason": "motivo",
         "term": "termo", "decision": "decisão", "text": "texto", "new_title": "novo título",
         "items": "itens", "content": "conteúdo", "criteria": "critérios",
-        "instruction": "instrução",
+        "instruction": "instrução", "head": "versão experimentada",
         "waiting": "proposta aguardando confirmação",
     },
     "en": {
@@ -764,7 +764,7 @@ _SUMMARY_LABELS = {
         "in_favour_of": "in favour of", "requirement": "requirement", "reason": "reason",
         "term": "term", "decision": "decision", "text": "text", "new_title": "new title",
         "items": "items", "content": "content", "criteria": "criteria",
-        "instruction": "instruction",
+        "instruction": "instruction", "head": "version tried",
         "waiting": "proposal waiting for confirmation",
     },
 }
@@ -830,6 +830,11 @@ def _proposal_summary(entry: dict, *, language: str = "pt-BR") -> str:
         parts.append(f"{said['instruction']}: {entry['instruction']}")
     if entry.get("criteria"):
         parts.append(f"{said['criteria']}: " + "; ".join(str(c) for c in entry["criteria"]))
+    # A YES IS TO THE HEAD IT WAS STAGED FOR (#448 slice 3): two acceptances of one card staged
+    # over two builds of its preview are different acts — the button posted for the first must not
+    # record the second
+    if entry.get("head"):
+        parts.append(f"{said['head']}: {entry['head']}")
     return "\n".join(parts)
 
 

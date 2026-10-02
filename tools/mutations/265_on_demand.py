@@ -52,8 +52,11 @@ MUTATIONS = [
     ("a moved branch is never said to be stale", DEMAND,
      "        stale += [s for s in stale_of(was, forge.heads) if s not in stale]",
      "        stale += []"),
+    # RE-PINNED 2026-10-02 (#448 slice 3): the cache's condition also reads `fresh`, which a
+    # requester's acceptance asks for; the claim — a read inside the minute reuses the answer — is
+    # the same
     ("the forge is asked on every read of a card", DEMAND,
-     "    if hit and now - hit[0] < FORGE_TTL_SECONDS:", "    if False:"),
+     "    if hit and not fresh and now - hit[0] < FORGE_TTL_SECONDS:", "    if False:"),
     ("a forge that could not be read reads as no open pull request", DEMAND,
      "    if not out and unread:", "    if False:"),
     ("a card of a requirement is read as a unit of its own", PREVIEW,

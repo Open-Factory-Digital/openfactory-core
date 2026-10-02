@@ -108,11 +108,17 @@ MUTATIONS = [
      '        corrected, residue = False, ""\n',
      '        adjust.send_back(self.project, number, instruction=said, by=actor)\n'
      '        corrected, residue = False, ""\n'),
+    # RE-PINNED 2026-10-02 (#448 slice 3): `accept_view` asks the same question in the same
+    # words, so the anchor carries the next two lines, which are `adjust_view`'s alone
     ("the card view offers the pass to anybody who opens it", MODULE,
      "        if not self.may_send_back(number, actor, vouched=vouched):\n"
-     '            return {"offered": False}\n',
+     '            return {"offered": False}\n'
+     "        gate = adjust.gate_of(self.project, number)\n"
+     "        if gate.why in (adjust.SPENT, adjust.WORKING, adjust.DEAF):\n",
      "        if False:\n"
-     '            return {"offered": False}\n'),
+     '            return {"offered": False}\n'
+     "        gate = adjust.gate_of(self.project, number)\n"
+     "        if gate.why in (adjust.SPENT, adjust.WORKING, adjust.DEAF):\n"),
     ("a spent budget reads as a gate a pass can be sent to", ADJUST,
      "    if left == 0:\n",
      "    if left == -1:\n"),
@@ -124,15 +130,18 @@ MUTATIONS = [
      "    if not gate:\n"),
 
     # ── the conversation ─────────────────────────────────────────────────────────────────────
+    # RE-PINNED 2026-10-02 (#448 slice 3): the gesture line now reads the acceptance's marker too
     ("the role's marker is never read", ROLE,
-     '        gesture = "adjust" if adjusted else "queue" if QUEUE_MARKER in text else ""\n',
-     '        gesture = "queue" if QUEUE_MARKER in text else ""\n'),
+     '        gesture = ("adjust" if adjusted else "accept" if accepted\n',
+     '        gesture = ("accept" if accepted\n'),
     ("the engine ignores the gesture", ENGINE,
      '    if getattr(answer, "gesture", "") == "adjust" and getattr(answer, "gesture_card", ""):\n',
      "    if False:\n"),
+    # RE-PINNED 2026-10-02 (#448 slice 3): the set holds the acceptance too; the cut removes
+    # only the pass, so the claim is the pass's alone
     ("the requester's own yes is refused like any non-approver's", CONFIRM,
-     '_THE_REQUESTERS_OWN = frozenset({"adjust"})\n',
-     "_THE_REQUESTERS_OWN = frozenset()\n"),
+     '_THE_REQUESTERS_OWN = frozenset({"adjust", "accept_change"})\n',
+     '_THE_REQUESTERS_OWN = frozenset({"accept_change"})\n'),
     ("a requester's yes confirms any kind of proposal", CONFIRM,
      '    if str(entry.get("kind") or "") in _THE_REQUESTERS_OWN and user:\n',
      "    if user:\n"),
@@ -150,11 +159,14 @@ MUTATIONS = [
     ("the card view asks the engine about cards nobody has started", CATALOG,
      '    if (shown and shown.get("readable") and shown.get("open") and shown.get("started")\n',
      '    if (shown and shown.get("readable") and shown.get("open")\n'),
+    # RE-PINNED 2026-10-02 (#448 slice 3): `pvAcceptBlock` opens the same way; the anchor
+    # carries `pvAdjustBlock`'s own marker
     ("the page draws the control whatever the server says", PANEL,
-     '  if(!a.offered)return a.note?',
-     '  if(false)return a.note?'),
+     '  if(!a.offered)return a.note?`<p class="pv-note" data-adjust>',
+     '  if(false)return a.note?`<p class="pv-note" data-adjust>'),
+    # RE-PINNED 2026-10-02 (#448 slice 3): the acceptance's block is drawn beside it
     ("the product card draws no control at all", PANEL,
-     '    </div>${note}${confirm}${where === "product" ? pvAdjustBlock(c) : ""}`;\n',
+     '    </div>${note}${confirm}${where === "product" ? pvAcceptBlock(c) + pvAdjustBlock(c) : ""}`;\n',
      "    </div>${note}${confirm}`;\n"),
     ("the inbox offers adjust past the budget", APP,
      '            if act.get("adjusts_left") == 0:\n',

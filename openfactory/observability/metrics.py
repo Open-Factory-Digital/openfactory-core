@@ -38,6 +38,11 @@ MetricKind = Literal["agent_run", "job", "product_sweep", "techlead_watch", "age
                      # One verdict on a card the product role drafted (#383, ADR-0054 D8): the
                      # scores, the verdict and the rubric that produced them, for calibration.
                      "card_verdict",
+                     # The requester's "that's it" on a card's change, against the head they
+                     # tried in its preview (#448 slice 3, ADR-0055 `accepted`): one row per
+                     # acceptance, newest wins — read by the merge gate, the panel and the
+                     # tech-lead, never an unsealed field of the job (`product/accept.py`).
+                     "card_accepted",
                      # People registered by invitation, their invitations and sessions — the
                      # local identity row's durable half (`identity/people.py`, #33). Under one
                      # deployment-wide key, not a project's.
