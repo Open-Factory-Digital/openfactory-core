@@ -979,7 +979,7 @@ def answer_staged(project, *, token: str, approved: bool, user: str, module=None
     key, _, fingerprint = (token or "").partition("|")
     entry = pending_for(key, project=project)
     if entry is None:
-        if _expired_recently(key):
+        if _expired_recently(key, project=project):
             from openfactory.product.voice import proposal_expired
 
             return "expired", proposal_expired(language=lang)
