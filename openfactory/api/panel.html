@@ -1817,7 +1817,7 @@ function inboxOptions(it){
   // reviewer has spoken, the cap is not spent. A list kept by hand on this page is the shape that
   // had already lost two states; the tiers below are styling, which is this page's own business.
   if(it.kind=="merge"){
-    const TIER={merge:"",adjust:" ghost",review:" ghost",discard:" plain"};
+    const TIER={merge:"",adjust:" ghost",address:" ghost",review:" ghost",discard:" plain"};
     const opts=(it.options&&it.options.length)?it.options:[
       {key:"merge",label:"Merge"},{key:"adjust",label:"Adjust"},{key:"discard",label:"Discard"}];
     return opts.map(o=>`<button class="btn sm${TIER[o.key]!==undefined?TIER[o.key]:" ghost"}"`+
@@ -3864,6 +3864,8 @@ function refreshProject(){
           // nobody can take, which is the rule the tech-lead already lives under.
           (a.can_review?` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="review" title="reads the pull request AS IT STANDS and replaces the verdict on this card — it changes no code, and it costs a model pass">Re-review</button>`:"")+
           ` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="adjust" title="one more agent pass on the SAME branch and PR, against your own words">✏️ Adjust…</button>`+
+          // THE PULL REQUEST'S OWN COMMENTS (#330), where the forge keeps them — the server says.
+          (a.can_address?` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="address" title="one more agent pass on the SAME branch and PR, against the review comments people left on it that still stand">Address comments</button>`:"")+
           ` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="discard" title="close the PR without merging and free the floor — the branch and its commits stay">Discard</button>`+
           gatePreviewLine(name, parked.issue));
     } else if(parked){
@@ -4697,7 +4699,7 @@ async function mergeGate(project,issue,answer,instruction){
     const d=await r.json().catch(()=>({}));
     // The Outcome's own sentence, always — it is written to be read by a person and it is the
     // only thing that knows whether the forge accepted the merge or merely started trying.
-    const TOAST={merge:"Merging",adjust:"Sent back",review:"Reading it again",discard:"Discarded"};
+    const TOAST={merge:"Merging",adjust:"Sent back",address:"Sent back",review:"Reading it again",discard:"Discarded"};
     if(r.ok)toast(TOAST[answer]||answer,(d&&d.message)||"done","ok");
     else toast("Could not "+answer,(d&&d.detail)||"the gate did not accept that","err");
   }catch(e){toast("Error","could not answer the merge gate","err")}

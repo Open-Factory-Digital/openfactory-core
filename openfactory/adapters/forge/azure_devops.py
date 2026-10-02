@@ -45,7 +45,12 @@ import re
 import urllib.parse
 
 from openfactory.adapters.azure_devops import AzureDevOpsClient, AzureDevOpsError
-from openfactory.adapters.forge.base import ForgeAdapter, ReviewEvent
+from openfactory.adapters.forge.base import (
+    CommentsNotListed,
+    ForgeAdapter,
+    ReviewComment,
+    ReviewEvent,
+)
 from openfactory.adapters.forge.base import truncated as _truncated
 
 log = logging.getLogger("openfactory.forge.azure_devops")
@@ -855,6 +860,51 @@ class AzureReposForge(ForgeAdapter):
             "PUT", f"git/repositories/{repo}/pullrequests/{pr_id}/reviewers/{self._me(client)}",
             body={"vote": vote},
         )
+
+    #: The two statuses a person reads as still open. `fixed`, `wontFix`, `closed` and `byDesign`
+    #: are each an answer somebody gave; `unknown` is no status at all.
+    _STANDING = frozenset({"active", "pending"})
+
+    def review_comments(self, *, pr: str) -> list[ReviewComment]:
+        """What people wrote on `pr` that still stands (#330, `forge/base.py::review_comments_of`).
+
+        EVERY COMMENT IN A THREAD THAT IS STILL ACTIVE OR PENDING. A vote here is a number with no
+        prose, so the prose of a request for changes is a thread like any other. Never a system
+        comment (the vendor's own notes on pushes and votes), and never what this credential wrote:
+        the platform's own review is fed back by the blocking review loop."""
+        try:
+            client = self._client()
+            pr_data = self._pr(pr)
+            repo = self._repo_of(pr_data)
+            pr_id = int(pr_data["pullRequestId"])
+            me = self._me(client)
+            threads = client.call(
+                "GET", f"git/repositories/{urllib.parse.quote(repo)}/pullrequests/{pr_id}/threads"
+            ).get("value") or []
+        except (AzureDevOpsError, KeyError, ValueError, TypeError) as exc:
+            raise CommentsNotListed(
+                f"Azure DevOps did not list the review comments on {pr} ({str(exc)[:160]})"
+            ) from None
+        page = self._web_url(repo=repo, pr_id=pr_id)
+        out: list[ReviewComment] = []
+        for thread in threads:
+            if thread.get("isDeleted") or str(thread.get("status") or "") not in self._STANDING:
+                continue
+            where = thread.get("threadContext") or {}
+            path = str(where.get("filePath") or "").lstrip("/")
+            line = int(((where.get("rightFileStart") or where.get("leftFileStart") or {})
+                        .get("line")) or 0)
+            for c in thread.get("comments") or []:
+                author = c.get("author") or {}
+                if (c.get("isDeleted") or c.get("commentType") == "system"
+                        or (me and author.get("id") == me)
+                        or not str(c.get("content") or "").strip()):
+                    continue
+                out.append(ReviewComment(
+                    author=str(author.get("uniqueName") or author.get("displayName") or "someone"),
+                    body=str(c["content"]), path=path, line=line,
+                    url=f"{page}?discussionId={thread.get('id')}"))
+        return out
 
     def _me(self, client: AzureDevOpsClient) -> str:
         """The identity id of whoever this credential is. Needed to cast a vote and to arm

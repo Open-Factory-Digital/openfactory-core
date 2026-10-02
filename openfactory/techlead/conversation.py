@@ -162,6 +162,9 @@ _NOT_RENDERED: dict[str, str] = {
     "temporal_url": "the guidance tells the tech-lead to read what a HUMAN sees, not the engine",
     "comments": "rendered by `comment_digest` as its own section, with authors and times — a "
                 "thread flattened onto one line loses exactly what makes it worth reading",
+    "can_address": "whether the panel shows the `address` button (#330). The tech-lead proposes "
+                   "rows from their own `choose_when`, and `address` refuses by name where the "
+                   "forge keeps no comments, so a proposal never reaches an agent on a guess",
 }
 
 

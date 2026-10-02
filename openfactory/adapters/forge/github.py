@@ -12,7 +12,12 @@ import re
 import subprocess
 import urllib.parse
 
-from openfactory.adapters.forge.base import ForgeAdapter, ReviewEvent
+from openfactory.adapters.forge.base import (
+    CommentsNotListed,
+    ForgeAdapter,
+    ReviewComment,
+    ReviewEvent,
+)
 from openfactory.adapters.forge.base import truncated as _truncated
 from openfactory.adapters.github_cli import no_repository_named, refused
 
@@ -823,6 +828,71 @@ class GitHubForge(ForgeAdapter):
                         (done.stderr or "").strip()[:160])
             return False
         return True
+
+    #: One page of each. A pull request with a hundred open threads is not one a single pass can
+    #: answer, and the pass says how many it carried.
+    _COMMENTS_QUERY = (
+        "query($owner: String!, $name: String!, $number: Int!) {"
+        " repository(owner: $owner, name: $name) { pullRequest(number: $number) {"
+        " reviewThreads(first: 100) { nodes { isResolved path line"
+        " comments(first: 50) { nodes { author { login } body url viewerDidAuthor } } } }"
+        " reviews(last: 100) { nodes { author { login } body state url viewerDidAuthor } }"
+        " } } }")
+
+    def review_comments(self, *, pr: str) -> list[ReviewComment]:
+        """What people wrote on `pr` that still stands (#330, `forge/base.py::review_comments_of`).
+
+        TWO KINDS, BOTH ASKED OF GITHUB'S OWN STATE:
+          · every comment in a thread nobody has resolved;
+          · the body of a person's latest review, while that review requests changes. A later
+            approval or a dismissal withdraws it, as it does on the pull request's own page.
+        A review that only commented has no state that says whether it was answered, so its body
+        is not carried. NEVER WHAT THIS CREDENTIAL WROTE (`viewerDidAuthor`): the platform's own
+        review is fed back by the blocking review loop, and its notes are not a person's."""
+        repo = self._repo_of_pr(pr)
+        owner, _, name = repo.partition("/")
+        number = pr.rstrip("/").rsplit("/", 1)[-1]
+        if not (owner and name and number.isdigit()):
+            raise CommentsNotListed(f"`{pr}` does not name a pull request on GitHub")
+        got = self._gh_read(["api", "graphql", "-f", f"query={self._COMMENTS_QUERY}",
+                             "-f", f"owner={owner}", "-f", f"name={name}",
+                             "-F", f"number={number}"], "list the review comments")
+        if got is None or got.returncode != 0:
+            why = _redact((got.stderr if got is not None else "") or "").strip()[-160:]
+            raise CommentsNotListed(
+                f"GitHub did not list the review comments on {pr}" + (f" ({why})" if why else ""))
+        import json as _json
+
+        try:
+            node = _json.loads(got.stdout or "")["data"]["repository"]["pullRequest"]
+            threads = node["reviewThreads"]["nodes"]
+            reviews = node["reviews"]["nodes"]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise CommentsNotListed(
+                f"GitHub answered something that is not the pull request's review threads "
+                f"({type(exc).__name__})") from None
+        out: list[ReviewComment] = []
+        for thread in threads:
+            if thread.get("isResolved"):
+                continue
+            for c in (thread.get("comments") or {}).get("nodes") or []:
+                if c.get("viewerDidAuthor") or not str(c.get("body") or "").strip():
+                    continue
+                out.append(ReviewComment(
+                    author=str((c.get("author") or {}).get("login") or "someone"),
+                    body=str(c["body"]), path=str(thread.get("path") or ""),
+                    line=int(thread.get("line") or 0), url=str(c.get("url") or "")))
+        standing: dict[str, dict] = {}
+        for r in reviews:  # oldest first: a person's later review replaces their earlier one
+            who = str((r.get("author") or {}).get("login") or "")
+            if r.get("viewerDidAuthor") or not who or r.get("state") == "COMMENTED":
+                continue
+            standing[who] = r
+        for who, r in standing.items():
+            if r.get("state") == "CHANGES_REQUESTED" and str(r.get("body") or "").strip():
+                out.append(ReviewComment(author=who, body=str(r["body"]),
+                                         url=str(r.get("url") or "")))
+        return out
 
     def pr_diff(self, *, pr: str, repo: str = "", max_chars: int = 60000) -> str | None:
         """`gh pr diff` — the changes themselves, or None when the read failed.

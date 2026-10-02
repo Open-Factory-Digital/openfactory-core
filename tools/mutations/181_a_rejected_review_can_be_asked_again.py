@@ -11,13 +11,13 @@ MUTATIONS = [
     # ── the verb has to survive every hop ───────────────────────────────────────────────────────
     ("the signal drops the answer, so every surface reports success and nothing happens",
      "openfactory/runtime/temporal/workflow.py",
-     '        if answer in ("merge", "adjust", "discard", "review"):',
-     '        if answer in ("merge", "adjust", "discard"):'),
+     '        if answer in ("merge", "adjust", "address", "discard", "review"):',
+     '        if answer in ("merge", "adjust", "address", "discard"):'),
 
     ("the client side refuses the verb its own workflow accepts",
      "openfactory/runtime/temporal/view.py",
-     '    if answer not in ("merge", "adjust", "discard", "review"):',
-     '    if answer not in ("merge", "adjust", "discard"):'),
+     '    if answer not in ("merge", "adjust", "address", "discard", "review"):',
+     '    if answer not in ("merge", "adjust", "address", "discard"):'),
 
     ("the gate can ask for a re-review and never publishes what came back",
      "openfactory/runtime/temporal/workflow.py",
