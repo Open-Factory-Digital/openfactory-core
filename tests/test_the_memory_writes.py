@@ -913,7 +913,9 @@ WRITES = {"queue": "promote", "defect": "file_defect", "ticket": "file_ticket",
           "decision": "record_decision", "close": "close_card", "align": "align_card",
           "correct": "correct_card", "fact": "note_fact", "draft": "propose",
           # #448: another pass, the card's bar corrected with it
-          "adjust": "send_back"}
+          "adjust": "send_back",
+          # #448 slice 3: the requester's "that's it", recorded against the head they tried
+          "accept_change": "accept_change"}
 
 
 def _entry(kind: str) -> dict:

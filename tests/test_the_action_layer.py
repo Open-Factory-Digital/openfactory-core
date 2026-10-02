@@ -295,6 +295,8 @@ OWNED = {
                      # #448: another pass from the card, through the same seam — the module
                      # decides who may send a card's change back
                      "product_adjust/"
+                     # #448 slice 3: the requester's "that's it" from the card, the same seam
+                     "product_accept_change/"
                      "product_record_decision/product_note_fact/product_file_defect/product_file_ticket/"
                      "product_reorder/product_say/"
                      # `product_pending` LISTS rather than acts, and is here for the gate rather

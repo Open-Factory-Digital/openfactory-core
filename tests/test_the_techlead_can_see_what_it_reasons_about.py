@@ -421,6 +421,9 @@ _PROBES = {
     "verdict_unread": True,
     "wedged": True,
     "refused": "the answer's seal does not match",
+    # #448 slice 3: the requester's "that's it", in the floor's one sentence
+    "accepted": {"by": "ana", "head": "abc1234def", "current": True,
+                 "said": "accepted by ana on abc1234"},
 }
 
 

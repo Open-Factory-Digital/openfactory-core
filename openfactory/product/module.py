@@ -4601,6 +4601,135 @@ class ProductModule:
                 "criteria": criteria,
                 "words": adjust_controls(left=gate.left, passes=gate.passes, language=lang)}
 
+    # ---- "that's it": the requester accepts the change they tried (#448 slice 3) ---------------
+
+    def prepare_acceptance(self, number: str, *, actor: str, language: str | None = None):
+        """What the conversation stages when a person says the change that waits on them is right
+        — an `accept.Prepared`: the head they tried, and whether the yes puts the change in, or the
+        sentence to say instead (#448 slice 3).
+
+        READ-ONLY, like `prepare_adjustment`, and in its order — who may, then the engine's gate,
+        then what was tried — so nothing is staged that the yes could not record. No model is
+        spent: the yes is the person's word, recorded as said."""
+        from openfactory.product import accept, adjust
+        from openfactory.product.voice import accept_change_said
+
+        number = canonical_ref(number)
+        lang = language or getattr(self.project, "language", None)
+        if not self.may_send_back(number, actor):
+            return accept.Prepared(said=accept_change_said("not_yours", ref=number,
+                                                           language=lang))
+        gate = adjust.gate_of(self.project, number)
+        if gate.why in accept.NOTHING_TO_ACCEPT:
+            return accept.Prepared(said=accept_change_said(gate.why, ref=number, language=lang))
+        tried = accept.tried(self.project, number, gate.pr_url)
+        if tried.why:
+            return accept.Prepared(said=accept_change_said(tried.why, ref=number, language=lang))
+        return accept.Prepared(ok=True, head=tried.head, pr_url=gate.pr_url,
+                               merges=self._the_yes_merges(gate, tried))
+
+    @staticmethod
+    def _the_yes_merges(gate, tried) -> bool:
+        """THE THREE CONDITIONS, in one place (#448 slice 3): the job says the look is all that
+        holds its merge (`Gate.look_only`, which it publishes only while the reading standing now
+        admits it), the gate can hear an answer, and the forge says the pull request still points
+        at the head the person tried. Anything less records the yes for a person to see."""
+        from openfactory.product.adjust import DEAF
+
+        return bool(gate.look_only and gate.why != DEAF and tried.at_head is True)
+
+    def accept_change(self, number: str, *, actor: str, head: str = "", pr_url: str = "",
+                      where: str = "", vouched: bool = False) -> WriteResult:
+        """Record that the change on this card, as its requester tried it, is what they asked for —
+        and, when the look is all that holds its merge, give the gate the `merge` (#448 slice 3).
+        The hand behind the conversation's yes and the card's own control.
+
+        IN THIS ORDER, AND EACH STEP IS WHY THE NEXT IS SAFE:
+
+            who may      `may_send_back` — the requester, a product admin, a vouched operator;
+            the gate     the ENGINE's answer for this card: a person is asked, no pass running;
+            the head     what the preview was BUILT from for the pull request the gate names, and
+                         the one staged (`head`) when there is one: a preview rebuilt in between
+                         is a change the yes never saw. A pull request that moved past it refuses;
+            the record   one `card_accepted` row (`accept.record`) — refused by name when it did
+                         not land, and nothing after it runs;
+            the merge    only on `_the_yes_merges`, through the seam every answer crosses;
+            the note     on the card, saying who, on which head, and whether it is going in.
+
+        A note that failed is reported on a SUCCESS (`close_card`'s rule), never as a failure of
+        the acceptance that landed."""
+        from openfactory.adapters.board_db import now_iso
+        from openfactory.product import accept, adjust
+        from openfactory.product.voice import accept_change_said, change_accepted_note
+
+        number = canonical_ref(number)
+        lang = getattr(self.project, "language", None)
+
+        def refused(why: str) -> WriteResult:
+            return WriteResult(ok=False, ref=f"#{number}",
+                               detail=accept_change_said(why, ref=number, language=lang))
+
+        if not self.may_send_back(number, actor, vouched=vouched):
+            return refused("not_yours")
+        gate = adjust.gate_of(self.project, number)
+        if gate.why in accept.NOTHING_TO_ACCEPT:
+            return refused(gate.why)
+        if pr_url and gate.pr_url and pr_url != gate.pr_url:
+            return refused(accept.MOVED)        # another pull request since it was staged
+        tried = accept.tried(self.project, number, gate.pr_url)
+        if tried.why:
+            return refused(tried.why)
+        if head and head != tried.head:
+            return refused(accept.MOVED)        # the preview was rebuilt since it was staged
+        if not accept.record(getattr(self.project, "name", "") or "", accept.Acceptance(
+                card=number, pr_url=gate.pr_url, head=tried.head, by=actor, at=now_iso(),
+                where=where)):
+            return refused(accept.UNRECORDED)
+        merging, unmerged = False, ""
+        if self._the_yes_merges(gate, tried):
+            unmerged = accept.merge(self.project, number, by=actor)
+            merging = not unmerged
+        residue = ""
+        try:
+            self._tracker().comment(f"#{number}", change_accepted_note(
+                by=actor, head=tried.head, pr_url=gate.pr_url, merging=merging, language=lang,
+                agent_name=self._name()))
+        except Exception as exc:  # noqa: BLE001 — the acceptance landed; only its note is lost
+            log.warning("OPENFACTORY_PRODUCT_ACCEPT_UNNOTED card=#%s (%s) — the acceptance was "
+                        "recorded and the card does not say so", number, exc)
+            residue = accept_change_said("unnoted", ref=number, language=lang)
+        log.info("OPENFACTORY_PRODUCT_ACCEPTED card=#%s by=%s head=%s merging=%s unmerged=%s",
+                 number, actor, tried.head[:12], merging, unmerged)
+        return accept.Accepted(ok=True, ref=f"#{number}", detail=residue, head=tried.head,
+                               merging=merging, unmerged=unmerged)
+
+    def accept_view(self, number: str, *, actor: str, vouched: bool = False) -> dict:
+        """What the card's "this is it" control needs on the product view (#448 slice 3): whether
+        it is offered to THIS person, the head they would accept, and the words — or, when the
+        change waits on them and there is nothing to accept yet, why. `{"offered": False}` and
+        nothing else when nobody is asked anything.
+
+        ASKED ONLY OF A CARD THE FACTORY HAS TAKEN UP AND NOT FINISHED (the caller's column), like
+        `adjust_view`. The forge is asked through the preview's minute of cache: the row asks it
+        fresh at the yes."""
+        from openfactory.product import accept, adjust
+        from openfactory.product.voice import accept_change_controls, accept_change_said
+
+        number = canonical_ref(number)
+        lang = getattr(self.project, "language", None)
+        if not self.may_send_back(number, actor, vouched=vouched):
+            return {"offered": False}
+        gate = adjust.gate_of(self.project, number)
+        if gate.why in accept.NOTHING_TO_ACCEPT:
+            return {"offered": False}
+        tried = accept.tried(self.project, number, gate.pr_url, fresh=False)
+        if tried.why:
+            return {"offered": False,
+                    "note": accept_change_said(tried.why, ref=number, language=lang)}
+        return {"offered": True, "head": tried.head,
+                "words": accept_change_controls(merges=self._the_yes_merges(gate, tried),
+                                                language=lang)}
+
     def align_card(self, number: str, *, requirement: int, actor: str) -> WriteResult:
         """Make a card execute the requirement it should — citation AND what it must satisfy.
 

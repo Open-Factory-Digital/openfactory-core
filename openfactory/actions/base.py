@@ -242,6 +242,8 @@ PARAMS: dict[str, str] = {
     "text": ("what the card should say instead — it replaces what was asked, or what is "
              "happening, on a card the product role opened"),
     "title": "what it is called, in the person's own words — short",
+    "head": ("the head the card's preview was built from, as the card showed it — the version the "
+             "person tried; empty takes the one the preview shows now"),
     "criteria": ("what must be true for the card to be done, one statement per line — it replaces "
                  "the card's acceptance criteria; empty leaves them as they are"),
     "session": "which of your conversations — its id, as the page lists it; empty is your first",

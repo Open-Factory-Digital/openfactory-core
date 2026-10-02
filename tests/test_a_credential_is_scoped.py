@@ -62,8 +62,9 @@ PRODUCT_ROWS = ("product_status", "product_requirements", "product_propose",
                 "product_ingest",
                 # #384 — the cards on the product view, and the close and removal on a card
                 "product_board", "product_withdraw_card",
-                # #448 — another pass on a card's change, from the card itself
-                "product_adjust",
+                # #448 — another pass on a card's change, from the card itself, and its other
+                # half: the requester's "that's it"
+                "product_adjust", "product_accept_change",
                 # a card's preview (ADR-0050 D6): the person who asked for the change looks at it
                 "preview_start", "preview_stop", "preview_rebuild")
 
