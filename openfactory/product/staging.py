@@ -785,7 +785,10 @@ def _proposal_summary(entry: dict, *, language: str = "pt-BR") -> str:
     # `número` is load-bearing for the FINGERPRINT, not just the judge: an accept entry holds
     # nothing but its kind and number, so without it every staged accept hashed identically and a
     # stale button for requirement 3 would have approved whatever accept came to be staged later.
-    for label, value in ((said["title"], getattr(draft, "title", "")),
+    # A CARD'S ENTRY HOLDS ITS TITLE AND ITS RENDERED CARD AT THE TOP, with no `answer` (#475):
+    # read only from the draft, every card proposal in a conversation summarised to its kind and
+    # shared one fingerprint, so a button posted for one card filed whichever was staged later
+    for label, value in ((said["title"], getattr(draft, "title", "") or entry.get("title", "")),
                          (said["number"], entry.get("number", "") or ""),
                          # WHAT THE NUMBER ALONE DOES NOT DISTINGUISH. Two closes of the same card
                          # in favour of different cards — or two alignments of one card to
@@ -806,7 +809,7 @@ def _proposal_summary(entry: dict, *, language: str = "pt-BR") -> str:
                          # entire value is that nobody edits it afterwards.
                          (said["decision"], entry.get("decision", "") or ""),
                          (said["text"], entry.get("body", "") or entry.get("restated", "")
-                          or entry.get("text", "")),
+                          or entry.get("text", "") or entry.get("described", "")),
                          # a correction of one card to two different titles is two decisions
                          (said["new_title"], entry.get("new_title", "") or ""),
                          (said["items"], ", ".join(str(n) for n in entry.get("numbers", [])
@@ -816,6 +819,10 @@ def _proposal_summary(entry: dict, *, language: str = "pt-BR") -> str:
     body = getattr(draft, "body", "") or getattr(draft, "statement", "")
     if body:
         parts.append(f"{said['content']}: {str(body)[:800]}")
+    elif entry.get("card"):
+        # the card as the person was shown it, criteria included — long enough that two cards
+        # differing only in a criterion near the end still read as two
+        parts.append(f"{said['content']}: {str(entry['card'])[:4000]}")
     # the criteria distinguish two drafts that share a title — a redraft after a correction must
     # not be approvable by the button posted for its predecessor
     criteria = list(getattr(draft, "must_be_true", None) or [])

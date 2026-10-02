@@ -122,9 +122,11 @@ MUTATIONS = [
      CHANNEL_TESTS),
 
     ("two corrections of one card to different words share a button", STAGING,
+     # re-pinned 2026-10-02: #475 added a plain ticket's request to the same line
      '                         (said["text"], entry.get("body", "") or entry.get("restated", "")\n'
-     '                          or entry.get("text", "")),',
-     '                         (said["text"], entry.get("body", "") or entry.get("restated", "")),',
+     '                          or entry.get("text", "") or entry.get("described", "")),',
+     '                         (said["text"], entry.get("body", "") or entry.get("restated", "")\n'
+     '                          or entry.get("described", "")),',
      CHANNEL_TESTS),
 
     ("two renames of one card to different titles share a button", STAGING,
