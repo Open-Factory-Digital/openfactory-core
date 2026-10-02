@@ -351,7 +351,10 @@ def _confirm_ticket(project, entry, *, module, user, lang) -> str:
         # there is one and to a module that takes it: an entry staged before the card was drafted
         # is filed as it always was.
         **({"card": entry["card"]} if entry.get("card") and _takes_card(module) else {}),
-        **_checked(module.file_ticket, entry))
+        **_checked(module.file_ticket, entry),
+        # WHERE IT WAS ASKED, AND BY WHOM (#481) — the card's delivery loop is how its requester
+        # hears every event about it, as a defect's is
+        **_whose(module.file_ticket, entry))
     if not result.ok:
         return _client_detail(result.detail, lang, project=project)
     from openfactory.product.voice import ticket_filed
