@@ -328,9 +328,14 @@ class AzureBoardsTracker:
         )
         ticket.labels = [t.lower() for t in split_tags(fields.get("System.Tags"))]
         ticket.author = _identity(fields.get("System.CreatedBy"))
-        ticket.state = "closed" if self._is_closed(
-            str(fields.get("System.WorkItemType") or self.work_item_type),
-            str(fields.get("System.State") or "")) else "open"
+        type_name = str(fields.get("System.WorkItemType") or self.work_item_type)
+        state_name = str(fields.get("System.State") or "")
+        closed = self._is_closed(type_name, state_name)
+        ticket.state = "closed" if closed else "open"
+        # AND WHY IT CLOSED, BY THE CATEGORY THE SUMMARY READS (#480). A reader asking for one card
+        # read every closed one as "this tracker does not say", so a work item a person moved to
+        # Removed was filed as finished work.
+        ticket.state_reason = self._closed_reason(type_name, state_name) if closed else ""
         return ticket
 
     def set_state(self, ref: str, state: JobState, reason: str | None = None, *,
