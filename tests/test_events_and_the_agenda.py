@@ -946,6 +946,7 @@ def _filing(registry, **overrides) -> SimpleNamespace:
         _vetter=lambda requirement, tracker: None,
         _open_delivery=lambda req, results, **kw: handed.setdefault("_open_delivery", kw),
         _track_defect=lambda number, **kw: handed.setdefault("_track_defect", kw),
+        _track_ticket=lambda ref, **kw: handed.setdefault("_track_ticket", kw),
         _checked_write=lambda **_k: WriteResult(ok=True, ref="#88"), _same_as=None,
         _cannot_see_the_product=lambda: None)
     for name, value in overrides.items():
@@ -961,7 +962,11 @@ def test_every_filing_verb_hands_WHERE_it_was_asked_on_to_the_delivery(registry)
     ProductModule.file_issues(fake, SimpleNamespace(number=7), actor=ANA, **whose)
     ProductModule.file_defect(fake, restated="o extrato duplica", reported_by=ANA, violates=None,
                               **whose)
-    assert fake.handed == {"_open_delivery": whose, "_track_defect": whose}
+    # a card asked for as described opens its own (#481)
+    ProductModule.file_ticket(fake, title="Exportar CSV", described="o relatório", reported_by=ANA,
+                              **whose)
+    assert fake.handed == {"_open_delivery": whose, "_track_defect": whose,
+                           "_track_ticket": {"title": "Exportar CSV", **whose}}
 
     passed: list[dict] = []
     fake = _filing(registry, file_issues=lambda req, **kw: passed.append(kw) or [])
@@ -973,6 +978,7 @@ def test_every_filing_verb_hands_WHERE_it_was_asked_on_to_the_delivery(registry)
 def test_every_filing_path_of_a_confirmation_passes_where_it_was_asked():
     source = (ROOT / "openfactory/product/confirm.py").read_text()
     assert "**_whose(module.file_defect, entry)" in source
+    assert "**_whose(module.file_ticket, entry)" in source
     assert "**_whose(module.open_cards_for, entry or {})" in source
     assert "**_whose(module.break_down, entry or {})" in source
 
