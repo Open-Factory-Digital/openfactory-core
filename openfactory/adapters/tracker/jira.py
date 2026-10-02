@@ -281,6 +281,11 @@ class JiraTracker:
         # done column is called "Donee", "Entregue" or anything else a client chose.
         category = (((fields.get("status") or {}).get("statusCategory")) or {}).get("key")
         ticket.state = "closed" if str(category or "").lower() == "done" else "open"
+        # AND WHY IT CLOSED, BY THE RULE THE SUMMARY USES (#480). Only `_summary` said it, so a
+        # reader that asked for ONE card (the stale-pickup healer, the card's door) read every
+        # closed card as "this tracker does not say", and a card withdrawn on Jira's own screen was
+        # filed as finished work. The same fields answer both reads, so they cannot disagree.
+        ticket.state_reason = self._closed_reason(fields) if ticket.state == "closed" else ""
         # `reporter` is who the card is FOR — Jira lets it be set to somebody other than the
         # account that clicked Create, which is `creator`, and the park escalation and the
         # requester lookup both want the former. `displayName`, for the reason `comments` gives:
