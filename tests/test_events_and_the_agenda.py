@@ -577,9 +577,12 @@ def _agenda_of(client, token: str) -> dict:
 def test_the_agenda_is_ON_THE_PANEL_and_filtered_by_who_the_credential_names(panel):
     ana, bruno = _agenda_of(panel, "tok-ana"), _agenda_of(panel, "tok-bruno")
 
-    assert [i["subject"] for i in ana["data"]["items"]] == ["7", "11", "42", "pdf-ou-csv"]
-    assert [i["subject"] for i in bruno["data"]["items"]] == ["9", "11", "42"]
-    assert "7" not in [i["subject"] for i in bruno["data"]["items"]], "Ana's item reached Bruno"
+    # PENDING (ADR-0055 D11): what waits on each of them — the deliveries the role owes them (7, 9,
+    # 11) are lines on their cards, not items here
+    assert [i["subject"] for i in ana["data"]["items"]] == ["42", "pdf-ou-csv"]
+    assert [i["subject"] for i in bruno["data"]["items"]] == ["42"]
+    assert "pdf-ou-csv" not in [i["subject"] for i in bruno["data"]["items"]], (
+        "Ana's item reached Bruno")
     assert ANA not in str(bruno) and "PDF ou CSV" not in str(bruno)
 
 
@@ -871,12 +874,12 @@ def test_every_WIRED_producer_calls_its_event_and_the_unwired_ones_say_so():
     assert events.PRODUCERS[events.DOCUMENT_INGESTED] == (
         "openfactory/product/documents/ingest.py::announce")
     assert "events.document_ingested(" in documents[start:documents.index("\ndef ", start + 10)]
-    # #384 wired the card's: its producer is the product role's own `withdraw_card`
-    module = (ROOT / "openfactory/product/module.py").read_text()
-    start = module.index("    def withdraw_card(")
-    assert events.PRODUCERS[events.CARD_WITHDRAWN] == (
-        "openfactory/product/module.py::withdraw_card")
-    assert "events.card_withdrawn(" in module[start:module.index("\n    def ", start + 10)]
+    # #412 wired the card's (#384's `withdraw_card` was its first, and only, producer): the card's
+    # door tells it, from the port the executor applies every `Tell` effect through
+    ports = (ROOT / "openfactory/lifecycle/ports.py").read_text()
+    start = ports.index("    def tell(")
+    assert events.PRODUCERS[events.CARD_MOVED] == "openfactory/lifecycle/ports.py::tell"
+    assert "events.card_moved(" in ports[start:ports.index("\n    def ", start + 10)]
     assert set(events.PRODUCERS) == set(events.KINDS)
 
 
@@ -1029,7 +1032,7 @@ def test_a_chat_add_on_claiming_to_be_the_EVENT_transport_is_refused(registry, m
 #: adapter and the action rows reach `receive`, which refuses an event.
 _TELLING = {"door": {"announce", "announce_now", "report", "_admit", "tell"},
             "events": {"card_finished", "deliver", "ci_went_red", "pull_requests_at_the_gate",
-                       "preview_up", "document_ingested", "card_withdrawn", "to_room", "say_to",
+                       "preview_up", "document_ingested", "card_moved", "to_room", "say_to",
                        "_tell", "_once",
                        # #401 — the change is the requester's to try: the watch and the round
                        "ready_for_you", "ready_at_the_gate"}}
@@ -1038,10 +1041,10 @@ _PRODUCERS = {"openfactory/product/door.py", "openfactory/product/events.py",
               # #269: a document the ingestion READ — its name is the file's path, and the
               # ingestion decides it; a transport can ask for a file to be read, never what is said
               "openfactory/product/documents/ingest.py",
-              # #384: a card dropped from the card itself — the product role's own `withdraw_card`
-              # tells it, after the write landed; the sentence is the catalogue's, and a transport
-              # hands over only which card and why, never what is said
-              "openfactory/product/module.py"}
+              # #412: what happened to a card — the card's door tells it, after the transition was
+              # recorded; the sentence is the catalogue's, and a transport hands over only which
+              # card, which event and why, never what is said (#384's `withdraw_card` before it)
+              "openfactory/lifecycle/ports.py"}
 
 
 def test_ONLY_the_factorys_own_producers_tell_the_door_an_event():

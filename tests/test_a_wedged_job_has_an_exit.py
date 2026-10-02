@@ -105,32 +105,50 @@ class _Client:
         return self.handle
 
 
+class _Tracker:
+    """The card's tracker, recording what the card's door asked of it (ADR-0055)."""
+
+    def __init__(self) -> None:
+        self.states: list[tuple[str, object]] = []
+        self.comments: list[tuple[str, str]] = []
+        self.refuses = False
+
+    def get_ticket(self, ref):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(state="open", title="the wedged one", raw="")
+
+    def set_state(self, ref, state, reason=None, **_kw):
+        if self.refuses:
+            raise RuntimeError("the tracker is down")
+        self.states.append((ref, state))
+
+    def comment(self, ref, body):
+        self.comments.append((ref, body))
+
+
 @pytest.fixture
-def engine(monkeypatch):
+def tracker():
+    return _Tracker()
+
+
+@pytest.fixture
+def engine(monkeypatch, tracker):
     """A running job at no gate, with the project resolved and the tracker stubbed out."""
     from openfactory.actions import catalog
 
     class Project:
         name = "p"
 
-    monkeypatch.setattr(catalog, "_project", lambda name: (Project(), None))
-    holder: dict = {}
+    monkeypatch.setattr(catalog, "_board_pair", lambda name: (Project(), tracker, None, None))
 
     def _connect(handle):
         async def _c():
             return _Client(handle), None
         monkeypatch.setattr(catalog, "_connected", _c)
-        holder["handle"] = handle
         return handle
 
-    monkeypatch.setattr(catalog, "_settle_after_stop",
-                        lambda *a, **kw: _settled(holder))
     return _connect
-
-
-async def _settled(holder):
-    holder["settled"] = True
-    return True
 
 
 def _stop(**kw):
@@ -141,7 +159,7 @@ def _stop(**kw):
     return asyncio.run(catalog._stop(by=ADMIN, project="p", issue="87", **kw))
 
 
-def test_a_wedged_job_is_terminated_and_the_floor_is_freed(engine):
+def test_a_wedged_job_is_terminated_and_the_floor_is_freed(engine, tracker):
     from openfactory.runtime.temporal.view import WorkflowExecutionStatus
 
     handle = engine(_Handle(status=WorkflowExecutionStatus.RUNNING))
@@ -154,6 +172,12 @@ def test_a_wedged_job_is_terminated_and_the_floor_is_freed(engine):
         "the engine's own record does not say who stopped it or why")
     assert outcome.data["freed"] is True
     assert "does not resume" in outcome.message.lower() or "not resume" in outcome.message
+    # THE CARD'S HALF IS THE DOOR'S: back to the backlog, one comment saying who and why
+    from openfactory.contracts import JobState
+
+    assert tracker.states == [("87", JobState.SKIPPED)], tracker.states
+    [(_, said)] = tracker.comments
+    assert "Rob" in said and "rebuilt" in said, said
 
 
 @pytest.mark.parametrize("gate,verb", [
@@ -205,18 +229,13 @@ def test_the_gates_are_read_from_the_SHARED_table():
 
 # ── 3. the ticket is settled, and a failure to settle is REPORTED ───────────────────────────────
 
-def test_the_outcome_says_when_the_TICKET_could_not_be_updated(engine, monkeypatch):
+def test_the_outcome_says_when_the_TICKET_could_not_be_updated(engine, tracker):
     """The workflow is already terminated. Refusing to say so because the tracker blinked would
     leave the operator believing nothing happened — worse than a card in the wrong column."""
-    from openfactory.actions import catalog
     from openfactory.runtime.temporal.view import WorkflowExecutionStatus
 
     engine(_Handle(status=WorkflowExecutionStatus.RUNNING))
-
-    async def _no(*_a, **_kw):
-        return False
-
-    monkeypatch.setattr(catalog, "_settle_after_stop", _no)
+    tracker.refuses = True
     outcome = _stop()
 
     assert outcome.ok, "the stop itself happened and must be reported as done"
@@ -225,13 +244,15 @@ def test_the_outcome_says_when_the_TICKET_could_not_be_updated(engine, monkeypat
 
 
 def test_settling_puts_the_ticket_somewhere_a_PERSON_finds_it():
-    from openfactory.actions import catalog
+    """The settle is `stopped`'s row of the card's table (ADR-0055) — read from the table, which the
+    door applies, not from a function's source."""
+    from openfactory.lifecycle.table import CardEvent, Column, Comment, Tell, consequences
 
-    src = inspect.getsource(catalog._settle_after_stop)
-    assert "JobState.SKIPPED" in src, (
+    said = consequences(CardEvent.STOPPED)
+    assert Column("backlog") in said, (
         "a stopped job's ticket is left in whatever column the run had reached")
-    assert "tracker.comment" in src, "nothing on the ticket says who stopped it or why"
-    assert "return False" in src, "a tracker that refused is reported as success"
+    assert Comment() in said, "nothing on the ticket says who stopped it or why"
+    assert any(isinstance(e, Tell) for e in said), "the person who asked for it is never told"
 
 
 # ── 4. the surfaces ─────────────────────────────────────────────────────────────────────────────

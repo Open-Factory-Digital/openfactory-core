@@ -206,9 +206,22 @@ def delivered(waiting: list[Loop], closed_issues: set[str]) -> dict[tuple[str, s
         # announced: silence, which is the one failure this loop exists to prevent.
         issues = {canonical_ref(n) for n in (loop.context.get("issues") or "").split(",")
                   if n.strip()}
+        # WHAT REMAINS, NOT WHAT WAS PROMISED (ADR-0055 D10). A card withdrawn or removed from a
+        # requirement will never be delivered, so "all of its work" is the work still to do — a
+        # delivery that waited on a cancelled card waited for ever. When nothing remains, the
+        # card's door closed the loop as cancelled already; it is not "delivered" here.
+        issues -= cancelled_cards(loop)
         if issues and issues <= closed_issues:
             out[(DELIVERY, loop.subject, loop.about)] = "delivered"
     return out
+
+
+def cancelled_cards(loop: Loop) -> set[str]:
+    """The cards of a delivery that were cancelled while the rest of it still waits."""
+    from openfactory.memory.ledger import CANCELLED_CARDS
+
+    return {canonical_ref(n) for n in str((loop.context or {}).get(CANCELLED_CARDS) or "")
+            .split(",") if n.strip()}
 
 
 #: Why she is asking at all. Said ONCE per batch, never per question: three questions each
