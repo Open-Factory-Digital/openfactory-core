@@ -577,6 +577,77 @@ async def _preview_rebuild(*, project: str, unit: str, by: Actor) -> Outcome:
     return await _preview_start(project=project, unit=unit, by=by)
 
 
+def _a_product_admin(project, by: Actor) -> bool:
+    """A person on the product's own admin list (`product.admins`, `module.may_act`), or the CLI —
+    a shell on the host outranks every row here.
+
+    NARROWER THAN `needs_admin` ON PURPOSE. On the panel every credential that got in is `admin`,
+    a product-scoped one included, which is right for starting a preview of somebody's change and
+    wrong for letting a preview run what that change declares (#348)."""
+    from openfactory.product.module import may_act
+
+    if getattr(by, "via", "") == "cli":
+        return True
+    return may_act(project, str(getattr(by, "id", "") or ""), via=str(getattr(by, "via", "") or
+                                                                     "api"))
+
+
+async def _preview_own_shape(*, project: str, unit: str, by: Actor) -> Outcome:
+    """Allow a unit's preview to run its change's OWN shape — the digest its last start read — and
+    build it again with it (#348, ADR-0050 D3 amended).
+
+    A PERSON UNLOCKS IT, AFTER READING IT. The shape is read from the base branch because the
+    compose file is in the repository the agent edits; a change whose point is a new service was
+    previewed without its point. The pull request lists every file a preview would read with a
+    hash, and the card says the digest of the change's shape. This row allows exactly that digest:
+    a push that changes the shape is a different one, and the preview goes back to the base's.
+
+    ONLY WHAT A START HAS MEASURED. The digest comes from the unit's record, never from a
+    parameter, so what is allowed is what the platform read, not what somebody typed."""
+    import asyncio
+
+    from openfactory import preview
+    from openfactory.preview import own
+
+    found, token, was, bad = _preview_target(project, unit)
+    if bad:
+        return bad
+    if not _a_product_admin(found, by):
+        return refused(DENIED, f"only a product admin of {found.name} (`product.admins`) may let a "
+                               f"preview run a change's own shape: it runs what the change "
+                               f"declares.")
+    if was is None or not was.own_shape:
+        return refused(CONFLICT, f"the change of {token} does not edit the product's shape — or no "
+                                 f"preview of it has read it yet. Start its preview first; its "
+                                 f"card then says whether it does.")
+    if was.shape_from == "change" and (own.allowed(found.name, token) or ("",))[0] == \
+            was.own_shape:
+        return done(f"{token}'s preview already runs its change's own shape "
+                    f"({own.short(was.own_shape)}).", project=found.name, unit=token,
+                    state=was.state)
+    if not own.allow_shape(found.name, token, was.own_shape, _who(by)):
+        return refused(UNAVAILABLE, "the allowance could not be recorded — nothing changed, and "
+                                    "this is safe to repeat.")
+    said = (f"{_who(by)} allowed this pull request's own preview shape "
+            f"({own.short(was.own_shape)}). The next preview runs it, admitted key by key as the "
+            f"base's is; a push that changes the shape goes back to the base's until somebody "
+            f"looks again.")
+    try:
+        _, _, forge = await asyncio.to_thread(_forge_and_manifest, found.name)
+        for url in was.pr_urls:
+            await asyncio.to_thread(forge.review_pr, pr=url, event="comment", body=said)
+    except Exception as exc:  # noqa: BLE001 — the allowance stands; the pull request was not told
+        log.warning("[%s] could not tell the pull request of %s about its shape (%s)",
+                    found.name, token, str(exc)[:160])
+    # AND IT IS BUILT AGAIN NOW, with what was allowed: a rebuild of a unit with nothing running
+    # is a start. Its own refusal (no runtime named, an engine that is down) is said beside the
+    # allowance, which stands either way.
+    rebuilt = await _preview_rebuild(project=project, unit=unit, by=by)
+    return done(f"{token}: {said} {rebuilt.message}", project=found.name, unit=token,
+                digest=was.own_shape,
+                state=str((rebuilt.data or {}).get("state") or was.state or preview.STARTING))
+
+
 # ── enable — is this project picked up at all ───────────────────────────────────────────────────
 
 async def _enable(*, project: str, by: Actor, enabled: bool = True) -> Outcome:
@@ -6648,6 +6719,19 @@ CATALOG: dict[str, ActionSpec] = {
             summary="take a card's preview down now — its logs are kept",
             run=_preview_stop,
             required=("project", "unit"),
+        ),
+        ActionSpec(
+            name="preview_own_shape",
+            scope=PRODUCT,
+            summary="let a card's preview run its change's own shape — the compose files and "
+                    "`preview:` block its pull request edits, at the digest its card shows — and "
+                    "build it again with it",
+            run=_preview_own_shape,
+            required=("project", "unit"),
+            choose_when="only after a person has READ the change's shape on the pull request: "
+                        "the compose files and the block it edits. A preview runs the base's "
+                        "shape because the change's is the agent's; this lets one unit run the "
+                        "change's, admitted like the base's, until a push changes it",
         ),
         ActionSpec(
             name="preview_rebuild",

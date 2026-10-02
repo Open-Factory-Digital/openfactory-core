@@ -252,6 +252,9 @@ OWNED = {
     # act. The marker is the port call itself: a front end that reacquired `merge_pr` would be the
     # panel landing somebody's change with no row deciding whether it may.
     "merge_pr": "pr_merge",
+    # Letting a preview run its change's own shape (#348). The marker is the allowance's writer: a
+    # front end that reached it would be a second place deciding which digest a person read.
+    "allow_shape": "preview_own_shape",
     # Ending a RUNNING job (#127). The marker is the engine call itself: until this row existed,
     # the only exit from a wedged job was an operator opening Temporal and terminating by hand —
     # a raw-engine operation on the one surface this product promises they will never need. A
