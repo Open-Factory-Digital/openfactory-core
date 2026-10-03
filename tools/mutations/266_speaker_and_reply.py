@@ -61,8 +61,10 @@ MUTATIONS = [
     # RE-PINNED 2026-09-28 (#394): the role's answer is recorded by `engine._answered`, the one
     # place both the turn and the read-only path record it
     ("the role's turn forgets which message it answers", ENGINE,
-     "                      text=_text_of(reply), channel=message.room, in_reply_to=message.id)",
-     "                      text=_text_of(reply), channel=message.room)"),
+     "                      text=_text_of(reply), channel=message.room, in_reply_to=message.id,\n"
+     "                      kind=_reply_kind(reply))",
+     "                      text=_text_of(reply), channel=message.room,\n"
+     "                      kind=_reply_kind(reply))"),
     ("the transcript writes neither id onto the row it was handed them for", TRANSCRIPT,
      '        if message_id:\n            extra["id"] = str(message_id)\n'
      '        if in_reply_to:\n            extra["in_reply_to"] = str(in_reply_to)\n',

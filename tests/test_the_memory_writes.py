@@ -466,10 +466,11 @@ def test_a_view_made_before_the_answer_holds_every_document(tmp_path):
 # ── a quiet conversation, distilled once per span, through the semaphore, naming nobody (D4) ────
 
 def _said(where: str, text: str, *, at: datetime, actor: str = "", role: str = "person",
-          addressed: bool = True) -> Said:
+          addressed: bool = True, kind: str = "answer") -> Said:
     ts = at.isoformat()
     return Said(id=f"t:{where}:{ts}", ts=ts, store=CONVERSATION, where=where, role=role,
-                actor=actor if role == "person" else "", text=text, addressed=addressed)
+                actor=actor if role == "person" else "", text=text, addressed=addressed,
+                kind=kind)
 
 
 NOW = datetime(2026, 9, 24, 18, 0, tzinfo=UTC)
@@ -857,6 +858,167 @@ def test_a_model_that_cannot_read_a_span_writes_nothing_and_says_so(tmp_path, ba
                                  now=NOW)
     assert _distillates(base) == [] and len(report.unread) == 2
     assert "could not read" in report.sentence()
+
+
+def test_a_distiller_that_raises_is_counted_not_propagated(tmp_path, base):
+    """A reading that RAISES is one that failed: `distil` never raises for a conversation (baseline
+    rule 1). The span is counted unread, nothing is written, and the next pass reads it again."""
+    project = _project()
+
+    class _Boom:
+        def distil(self, span):
+            raise RuntimeError("the model host fell over mid-read")
+
+    report = distillation.distil(project, module=_writer(project, base,
+                                                         _checkout(base, tmp_path / "a")),
+                                 root=tmp_path / "a", said=_conversations(), distiller=_Boom(),
+                                 now=NOW)
+    assert _distillates(base) == [], "a span that raised is not written"
+    assert _marked(base) == [], "nor marked read — the next pass reads it again"
+    assert len(report.unread) == 2 and report.written == [] and report.marked == []
+
+
+# ── only a conversation that SAID something becomes a distillate (#457) ──────────────────────────
+
+def _marked(base: Path) -> list[str]:
+    from openfactory.product.documents.record import MARKED
+    listed = _git("ls-tree", "-r", "--name-only", "main", MARKED, cwd=base).splitlines()
+    return sorted(p for p in listed if p.strip())
+
+
+def _question_then_crash(now: datetime = NOW) -> list[Said]:
+    """The case from the issue: a person's question, and the platform's OWN crash reply — its only
+    role line is a platform sentence, not an answer."""
+    t = now - timedelta(hours=9)
+    return [
+        _said(ROOM, "Can you add a fuel surcharge line to every invoice?", at=t, actor="helena"),
+        _said(ROOM, "CRASHED on my side.", at=t + timedelta(minutes=1), role="agent", kind="broke"),
+    ]
+
+
+def test_a_question_and_a_crash_reply_is_marked_read_never_distilled(tmp_path, base):
+    """THE ISSUE'S OWN CASE (#457). A person asked and the platform's handler broke: the span's only
+    role line is a platform sentence. No model is asked, no distillate is written — but the span is
+    MARKED read under the same semaphore, so the cursor advances and it is never read again."""
+    project = _project()
+    distiller = _Distiller(project)
+    report = distillation.distil(project, module=_writer(project, base,
+                                                         _checkout(base, tmp_path / "a")),
+                                 root=tmp_path / "a", said=_question_then_crash(),
+                                 distiller=distiller, now=NOW)
+
+    assert distiller.spans == [], "no model was asked to read a span of platform sentences"
+    assert _distillates(base) == [], "nothing was kept — no distillate"
+    assert len(report.marked) == 1 and report.written == [] and report.unread == []
+    assert len(_marked(base)) == 1, "the span was marked read"
+
+    # the cursor advanced: a later pass over the same lines finds nothing ready
+    second = _Distiller(project)
+    later = distillation.distil(project, module=_writer(project, base,
+                                                        _checkout(base, tmp_path / "b")),
+                                root=tmp_path / "b", said=_question_then_crash(),
+                                distiller=second, now=NOW + timedelta(hours=2))
+    assert second.spans == [] and later.marked == [], "a span marked read is not read again"
+
+    # across two processes: a pass from a checkout that never saw the mark re-reads and re-marks;
+    # the base, re-read under the semaphore, refuses the second — one mark stands
+    stale = tmp_path / "stale"
+    shutil.copytree(bed.FIXTURE / "context", stale)
+    raced = distillation.distil(project, module=_writer(project, base, stale), root=stale,
+                                said=_question_then_crash(), distiller=_Distiller(project), now=NOW)
+    assert raced.written == [] and len(raced.marked_already) == 1
+    assert len(_marked(base)) == 1, "a span is marked once, whoever runs it"
+
+
+def test_a_span_a_model_finds_nothing_in_is_marked_read_not_distilled(tmp_path, base):
+    """An all-empty reading, or the model's explicit nothing-to-keep answer, keeps nothing: no
+    distillate, the span marked read (#457). The model WAS asked — there were lines to read — and
+    what it answered is what makes this a mark rather than a distillate."""
+    project = _project()
+
+    class _KeepsNothing:
+        def __init__(self) -> None:
+            self.spans: list = []
+
+        def distil(self, span):
+            self.spans.append(span)
+            return distillation.Distilled(nothing=True, by="stub/distiller")
+
+    distiller = _KeepsNothing()
+    report = distillation.distil(project, module=_writer(project, base,
+                                                         _checkout(base, tmp_path / "a")),
+                                 root=tmp_path / "a", said=_conversations(), distiller=distiller,
+                                 now=NOW)
+
+    assert len(distiller.spans) == 2, "both quiet spans were read by the model"
+    assert _distillates(base) == [], "neither kept anything — no distillate"
+    assert len(report.marked) == 2 and report.written == []
+    assert len(_marked(base)) == 2, "each span that kept nothing is marked read"
+
+
+def test_a_real_agreement_beside_a_platform_sentence_is_still_distilled_without_it(tmp_path, base):
+    """A span with a real agreement AND a platform sentence is still distilled — and the platform
+    sentence is absent from the `conversation.txt` the model was handed (#457)."""
+    project = _project()
+    t = NOW - timedelta(hours=9)
+    said = [
+        _said(ROOM, "Please add a fuel surcharge line to every invoice.", at=t, actor="helena"),
+        _said(ROOM, "Noted — a fuel surcharge line on every invoice.",
+              at=t + timedelta(minutes=1), role="agent"),
+        _said(ROOM, "CRASHED on my side.", at=t + timedelta(minutes=2), role="agent", kind="broke"),
+    ]
+    distiller = _Distiller(project)
+    distillation.distil(project, module=_writer(project, base, _checkout(base, tmp_path / "a")),
+                        root=tmp_path / "a", said=said, distiller=distiller, now=NOW)
+
+    assert len(_distillates(base)) == 1, "a span with a real agreement is distilled"
+    [span] = distiller.spans
+    handed = [line.text for line in span.lines]
+    assert not any("CRASHED" in text for text in handed), \
+        "the platform sentence is not handed to the model"
+    assert any("fuel surcharge" in text for text in handed)
+
+
+def test_the_prompt_offers_nothing_to_keep_and_tells_a_question_from_a_request():
+    """The distillation prompt has an explicit way to answer that there is nothing to keep, and it
+    says a question ABOUT the product is not something asked of it (#457)."""
+    project = _project()
+    [span, _bruno] = distillation.spans(project, _conversations(), distilled={}, now=NOW)
+    text = distillation.prompt(span)
+    assert '{"nothing": true}' in text, "no explicit nothing-to-keep answer"
+    asked = text[text.index("`asked`"):]
+    assert "DO" in asked and "HAVE" in asked and "CHANGE" in asked
+    assert "question ABOUT the" in asked, "it does not tell a question from a request"
+
+    # the model's explicit nothing-to-keep answer is read as keeping nothing
+    assert distillation.Distilled(nothing=True, agreed=["x"]).kept_something() is False
+    assert distillation.Distilled(agreed=[], asked=[]).kept_something() is False
+    assert distillation.Distilled(agreed=["a line worth keeping"]).kept_something() is True
+
+
+def test_a_marked_span_is_not_a_document(tmp_path, base):
+    """The mark is a hidden record, not a document: ingestion never reads it, so there is no index
+    item and no Documents entry for it (#457)."""
+    from openfactory.product.documents.ingest import documents_in, ingest, overview
+    from openfactory.product.key import product_key
+
+    project = _project()
+    distillation.distil(project, module=_writer(project, base, _checkout(base, tmp_path / "a")),
+                        root=tmp_path / "a", said=_question_then_crash(),
+                        distiller=_Distiller(project), now=NOW)
+    assert _marked(base), "the span was marked read"
+
+    root = _checkout(base, tmp_path / "read")
+    assert not any(p.startswith(".distilled") for p in documents_in(root)), \
+        "ingestion does not walk the hidden mark tree"
+    report = ingest(project, root=root, reader=bed.FixtureReader(), announce=lambda *_a, **_k: False)
+    assert not any(p.startswith(".distilled") for p in report.ingested)
+    assert not any(p.startswith(".distilled") for p, _why in report.unreadable)
+
+    ov = overview(product_key(project), internal=True)
+    listed = ov["documents"] + ov.get("documents_internal", []) + ov["unreadable"] \
+        + ov.get("unreadable_internal", [])
+    assert not any(d["path"].startswith(".distilled") for d in listed), "no Documents entry"
 
 
 def test_the_default_distiller_reads_one_conversation_in_a_room_of_its_own(tmp_path):
