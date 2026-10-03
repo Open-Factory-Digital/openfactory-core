@@ -553,7 +553,7 @@ def distil(project, *, module, root: Path, said, distiller: Distiller | None = N
         if span.lines:
             try:
                 reading = distiller.distil(span)
-            except Exception as exc:  # noqa: BLE001 — a reading that raised is one that failed
+            except Exception as exc:  # a reading that raised is one that failed; never raise for it
                 reading = Distilled(error=f"{type(exc).__name__}: {str(exc)[:200]}")
             if reading.error:
                 log.warning("OPENFACTORY_PRODUCT_DISTIL_UNREAD project=%s span=%s (%s)",

@@ -860,6 +860,24 @@ def test_a_model_that_cannot_read_a_span_writes_nothing_and_says_so(tmp_path, ba
     assert "could not read" in report.sentence()
 
 
+def test_a_distiller_that_raises_is_counted_not_propagated(tmp_path, base):
+    """A reading that RAISES is one that failed: `distil` never raises for a conversation (baseline
+    rule 1). The span is counted unread, nothing is written, and the next pass reads it again."""
+    project = _project()
+
+    class _Boom:
+        def distil(self, span):
+            raise RuntimeError("the model host fell over mid-read")
+
+    report = distillation.distil(project, module=_writer(project, base,
+                                                         _checkout(base, tmp_path / "a")),
+                                 root=tmp_path / "a", said=_conversations(), distiller=_Boom(),
+                                 now=NOW)
+    assert _distillates(base) == [], "a span that raised is not written"
+    assert _marked(base) == [], "nor marked read — the next pass reads it again"
+    assert len(report.unread) == 2 and report.written == [] and report.marked == []
+
+
 # ── only a conversation that SAID something becomes a distillate (#457) ──────────────────────────
 
 def _marked(base: Path) -> list[str]:
