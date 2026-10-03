@@ -165,8 +165,8 @@ MUTATIONS = [
     ("the recall a turn reads finds what the room said to others", RECALL,
      "            and (overheard or h.said.addressed)\n", ""),
     ("the recall index forgets which lines were not for the role", RECALL,
-     "                        addressed=extra.get(transcript.ADDRESSED_MARK) is not False))",
-     "                        addressed=True))"),
+     "                        addressed=extra.get(transcript.ADDRESSED_MARK) is not False,",
+     "                        addressed=True,"),
     # RE-PINNED 2026-09-25 (#335): the history is read into `before`, which the clock also reads
     ("the turn asks its history for what was not addressed to the role", ENGINE,
      "    before = [t for t in transcript.recent(project, thread=ex.thread, channel=ex.channel)",
