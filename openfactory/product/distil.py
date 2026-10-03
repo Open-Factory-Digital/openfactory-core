@@ -68,7 +68,15 @@ import yaml
 from pydantic import BaseModel, Field
 
 from openfactory.contracts.document import CLIENT
-from openfactory.product.documents.record import DIRECT, DISTILLATES, ROOM, distillate_path
+from openfactory.memory.transcript import ANSWER
+from openfactory.product.documents.record import (
+    DIRECT,
+    DISTILLATES,
+    MARKED,
+    ROOM,
+    distillate_path,
+    span_marker_path,
+)
 
 log = logging.getLogger("openfactory.product.distil")
 
@@ -76,7 +84,9 @@ log = logging.getLogger("openfactory.product.distil")
 #: session over, not a pause for coffee: a person who answers the role's question the next morning
 #: starts a new span, and the two are read together by whoever searches.
 QUIET_HOURS = 6
-#: A span worth a reading: at least this many lines, a person's among them.
+#: A span worth a reading: at least this many lines a model is handed — a person's and the role's
+#: ANSWER among them. The platform's own sentences (a crash reply, an unavailable, a hand-off) do
+#: not count toward it and are handed to no model (#457, `_is_platform`).
 MIN_LINES = 2
 #: The most one span holds — the oldest first; the rest is the next span.
 MAX_LINES = 200
@@ -141,9 +151,18 @@ class Distilled(BaseModel):
     decided: list[str] = Field(default_factory=list)
     refused: list[str] = Field(default_factory=list)
     open: list[str] = Field(default_factory=list)
+    #: THE MODEL'S EXPLICIT WAY TO SAY THERE IS NOTHING TO KEEP (#457): no agreement, request or
+    #: decision the record does not already hold. `True` makes the span a span read and kept, never
+    #: a distillate — the same outcome as an all-empty reading, said outright rather than inferred.
+    nothing: bool = False
     #: `harness/model` of what wrote it
     by: str = ""
     error: str = ""
+
+    def kept_something(self) -> bool:
+        """Whether this reading is worth a distillate: it keeps something AND did not say there is
+        nothing (#457). An all-empty reading keeps nothing; `nothing` says so outright."""
+        return not self.nothing and any(getattr(self, name) for name, _title in SECTIONS)
 
 
 @runtime_checkable
@@ -155,19 +174,23 @@ class Distiller(Protocol):
 # ── which conversations are ready ───────────────────────────────────────────────────────────────
 
 def distilled_in(root: Path) -> dict[str, str]:
-    """`{conversation digest: latest until}` — what the context repository at `root` says was
-    distilled already, read off each distillate's front matter."""
+    """`{conversation digest: latest until}` — what the context repository at `root` says was READ
+    already, so a span after it is not read again. The position comes from BOTH what was written as
+    a distillate (`conversations/…`) AND what marks a span that kept nothing (`.distilled/…`, the
+    hidden tree): a deployment upgraded onto this reads its existing distillates through, and a span
+    marked empty since is just as read (#457)."""
     from openfactory.product.authoring import distilled_until
 
     out: dict[str, str] = {}
-    for kind in (ROOM, DIRECT):
-        base = Path(root) / DISTILLATES / kind
-        if not base.is_dir():
-            continue
-        for folder in sorted(p for p in base.iterdir() if p.is_dir()):
-            until = distilled_until(folder)
-            if until:
-                out[folder.name] = max(out.get(folder.name, ""), until)
+    for top in (DISTILLATES, MARKED):
+        for kind in (ROOM, DIRECT):
+            base = Path(root) / top / kind
+            if not base.is_dir():
+                continue
+            for folder in sorted(p for p in base.iterdir() if p.is_dir()):
+                until = distilled_until(folder)
+                if until:
+                    out[folder.name] = max(out.get(folder.name, ""), until)
     return out
 
 
@@ -227,28 +250,47 @@ def spans(project, said, *, distilled: dict[str, str], now: datetime | None = No
         newest = _when(fresh[-1].ts) if fresh else None
         if newest is None or newest > cutoff:
             continue  # nothing new, or still talking
-        # NEVER A LINE SAID IN A GROUP TO SOMEBODY ELSE (ADR-0053 D12): what was agreed with the
-        # role is what was said to it
-        taken, size = [], 0
+        taken: list = []
+        size = 0
         for s in fresh:
             if len(taken) >= MAX_LINES or size + len(s.text) > MAX_CHARS:
                 break
             taken.append(s)
             size += len(s.text)
-        spoken = [s for s in taken if s.addressed]
-        if len(spoken) < MIN_LINES or not any(s.role != "agent" for s in spoken):
-            continue
+        # NEVER A LINE SAID IN A GROUP TO SOMEBODY ELSE (ADR-0053 D12): what was agreed with the
+        # role is what was said to it
+        addressed = [s for s in taken if s.addressed]
+        if len(addressed) < MIN_LINES or not any(s.role != "agent" for s in addressed):
+            continue  # not an exchange at all — a lonely line, as it always was: not a span
+        # THE PLATFORM'S OWN SENTENCES ARE NOT THE ROLE'S ANSWER (#457): a crash reply, an
+        # unavailable, a busy acknowledgement, a hand-off — none is handed to a model, and none
+        # counts toward MIN_LINES. What a model reads is the people's lines and the role's ANSWERS;
+        # a span whose only role lines are platform sentences keeps nothing, and is marked read with
+        # no model call so it is never read again.
+        spoken = [s for s in addressed if not _is_platform(s)]
+        worth_a_model = (len(spoken) >= MIN_LINES and any(s.role != "agent" for s in spoken)
+                         and any(s.role == "agent" for s in spoken))
         ready.append(Span(
             conversation=where, digest=digest, private=is_private(where),
             audience=_audience(project, where), after=after, since=str(taken[0].ts),
             until=str(taken[-1].ts),
             # THE LINES NAME NOBODY THE PRODUCT KNOWS before any model reads them: what it was
-            # never handed it cannot write down (`scrub`, again, on what it answers)
+            # never handed it cannot write down (`scrub`, again, on what it answers). Empty when
+            # nothing is worth a model — the span is still returned, so `distil` marks it read.
             lines=tuple(Line(ts=str(s.ts), who=_who(project, s),
-                             text=scrub(str(s.text).strip(), people)) for s in spoken),
+                             text=scrub(str(s.text).strip(), people)) for s in spoken)
+                  if worth_a_model else (),
             people=people))
     ready.sort(key=lambda s: s.until)
     return ready
+
+
+def _is_platform(line) -> bool:
+    """A line the platform said in its OWN voice, not the model's answer (#457): a role line
+    recorded with a kind that is not `ANSWER`. Only the role speaks these; a person's line, and
+    every line recorded before the kind existed, reads as an answer."""
+    return (str(getattr(line, "role", "")) == "agent"
+            and str(getattr(line, "kind", ANSWER) or ANSWER) != ANSWER)
 
 
 # ── the reading ─────────────────────────────────────────────────────────────────────────────────
@@ -259,10 +301,17 @@ def prompt(span: Span) -> str:
         f"of a product and its product role, from {span.since[:16]} to {span.until[:16]}: "
         f"{len(span.lines)} lines, each saying when it was said and who said it — by their role "
         f"in the product, never by name.\n\n"
-        "Read it and answer with ONE JSON object and nothing else:\n\n"
+        "Read it and answer with ONE JSON object and nothing else.\n\n"
+        "When nothing in it is worth keeping — no agreement, no request, no decision beyond what "
+        "the role says it already recorded, and no question left open — answer EXACTLY:\n\n"
+        '{"nothing": true}\n\n'
+        "Otherwise:\n\n"
         '{"agreed": ["…"], "asked": ["…"], "decided": ["…"], "refused": ["…"], "open": ["…"]}\n\n'
         "- `agreed`: what the people and the role agreed on.\n"
-        "- `asked`: what somebody asked the product to do, to have or to change.\n"
+        "- `asked`: what somebody asked the product to DO, to HAVE or to CHANGE. A question ABOUT "
+        "the product — how something works, what it does, whether it already does a thing — is NOT "
+        "something they asked the product for: leave it out, or put it in `open` if it was left "
+        "unanswered.\n"
         "- `decided`: what a person decided.\n"
         "- `refused`: what was refused, dropped or decided against.\n"
         "- `open`: the questions left without an answer.\n\n"
@@ -324,7 +373,8 @@ class ModelDistiller:
         if answer is None:
             return Distilled(error="the model's answer was not the JSON object it was asked for",
                              by=by)
-        return Distilled(**{name: _items(answer.get(name)) for name, _title in SECTIONS}, by=by)
+        return Distilled(**{name: _items(answer.get(name)) for name, _title in SECTIONS},
+                         nothing=bool(answer.get("nothing")), by=by)
 
 
 # ── what is written ─────────────────────────────────────────────────────────────────────────────
@@ -333,12 +383,23 @@ def _compact(ts: str) -> str:
     return re.sub(r"[^0-9T]", "", str(ts)[:19])
 
 
-def path_for(span: Span) -> str:
-    """Where a span is written: its conversation's folder, a name its end and its identity make —
-    the same span always lands on the same path."""
+def _name_for(span: Span) -> str:
+    """The file name a span lands on — its end and its identity, so the same span always lands on
+    the same path, whether it is a distillate or a span-read mark."""
     ident = hashlib.sha256(f"{span.digest}|{span.after}|{span.until}".encode()).hexdigest()[:8]
-    return distillate_path(private=span.private, digest=span.digest,
-                           name=f"{_compact(span.until)}-{ident}.md")
+    return f"{_compact(span.until)}-{ident}.md"
+
+
+def path_for(span: Span) -> str:
+    """Where a span's distillate is written: its conversation's folder under `conversations/`."""
+    return distillate_path(private=span.private, digest=span.digest, name=_name_for(span))
+
+
+def marker_path(span: Span) -> str:
+    """Where a span that KEPT NOTHING is marked read — the hidden tree, so ingestion never reads it
+    as a document (no record, no index item, no Documents entry), while `distilled_in` reads it to
+    advance the cursor (#457). The same span always lands on the same path."""
+    return span_marker_path(private=span.private, digest=span.digest, name=_name_for(span))
 
 
 def known_people(project, said) -> set[str]:
@@ -412,6 +473,22 @@ def render(span: Span, reading: Distilled, *, people) -> str:
             + "\n".join(body).rstrip() + "\n")
 
 
+def render_marker(span: Span) -> str:
+    """The mark a span that kept nothing leaves — the front matter `distilled_in` reads to advance
+    the cursor (its `until`), and a line saying why there is no distillate (#457). It names nobody
+    and holds none of the conversation: it is the record that the span was read, not its reading.
+    Hidden on disk (`marker_path`), so ingestion never reads it as a document."""
+    front = {"kind": "conversation-span-read", "conversation": span.digest,
+             "private": span.private, "after": span.after, "since": span.since,
+             "until": span.until, "lines": len(span.lines)}
+    body = ("A span of this conversation that went quiet and kept nothing a distillate would hold "
+            "— no agreement, request or decision the product's record does not already have, and "
+            "no question left open. Marked read so it is never distilled again. It is not a "
+            "document and nobody reads it; it holds none of what was said.")
+    return ("---\n" + yaml.safe_dump(front, sort_keys=False, allow_unicode=True) + "---\n\n"
+            + body + "\n")
+
+
 # ── the pass ────────────────────────────────────────────────────────────────────────────────────
 
 @dataclass
@@ -422,12 +499,20 @@ class Report:
     already: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
     unread: list[str] = field(default_factory=list)
+    #: spans read that kept nothing — marked read, no distillate (#457); and those a race marked
+    #: already
+    marked: list[str] = field(default_factory=list)
+    marked_already: list[str] = field(default_factory=list)
     left: int = 0
 
     def sentence(self) -> str:
         said = [f"{len(self.written)} conversation(s) distilled"]
         if self.already:
             said.append(f"{len(self.already)} distilled already by another pass")
+        if self.marked:
+            said.append(f"{len(self.marked)} read that kept nothing")
+        if self.marked_already:
+            said.append(f"{len(self.marked_already)} read by another pass")
         if self.unread:
             said.append(f"{len(self.unread)} the model could not read (the reason is in the "
                         f"platform's log)")
@@ -462,24 +547,37 @@ def distil(project, *, module, root: Path, said, distiller: Distiller | None = N
         if n >= limit or (deadline is not None and clock() > deadline):
             report.left = len(ready) - n
             break
-        path = path_for(span)
-        try:
-            reading = distiller.distil(span)
-        except Exception as exc:  # noqa: BLE001 — a reading that raised is one that failed
-            reading = Distilled(error=f"{type(exc).__name__}: {str(exc)[:200]}")
-        if reading.error:
-            log.warning("OPENFACTORY_PRODUCT_DISTIL_UNREAD project=%s span=%s (%s)",
-                        getattr(project, "name", "?"), path, reading.error)
-            report.unread.append(path)
-            continue
-        written = module.record_distillate(path=path, text=render(
-            span, reading, people=span.people), after=span.after)
-        if written.ok and written.existed:
-            report.already.append(path)
-        elif written.ok:
-            report.written.append(path)
+        # A SPAN WITH NOTHING FOR A MODEL — its only role lines were the platform's own — is read
+        # without a model call (#457): there is nothing to hand one.
+        reading: Distilled | None = None
+        if span.lines:
+            try:
+                reading = distiller.distil(span)
+            except Exception as exc:  # noqa: BLE001 — a reading that raised is one that failed
+                reading = Distilled(error=f"{type(exc).__name__}: {str(exc)[:200]}")
+            if reading.error:
+                log.warning("OPENFACTORY_PRODUCT_DISTIL_UNREAD project=%s span=%s (%s)",
+                            getattr(project, "name", "?"), path_for(span), reading.error)
+                report.unread.append(path_for(span))
+                continue
+        # KEPT SOMETHING → a distillate; kept nothing (no line for a model, an all-empty reading, or
+        # the model's nothing-to-keep answer) → the span is MARKED read, no document. Either way the
+        # cursor advances, through the SAME semaphore, once per span.
+        if reading is not None and reading.kept_something():
+            kept, path, text = True, path_for(span), render(span, reading, people=span.people)
         else:
+            kept, path, text = False, marker_path(span), render_marker(span)
+        written = module.record_distillate(path=path, text=text, after=span.after)
+        if not written.ok:
             report.failed.append(path)
+        elif kept and written.existed:
+            report.already.append(path)
+        elif kept:
+            report.written.append(path)
+        elif written.existed:
+            report.marked_already.append(path)
+        else:
+            report.marked.append(path)
     log.info("OPENFACTORY_PRODUCT_DISTIL project=%s %s", getattr(project, "name", "?"),
              report.sentence())
     return report
@@ -488,5 +586,5 @@ def distil(project, *, module, root: Path, said, distiller: Distiller | None = N
 __all__ = [
     "MAX_CHARS", "MAX_LINES", "MIN_LINES", "PER_PASS", "QUIET_HOURS", "Distilled", "Distiller",
     "Line", "ModelDistiller", "Report", "Span", "distil", "distilled_in", "known_people",
-    "path_for", "prompt", "render", "scrub", "spans",
+    "marker_path", "path_for", "prompt", "render", "render_marker", "scrub", "spans",
 ]
