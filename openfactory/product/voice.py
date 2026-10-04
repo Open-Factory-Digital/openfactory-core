@@ -228,11 +228,13 @@ _HANDBACK_CAUSE = {
     "technical": {"pt-BR": "técnica", "en": "technical"},
     "environment": {"pt-BR": "de ambiente", "en": "environmental"},
 }
+#: `{backlog}` and `{queue}` are the columns AS THE CARD'S BOARD CALLS THEM (#502): the person
+#: reading this looks for them on their own board — see `column_said`.
 _FIX_COMMENT = {
     "pt-BR": ("{sig} O impedimento aqui é do requisito, não da execução{why}.\n\n{fix}Devolvi "
-              "para o Backlog. Promover para TO-DO continua sendo decisão de uma pessoa."),
+              "para o {backlog}. Promover para {queue} continua sendo decisão de uma pessoa."),
     "en": ("{sig} The impediment here is the requirement, not the execution{why}.\n\n{fix}I have "
-           "put it back in the Backlog. Promoting it to TO-DO is still a person's call."),
+           "put it back in the {backlog}. Promoting it to {queue} is still a person's call."),
 }
 _FIX_CLAUSE = {
     "pt-BR": "O que ajustei: {fix}\n\n",
@@ -433,6 +435,21 @@ def _pick(catalogue: dict[str, str], language: str | None) -> str:
     listener."""
     lang = (language or DEFAULT_LANGUAGE).strip()
     return catalogue.get(lang) or catalogue.get(DEFAULT_LANGUAGE) or catalogue["en"]
+
+
+def column_said(named: str, key: str) -> str:
+    """The column a sentence names: `named`, the board's own word for the stage `key`, when the
+    caller asked the board — the platform's word otherwise (#502).
+
+    THE SENTENCES SPELLED THE PLATFORM'S COLUMNS. "Fica no Backlog", "Promover para TO-DO" — said
+    to a person about a card the product role had just placed in their board's `Pendências`, or
+    waiting in its `A Fazer`. They read those words and look for them on their own board. The
+    caller holds the board (`ProductModule.board_words`, the door's `Seen.column`), so it passes
+    the name in; a caller that has none says the platform's word, which is what the board says
+    when nobody renamed it."""
+    from openfactory.adapters.board.columns import name_for
+
+    return str(named or "").strip() or name_for(key)
 
 
 _CONFIRM = {
@@ -682,10 +699,10 @@ def confirmation_request(*, title: str, must_be_true: list[str],
 #: THE CARD BEFORE THE PROMISE (ADR-0047 §2): what the requester reads right after the first yes.
 #: The second question is asked here, on the thing that will be worked.
 _CARDS_OPENED_AWAITING = {
-    "pt-BR": ("Abri {cards} para esse requisito, no Backlog, ainda **sem aceite**. Você confirma "
+    "pt-BR": ("Abri {cards} para esse requisito, no {backlog}, ainda **sem aceite**. Você confirma "
               "que é isso que o produto promete? Se sim, o aceite fica registrado no cartão, em "
               "seu nome — e só aí vira promessa. **Nada está sendo construído ainda**."),
-    "en": ("I opened {cards} for this requirement, in the Backlog, **not yet accepted**. Do you "
+    "en": ("I opened {cards} for this requirement, in the {backlog}, **not yet accepted**. Do you "
            "confirm this is what the product promises? If so, the acceptance is recorded on the "
            "card in your name — and only then does it become a promise. "
            "**Nothing is being built yet**."),
@@ -745,9 +762,12 @@ def _named_cards(cards: list[str], language: str | None) -> str:
     return many.format(many=", ".join(refs[:-1]) + joiner + refs[-1])
 
 
-def cards_opened_awaiting(*, cards: list[str], number: int, language: str | None = None) -> str:
+def cards_opened_awaiting(*, cards: list[str], number: int, language: str | None = None,
+                          backlog: str = "") -> str:
+    """`backlog` is what the card's board calls it — see `column_said`."""
     return _pick(_CARDS_OPENED_AWAITING, language).format(
-        cards=_named_cards(cards, language), number=number)
+        cards=_named_cards(cards, language), number=number,
+        backlog=column_said(backlog, "backlog"))
 
 
 def acceptance_stamp(*, number: int, actor: str, day: str, where: str, requester: str = "",
@@ -1089,10 +1109,10 @@ _CARD_NOT_DRAFTED = {
 #: HONEST about the gate, like `_DEFECT_FILED`: a card lands in Backlog, and nothing leaves Backlog
 #: without a person promoting it (ADR-0019 §5) — starting work spends money.
 _TICKET_FILED = {
-    "pt-BR": "Aberto: {where}. Fica no Backlog até o time aprovar a próxima leva — e quando sair, "
-             "eu aviso aqui.",
-    "en": "Opened: {where}. It stays in the Backlog until the team approves the next batch — and "
-          "when it ships, I will say so here.",
+    "pt-BR": "Aberto: {where}. Fica no {backlog} até o time aprovar a próxima leva — e quando "
+             "sair, eu aviso aqui.",
+    "en": "Opened: {where}. It stays in the {backlog} until the team approves the next batch — "
+          "and when it ships, I will say so here.",
 }
 
 #: The order read back BEFORE it is written, and honest about what it is not: nothing starts.
@@ -1328,11 +1348,13 @@ _CANNOT_SAY = {"pt-BR": "não sei dizer", "en": "I cannot tell"}
 
 
 def ticket_filed(*, ref: str, url: str = "", language: str | None = None,
-                 existed: bool = False, just_asked: bool = False) -> str:
+                 existed: bool = False, just_asked: bool = False, backlog: str = "") -> str:
+    """`backlog` is what the card's board calls it — see `column_said`."""
     where = url or (f"#{ref}" if ref else "")
     if just_asked:
         return just_asked_for_a_card(where=where, language=language)
-    text = _pick(_TICKET_FILED, language).format(where=where or _pick(_THE_CARD, language))
+    text = _pick(_TICKET_FILED, language).format(where=where or _pick(_THE_CARD, language),
+                                                 backlog=column_said(backlog, "backlog"))
     if existed:
         text = _pick({"pt-BR": "Já existia um cartão com esse título — é este. ",
                       "en": "A card with that title already existed — this is it. "},
@@ -3340,12 +3362,12 @@ def card_moved(notice: str, *, ref: str, title: str = "", removed: bool = False,
 
 #: Why the door refused: where the card is, and what cannot happen to it from there (D2).
 _CARD_WHERE = {
-    "pt-BR": {"backlog": "no backlog", "todo": "em TO-DO, esperando a fábrica",
+    "pt-BR": {"backlog": "no backlog", "todo": "em {queue}, esperando a fábrica",
               "running": "com a fábrica trabalhando nele", "waiting_on_a_person":
               "esperando uma pessoa", "merged": "já mergeado", "staged": "em um estágio",
               "delivered": "entregue", "closed": "fechado", "removed": "fora do quadro",
               "": "aberto, e o quadro não diz onde"},
-    "en": {"backlog": "in the backlog", "todo": "in TO-DO, waiting for the factory",
+    "en": {"backlog": "in the backlog", "todo": "in {queue}, waiting for the factory",
            "running": "being worked on by the factory", "waiting_on_a_person":
            "waiting on a person", "merged": "merged", "staged": "on a stage",
            "delivered": "delivered", "closed": "closed", "removed": "not on the board",
@@ -3370,11 +3392,16 @@ _CARD_RACED = {
 }
 
 
-def card_refused(event: str, *, state: str, ref: str, language: str | None = None) -> str:
+def card_refused(event: str, *, state: str, ref: str, language: str | None = None,
+                 column: str = "") -> str:
     """Why `event` may not happen to card `ref` while it is in `state` — `""` when no board places
-    it."""
+    it. `column` is where the card sits AS ITS BOARD CALLS IT (#502): a card waiting in the queue
+    is in the board's `A Fazer`, and the platform's `TO-DO` names nothing the requester can find."""
+    where = _pick(_CARD_WHERE, language).get(state, state)
+    if state == "todo":
+        where = where.format(queue=column_said(column, "todo"))
     return _pick(_CARD_REFUSED, language).format(
-        ref=str(ref).lstrip("#"), where=_pick(_CARD_WHERE, language).get(state, state),
+        ref=str(ref).lstrip("#"), where=where,
         done=_pick(_CARD_DONE_TO, language).get(event, event))
 
 

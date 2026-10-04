@@ -429,6 +429,38 @@ def _columns(project, token: str | None) -> dict[str, str] | None:
     return board.columns()
 
 
+def stages_of(tickets: list[Ticket], board) -> dict[str, str]:
+    """`{column as the board calls it: neutral key}` for every column `tickets` sit in — the board
+    asked ONCE per column per read (#502), through `board.base.stage_key`.
+
+    WHAT `readiness` AND `triage` READ INSTEAD OF A NAME. A `Ticket` carries its column verbatim,
+    as its board spells it, and both judged it against the platform's own six — so on a board whose
+    deployment renamed its columns, nothing queued, filed, in flight or waiting was counted as any
+    of those. The board is the only thing that knows which of its columns is which stage; this asks
+    it for the handful of columns a read actually met, and the judges stay pure arithmetic over the
+    answer. `None` for `board` is the platform's own names, which is `stage_key`'s degrade."""
+    from openfactory.adapters.board.base import stage_key
+
+    return {column: stage_key(board, column)
+            for column in dict.fromkeys(t.column for t in tickets if t.column)}
+
+
+def stages_for(project, tickets: list[Ticket], *, token: str | None = None) -> dict[str, str]:
+    """`stages_of`, for a caller holding a project and no board — built the way this module's own
+    read builds it (`_columns`). A board that cannot be built is asked nothing: the platform's own
+    names, said in the log, never a raise out of a reader whose contract is a sentence."""
+    from openfactory.adapters.board import build_board
+
+    try:
+        board = build_board(project, token=_credential(project, token))
+    except Exception as exc:  # noqa: BLE001 — a reader degrades; it does not raise
+        log.warning("could not build %s's board to ask what its columns are (%s) — reading them by "
+                    "the platform's own names, which is right only for a board it created",
+                    getattr(project, "name", "?"), str(exc)[:200])
+        board = None
+    return stages_of(tickets, board)
+
+
 class Parked(BaseModel):
     """One ticket waiting on a person, with what the tech-lead already said about it."""
 
@@ -449,7 +481,7 @@ class Parked(BaseModel):
         return None if v is None else canonical_ref(v)
 
 def parked_with_diagnosis(project, *, token: str | None = None, limit: int = 10,
-                          column: str = "Needs Action",
+                          key: str = "needs_action",
                           tracker=None) -> tuple[list[Parked], str]:
     """What is parked, newest first, each carrying the last diagnosis left on it.
 
@@ -468,7 +500,10 @@ def parked_with_diagnosis(project, *, token: str | None = None, limit: int = 10,
     tickets, error = read_board(project, token=token, tracker=tracker)
     if error:
         return [], error
-    waiting = [t for t in tickets if t.column == column and t.state == "open"]
+    # BY KEY, NAMED BY THE BOARD (#502): this compared each card with the platform's `Needs
+    # Action`, so a board that calls it anything else had nothing parked, ever
+    stages = stages_for(project, tickets, token=token)
+    waiting = [t for t in tickets if stages.get(t.column) == key and t.state == "open"]
     waiting.sort(key=lambda t: t.updated_days_ago if t.updated_days_ago is not None else 9999)
 
     out: list[Parked] = []

@@ -76,6 +76,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from openfactory.contracts.refs import canonical_ref
 from openfactory.product import progress as _progress
 from openfactory.product.confirm import (
+    _board_word,
     _breakdown_reply,
     _client_detail,
     _is_requester,
@@ -1648,7 +1649,8 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         # the file cannot show that, and a person saying so can (#182).
         _progress.stage("breaking_down")
         results = module.break_down(number, actor=user, asked_for=True)
-        return _breakdown_reply(results, number, name, lang, project)
+        return _breakdown_reply(results, number, name, lang, project,
+                                backlog=_board_word(module, "backlog"))
 
     if intent == "accept":
         number = int(captures.get("number") or 0)

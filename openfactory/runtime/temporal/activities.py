@@ -1193,6 +1193,9 @@ def _do_split(inp: SplitInput) -> str:
     parent = tracker.get_ticket(parent_ref)
     _pf_emit(events, inp.project, inp.issue, "state", "splitting",
              note=f"creating {n} children and closing the parent")
+    # WHERE EACH CHILD WENT, AS THIS PROJECT'S BOARD CALLS IT (#502): the note is read by a person
+    # looking at their own board, which may say `A Fazer` where the platform says `TO-DO`
+    named = _named_columns(project, "todo", "backlog")
     refs: list[str] = []
     stragglers: list[str] = []  # created but NOT positively queued — every claim below wears this
     for i, child in enumerate(inp.children):
@@ -1219,8 +1222,8 @@ def _do_split(inp: SplitInput) -> str:
                     "OPENFACTORY_SPLIT_CHILD_NOT_QUEUED %s — created but not in TO-DO; nothing "
                     "picks "
                     "it up until somebody moves it", ref)
-        dest_note = ("TO-DO" if queued
-                     else ("NOT QUEUED — move it by hand" if to_todo else "Backlog"))
+        dest_note = (named["todo"] if queued
+                     else ("NOT QUEUED — move it by hand" if to_todo else named["backlog"]))
         _pf_emit(events, inp.project, inp.issue, "note", f"created {title} → {dest_note}")
     links = ", ".join(refs)
     from openfactory.adapters.tracker.base import close_ticket
@@ -2985,6 +2988,22 @@ async def scan_projects() -> list[dict]:
                                   or _pickup_column(p)),
             })
     return out
+
+
+def _named_columns(project, *keys: str) -> dict[str, str]:
+    """What this project's board calls each of `keys` — the platform's word for a board that cannot
+    be built or asked (#502). For a sentence about where a card went, never for a move: a move
+    goes through the row's own map (`set_state`), and a name here is only what a person reads."""
+    from openfactory.adapters.board import build_board
+    from openfactory.adapters.board.base import stage_column
+
+    try:
+        board = build_board(project)
+    except Exception as exc:  # noqa: BLE001 — a name in a note must not cost the split
+        activity.logger.info("could not build %s's board to name its columns (%s)",
+                             getattr(project, "name", "?"), str(exc)[:160])
+        board = None
+    return {key: stage_column(board, key) for key in keys}
 
 
 def _pickup_column(project) -> str:
@@ -6106,7 +6125,12 @@ def _queued_tickets(project) -> list[str]:
             "techlead watch: could not read the board (%s) — this round cannot tell whether the "
             "floor is idle with work waiting, so it will not claim either way", error)
         return []
-    return [str(n) for n in readiness(tickets).todo]
+    # BY KEY, AS THIS BOARD NAMES ITS COLUMNS (#502): read by the platform's `TO-DO`, a board whose
+    # queue is `A Fazer` had nothing queued, and the idle-floor finding fired beside a full queue
+    from openfactory.product.board import stages_for
+
+    return [str(n) for n in readiness(tickets, stages=stages_for(project, tickets,
+                                                                 token=token)).todo]
 
 
 def _recent_causes(project_name: str) -> dict[str, int]:

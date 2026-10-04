@@ -96,10 +96,12 @@ MUTATIONS = [
      '    QUEUE_KEY = "todo"',
      '    QUEUE_KEY = "in_progress"', COLUMNS),
 
+    # re-pinned 2026-10-04: the triage's three arguments are KEYS, and the board names each one
+    # (#502) — the claim is unchanged: work in flight is the platform's `in_progress`
     ("the triage reads the wrong column for work in flight, so every active card reports as "
      "something else", TRIAGE,
-     '           active_columns: tuple[str, ...] = (CANONICAL_COLUMNS["in_progress"],),',
-     '           active_columns: tuple[str, ...] = (CANONICAL_COLUMNS["in_review"],),', COLUMNS),
+     '           active_keys: tuple[str, ...] = ("in_progress",),',
+     '           active_keys: tuple[str, ...] = ("in_review",),', COLUMNS),
 
     # RE-PINNED 2026-09-20 (#231): the step between — `(options.get("columns") or {}).get("todo")`
     # — is gone. `options` is `dict[str, str]`, so it raised `AttributeError` on the one shape the

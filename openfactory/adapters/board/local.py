@@ -29,11 +29,16 @@ log = logging.getLogger("openfactory.board.local")
 class LocalBoard:
     """The six columns and where each card sits, for one project."""
 
-    def __init__(self, tracker) -> None:
+    def __init__(self, tracker, *, queue: str = "") -> None:
         #: The tracker this board is the face of. Held rather than re-derived, for the reason the
         #: Jira row states: a second source for one fact is a board moving cards by rules the
         #: tracker has abandoned.
         self._tracker = tracker
+        #: The queue's name when the deployment declared it with `pickup_status`, or `""` (#502).
+        #: Folded over this board's own rows wherever they are read as names, so the column the
+        #: poller pulls from is the one `pickup_column`, `stage_column` and `stage_key` answer with
+        #: — see `board/factory.py::with_the_queue` for the promotion it kept from landing nowhere.
+        self._queue = (queue or "").strip()
 
     @property
     def project(self) -> str:
@@ -107,7 +112,7 @@ class LocalBoard:
         factory has taken it up*, so answering `parking` would refuse an edit on a card nobody is
         working on. A column this platform does not map is `""`, which is what the gate is built
         to hear."""
-        from openfactory.adapters.board.columns import CANONICAL_COLUMNS, key_for
+        from openfactory.adapters.board.columns import key_for
 
         try:
             with connect(self._db()) as conn:
@@ -118,8 +123,7 @@ class LocalBoard:
                         "the platform's own names, which is right until somebody renames one",
                         self.project, exc_info=True)
             rows = []
-        return key_for(column, renamed={r["key"]: r["name"] for r in rows
-                                        if r["name"] and r["key"] in CANONICAL_COLUMNS})
+        return key_for(column, renamed=self._renamed(rows))
 
     def stage_column(self, key: str) -> str:
         """What this board calls the stage `key`. See `Staged.stage_column`.
@@ -127,7 +131,7 @@ class LocalBoard:
         Off the board's own rows, for the reason `stage_key` gives: a column renamed with
         `columns:` at `project init`, or on the board afterwards, is the name `set_column` matches,
         and the product role asking for the platform's word would find no such column (#496)."""
-        from openfactory.adapters.board.columns import CANONICAL_COLUMNS, name_for
+        from openfactory.adapters.board.columns import name_for
 
         try:
             with connect(self._db()) as conn:
@@ -138,8 +142,17 @@ class LocalBoard:
                         "the platform's own words, which is right until somebody renames one",
                         self.project, exc_info=True)
             rows = []
-        return name_for(key, renamed={r["key"]: r["name"] for r in rows
-                                      if r["name"] and r["key"] in CANONICAL_COLUMNS})
+        return name_for(key, renamed=self._renamed(rows))
+
+    def _renamed(self, rows) -> dict[str, str]:
+        """This board's own names for the platform's keys, read off its rows — and the queue the
+        deployment declared over them (#502), so both directions and the poller read one column."""
+        from openfactory.adapters.board.columns import CANONICAL_COLUMNS
+
+        named = {r["key"]: r["name"] for r in rows if r["name"] and r["key"] in CANONICAL_COLUMNS}
+        if self._queue:
+            named["todo"] = self._queue
+        return named
 
     def pickup_column(self) -> str:
         """What THIS board calls the column the poller picks up from.
@@ -150,6 +163,9 @@ class LocalBoard:
         looked for, and the doctor turns exactly that into an actionable sentence."""
         from openfactory.adapters.board.columns import CANONICAL_COLUMNS
 
+        if self._queue:
+            # THE QUEUE THE DEPLOYMENT NAMED (#502) — what the poller pulls from either way
+            return self._queue
         try:
             with connect(self._db()) as conn:
                 row = conn.execute("SELECT name FROM columns WHERE project = ? AND key = 'todo'",
