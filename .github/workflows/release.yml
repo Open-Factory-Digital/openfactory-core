@@ -397,6 +397,13 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          # A RELEASE CANDIDATE IS A PRE-RELEASE, AND NEVER LATEST (docs/RELEASING.md). A tag with a
+          # hyphen (`v0.5.0-rc.1`) is a candidate: published so it can be installed by name and
+          # verified, and kept out of `releases/latest`, which is what `install.sh` resolves when
+          # no `--version` is given. Without these two lines the first candidate would have been
+          # every new installation's version.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') }}
           # GENERATED NOTES, PLUS THE ONE LINE A RELEASE PAGE OWES A READER: which images this tag
           # published, so somebody landing here from a `docker pull` that failed can see whether
           # the tag they typed exists.
