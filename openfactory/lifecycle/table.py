@@ -147,9 +147,11 @@ ALLOWED: dict[CardEvent, frozenset[State]] = {
 }
 
 #: The events that need the card CLOSED on its tracker, whatever its state says. `delivered` is a
-#: card the factory finished, closed or not yet: the local board leaves it open in Done, Jira closes
-#: it there (`statusCategory` done). Reopening an open card was the defect — on the local board it
-#: threw a card in progress back into Backlog — so a reopen asks for the closed card itself.
+#: card the factory finished, closed or not yet: every row closes it in Done — the local board too
+#: since #500, Jira by `statusCategory` — but a person can drag an open card there, and a hosted
+#: close can be refused (`OPENFACTORY_DELIVERED_CARD_NOT_CLOSED`). Reopening an open card was the
+#: defect — on the local board it threw a card in progress back into Backlog — so a reopen asks for
+#: the closed card itself.
 ONLY_ON_A_CLOSED_CARD: frozenset[CardEvent] = frozenset({CardEvent.REOPENED})
 
 #: The events whose legality a board that places no card cannot settle, and which are therefore
