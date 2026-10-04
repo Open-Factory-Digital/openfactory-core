@@ -1,5 +1,5 @@
 """A manifest whose stages nothing would observe is refused when it loads, and a pending deploy
-is not a reached stage (#501).
+is not a reached stage (#501) — nor is one nothing read (#518).
 
 THREE SHAPES ANNOUNCED A DELIVERY BEFORE THE STAGE THEY DECLARE WAS OBSERVED, and two of them are
 closed here (the third — `--promote` on a deploy-only manifest — is the workflow's, and lives with
@@ -20,6 +20,13 @@ the deploy watch):
       deploy is right after its merge — passed as green. It is waited for now, like the deploy
       watch waits for its run, inside one window for the whole walk; still pending when the
       window closes, the stage is held as NOT REACHED, and said so in words that are not "red".
+
+  …AND WHAT NOTHING READ (#518). A stage counts as reached ONLY on an observation: a deploy of
+      this ref that finished green, or a `health_url` that answered healthy. `unknown` (nothing
+      recorded for this ref there) and `none` (what the `ci: none` observer answers for every
+      ref) go to `health_url` when there is one and are NOT REACHED when there is not — held, in
+      a sentence of their own. On a project whose CI reads no deploy, a chain stage with no
+      `health_url` is refused when the manifest loads: its `deploy_ref` is read by nobody.
 """
 
 from __future__ import annotations
@@ -214,11 +221,13 @@ class _Notifier:
 
 
 class _Deploys:
-    """Each deploy_ref answers from its own script; the last answer repeats for ever."""
+    """Each deploy_ref answers from its own script; the last answer repeats for ever. Every
+    health_url answers healthy unless it is in `sick`, and every probe is recorded."""
 
-    def __init__(self, **scripts: list[str]):
+    def __init__(self, *, sick: frozenset[str] = frozenset(), **scripts: list[str]):
         self.scripts = {k: list(v) for k, v in scripts.items()}
         self.reads: list[str] = []
+        self.sick, self.probed = sick, []
 
     def deploy_status(self, *, env, ref):
         self.reads.append(env)
@@ -226,7 +235,8 @@ class _Deploys:
         return script.pop(0) if len(script) > 1 else script[0]
 
     def health(self, *, url, timeout=10):
-        return True
+        self.probed.append(url)
+        return url not in self.sick
 
 
 class _Clock:
@@ -328,3 +338,180 @@ def test_the_not_reached_sentence_is_said_in_the_projects_language():
     runner.promote("#7")
 
     assert any("não alcançado" in c for c in runner.tracker.comments), runner.tracker.comments
+
+
+# ── #518: a stage counts as reached only on what was observed ───────────────────────────────────
+
+def _staging(**declared) -> dict[str, Environment]:
+    return {"staging": Environment(**declared), "prod": Environment(deploy_ref="prod")}
+
+
+@pytest.mark.parametrize("answer", ["unknown", "none"])
+def test_a_deploy_nothing_read_with_NO_health_url_is_NOT_REACHED_and_held(answer):
+    """`unknown` is nothing recorded for this ref there; `none` is the `ci: none` observer's
+    answer for every ref. Neither is a deploy anybody saw, and there is no page to probe."""
+    deploys = _Deploys(staging=[answer], prod=["success"])
+    runner, clock = _runner(deploys, _staging(deploy_ref="staging"), ["staging", "prod"])
+
+    result = runner.promote("#7")
+
+    assert result.state is JobState.ON_HOLD and result.note == "staging not reached", result
+    assert JobState.AWAITING_PROD_APPROVAL not in runner.tracker.states
+    assert JobState.DONE not in runner.tracker.states
+    said = " ".join(runner.tracker.comments)
+    assert "staging verified" not in said, f"a stage nothing read was called verified: {said}"
+    assert "not reached" in said and "health_url" in said, said
+    assert "pending" not in said and "failed" not in said, (
+        f"a deploy nothing read was reported as still running, or as a failure: {said}")
+    assert clock.slept == [], "an answer that is not `pending` was waited for"
+
+
+@pytest.mark.parametrize("answer", ["unknown", "none"])
+def test_a_deploy_nothing_read_WITH_a_health_url_is_reached_only_when_the_probe_answers_HEALTHY(
+        answer):
+    deploys = _Deploys(staging=[answer], prod=["success"])
+    runner, _clock = _runner(deploys, _staging(deploy_ref="staging", health_url="https://s/h"),
+                             ["staging", "prod"])
+
+    result = runner.promote("#7")
+
+    assert deploys.probed == ["https://s/h"], "the probe did not decide"
+    assert result.state is JobState.AWAITING_PROD_APPROVAL, result
+    assert any("staging verified" in c for c in runner.tracker.comments)
+
+
+@pytest.mark.parametrize("answer", ["unknown", "none"])
+def test_a_deploy_nothing_read_whose_health_url_answers_UNHEALTHY_is_not_reached(answer):
+    deploys = _Deploys(staging=[answer], prod=["success"], sick=frozenset({"https://s/h"}))
+    runner, _clock = _runner(deploys, _staging(deploy_ref="staging", health_url="https://s/h"),
+                             ["staging", "prod"])
+
+    result = runner.promote("#7")
+
+    assert result.state is JobState.ON_HOLD and result.note == "staging red", result
+    assert JobState.AWAITING_PROD_APPROVAL not in runner.tracker.states
+    assert not any("staging verified" in c for c in runner.tracker.comments)
+
+
+def test_a_GREEN_deploy_with_no_health_url_is_still_reached():
+    """The other observation. Without it the rule would hold every deploy-only stage."""
+    deploys = _Deploys(staging=["success"], prod=["success"])
+    runner, _clock = _runner(deploys, _staging(deploy_ref="staging"), ["staging", "prod"])
+
+    assert runner.promote("#7").state is JobState.AWAITING_PROD_APPROVAL
+
+
+def test_a_production_release_nothing_read_is_held_NOT_LIVE_and_NOT_ROLLED_BACK():
+    deploys = _Deploys(staging=["success"], prod=["unknown"])
+    runner, _clock = _runner(deploys, _CHAIN, ["staging", "prod"])
+
+    result = runner.release_prod("#7", version="1.0.0", approver="alice")
+
+    assert result.state is JobState.ON_HOLD and result.note == "prod not reached", result
+    assert JobState.DONE not in runner.tracker.states
+    assert JobState.ROLLING_BACK not in runner.tracker.states, "a release nobody read was undone"
+    assert not any("live in production" in m for _l, m in runner.notifier.sent)
+
+
+def test_the_nothing_read_sentence_is_said_in_the_projects_language():
+    deploys = _Deploys(staging=["unknown"], prod=["success"])
+    runner, _clock = _runner(deploys, _staging(deploy_ref="staging"), ["staging", "prod"])
+    runner.language = "pt-BR"
+
+    runner.promote("#7")
+
+    assert any("não alcançado" in c and "nenhum deploy" in c for c in runner.tracker.comments), (
+        runner.tracker.comments)
+
+
+def test_on_ci_none_the_health_url_DECIDES_through_the_real_observer(monkeypatch):
+    """The `none` row used to answer False without probing, so on a project with no CI the one
+    observation it has could never come back healthy. No packet leaves: `httpx.get` answers here."""
+    import httpx
+
+    from openfactory.adapters.environment.none import NoObserver
+
+    monkeypatch.setattr(httpx, "get",
+                        lambda url, timeout: httpx.Response(200 if "up" in url else 503))
+    for url, state in (("https://up/h", JobState.AWAITING_PROD_APPROVAL),
+                       ("https://sick/h", JobState.ON_HOLD)):
+        runner, _clock = _runner(NoObserver(), _staging(deploy_ref="staging", health_url=url),
+                                 ["staging", "prod"])
+        assert runner.promote("#7").state is state, url
+
+
+# ── #518: a project whose CI reads no deploy, refused when the manifest loads ────────────────────
+
+def _watched_by(forge: str, ci: str = ""):
+    """A registry row: the forge's kind, and the CI it names (`forge.options.ci`), if any."""
+    project = _Project()
+    project.forge = type("F", (), {"kind": forge, "options": {"ci": ci} if ci else {}})()
+    project.tracker = type("T", (), {"kind": forge, "options": {}})()
+    return project
+
+
+_READS_NO_DEPLOY = [pytest.param("github", "none", id="ci-none-named-on-a-github-forge"),
+                    pytest.param("local", "", id="a-local-forge-which-maps-to-none")]
+
+
+@pytest.mark.parametrize("forge,ci", _READS_NO_DEPLOY)
+@pytest.mark.parametrize("keys,unprobed", [
+    pytest.param({"environments": {"staging": {"deploy_ref": "staging", "url": "https://s"}}},
+                 "staging", id="a-derived-staging-watched-only-by-its-deploy"),
+    pytest.param({"environments": {"dev": {"health_url": "https://d/h"},
+                                   "producao": {"deploy_ref": "producao"}},
+                  "promote": ["dev", "producao"]}, "producao", id="production-included"),
+])
+def test_on_a_project_whose_CI_reads_no_deploy_a_stage_without_health_url_is_REFUSED_at_load(
+        forge, ci, keys, unprobed, tmp_path):
+    with pytest.raises(ValueError) as caught:
+        load_manifest(_watched_by(forge, ci), repo_root=_write(tmp_path, **keys))
+
+    said = str(caught.value)
+    assert "project.yaml" in said, "the refusal does not name the file"
+    assert f"'{unprobed}'" in said, f"the refusal does not name the stage: {said}"
+    assert "reads no deploy" in said and "announced" in said, f"the reason is not named: {said}"
+    assert "Declare health_url" in said and "forge.options.ci" in said, (
+        f"the two fixes are not named: {said}")
+
+
+@pytest.mark.parametrize("forge,ci", _READS_NO_DEPLOY)
+def test_on_that_project_a_chain_whose_every_stage_has_a_health_url_loads(forge, ci, tmp_path):
+    keys = {"environments": {"staging": {"deploy_ref": "staging", "health_url": "https://s/h"},
+                             "prod": {"health_url": "https://p/h"}}}
+    m = load_manifest(_watched_by(forge, ci), repo_root=_write(tmp_path, **keys))
+    assert m.promotion_chain() == (["staging"], "prod")
+
+
+@pytest.mark.parametrize("forge,ci", [pytest.param("github", "", id="github-reads-its-deploys"),
+                                      pytest.param("github", "azure_pipelines",
+                                                   id="a-named-ci-that-reads-deploys")])
+def test_the_same_deploy_only_stage_loads_where_the_CI_reads_deploys(forge, ci, tmp_path):
+    keys = {"environments": {"staging": {"deploy_ref": "staging"}}}
+    m = load_manifest(_watched_by(forge, ci), repo_root=_write(tmp_path, **keys))
+    assert m.environments["staging"].deploy_ref == "staging"
+
+
+def test_the_manifest_alone_cannot_see_its_CI_so_it_validates_without_the_rule():
+    """Which CI watches a project is the registry's; only the loader holds both."""
+    m = Manifest.model_validate({**FLOOR, "environments": {"staging": {"deploy_ref": "staging"}}})
+    assert m.promotion_chain() == (["staging"], None)
+
+
+def test_the_compatibility_rule_says_a_pre_1_0_minor_may_refuse_a_shape_that_did_the_wrong_thing():
+    """#501 and #518 narrow what version 1 accepts without a bump. The rule above
+    `SUPPORTED_MANIFEST_VERSIONS` says when that is allowed, so code and practice agree."""
+    source = (ROOT / "openfactory" / "contracts" / "manifest.py").read_text()
+    rule = source[source.index("THE COMPATIBILITY RULE"):source.index("SUPPORTED_MANIFEST_VERSIONS:")]
+    flat = " ".join(rule.replace("#:", " ").split())
+    assert "may refuse in a" in flat and "pre-1.0 minor" in flat, flat
+    assert "the WRONG THING" in flat and "upgrade note" in flat and "#501" in flat, flat
+
+
+def test_every_document_that_teaches_the_chain_says_the_518_rule():
+    for rel in ("docs/project.yaml.example", "docs/ONBOARDING.md", "docs/autonomous-flow.md",
+                "docs/reference/configuration.md"):
+        text = (ROOT / rel).read_text()
+        assert "#518" in text, f"{rel} does not say a stage counts only on what was observed"
+        flat = " ".join(text.replace("#", " ").split())
+        assert "ci: none" in flat, f"{rel} does not say what a project with no CI must declare"

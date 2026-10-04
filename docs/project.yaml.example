@@ -213,6 +213,11 @@ components: {}
 # chain, production included, declares one or both: a stage with neither would count as reached
 # with nothing seen, so it is refused when the manifest loads (#501). A deploy still pending is
 # waited for (up to 20 min for the whole walk) and is never a reached stage.
+# A stage counts as reached ONLY on what was observed (#518): a green deploy of this change, or a
+# `health_url` that answered healthy. A `deploy_ref` nothing recorded this change against goes to
+# the `health_url`; with none, the stage is held as not reached. On a project with no CI
+# (`ci: none`, which a `forge: local` one gets by default) nothing reads a deploy, so every stage
+# of the chain needs a `health_url` there — the manifest is refused when it loads until it has one.
 # environments:
 #   dev:      {health_url: "https://dev.example.com/health", url: "https://dev.example.com"}
 #   qa:       {deploy_ref: qa, health_url: "https://qa.example.com/health", url: "https://qa.example.com"}

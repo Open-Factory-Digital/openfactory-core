@@ -10,7 +10,14 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from openfactory.contracts.state import RiskLevel
 
@@ -69,8 +76,10 @@ class Environment(BaseModel):
 
     A STAGE OF THE PROMOTION CHAIN DECLARES `deploy_ref`, `health_url`, OR BOTH — with neither
     there is nothing to observe, and the manifest is refused when it loads (#501,
-    `Manifest._every_stage_of_the_chain_is_observed`). An environment the chain does not walk
-    may carry only a `url:`."""
+    `Manifest._every_stage_of_the_chain_is_observed`). On a project whose CI reads no deploy at
+    all (`ci: none`) `deploy_ref` is read by nobody, so there a stage needs `health_url` (#518,
+    `Manifest._a_stage_no_ci_reads_is_probed`). An environment the chain does not walk may carry
+    only a `url:`."""
 
     model_config = _STRICT
 
@@ -235,6 +244,16 @@ class PreviewConfig(BaseModel):
 #:   needs a bump      removing or renaming a field · narrowing what one accepts · changing what
 #:                     an existing field MEANS · a default whose new value changes behaviour for
 #:                     a manifest that does not mention it
+#:   may refuse in a   a shape that silently did the WRONG THING — keeping version 1, with the
+#:   pre-1.0 minor     reason AND the fix named in the refusal, and an upgrade note in that
+#:                     release's notes (#501, #518)
+#:
+#: THE THIRD LINE IS NARROWING WITHOUT A BUMP, and it is written down because #501 already did it:
+#: a stage nothing observes, and environments the derived chain never walks, loaded and announced
+#: a delivery about something nobody had seen. A bump would have told every such client "your
+#: manifest is from the future" when the truth is "your manifest was always lying to you". Before
+#: 1.0 that is a minor release's to refuse — never a patch's, never silently, and never a shape
+#: that was merely unusual: only one whose result was wrong.
 #:
 #: `extra="forbid"` already catches a field we do not know. It cannot catch a field whose meaning
 #: changed under a name we do — which is why the version exists and why an unknown one must raise
@@ -266,6 +285,14 @@ class Gate(BaseModel):
     advisory: bool = False
     #: A scan measured in minutes must not borrow the test suite's wall. None → the default.
     timeout_minutes: int | None = None
+
+
+#: The validation-context key that carries what the MANIFEST CANNOT KNOW about its own project:
+#: that the CI watching it reads no deploy at all, and that CI's kind (#518). Which CI watches a
+#: project is the REGISTRY's (`forge.options.ci`, or the forge's kind — `local` maps to `none`),
+#: not the client's file, so `loader.load_manifest` fills it from the project's row and every
+#: other `Manifest(...)` — a test, a proposal being drafted — validates without it.
+CI_THAT_READS_NO_DEPLOY = "ci_that_reads_no_deploy"
 
 
 class Manifest(BaseModel):
@@ -612,6 +639,43 @@ class Manifest(BaseModel):
                 f"GETs), or both")
         return self
 
+    @model_validator(mode="after")
+    def _a_stage_no_ci_reads_is_probed(self, info: ValidationInfo) -> Manifest:
+        """On a project whose CI reads no deploy (`ci: none`), every stage of the chain declares
+        `health_url`.
+
+        `deploy_ref` IS A QUESTION FOR THE CI, AND THIS ONE ANSWERS NOBODY. The `none` observer
+        says `"none"` for every ref — true, and not an observation — so a stage watched only
+        through its `deploy_ref` could never be seen: it counted as reached with nothing looked
+        at, and the delivery waiting on it was announced (#518). `PromotionRunner._verify` now
+        holds such a stage instead; refusing it HERE is what keeps that hold from being every
+        delivery's fate on this project, and tells the operator before a card is spent on it.
+
+        `health_url` IS THE CLIENT'S OWN PAGE, probed the same way whatever CI there is or is not,
+        so it is the one observation left — and the fix the message names, beside the other one:
+        a CI that reads deploys, which is the registry's to declare.
+
+        THE MANIFEST CANNOT SEE ITS CI. Validated without the context — anywhere but
+        `loader.load_manifest` — this says nothing, and #501's rule above still holds."""
+        kind = (info.context or {}).get(CI_THAT_READS_NO_DEPLOY)
+        if not kind:
+            return self
+        stages, production = self.promotion_chain()
+        walked = [*stages, *([production] if production else [])]
+        unprobed = [name for name in walked
+                    if (env := self.environments.get(name)) is not None and not env.health_url]
+        if unprobed:
+            one = len(unprobed) == 1
+            raise ValueError(
+                f"environments: {unprobed} {'is a stage' if one else 'are stages'} of the "
+                f"promotion chain ({' → '.join(walked)}) with no health_url, and this project's "
+                f"CI is {kind!r}, which reads no deploy: deploy_ref is read by nobody, so nothing "
+                f"could observe {'it' if one else 'them'} and the delivery would be announced "
+                f"about a stage nobody saw. Declare health_url (a page the platform GETs) on "
+                f"{'it' if one else 'each of them'}, or name a CI that reads deploys in the "
+                f"project's registry row (`forge.options.ci`)")
+        return self
+
     def promotion_chain(self) -> tuple[list[str], str | None]:
         """`(stages_to_observe_in_order, production_or_None)` — the one answer the tail walks.
 
@@ -837,10 +901,10 @@ class Manifest(BaseModel):
         SEE. This is what it sees.
 
         WHY `model_fields_set` AND NOT A DIFF AGAINST `Manifest()`. `loader.load_manifest` builds
-        this with `Manifest(**data)`, so the set is exactly the YAML mapping's own keys. Diffing
-        values against a fresh default instead cannot tell `merge_policy: human`, typed on purpose
-        by someone who considered the choice, from the default nobody thought about — the very
-        distinction this exists to make.
+        this with `Manifest.model_validate(data, ...)`, so the set is exactly the YAML mapping's
+        own keys. Diffing values against a fresh default instead cannot tell `merge_policy:
+        human`, typed on purpose by someone who considered the choice, from the default nobody
+        thought about — the very distinction this exists to make.
 
         The names are mapped back through the aliases because a human is going to go looking for
         them in their own file: the field is `validation`, the key they wrote and must find is

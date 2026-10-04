@@ -32,6 +32,12 @@ log = logging.getLogger("openfactory.promotion")
 #: wearing one value: a stage that is RED, and a stage whose deploy has not finished yet. The
 #: second used to pass as green, and the first is not what it is.
 Reach = Literal["reached", "red", "not reached"]
+#: WHY a stage was not reached (#518) — two causes of one outcome, both held, said apart:
+#: `pending`, its deploy still running when the window closed (somebody watches the pipeline);
+#: `unread`, no deploy of this ref read there — `unknown`, or the `none` CI's "none" — and no
+#: `health_url` to probe instead (somebody fixes the stage's declaration). "" when it was reached,
+#: or red.
+Why = Literal["", "pending", "unread"]
 
 #: How long ONE WALK waits for deploys still `pending` before the stage counts as not reached
 #: (#501). Shared by every stage of the walk rather than given to each, because the walk runs in
@@ -108,9 +114,10 @@ class PromotionRunner:
             # naming — so the stage's own NAME rides on the events and the ticket instead.
             self._state(ticket_ref, JobState.STAGING_VERIFYING)
             self._emit(ticket_ref, "note", f"verifying {name}")
-            seen = self._verify(ref, self.manifest.environments.get(name), deadline=deadline)
+            seen, why = self._verify(ref, self.manifest.environments.get(name),
+                                     deadline=deadline)
             if seen != "reached":
-                return self._failed_env(ticket_ref, name, seen)
+                return self._failed_env(ticket_ref, name, seen, why)
 
         verified = ", ".join(stages)
         # WHERE A PERSON LOOKS, AND WHETHER ANYBODY IS ASKED TO (#122). Both come from the
@@ -201,8 +208,8 @@ class PromotionRunner:
         self._state(ticket_ref, JobState.PROD_VERIFYING)
         # production is the chain's LAST stage, whatever the client calls it (#109)
         _, production = self.manifest.promotion_chain()
-        seen = self._verify(ref, self.manifest.environments.get(production or "prod"),
-                            deadline=self.clock() + self.reach_window)
+        seen, why = self._verify(ref, self.manifest.environments.get(production or "prod"),
+                                 deadline=self.clock() + self.reach_window)
         if seen == "reached":
             self._notify(ticket_ref, self._say("promo.live"), "info")
             self._state(ticket_ref, JobState.DONE)
@@ -211,7 +218,8 @@ class PromotionRunner:
             # NOT LIVE, AND NOT RED EITHER (#501). A production deploy still running when the
             # window closed is held with that said — rolling back a release nobody has seen fail
             # would be acting on a guess, in the one environment where a guess costs the most.
-            return self._failed_env(ticket_ref, production or "prod", seen)
+            # The same for a release nothing could read and nothing probed (#518).
+            return self._failed_env(ticket_ref, production or "prod", seen, why)
         # red prod → rollback (a defined, safe pipeline action) + report
         self._state(ticket_ref, JobState.ROLLING_BACK)
         self._notify(ticket_ref, self._say("promo.verify-failed"), "error")
@@ -221,9 +229,10 @@ class PromotionRunner:
 
     # -- internals --
 
-    def _verify(self, ref: str, env: Environment | None, *, deadline: float) -> Reach:
-        """Whether the declared environment was reached: its deploy finished green and its probe
-        answers. "reached" FOR AN UNDECLARED ONE, and the callers are what make that honest.
+    def _verify(self, ref: str, env: Environment | None, *,
+                deadline: float) -> tuple[Reach, Why]:
+        """Whether the declared environment was reached, and why not when it was not.
+        "reached" FOR AN UNDECLARED ONE, and the callers are what make that honest.
 
         "Nothing declared" and "checked and green" are the same value here and must never be the
         same SENTENCE. This answering yes is how "✅ staging verified" was posted about a project
@@ -237,29 +246,54 @@ class PromotionRunner:
         green, and the delivery was announced about a version that was not there yet. It is
         waited for now, the way the deploy watch waits for its run: read again every
         `reach_poll` seconds until it settles or `deadline` passes. Still pending at the deadline
-        is "not reached", and the caller holds the stage saying exactly that. `unknown` (nothing
-        recorded for this environment) is read as it always was: left to `health_url`, or passed."""
+        is "not reached", and the caller holds the stage saying exactly that.
+
+        A STAGE IS REACHED ONLY ON AN OBSERVATION (#518): a deploy of this ref that finished
+        green, or a `health_url` that answered healthy — and when both are declared, both. Two
+        answers used to pass without either: `unknown` (nothing recorded for this ref in that
+        environment) and `none` (what the `ci: none` observer answers for every ref, because it
+        reads no deploy at all) were handed to `health_url` when there was one and counted as
+        reached when there was not, and the delivery waiting on the stage was announced with
+        nothing seen. Both still go to `health_url` when there is one, which must answer healthy;
+        with none, the stage is "not reached" and held like a deploy still pending, in a
+        sentence of its own ("unread"). On a `ci: none` project the
+        manifest is refused when it loads instead (`Manifest._a_stage_no_ci_reads_is_probed`),
+        so the hold is what is left for a `deploy_ref` that names an environment nothing has
+        recorded."""
         if env is None:
-            return "reached"  # nothing declared to verify
+            return "reached", ""  # nothing declared to verify
+        status = ""
         if env.deploy_ref:
             status = self.observer.deploy_status(env=env.deploy_ref, ref=ref)
             while status == "pending" and self.clock() < deadline:
                 self.sleep(max(0.0, min(self.reach_poll, deadline - self.clock())))
                 status = self.observer.deploy_status(env=env.deploy_ref, ref=ref)
             if status == "failure":
-                return "red"
+                return "red", ""
             if status == "pending":
                 log.warning("OPENFACTORY_STAGE_NOT_REACHED deploy_ref=%s ref=%s — its deploy was "
                             "still pending when the %ds window closed; the stage is held, not "
                             "passed", env.deploy_ref, ref, int(self.reach_window))
-                return "not reached"
+                return "not reached", "pending"
         if env.health_url:
-            return "reached" if self.observer.health(url=env.health_url) else "red"
-        return "reached"
+            return ("reached" if self.observer.health(url=env.health_url) else "red"), ""
+        if status == "success":
+            return "reached", ""
+        # NOTHING WAS OBSERVED (#518): `unknown`, or the `none` CI's "none" — an answer, and not
+        # a deploy anybody saw — with no `health_url` to look instead.
+        log.warning("OPENFACTORY_STAGE_NOT_REACHED deploy_ref=%s ref=%s status=%s — no deploy of "
+                    "this ref was read there and the stage declares no health_url to probe; the "
+                    "stage is held, not passed", env.deploy_ref, ref, status or "unread")
+        return "not reached", "unread"
 
-    def _failed_env(self, ticket_ref: str, env: str, seen: Reach = "red") -> RunResult:
-        """Hold the walk at `env`, saying which of the two it was: red, or not reached in time."""
-        if seen == "not reached":
+    def _failed_env(self, ticket_ref: str, env: str, seen: Reach = "red",
+                    why: Why = "") -> RunResult:
+        """Hold the walk at `env`, saying which it was: red, not reached in time, or not reached
+        because nothing could be read there (#518)."""
+        if seen == "not reached" and why == "unread":
+            self._notify(ticket_ref, self._say("promo.env-unread", env=env), "error")
+            self._say_on_ticket(ticket_ref, self._say("promo.env-unread-ticket", env=env))
+        elif seen == "not reached":
             window = max(1, round(self.reach_window / 60))
             self._notify(ticket_ref, self._say("promo.env-not-reached", env=env, minutes=window),
                          "error")

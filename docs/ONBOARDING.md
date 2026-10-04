@@ -1233,6 +1233,16 @@ A deploy still **pending** is not a reached stage. The walk reads it again every
 20 minutes for the whole walk — and a deploy still pending then holds the ticket saying the stage
 was *not reached*, which is a different sentence from a red one.
 
+**A stage counts as reached only on what was observed** (#518): a deploy of this change that
+finished green, or a `health_url` that answered healthy (both, when both are declared). A
+`deploy_ref` that nothing recorded a deploy of this change against — your provider answers
+*unknown* — is handed to the `health_url` when there is one; when there is not, the stage is held
+as *not reached*, and the ticket asks you to check the name or declare a probe. **On a project
+with no CI (`ci: none`, which is what a `forge: local` project gets by default)** nothing reads a deploy at all, so
+`deploy_ref` alone observes nothing there: every stage of the chain, production included, needs a
+`health_url`, and the manifest is refused when it loads until it has one — or until the registry
+names a CI that reads deploys in `forge.options.ci`.
+
 **No production at all?** Omit `promote:` and call the stage you do have `staging`: with no
 `promote:` the chain is derived from the two fixed names, `staging` observed and `prod` gated. The
 ticket then finishes once `staging` is observed, saying this project declares no production

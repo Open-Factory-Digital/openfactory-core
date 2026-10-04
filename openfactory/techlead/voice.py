@@ -707,6 +707,23 @@ NARRATION: dict[str, dict[str, str]] = {
               "was verified there and the change is held — see the pipeline.",
         "pt-BR": "⏸️ {env} não alcançado: o deploy ainda estava pendente depois de {minutes} min, "
                  "então nada foi verificado lá e a mudança está parada — veja o pipeline."},
+    # NOT REACHED BECAUSE NOTHING COULD BE READ THERE (#518): no deploy of this change recorded
+    # in that environment (or a CI that reads none), and no `health_url` to probe instead. Its own
+    # sentence because the remedy is the stage's declaration, not a pipeline to wait on.
+    "promo.env-unread": {
+        "en": "{env} not reached — no deploy of this change was read there, and it declares no "
+              "health_url to probe",
+        "pt-BR": "{env} não alcançado — nenhum deploy desta mudança foi lido lá, e ele não declara "
+                 "health_url para sondar"},
+    "promo.env-unread-ticket": {
+        "en": "⏸️ {env} not reached: no deploy of this change was read there and it declares no "
+              "`health_url`, so nothing was verified there and the change is held — check that "
+              "its `deploy_ref` names the deployment environment your pipeline records, or "
+              "declare a `health_url` for it in `.openfactory/project.yaml`.",
+        "pt-BR": "⏸️ {env} não alcançado: nenhum deploy desta mudança foi lido lá e ele não "
+                 "declara `health_url`, então nada foi verificado lá e a mudança está parada — "
+                 "confira se o `deploy_ref` dele nomeia o ambiente de deploy que o seu pipeline "
+                 "registra, ou declare um `health_url` para ele no `.openfactory/project.yaml`."},
     # ── a review finding nobody acknowledged ─────────────────────────────────────────────────────
     "finding.unacked.detail": {
         "en": "delivered with the review raising something serious: {detail}",
