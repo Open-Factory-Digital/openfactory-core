@@ -47,6 +47,8 @@ from openfactory.contracts.checks import CiDecision
 from openfactory.runtime.temporal.io import (
     AdjustInput,
     CoordinatorSayInput,
+    DeployNotifyInput,
+    DeployStatusInput,
     HoldSyncInput,
     KnowledgeRefreshInput,
     MergeCheckInput,
@@ -798,6 +800,194 @@ async def test_a_new_change_replays_on_this_code(env):
     for history in histories:
         await Replayer(workflows=[JobWorkflow],
                        data_converter=pydantic_data_converter).replay_workflow(history)
+
+
+# ── 3b. each change's deploy is watched as its own (the review of #503) ──────────────────────────
+
+#: every deploy a watch probed, by the pull request it was started for — one per change
+_PROBED: list[str] = []
+
+
+@activity.defn(name="run_job")
+async def _run_job_that_merges(inp: RunJobInput) -> RunResult:
+    """A run on a project that declares `post_merge_deploy:` and lets the factory merge: each
+    change merges, and each merge starts a watch on its deploy."""
+    from openfactory.contracts.manifest import PostMergeDeploy
+
+    _RUNS.append((inp.another_pass, inp.change))
+    return RunResult(ticket_id=inp.issue, state=JobState.PR_OPEN, auto_merge=True,
+                     pr_url=f"https://x/pr/{inp.change + 1}",
+                     post_merge_deploy=PostMergeDeploy(workflow="deploy.yml", env="staging"))
+
+
+@activity.defn(name="check_deploy_status")
+async def _still_deploying(inp: DeployStatusInput) -> dict:
+    """A deploy that has not finished — so the first change's watch is still running when the
+    second change merges, which is the case the id has to survive."""
+    _PROBED.append(inp.pr_url)
+    return {"status": "pending", "run_url": None}
+
+
+@activity.defn(name="notify_deploy")
+async def _deploy_told(inp: DeployNotifyInput) -> None:
+    return None
+
+
+def _merging_activities():
+    swapped = [a for a in _activities() if a is not _run_job]
+    return [*swapped, _run_job_that_merges, _still_deploying, _deploy_told]
+
+
+async def _watching(env, wf_id: str) -> bool:
+    from temporalio.client import WorkflowExecutionStatus
+
+    try:
+        desc = await env.client.get_workflow_handle(wf_id).describe()
+    except Exception:  # noqa: BLE001 — not started (yet)
+        return False
+    return desc.status == WorkflowExecutionStatus.RUNNING
+
+
+async def _watches_started(history) -> list[str]:
+    """The ids a run asked the engine to start a deploy watch under, in its own history."""
+    from temporalio.api.enums.v1 import EventType
+
+    return [e.start_child_workflow_execution_initiated_event_attributes.workflow_id
+            for e in history.events
+            if e.event_type == EventType.EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED]
+
+
+def _marked(history, patch: str) -> bool:
+    """Whether a run recorded `patch`'s marker."""
+    from temporalio.api.enums.v1 import EventType
+
+    return any(patch.encode() in e.SerializeToString() for e in history.events
+               if e.event_type == EventType.EVENT_TYPE_MARKER_RECORDED)
+
+
+@pytest.mark.owns_its_engine
+async def test_a_later_change_watches_its_own_deploy_while_the_first_is_still_watched(env):
+    """THE SECOND CHANGE'S DEPLOY IS WATCHED (#448 slice 4, the review of #503). Both watches run
+    at once, under ids that differ: the first change's is the id every first change always had,
+    the second's carries the number its branch carries. Both runs replay on this code, and only
+    the later change records the marker."""
+    from gate_answers import approve_prod
+    from temporalio.contrib.pydantic import pydantic_data_converter
+    from temporalio.worker import Replayer, Worker
+
+    from openfactory.runtime.temporal.workflow import (
+        _A_LATER_CHANGE_WATCHES_ITS_OWN_DEPLOY,
+        DeployWatchWorkflow,
+    )
+
+    _PROBED.clear()
+    async with Worker(env.client, task_queue=TQ, workflows=[JobWorkflow, DeployWatchWorkflow],
+                      activities=_merging_activities()):
+        h = await _start(env, _params())
+        await _at_the_gate(h, runs=1)
+        await _not_yet(h, INSTRUCTION, ASKER)
+        await _at_the_gate(h, runs=2)
+        first_alive = await _until(lambda: _watching(env, "openfactory-deploy-p-10"))
+        second_alive = await _until(lambda: _watching(env, "openfactory-deploy-p-10-2"))
+        both_probed = await _until(lambda: _probed_both())
+        await approve_prod(h, "1.0.0", "ana", "")
+        result = await h.result()
+        first = env.client.get_workflow_handle(h.id, run_id=_FIRST_RUN[0])
+        histories = [await first.fetch_history(), await h.fetch_history()]
+
+    assert first_alive and second_alive and both_probed, (
+        "the two changes' deploys were not watched at once")
+    assert [await _watches_started(hist) for hist in histories] == [
+        ["openfactory-deploy-p-10"], ["openfactory-deploy-p-10-2"]], (
+        "a change's watch was not asked for under its own id — or the first change's id moved")
+    assert not _marked(histories[0], _A_LATER_CHANGE_WATCHES_ITS_OWN_DEPLOY), (
+        "a first change recorded the marker — its id needs none")
+    assert _marked(histories[1], _A_LATER_CHANGE_WATCHES_ITS_OWN_DEPLOY)
+    assert _RUNS == [("", 0), (INSTRUCTION, 1)] and result.state == JobState.DONE
+    for history in histories:
+        await Replayer(workflows=[JobWorkflow, DeployWatchWorkflow],
+                       data_converter=pydantic_data_converter).replay_workflow(history)
+
+
+async def _probed_both() -> bool:
+    return {"https://x/pr/1", "https://x/pr/2"} <= set(_PROBED)
+
+
+@pytest.mark.owns_its_engine
+async def test_a_later_change_from_before_its_own_watch_keeps_the_id_it_had_and_replays(
+        env, monkeypatch, caplog):
+    """A later change whose history predates the marker replays the id it had — the first
+    change's, refused while that watch runs — and the refusal reads as what it is: that watch is
+    already running."""
+    from gate_answers import approve_prod
+    from temporalio import workflow as wf
+    from temporalio.contrib.pydantic import pydantic_data_converter
+    from temporalio.worker import Replayer, Worker
+
+    from openfactory.runtime.temporal.workflow import (
+        _A_LATER_CHANGE_WATCHES_ITS_OWN_DEPLOY,
+        DeployWatchWorkflow,
+    )
+
+    real = wf.patched
+    monkeypatch.setattr(wf, "patched", lambda id: False
+                        if id == _A_LATER_CHANGE_WATCHES_ITS_OWN_DEPLOY else real(id))
+    caplog.set_level("WARNING", logger="temporalio.workflow")
+    async with Worker(env.client, task_queue=TQ, workflows=[JobWorkflow, DeployWatchWorkflow],
+                      activities=_merging_activities()):
+        h = await _start(env, _params())
+        await _at_the_gate(h, runs=1)
+        await _until(lambda: _watching(env, "openfactory-deploy-p-10"))
+        await _not_yet(h, INSTRUCTION, ASKER)
+        await _at_the_gate(h, runs=2)
+        await approve_prod(h, "1.0.0", "ana", "")
+        await h.result()
+        history = await h.fetch_history()
+    monkeypatch.setattr(wf, "patched", real)
+
+    assert await _watches_started(history) == ["openfactory-deploy-p-10"], (
+        "a history recorded before the marker did not keep the id it had")
+    assert not _marked(history, _A_LATER_CHANGE_WATCHES_ITS_OWN_DEPLOY)
+    assert any("openfactory-deploy-p-10 is already running" in r.getMessage()
+               for r in caplog.records), "the engine's 'already running' was not read as such"
+    await Replayer(workflows=[JobWorkflow, DeployWatchWorkflow],
+                   data_converter=pydantic_data_converter).replay_workflow(history)
+
+
+@pytest.mark.parametrize("raised,said", [
+    ("already", "openfactory-deploy-p-10-2 is already running"),
+    ("refused", "the engine refused to start deploy-watch openfactory-deploy-p-10-2"),
+])
+def test_a_watch_not_started_says_whether_it_runs_already_or_the_engine_refused(
+        monkeypatch, caplog, raised, said):
+    """The two reasons a watch is not started are two sentences: a watch already running under
+    this change's id is a re-run; anything else is the engine refusing, and nothing watches it."""
+    from temporalio import workflow as wf
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
+    from openfactory.contracts.manifest import PostMergeDeploy
+    from openfactory.runtime.temporal.workflow import _A_LATER_CHANGE_WATCHES_ITS_OWN_DEPLOY
+
+    async def start(*_a, id: str, **_kw):
+        if raised == "already":
+            raise WorkflowAlreadyStartedError(id, "DeployWatchWorkflow")
+        raise RuntimeError("namespace is not accepting new workflows")
+
+    monkeypatch.setattr(wf, "start_child_workflow", start)
+    monkeypatch.setattr(wf, "patched", lambda id: id == _A_LATER_CHANGE_WATCHES_ITS_OWN_DEPLOY)
+    # THE WORKFLOW'S LOGGER ASKS ITS RUN WHETHER IT IS REPLAYING; there is no run here, so the
+    # logger it adapts is used as it is
+    monkeypatch.setattr(wf, "logger", wf.logger.base_logger)
+    caplog.set_level("WARNING", logger="temporalio.workflow")
+    merged = RunResult(ticket_id="10", state=JobState.MERGED, pr_url="https://x/pr/2",
+                       post_merge_deploy=PostMergeDeploy(workflow="deploy.yml"))
+
+    asyncio.run(JobWorkflow()._spawn_deploy_watch(_params(change=1), merged))
+
+    told = [r.getMessage() for r in caplog.records]
+    assert any(said in line for line in told), told
+    other = "the engine refused" if raised == "already" else "is already running"
+    assert not any(other in line for line in told), told
 
 
 # ── 4. the new change: its own branch, the words in its brief ───────────────────────────────────

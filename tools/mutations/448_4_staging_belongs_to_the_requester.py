@@ -34,7 +34,12 @@ And the rest of slice 4 — who releases, and what "not yet" does at the last ga
     passes carried, no sizing again, said by the tech-lead — and publishes what is left, what
     happens when nothing is, a refusal, and whether it hears at all;
   · each change has its own branch, every runner of the job (run, adjust, repair, re-review,
-    remote box) is built for it, and the words reach the agent's brief.
+    remote box) is built for it, and the words reach the agent's brief;
+  · and each change's deploy has its own watch (the review of #503): a later change's id carries
+    its number, so it runs beside the first change's watch rather than being refused by it; the
+    first change's id is the one it always had and records no marker; a later change whose history
+    predates the marker keeps the id it had; and a watch not started says whether it was already
+    running or the engine refused it.
 """
 
 TEST = "tests/test_staging_belongs_to_the_requester.py"
@@ -56,6 +61,11 @@ DEAF = NOT_YET + "::test_a_run_parked_before_it_could_hear_is_deaf_says_so_and_r
 WORKER = NOT_YET + "::test_the_run_the_adjust_and_the_re_review_are_built_for_the_same_change"
 REMOTE = NOT_YET + "::test_a_remote_box_is_told_which_change_and_what_is_still_wrong"
 INPUTS = NOT_YET + "::test_every_input_for_the_cards_pull_request_says_which_change_it_is"
+WATCHED = NOT_YET + "::test_a_later_change_watches_its_own_deploy_while_the_first_is_still_watched"
+OLD_WATCH = (NOT_YET + "::test_a_later_change_from_before_its_own_watch_keeps_the_id_it_had_and_"
+             "replays")
+NOT_STARTED = (NOT_YET + "::test_a_watch_not_started_says_whether_it_runs_already_or_the_engine_"
+               "refused")
 RELEASE = "openfactory/product/release.py"
 EVENTS = "openfactory/product/events.py"
 FOLLOWUP = "openfactory/product/followup.py"
@@ -471,4 +481,25 @@ MUTATIONS = [
      '                        source=REVIEW_THREAD if threads else "", by=who,\n'
      "                        change=params.change),",
      '                        source=REVIEW_THREAD if threads else "", by=who),', INPUTS),
+
+    # ── each change's deploy has its own watch (the review of #503) ──────────────────────────
+    ("a later change's deploy watch takes the first change's id", WORKFLOW,
+     '            watch_id = f"{watch_id}-{params.change + 1}"\n',
+     "            pass\n", WATCHED),
+    ("a first change's deploy watch moves to a new id", WORKFLOW,
+     '        watch_id = f"openfactory-deploy-{params.project}-{params.issue}"\n',
+     '        watch_id = f"openfactory-deploy-{params.project}-{params.issue}-1"\n', WATCHED),
+    ("a first change's deploy watch records the marker", WORKFLOW,
+     "        if params.change and workflow.patched(_A_LATER_CHANGE_WATCHES_ITS_OWN_DEPLOY):\n",
+     "        if workflow.patched(_A_LATER_CHANGE_WATCHES_ITS_OWN_DEPLOY) and params.change:\n",
+     WATCHED),
+    ("a later change's deploy watch changes its id without a marker", WORKFLOW,
+     "        if params.change and workflow.patched(_A_LATER_CHANGE_WATCHES_ITS_OWN_DEPLOY):\n",
+     "        if params.change:\n", OLD_WATCH),
+    ("the engine refusing a deploy watch reads as a re-run", WORKFLOW,
+     "        except WorkflowAlreadyStartedError:\n",
+     "        except Exception:\n", NOT_STARTED),
+    ("a deploy watch already running reads as the engine refusing", WORKFLOW,
+     "        except WorkflowAlreadyStartedError:\n",
+     "        except ZeroDivisionError:\n", NOT_STARTED),
 ]

@@ -20,7 +20,7 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError
+from temporalio.exceptions import ActivityError, WorkflowAlreadyStartedError
 from temporalio.workflow import ParentClosePolicy
 
 with workflow.unsafe.imports_passed_through():
@@ -226,6 +226,10 @@ _ADJUST_CHARS = 2000
 #: The patch a run's last gate is asked under, once, whether it hears "not yet" (#448 slice 4). A
 #: run parked there before it existed replays without it — deaf, and saying so.
 _NOT_YET_AT_THE_LAST_GATE = "a-not-yet-at-the-last-gate-is-another-change"
+#: The patch a LATER change of a card is asked under before it starts its deploy watch (#448 slice
+#: 4, from the review of #503): the change's number is in the watch's id from then on. Asked only
+#: for a change past the first, so a first change records no marker and keeps the id it always had.
+_A_LATER_CHANGE_WATCHES_ITS_OWN_DEPLOY = "a-later-change-watches-its-own-deploy"
 # Post-merge deploy watch (ADR-0005): a project's own CI deploys on push to main; we observe
 # that run on the merge commit and notify its outcome. Poll gently — a deploy is minutes.
 _DEPLOY_POLL = timedelta(minutes=1)
@@ -2540,10 +2544,31 @@ class JobWorkflow:
         the ticket is DONE at merge, so the floor frees immediately; the watch runs on its own.
         ParentClosePolicy.ABANDON lets it outlive this workflow's completion. Best-effort: a
         failure to start the watch must NEVER fail an already-merged job (worst case: no deploy
-        notification), so we swallow errors and let the job complete."""
+        notification), so we swallow errors and let the job complete.
+
+        ONE WATCH PER CHANGE OF THE CARD (#448 slice 4, from the review of #503). The id was the
+        project and the card, and a card has more than one change since its requester can say "not
+        yet" at the last gate: the first change's watch can still be running when the second
+        merges, the engine refuses a second workflow under a running one's id, and the refusal was
+        read as a re-run — so the second change's deploy was never watched. A later change's watch
+        carries its number, the one its branch carries (`namespace.job_branch`: `-2` for the
+        second change), so the two are told apart on the engine as they are on the forge. The first
+        change keeps the id it always had, byte for byte: the panel reads it (`view._deploy_state`)
+        and every history recorded before this replays it.
+
+        PATCHED, because an id is the shape of a command (TMPRL1100) — and asked only for a later
+        change, so a first change records no marker. A later change whose history predates it
+        replays the id it had.
+
+        AND A REFUSAL SAYS WHICH IT IS. "Already started" is the engine saying this very watch is
+        running — a re-run of the same change; anything else is the engine refusing to start it at
+        all, and the log says so rather than passing it off as the harmless case."""
         cfg = result.post_merge_deploy
         if not (cfg and result.pr_url):
             return
+        watch_id = f"openfactory-deploy-{params.project}-{params.issue}"
+        if params.change and workflow.patched(_A_LATER_CHANGE_WATCHES_ITS_OWN_DEPLOY):
+            watch_id = f"{watch_id}-{params.change + 1}"
         try:
             await workflow.start_child_workflow(
                 DeployWatchWorkflow.run,
@@ -2552,17 +2577,22 @@ class JobWorkflow:
                     workflow=cfg.workflow, env=cfg.env, timeout_minutes=cfg.timeout_minutes,
                     url=getattr(cfg, "url", "") or "",
                 ),
-                id=f"openfactory-deploy-{params.project}-{params.issue}",
+                id=watch_id,
                 # inherit the parent's task queue (openfactory-jobs in prod) so the same worker
                 # fleet
                 # runs the watch — no separate deployment, and tests run it on their own queue.
                 parent_close_policy=ParentClosePolicy.ABANDON,
             )
-        except Exception:
-            # already-watching (a re-run) or a transient start error — the merge stands and
-            # the floor must free regardless. Never let the watch's start block the job (A3).
-            workflow.logger.warning("deploy-watch not started for %s#%s", params.project,
-                                    params.issue)
+        except WorkflowAlreadyStartedError:
+            # ALREADY WATCHING THIS CHANGE — a re-run of it. The merge stands and the floor must
+            # free regardless. Never let the watch's start block the job (A3).
+            workflow.logger.warning("deploy-watch %s is already running — a re-run of %s#%s; it "
+                                    "goes on watching", watch_id, params.project, params.issue)
+        except Exception as exc:  # noqa: BLE001 — the merge stands whatever the engine says
+            # THE ENGINE REFUSED TO START IT — not a re-run, and nothing is watching this deploy.
+            workflow.logger.warning("the engine refused to start deploy-watch %s for %s#%s (%s) — "
+                                    "the merge stands, and this deploy will not be reported",
+                                    watch_id, params.project, params.issue, exc)
 
     async def _stamp_title(self, params: JobParams) -> None:
         """Stamp the ticket's title into the workflow memo so the panel shows it beside the
