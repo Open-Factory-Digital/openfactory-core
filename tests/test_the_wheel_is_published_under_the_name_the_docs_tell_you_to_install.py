@@ -277,12 +277,28 @@ def test_the_package_declares_ONE_version():
         f"not notice.")
 
 
+_A_TAG_COULD_CARRY = re.compile(r"\d+\.\d+\.\d+([-abrc.dev+][0-9A-Za-z.+-]*)?")
+
+
+@pytest.mark.parametrize("version,carried", [
+    ("0.4.2", True), ("0.5.0-rc.1", True), ("0.5.0-rc.12", True), ("0.5.0rc1", True),
+    ("0.6.0.dev0", True), ("v0.5.0", False), (" 0.5.0", False), ("0.5", False)])
+def test_what_a_tag_could_carry_includes_a_candidate(version, carried):
+    """The rule below, on the versions the release process declares and on what it must refuse."""
+    assert bool(_A_TAG_COULD_CARRY.fullmatch(version)) is carried, version
+
+
 def test_the_declared_version_is_one_a_tag_could_carry():
     """`v${version}` is how the tag is formed, so a version with a leading `v`, whitespace or a
-    local segment produces a tag the workflow's own `${GITHUB_REF_NAME#v}` cannot round-trip."""
+    local segment produces a tag the workflow's own `${GITHUB_REF_NAME#v}` cannot round-trip.
+
+    A HYPHEN ROUND-TRIPS, AND IT IS THE CANDIDATE'S SPELLING (docs/RELEASING.md). `0.5.0-rc.1` is
+    what the package declares for `v0.5.0-rc.1`, and the hyphen is what the release workflow reads
+    to publish a pre-release; spelling it `0.5.0rc1` would disarm that. The class lacked `-`, so
+    the first candidate's version pull request would have gone red (review of #510)."""
     version = PROJECT["version"]
 
-    assert re.fullmatch(r"\d+\.\d+\.\d+([abrc.dev+][0-9A-Za-z.+-]*)?", version), (
+    assert _A_TAG_COULD_CARRY.fullmatch(version), (
         f"project.version is {version!r}, which does not round-trip through a `v<version>` tag")
 
 

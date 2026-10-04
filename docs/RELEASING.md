@@ -11,6 +11,7 @@ stops before every step that cannot be undone.
 |---|---|---|
 | release manager | @robertocsp | the cut date, what goes in, every tag, the go/no-go for each release |
 | reviewer | @hermesfelipe | reviews every pull request, the version and backport pull requests included |
+| deputy release manager | to be named by the release manager | takes the role when the release manager cannot: the `v*` ruleset lists both, so a release never waits on one person |
 | release agent | `release-manager` | audits, prepares the pull requests, runs the rehearsals, drafts the notes. It never tags, publishes, merges or changes a setting without the release manager's explicit go |
 
 ## Running it with the agent
@@ -22,6 +23,8 @@ checkout; `/agents` lists it.
 - a checkout of this repository, up to date with `origin`;
 - Claude Code;
 - `gh` logged in as the release manager, the account allowed to create release branches and tags;
+- the one-time setup below done, the rulesets in particular. The agent's "never without a go" is
+  an instruction to a model; the rulesets are what actually stop a tag nobody approved;
 - Docker running, for the upgrade rehearsal and the fresh install;
 - the project's virtual environment, for the tests.
 
@@ -115,8 +118,11 @@ release/0.5          ●───●─────●────●───�
 1. **A published release is frozen.** Never move, delete or re-push a tag, never re-publish an
    image under a released tag, never edit a released wheel. What a release lacks is a new patch,
    tracked as an issue on the next milestone.
-2. **Rehearse the upgrade before every tag**, candidate or final (below). It caught #363 before
-   `v0.4.0`: an upgrade that emptied every credential, which two tests had pinned as the contract.
+2. **Rehearse the upgrade before every tag**, candidate or final (below), on the commit being
+   tagged. A final release whose only change since its last verified candidate is the version line
+   carries that candidate's rehearsal, recorded again for the final. Anything else is rehearsed
+   again. It caught #363 before `v0.4.0`: an upgrade that emptied every credential, which two
+   tests had pinned as the contract.
 3. **A security defect never becomes a public issue or an ordinary pull request.** It follows the
    private advisory path (below). Release first, publish the advisory second.
 4. **Only the release manager creates a release branch or a tag**, and only after the checks of
@@ -146,7 +152,7 @@ release manager decides what earns it.
 
 ### 2. The cut
 
-1. **Open the release tracking issue**, `Release x.y.0`, from the checklist at the end of this page.
+1. **Open the release tracking issue**, `Release x.y.0`, from the template at the end of this page.
 2. **Create `release/x.y` from the green commit of `main`** (release manager's go):
    `git push origin <sha>:refs/heads/release/x.y`.
 3. **On `main`, a pull request declares the next development version**: "The package declares
@@ -166,7 +172,8 @@ release manager decides what earns it.
    ```
 3. **Watch the `release` workflow to the end**, then check what it published:
    - the three images, under `ghcr.io/open-factory-digital/openfactory-{worker,sandbox,cli}:vx.y.z-rc.N`;
-   - the wheel, as `openfactory==x.y.zrcN` on PyPI;
+   - the wheel, as version `x.y.zrcN` on PyPI, with its provenance (the workflow publishes it with
+     attestations: the file's page on PyPI shows them);
    - the GitHub release, **marked as a pre-release and not as Latest**, with its assets and `SHA256SUMS`.
 
 ### 4. Verifying a candidate
@@ -197,8 +204,8 @@ records in the tracking issue why it ships anyway and what the workaround is.
 
 1. **A pull request on `release/x.y`** declares `x.y.z`. Its body carries the release notes as
    they will be published.
-2. **Rehearse the upgrade on that commit** if anything changed since the last candidate's
-   rehearsal. Only the version line changed? Then the candidate's rehearsal stands.
+2. **Rehearse the upgrade on that commit**, as rule 2 says: when only the version line changed
+   since the last verified candidate, record that candidate's rehearsal for the final.
 3. **Tag `vx.y.z` on the merge commit** (release manager's go), the same commands as for a
    candidate.
 4. **Check the publication**, as for a candidate. This time the GitHub release is **Latest**.
@@ -233,20 +240,36 @@ as an issue or an ordinary pull request:
 4. **Request the CVE.** The number is assigned after the advisory is published.
 5. **Merge from the advisory page.** A repository admin's "merge and bypass branch protections" is
    scoped to that merge. Never add a bypass actor to a ruleset.
-6. **Release the patch**, steps 3–5 above.
+6. **Release the patch**, steps 3–5 above. Until the advisory is published, every result of
+   those steps (the rehearsal, the checks, the decisions) is written in the **advisory**, which is
+   private, and not in a public tracking issue. The tracking issue gets them when the advisory is
+   published.
 7. **Only then publish the advisory.** Publishing before an installable fix exists teaches the
    flaw to people who cannot yet protect themselves.
+
+### 8. When a release goes wrong
+
+- **A tag whose run failed half way** (images pushed, the wheel not, or the reverse): the version
+  is burned. Never re-push the tag or re-publish under it. Fix on `main`, backport, and tag the
+  next candidate or patch.
+- **A wheel published wrong:** yank it on PyPI (it stays installable by its exact version, and
+  stops being chosen), and release the next patch. PyPI never replaces a published file.
+- **A release that ships a defect:** it is the next patch's, tracked as an issue on the next
+  milestone (rule 1).
 
 ## One-time setup (done once per repository, by an admin)
 
 - **A ruleset on `release/*`** with the rules `main` has: no deletion, no force-push, linear
-  history, and changes only through a reviewed pull request.
-- **A tag ruleset on `v*`:** creation, update and deletion restricted to the release manager.
+  history, and changes only through a reviewed pull request. Creating a `release/*` branch is
+  restricted to the release manager and the deputy, not forbidden, or the cut itself is blocked.
+- **A tag ruleset on `v*`:** creation restricted to the release manager and the deputy; update
+  and deletion forbidden to everybody (a published release is frozen).
 - **The labels** `release-blocker` and `backport-x.y` (one per supported line).
 
 ## The release tracking issue
 
-Opened at the cut, titled `Release x.y.z`, on the milestone:
+Opened at the cut for a minor (`Release x.y.0`), and for every patch when its first backport is
+labelled (`Release x.y.z`), on the release's milestone:
 
 ```markdown
 - [ ] Milestone audited; everything left moved or marked `release-blocker`

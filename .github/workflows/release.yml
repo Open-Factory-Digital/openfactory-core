@@ -88,9 +88,10 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.ORG }}/openfactory-base
           tags: |
             type=ref,event=branch
-            type=semver,pattern=v{{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=raw,value=${{ github.ref_name }},enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
+            type=semver,pattern={{major}},enable=${{ !contains(github.ref_name, '-') }}
+          flavor: latest=false
 
       - uses: docker/build-push-action@v6
         with:
@@ -159,15 +160,26 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.image }}
-          # `type=ref,branch` gives the `main` tag the tracked compose default resolves to;
-          # `type=semver` gives `v1.2.3`, `1.2` and `1` for a tag build. `latest` is deliberately
-          # NOT here: a moving tag on a registry is precisely what the pinned install exists to
-          # avoid, and offering one invites somebody to use it.
+          # `type=ref,branch` gives the `main` tag the tracked compose default resolves to. A tag
+          # build is published under the tag ITSELF (`type=raw` on `github.ref_name`), and a final
+          # one also under `1.2` and `1`.
+          #
+          # NOT `type=semver,pattern=v{{version}}`. For a pre-release, `docker/metadata-action`
+          # discards a configured semver pattern and compiles `{{version}}` instead, so
+          # `v0.5.0-rc.1` was published as `0.5.0-rc.1` — not the tag `install.sh --version` pulls
+          # — and the floating `0` was moved onto the candidate. The floating patterns are off for
+          # a hyphenated tag for the same reason (docs/RELEASING.md: a candidate is installed by
+          # name and moves nothing).
+          #
+          # `latest` is deliberately NOT published: a moving tag on a registry is precisely what
+          # the pinned install exists to avoid. It has to be switched off as well as left out —
+          # `flavor.latest` defaults to `auto`, which pushed `latest` on every final tag.
           tags: |
             type=ref,event=branch
-            type=semver,pattern=v{{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=raw,value=${{ github.ref_name }},enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
+            type=semver,pattern={{major}},enable=${{ !contains(github.ref_name, '-') }}
+          flavor: latest=false
 
       - id: build
         uses: docker/build-push-action@v6
@@ -400,8 +412,10 @@ jobs:
           # A RELEASE CANDIDATE IS A PRE-RELEASE, AND NEVER LATEST (docs/RELEASING.md). A tag with a
           # hyphen (`v0.5.0-rc.1`) is a candidate: published so it can be installed by name and
           # verified, and kept out of `releases/latest`, which is what `install.sh` resolves when
-          # no `--version` is given. Without these two lines the first candidate would have been
-          # every new installation's version.
+          # no `--version` is given. Without `prerelease` the first candidate would have been every
+          # new installation's version. `prerelease` alone keeps a candidate out of
+          # `releases/latest` (the action cannot make a pre-release Latest); `make_latest` states
+          # the pairing for the reader rather than adding a second guarantee.
           prerelease: ${{ contains(github.ref_name, '-') }}
           make_latest: ${{ !contains(github.ref_name, '-') }}
           # GENERATED NOTES, PLUS THE ONE LINE A RELEASE PAGE OWES A READER: which images this tag
