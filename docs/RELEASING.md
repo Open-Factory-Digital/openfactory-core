@@ -55,10 +55,16 @@ green, and then waits.
 **Picking up later.** The agent writes every result into the release tracking issue. A new session,
 yours or the next release manager's, reads the issue and continues from it.
 
-**From another session**, `@agent-release-manager <task>` runs it as a subagent. A subagent works to
-the end and returns a report; it cannot wait for an answer. Use it for the reversible work: an
-audit, the notes, the backport pull requests. For anything that needs a go, start
-`claude --agent release-manager`, or take the step by hand.
+**From an ordinary session**, mention the agent at the start of a request, followed by what you want
+done, in plain words:
+
+```
+@agent-release-manager audit milestone 0.5.0 for the cut on Friday
+```
+
+That runs it as a subagent. A subagent works to the end and returns a report; it cannot wait for
+an answer. Use it for the reversible work: an audit, the notes, the backport pull requests. For
+anything that needs a go, start `claude --agent release-manager`, or take the step by hand.
 
 **Without Claude Code,** this page is the whole process: every step has its command.
 
