@@ -184,12 +184,9 @@ MUTATIONS = [
      "        if not may_act(project, user) and not _is_requester(waiting, user):\n"),
     ("the token route's own gate forgets the transport it was told",
      CONFIRM,
-     "    if not may_act(project, user, via=via):\n"
-     "        # AUTHZ BEFORE POP, like every other confirmation path: an unauthorised click "
-     "must not\n",
-     "    if not may_act(project, user):\n"
-     "        # AUTHZ BEFORE POP, like every other confirmation path: an unauthorised click "
-     "must not\n"),
+     # re-pinned 2026-10-01 (#448): the gate is `_may_say_yes`, told the transport the same way
+     "    said = _may_say_yes(project, entry, user, via=via, module=module)\n",
+     '    said = _may_say_yes(project, entry, user, via="api", module=module)\n'),
     ("the token route hands confirm a yes with no transport",
      CONFIRM,
      "                           user=user, lang=lang, via=via,\n",

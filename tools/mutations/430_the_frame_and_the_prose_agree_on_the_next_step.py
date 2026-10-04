@@ -52,8 +52,9 @@ MUTATIONS = [
 
     ("the scope shrinks: a staging marker is dropped from the list the guard walks",
      ROLE,
-     "STAGING_MARKERS = (REQUEST_MARKER, DEFECT_MARKER, TICKET_MARKER, ORDER_MARKER, QUEUE_MARKER)\n",
-     "STAGING_MARKERS = (REQUEST_MARKER, TICKET_MARKER, ORDER_MARKER, QUEUE_MARKER)\n"),
+     # re-pinned 2026-10-01 (#448): the list gained the adjust marker on a second line
+     "STAGING_MARKERS = (REQUEST_MARKER, DEFECT_MARKER, TICKET_MARKER, ORDER_MARKER, QUEUE_MARKER,\n",
+     "STAGING_MARKERS = (REQUEST_MARKER, TICKET_MARKER, ORDER_MARKER, QUEUE_MARKER,\n"),
 
     ("the phrase stops forbidding the offer",
      ROLE,

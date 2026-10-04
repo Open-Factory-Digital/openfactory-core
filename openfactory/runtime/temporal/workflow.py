@@ -36,6 +36,7 @@ with workflow.unsafe.imports_passed_through():
         advisory_note,
         nothing_ran_note,
     )
+    from openfactory.contracts.project import ADJUST_PASSES
     from openfactory.runtime.temporal.activities import (
         adjust_pr,
         card_question_sweep,
@@ -140,7 +141,7 @@ with workflow.unsafe.imports_passed_through():
     # which prints the sentence, answered 500 on an install without the `runtime` extra. Imported
     # HERE, inside the sandbox pass-through, like the phrasebook below: a pure function of one
     # bool, so replay reads the same words it recorded. `workflow.merge_wait_note` stays a name.
-    from openfactory.runtime.temporal.vocabulary import merge_wait_note
+    from openfactory.runtime.temporal.vocabulary import adjusts_spent_note, merge_wait_note
     from openfactory.techlead import CODE as CAUSE_CODE
     from openfactory.techlead import classify, remedy_for
 
@@ -2016,6 +2017,11 @@ class JobWorkflow:
                         said.append(nothing_ran_note(quiet, _NOTHING_RAN_GRACE))
                     if asked is not None and asked.advisory:
                         said.append(advisory_note(asked.advisory))
+                    # PAST THE PROJECT'S PASSES, THE STANDING WAIT SAYS WHO DECIDES (#448) — on
+                    # every look, not only in the one answer refused: this dict is rebuilt each
+                    # round, and a note set by a refusal lasted until the next read of the checks
+                    if not auto and self._adjust_passes >= params.adjust_passes:
+                        said.append(adjusts_spent_note(params.adjust_passes))
                     self._merge_wait = {"pr_url": pr_url, "auto": auto, "note": " — ".join(said)}
                     elapsed = workflow.now() - start
                     nap = _CI_POLL if elapsed < _CI_FAST_WINDOW else _CI_SLOW_POLL
@@ -2054,6 +2060,15 @@ class JobWorkflow:
                     # cap is not spent.
                     self._merge_wait["can_review"] = bool(
                         gate_live and not self._re_review_refusal(params))
+                    # AND HOW MANY MORE PASSES THE PERSON MAY ASK FOR (#448), so a surface offers
+                    # "send it back" only while one is left and says what happens next when none
+                    # is — the requester's conversation, the card, the floor — and the seam every
+                    # answer crosses refuses a pass the job would refuse (`view.answer_merge_gate`).
+                    # State, not a command: a job replaying older history publishes the same
+                    # numbers its own branch below enforces.
+                    self._merge_wait["adjust_passes"] = params.adjust_passes
+                    self._merge_wait["adjusts_left"] = max(
+                        0, params.adjust_passes - self._adjust_passes)
                     if gate_live:
                         with contextlib.suppress(TimeoutError):
                             await workflow.wait_condition(lambda: self._gate is not None,
@@ -2068,10 +2083,13 @@ class JobWorkflow:
             note=f"PR not merged within {params.merge_deadline_days}d (CI watch)",
         )
 
-    #: How many `adjust` passes one job may spend. Mirrors `_CI_REPAIR_MAX` and for the same
-    #: reason: each pass is a paid agent run holding the single-slot floor, so an uncapped one is
-    #: a human-driven infinite loop with only the 14-day deadline underneath it.
-    _ADJUST_MAX = 2
+    #: How many `adjust` passes one job may spend WHEN ITS PROJECT SAYS NOTHING. Mirrors
+    #: `_CI_REPAIR_MAX` and for the same reason: each pass is a paid agent run holding the
+    #: single-slot floor, so an uncapped one is a human-driven infinite loop with only the 14-day
+    #: deadline underneath it. THE BUDGET A JOB SPENDS IS `params.adjust_passes` (#448): the
+    #: project's, stamped at launch, defaulting to this — so a job whose history predates the field
+    #: replays against the same 2 it always had, and the answer it gave is the answer it gives.
+    _ADJUST_MAX = ADJUST_PASSES
 
     #: How many times one job may be READ again on demand (#181). Higher than `_ADJUST_MAX`
     #: because a re-review writes nothing and cannot loop the work — and bounded all the same,
@@ -2267,11 +2285,17 @@ class JobWorkflow:
 
         # adjust — on a person's own words, or (`address`, #330) on what people wrote on the pull
         # request, which the worker reads when the pass starts. One budget for both: the same
-        # pass, on the same branch, with its words from somewhere else.
+        # pass, on the same branch, with its words from somewhere else, counted against the
+        # project's number (#448).
         threads = answer == "address"
-        if self._adjust_passes >= self._ADJUST_MAX:
+        if self._adjust_passes >= params.adjust_passes:
+            # NEVER A BARE REFUSAL (#448). "2 adjust passes already spent" told the person what
+            # they could not do and nothing about what happens instead; the wall is the project's
+            # number, and past it the change is a person's to decide. Reached only by an answer
+            # that raced the seam's own refusal (`view.answer_merge_gate`), which says the same.
             self._merge_wait = {"pr_url": pr_url, "auto": False,
-                                "note": f"{self._ADJUST_MAX} adjust passes already spent"}
+                                "adjust_passes": params.adjust_passes, "adjusts_left": 0,
+                                "note": adjusts_spent_note(params.adjust_passes)}
             return None
         self._adjust_passes += 1
         # THE MACHINE HOLDS IT NOW (#151). `_merge_wait` is what every surface reads to decide a

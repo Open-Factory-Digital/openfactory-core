@@ -41,6 +41,7 @@ async def main() -> None:
             # Resolved at launch like every other entry point, or this one quietly runs the
             # framework image for a project that declares its own (ADR-0037 D4).
             image=resolve_box_image(ProjectRegistry().get(args.project), sandbox=args.sandbox),
+            adjust_passes=ProjectRegistry().get(args.project).adjust_passes,  # #448
         ),
         id=wf_id,
         task_queue=TASK_QUEUE,

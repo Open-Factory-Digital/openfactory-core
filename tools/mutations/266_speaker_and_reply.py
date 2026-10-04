@@ -61,8 +61,10 @@ MUTATIONS = [
     # RE-PINNED 2026-09-28 (#394): the role's answer is recorded by `engine._answered`, the one
     # place both the turn and the read-only path record it
     ("the role's turn forgets which message it answers", ENGINE,
-     "                      text=_text_of(reply), channel=message.room, in_reply_to=message.id)",
-     "                      text=_text_of(reply), channel=message.room)"),
+     "                      text=_text_of(reply), channel=message.room, in_reply_to=message.id,\n"
+     "                      kind=_reply_kind(reply))",
+     "                      text=_text_of(reply), channel=message.room,\n"
+     "                      kind=_reply_kind(reply))"),
     ("the transcript writes neither id onto the row it was handed them for", TRANSCRIPT,
      '        if message_id:\n            extra["id"] = str(message_id)\n'
      '        if in_reply_to:\n            extra["in_reply_to"] = str(in_reply_to)\n',
@@ -125,14 +127,13 @@ MUTATIONS = [
      '    if getattr(getattr(project, "product", None), "accept_on_behalf", False):\n'
      '        return ""\n',
      ""),
+    # re-pinned 2026-10-01 (#448): the approver's check moved into `_may_say_yes`, which also
+    # admits a card's requester for their own card's pass; its last line refuses everybody else
     ("`accept_on_behalf` also lets somebody off the admin list confirm", CONFIRM,
-     "    if not may_act(project, user, via=via):\n"
-     "        return unauthorized_message(project)\n\n"
-     "    from openfactory.product.staging import consume\n",
-     "    if not may_act(project, user, via=via) and not getattr(\n"
-     '            getattr(project, "product", None), "accept_on_behalf", False):\n'
-     "        return unauthorized_message(project)\n\n"
-     "    from openfactory.product.staging import consume\n"),
+     "    return unauthorized_message(project)\n\n\ndef confirm(",
+     '    if getattr(getattr(project, "product", None), "accept_on_behalf", False):\n'
+     '        return ""\n'
+     "    return unauthorized_message(project)\n\n\ndef confirm("),
     ("the requester is found INSIDE a mention again — `ana` confirms for `<@joana>`", CONFIRM,
      "    return bool(user) and requester_of(entry) == user",
      '    return bool(user) and any(user in str(entry.get(k) or "")\n'

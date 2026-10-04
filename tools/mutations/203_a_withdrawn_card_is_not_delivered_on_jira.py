@@ -9,6 +9,7 @@ REGISTRY = "openfactory/adapters/tracker/registry.py"
 CONFORMANCE = "openfactory/conformance/adapters.py"
 CATALOG = "openfactory/actions/catalog.py"
 MODULE = "openfactory/product/module.py"
+PORTS = "openfactory/lifecycle/ports.py"
 LOCAL_FLOW = "openfactory/testing/local_flow.py"
 VOICE = "openfactory/product/voice.py"
 
@@ -134,17 +135,18 @@ MUTATIONS = [
      "    def close_ticket(self, ref: str, reason: str) -> None:"),
 
     # ── the callers ─────────────────────────────────────────────────────────────────────────────
+    # RE-PINNED 2026-10-01 (#412): the board's close and the product owner's are one call now,
+    # the card's door's (`lifecycle/ports.py::Ports.close`), so the seam is cut there
     ("the catalog walks around the seam, and an old row answers a TypeError the operator reads",
-     CATALOG,
-     "        close_ticket(tracker, issue, note, delivered=delivered)",
-     "        tracker.close_ticket(issue, note, delivered=delivered)",
+     PORTS,
+     "        close_ticket(self.tracker, card, note, delivered=delivered)",
+     "        self.tracker.close_ticket(card, note, delivered=delivered)",
      CLOSED_AS_DELIVERED),
 
-    ("the catalog walks around the seam — seen from the code, not from a run", CATALOG,
-     "        close_ticket(tracker, issue, note, delivered=delivered)",
-     "        tracker.close_ticket(issue, note, delivered=delivered)"),
+    ("the catalog walks around the seam — seen from the code, not from a run", PORTS,
+     "        close_ticket(self.tracker, card, note, delivered=delivered)",
+     "        self.tracker.close_ticket(card, note, delivered=delivered)"),
 
-    ("the product owner's close walks around the seam", MODULE,
-     "            close_ticket(tracker, f\"#{number}\",\n",
-     "            tracker.close_ticket(f\"#{number}\",\n"),
+    # RETIRED 2026-10-01: the product owner's close walks around the seam — `_close_one` reaches the
+    # tracker only through the card's door now, whose close is the row above (#412)
 ]

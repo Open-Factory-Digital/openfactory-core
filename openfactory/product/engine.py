@@ -424,11 +424,25 @@ def _answered(project, message: Message, reply: Reply | str, *, again: bool) -> 
     if again:
         transcript.supersede(project, thread=message.conversation, answering=message.id)
     transcript.record(project, thread=message.conversation, role="agent",
-                      text=_text_of(reply), channel=message.room, in_reply_to=message.id)
+                      text=_text_of(reply), channel=message.room, in_reply_to=message.id,
+                      kind=_reply_kind(reply))
 
 
 def _text_of(reply: Reply | str) -> str:
     return reply.text if isinstance(reply, Reply) else str(reply)
+
+
+def _reply_kind(reply: Reply | str) -> str:
+    """WHAT KIND OF REPLY the role's line was, for the transcript (#457): a `Reply` that already
+    names a kind other than the model's answer carries it (a hand-off); otherwise the platform's
+    own sentences are recognised by their text (`voice.own_voice_kind`) — a crash reply, an
+    unavailable — and everything else is the role's answer (`""`, which `transcript.record` leaves
+    unmarked, so it reads as an answer like every row written before this)."""
+    from openfactory.product import voice
+
+    if isinstance(reply, Reply) and reply.kind not in ("", "answer", "receipt"):
+        return reply.kind
+    return voice.own_voice_kind(_text_of(reply))
 
 
 def _files_of(message) -> dict:
@@ -1066,6 +1080,12 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
     # `thread` IS THE STAGING KEY in this stage (#266 slice 4): everything below stages for this
     # person in this conversation (`ex.key`), which is all this stage uses it for
     text, user, thread, channel, source = ex.text, ex.user, ex.key, ex.channel, ex.source
+    if getattr(answer, "gesture", "") == "adjust" and getattr(answer, "gesture_card", ""):
+        # FIRST, because it names the one card whose change waits on this person: what they
+        # tried is not a broken promise of the product nor a new wish, it is "not yet" (#448)
+        offered = _offer_adjust(ex, answer)
+        if offered is not None:
+            return offered
     if getattr(answer, "is_defect", False):
         # Who can actually unlock the pen. Asking the REPORTER to confirm and then refusing their
         # confirmation — with a refusal written for the requirement flow ("registrar como
@@ -1174,6 +1194,46 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
             # and the proposal went out twice.
             return proposed
     return None
+
+
+def _offer_adjust(ex: Exchange, answer) -> Reply | str | None:
+    """Another pass on the change that waits on this person, staged for their yes — or what
+    happens instead, said in the conversation (#448). None for a module that cannot prepare one
+    (an add-on's, a double), and the turn goes on as before.
+
+    THE ROLE'S UNDERSTANDING, THEN THE PROPOSAL. Its reply stays in front — the person confirms a
+    restatement of what they said, so they must read it — and the proposal under it names the
+    pass, the bar it is judged against, and that the card is corrected to match. When no pass can
+    be sent (not theirs, nothing waiting, a pass already running, the project's passes spent) the
+    reply says why and what happens next, and nothing is staged: NEVER A BARE REFUSAL."""
+    from openfactory.product.voice import adjust_confirmation
+
+    prepare = getattr(ex.module, "prepare_adjustment", None)
+    if not callable(prepare):
+        return None
+    number = canonical_ref(getattr(answer, "gesture_card", "") or "")
+    preamble = (answer.text + "\n\n") if answer.text else ""
+    ex.on_it()
+    prepared = prepare(number, actor=ex.user, conversation=ex.conversation,
+                       reply=answer.text or "", request=ex.text, language=ex.lang)
+    if not prepared.ok:
+        return preamble + prepared.said
+    gate = prepared.gate
+    this = (gate.passes - gate.left + 1
+            if gate is not None and gate.passes is not None and gate.left is not None else None)
+    replaced = remember(ex.key, {"kind": "adjust", "number": number,
+                                 "instruction": prepared.instruction,
+                                 "criteria": list(prepared.criteria),
+                                 "keeps": prepared.keeps,
+                                 "pr_url": getattr(gate, "pr_url", "") or "",
+                                 "seq": ex.seen, "source": ex.source or "",
+                                 "channel": ex.channel},
+                        lang=ex.lang, project=ex.project, person=ex.user)
+    ask = adjust_confirmation(number=number, instruction=prepared.instruction,
+                              criteria=prepared.criteria, keeps=prepared.keeps,
+                              pass_number=this, passes=getattr(gate, "passes", None),
+                              language=ex.lang)
+    return offer(ex.project, ex.key, replaced + preamble + ask)
 
 
 def _offer_card(ex: Exchange, composed, *, request: str, preamble: str = "",

@@ -14,7 +14,7 @@ import os
 import subprocess
 import time
 
-from openfactory.adapters.github_cli import no_repository_named, refused
+from openfactory.adapters.github_cli import nothing_named, refused
 from openfactory.adapters.tracker.base import (
     Budget,
     TicketComment,
@@ -103,11 +103,11 @@ class GitHubIssuesTracker(TrackerAdapter):
     _RATE_MARKERS = ("rate limit", "abuse detection", "submitted too quickly", "retry your request")
 
     def _gh(self, args: list[str], timeout: int = 60) -> subprocess.CompletedProcess[str]:
-        # NEVER A GUESSED REPOSITORY (`adapters/github_cli.py`): an empty `--repo` is answered as a
-        # failed call before `gh` can fill it in from the working directory
-        why = no_repository_named(args)
+        # NEVER A GUESSED REPOSITORY, OWNER OR BRANCH (`adapters/github_cli.py`): an empty flag is
+        # answered as a failed call before `gh` can fill it in by guessing
+        why = nothing_named(args)
         if why:
-            log.warning("OPENFACTORY_GH_NO_REPOSITORY %s", why)
+            log.warning("OPENFACTORY_GH_NOTHING_NAMED %s", why)
             return refused(args, why)
         try:
             p = subprocess.run(

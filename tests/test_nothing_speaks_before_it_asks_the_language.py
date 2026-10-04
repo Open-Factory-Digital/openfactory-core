@@ -70,8 +70,6 @@ NOT_A_PERSONS_LANGUAGE = {
 #: here, by FILE AND FUNCTION so that nothing else in those files is excused, and a case below
 #: keeps this from growing and removes an entry the day its site is fixed.
 SEEN_ONLY_SINCE_THE_WALK_FOLLOWS_A_NAME = {
-    ("openfactory/actions/catalog.py", "_settle_after_stop"):
-        "the note a stop leaves on the card (`Stopped by … The job was terminated in the engine`)",
     ("openfactory/orchestrator/machine.py", "_record_decision"):
         "the decision request posted on the card (`Decision needed — the job is on hold`)",
     ("openfactory/runtime/temporal/activities.py", "_do_coordinate"):
@@ -213,7 +211,8 @@ def test_the_sites_found_by_following_a_name_can_only_SHRINK():
     stale = sorted(k for k in SEEN_ONLY_SINCE_THE_WALK_FOLLOWS_A_NAME if k[0] not in live)
 
     assert not stale, f"registered and no longer welded — remove the entry: {stale}"
-    assert len(SEEN_ONLY_SINCE_THE_WALK_FOLLOWS_A_NAME) <= 3
+    # 3 → 2 (#412): the stop's note moved into the catalogue, written by the card's door
+    assert len(SEEN_ONLY_SINCE_THE_WALK_FOLLOWS_A_NAME) <= 2
 
 
 def test_the_walk_actually_INSPECTS_the_package():

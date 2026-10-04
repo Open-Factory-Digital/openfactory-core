@@ -242,6 +242,32 @@ def test_it_starts_itself_only_where_should_start_would_let_it(monkeypatch, auto
     assert events._preview_starts_itself(project) is expected
 
 
+@pytest.mark.parametrize("required", [False, True])
+@pytest.mark.parametrize("auto_start", [True, False])
+@pytest.mark.parametrize("kind", ["compose", "none", ""])
+def test_the_sentence_and_the_start_agree_wherever_the_offer_is_startable(monkeypatch, kind,
+                                                                         auto_start, required):
+    """THE TWO ARE ASKED THE SAME QUESTION, NOT TESTED SEPARATELY (review of #439). The test above
+    checks `_preview_starts_itself` against a table written beside it; `should_start` could gain a
+    refusal on a policy field and both would stay green while the role told a requester "wait,
+    it is starting itself" about a start that never comes. Here the real `should_start` is handed
+    an offer that passes every one of its other gates, and the two must answer alike."""
+    from openfactory import preview
+    from openfactory.contracts.project import PreviewPolicy
+    from openfactory.preview import live
+    from openfactory.runtime.temporal import io
+
+    monkeypatch.setattr(io, "default_preview_runtime", lambda: kind)
+    project = SimpleNamespace(name="books",
+                              preview=PreviewPolicy(auto_start=auto_start, required=required))
+    offered = preview.Preview(project="books", unit="500", cards=("500",), state=preview.OFFERED,
+                              pr_urls=(PR,), branches={PR: "openfactory/500"})
+
+    start, _why = live.should_start(project, offered, kind=kind, running=lambda: ())
+
+    assert events._preview_starts_itself(project) is start
+
+
 def test_with_no_preview_on_offer_it_never_sends_them_to_a_button_that_is_not_there(
         registry, ledger, told, monkeypatch):
     monkeypatch.setattr(events, "_preview_offered", lambda project, card: False)
@@ -431,7 +457,9 @@ def _items(language: str | None):
 def test_the_agenda_speaks_the_projects_language():
     pt = {i.subject: i for i in _items("pt-BR")}
     assert pt["defeito-500"].said == "avisar você quando o problema reportado estiver corrigido"
-    assert pt["defeito-500"].chip == "devo a você"
+    # ADR-0055 D11: what the role OWES has no chip — it is a line on its card, not a thing the
+    # person is shown as theirs to act on
+    assert pt["defeito-500"].chip == ""
     assert pt["defeito-500"].when == "desde 2026-09-29"
     assert pt["7"].said == "avisar você quando o requisito 7 estiver pronto"
     assert pt["42"].said == "uma resposta sobre o #42" and pt["42"].chip == "espero da sala"
@@ -440,7 +468,7 @@ def test_the_agenda_speaks_the_projects_language():
 
     en = {i.subject: i for i in _items("en")}
     assert en["defeito-500"].said == "tell you when the problem reported is fixed"
-    assert en["defeito-500"].chip == "owed to you"
+    assert en["42"].chip == "awaited from the room"
     for item in pt.values():
         assert "tell " not in item.said and "owed" not in item.chip and "since" not in item.when
 
@@ -459,10 +487,10 @@ def test_the_agenda_on_the_panel_says_what_it_is_in_the_projects_language(
                                  headers={"authorization": "Bearer tok-ana"})
     assert r.status_code == 200, r.text
     data = r.json()["data"]
-    assert data["items"][0]["said"] == "avisar você quando o problema reportado estiver corrigido"
-    assert data["items"][0]["chip"] == "devo a você"
+    # PENDING (ADR-0055 D11): a delivery the role owes is not on it — it is on the card it is about
+    assert data["items"] == []
     assert data["about"] == voice.agenda_about(agent_name=AGENT, language=LANG)
-    assert data["about"].startswith(f"O que {AGENT} deve a você")
+    assert data["about"].startswith(f"O que {AGENT} espera de você")
     assert data["empty"] == voice.agenda_empty(LANG)
 
 

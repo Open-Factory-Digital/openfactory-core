@@ -221,6 +221,9 @@ HUMAN_PHASES: frozenset[str] = frozenset({
     # THE CARD A PERSON ASKED FOR (#383): the draft is the card the client opens, and the judge's
     # `ask` is the question the role puts to the person when the card cannot be filed yet
     "product_card_draft", "product_card_judge",
+    # ANOTHER PASS ON A CHANGE THAT WAITS ON ITS REQUESTER (#448): the criteria it drafts are
+    # written onto the card they open, and the instruction is shown to them before the yes
+    "product_adjust_draft",
 })
 
 def needs_language_directive(phase: str) -> bool:
