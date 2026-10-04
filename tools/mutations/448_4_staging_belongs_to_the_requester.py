@@ -87,20 +87,16 @@ MUTATIONS = [
     ("the parked job never says which run it is in", RELEASE,
      '            out.append((issue, where, str(getattr(wf, "run_id", "") or "")))\n',
      '            out.append((issue, where, ""))\n'),
+    # re-pinned 2026-10-05: #448 slice 6 — the round's asking is the card's `staged`
     ("the round tells every run of a card as one", ACTIVITIES,
-     "        if await asyncio.to_thread(events.staged_for_you, project, card=str(issue), "
-     "where=where,\n"
-     "                                   run=run):\n",
-     "        if await asyncio.to_thread(events.staged_for_you, project, card=str(issue), "
-     "where=where,\n"
-     '                                   run=""):\n'),
+     '                facts={"asked_at": _now_iso(), "run": run, "where": where,\n',
+     '                facts={"asked_at": _now_iso(), "run": "", "where": where,\n'),
 
     # ── the requester is told, where they asked, once per run ────────────────────────────────
-    ("the round never tells the requester", ACTIVITIES,
-     "        if await asyncio.to_thread(events.staged_for_you, project, card=str(issue), "
-     "where=where,\n"
-     "                                   run=run):\n",
-     "        if False:\n"),
+    # re-pinned 2026-10-05: #448 slice 6 — the requester's telling is the asking's row
+    ("the round never tells the requester", "openfactory/lifecycle/table.py",
+     "            return (Loops(RELEASE_ASK), Tell(STAGED_FOR_YOU), Loops(RELEASE_ASK_THEIRS))\n",
+     "            return (Loops(RELEASE_ASK), Loops(RELEASE_ASK_THEIRS))\n"),
     # re-pinned 2026-10-05: #448 slice 6 — the telling is the door's `to_try_at_the_stage` now
     ("a new run of the card is never told again", EVENTS,
      "    said = _event_id(STAGED, project, card, run)\n",
@@ -126,16 +122,16 @@ MUTATIONS = [
      "            return acc.where, acc.by\n"),
 
     # ── their copy of the question ───────────────────────────────────────────────────────────
-    ("no copy of theirs is opened when they were told", ACTIVITIES,
-     "            if theirs:\n                opened.append(followup.release_of(",
-     "            if False:\n                opened.append(followup.release_of("),
-    ("their copy is opened though the telling never reached them", ACTIVITIES,
-     "        if await asyncio.to_thread(events.staged_for_you, project, card=str(issue), "
-     "where=where,\n"
-     "                                   run=run):\n",
-     "        if [await asyncio.to_thread(events.staged_for_you, project, card=str(issue), "
-     "where=where,\n"
-     "                                    run=run)]:\n"),
+    # re-pinned 2026-10-05: #448 slice 6 — their copy is the asking's row
+    ("no copy of theirs is opened when they were told", "openfactory/lifecycle/table.py",
+     "            return (Loops(RELEASE_ASK), Tell(STAGED_FOR_YOU), Loops(RELEASE_ASK_THEIRS))\n",
+     "            return (Loops(RELEASE_ASK), Tell(STAGED_FOR_YOU))\n"),
+    # re-pinned 2026-10-05: #448 slice 6 — their copy waits on the telling in `loops.release_asked`
+    ("their copy is opened though the telling never reached them",
+     "openfactory/lifecycle/loops.py",
+     "        if not events.told_at_the_stage(project, card=issue, run=run):\n"
+     '            return "not asked: they were not told it is theirs to try"\n',
+     ""),
     ("their copy and the room's are one row of the ledger", FOLLOWUP,
      "                     about=where_asked or channel,\n",
      "                     about=channel,\n"),
@@ -169,14 +165,14 @@ MUTATIONS = [
      "        return [is_release(x) for x in sorted(loops, key=lambda x: x.ts)]\n"),
 
     # ── a verdict closes every copy, of its own release only ─────────────────────────────────
-    ("a verdict closes only the copy it landed on", ENGINE,
-     "        observed = {(ACCEPTANCE, x.subject, x.about): verdict\n"
-     "                    for x in waiting(ledger, owner=OWNER)\n"
-     "                    if issue and x.kind == ACCEPTANCE and is_release(x) == issue}\n",
-     "        observed = {}\n"),
-    ("a verdict closes every release waiting", ENGINE,
-     "                    if issue and x.kind == ACCEPTANCE and is_release(x) == issue}\n",
-     "                    if issue and x.kind == ACCEPTANCE and is_release(x)}\n"),
+    # re-pinned 2026-10-05: #448 slice 6 — a verdict closes the copies in `loops.release_answered`
+    ("a verdict closes only the copy it landed on", "openfactory/lifecycle/loops.py",
+     '                and (not only_theirs or (x.context or {}).get("conversation"))]\n',
+     '                and not (x.context or {}).get("conversation")]\n'),
+    # re-pinned 2026-10-05: #448 slice 6 — a verdict closes the copies in `loops.release_answered`
+    ("a verdict closes every release waiting", "openfactory/lifecycle/loops.py",
+     "                if x.kind == ACCEPTANCE and _bare(followup.is_release(x)) == issue\n",
+     "                if x.kind == ACCEPTANCE and followup.is_release(x)\n"),
 
     # ── the round asks once, and only what landed ────────────────────────────────────────────
     ("the room is asked again while only their copy is open", ACTIVITIES,
@@ -187,14 +183,10 @@ MUTATIONS = [
      "    asked = {followup.is_release(x) for x in open_now}\n",
      '    asked = {followup.is_release(x) for x in open_now\n'
      '             if (x.context or {}).get("conversation")}\n'),
+    # re-pinned 2026-10-05: #448 slice 6 — the room's question is the asking's act
     ("a room post that did not land still opens the question", ACTIVITIES,
-     "        if not await asyncio.to_thread(_product_post, channel, project, cfg, text):\n"
-     "            continue\n"
-     "        room = channel_destination(project, product=True)\n"
-     "        ts = _now_iso()\n",
-     "        await asyncio.to_thread(_product_post, channel, project, cfg, text)\n"
-     "        room = channel_destination(project, product=True)\n"
-     "        ts = _now_iso()\n"),
+     '            return None if _product_post(channel, project, cfg, text) else "not landed"\n',
+     '            return None if [_product_post(channel, project, cfg, text)] else "not landed"\n'),
 
     # ── in their words, and a known kind ─────────────────────────────────────────────────────
     ("an unknown address is written as if there were one", VOICE,
@@ -216,15 +208,18 @@ MUTATIONS = [
     ("anybody who answers is taken for the card's requester", ENGINE,
      "    theirs = not admin and _asked_for(module, issue, user)\n",
      "    theirs = not admin\n"),
-    ("their yes closes the room's question too", ENGINE,
-     '    _close_release(project, loop, "worked", only_theirs=True)\n',
-     '    _close_release(project, loop, "worked")\n'),
-    ("their yes is not recorded", ENGINE,
-     '    _close_release(project, loop, "worked", only_theirs=True)\n',
-     ""),
-    ("the room is never told they said it is right", ENGINE,
-     "    told = events.tried_and_right(project, card=issue,\n",
-     "    told = False and events.tried_and_right(project, card=issue,\n"),
+    # re-pinned 2026-10-05: #448 slice 6 — their yes is `accepted` at the last gate
+    ("their yes closes the room's question too", "openfactory/lifecycle/table.py",
+     "            return (Loops(RELEASE_THEIRS_WORKED), Tell(TRIED), *_said(facts), Forget())\n",
+     "            return (Loops(RELEASE_WORKED), Tell(TRIED), *_said(facts), Forget())\n"),
+    # re-pinned 2026-10-05: #448 slice 6 — their yes is `accepted` at the last gate
+    ("their yes is not recorded", "openfactory/lifecycle/table.py",
+     "            return (Loops(RELEASE_THEIRS_WORKED), Tell(TRIED), *_said(facts), Forget())\n",
+     "            return (Tell(TRIED), *_said(facts), Forget())\n"),
+    # re-pinned 2026-10-05: #448 slice 6 — the room's telling is `accepted`'s row
+    ("the room is never told they said it is right", "openfactory/lifecycle/table.py",
+     "            return (Loops(RELEASE_THEIRS_WORKED), Tell(TRIED), *_said(facts), Forget())\n",
+     "            return (Loops(RELEASE_THEIRS_WORKED), *_said(facts), Forget())\n"),
     ("the room is told again for every yes of the same run", EVENTS,
      "    event = _event_id(TRIED, project, card, run)\n",
      "    event = _event_id(TRIED, project, card, run, str(time.time()))\n"),
@@ -254,9 +249,10 @@ MUTATIONS = [
     ("an admin's release says the requester said so of an asking they never answered", ENGINE,
      "and is_release(x) == issue and x.ts == loop.ts\n",
      "and is_release(x) == issue\n"),
+    # re-pinned 2026-10-05: #448 slice 6 — the record's word is `whose`
     ("a requester's release is recorded as a client's", ENGINE,
-     '    said = ("released_by_requester" if not admin\n',
-     '    said = ("released_by_client" if not admin\n'),
+     '    whose = ("released_by_requester" if not admin\n',
+     '    whose = ("released_by_client" if not admin\n'),
     ("a not-yet that could be either of two closes the newest", ENGINE,
      '        if ambiguous:\n            # NOR IS A "NOT YET" GUESSED',
      '        if False:\n            # NOR IS A "NOT YET" GUESSED'),
@@ -325,14 +321,16 @@ MUTATIONS = [
     ("the last gate's pass is sent as a merge-gate adjust", ADJUST,
      "    if merged:\n        return _not_yet(project, card, instruction=instruction, by=by)\n",
      "", SENT_PASS),
+    # re-pinned 2026-10-05: #448 slice 6 — the pass is `resumed`'s act
     ("the module sends a merged change back as a pass on its pull request", MODULE,
-     "        why = adjust.send_back(self.project, number, instruction=said, by=actor,\n"
-     "                               merged=gate.merged)\n",
-     "        why = adjust.send_back(self.project, number, instruction=said, by=actor,\n"
-     "                               merged=False)\n", SENT_PASS),
+     "            why = adjust.send_back(self.project, number, instruction=said, by=actor,\n"
+     "                                   merged=gate.merged)\n",
+     "            why = adjust.send_back(self.project, number, instruction=said, by=actor,\n"
+     "                                   merged=False)\n", SENT_PASS),
+    # re-pinned 2026-10-05: #448 slice 6 — the pass is `resumed`'s act
     ("the person is told the pass works on the same change", MODULE,
-     "                           passes=gate.passes, merged=gate.merged,",
-     "                           passes=gate.passes, merged=False,", SENT_PASS),
+     "                           merged=gate.merged, pass_number=pass_number)",
+     "                           merged=False, pass_number=pass_number)", SENT_PASS),
     ("the seam signals a job not at its last gate", VIEW,
      "    if not await handle.query(JobWorkflow.awaiting_approval):\n"
      '        raise RuntimeError("this job is not waiting at its last gate")\n',

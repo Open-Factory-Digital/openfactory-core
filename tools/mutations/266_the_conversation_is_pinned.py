@@ -831,9 +831,10 @@ MUTATIONS = [
      '    if False:\n        if ambiguous:\n'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # re-pinned 2026-10-05: #448 slice 6 — the release is `released`'s act, and its refusal the answer
     ("a release the workflow refused is announced as going live", ENGINE,
-     '    if not ok:\n        return f"{head}{why}"',
-     '    if False:\n        return f"{head}{why}"'),
+     '        return f"{head}{moved.answer}"\n',
+     '        return head + engine_said("releasing", language=lang)\n'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("with two releases waiting, the newest guess is put live", ENGINE,
@@ -857,32 +858,23 @@ MUTATIONS = [
      "    _close_release(project, loop, verdict)\n"
      "    admin = may_act(project, user, via=via)\n"),
 
-    ("an admin's worked releases and leaves the release question open (#273)", ENGINE,
-     "    # whether the workflow was still there to take it.\n"
-     "    _close_release(project, loop, verdict)\n",
-     "    # whether the workflow was still there to take it.\n"),
+    # re-pinned 2026-10-05: #448 slice 6 — the question closes by the door's `released` row
+    ("an admin's worked releases and leaves the release question open (#273)",
+     "openfactory/lifecycle/table.py",
+     "        return (*_said(facts), Loops(RELEASE_WORKED), Forget())\n",
+     "        return (*_said(facts), Forget())\n"),
 
+    # re-pinned 2026-10-05: #448 slice 6 — the not-yet closes the question as the door's `stage_rejected`
     ("a did-not-work on a release leaves its loop open (#273)", ENGINE,
-     "        # it: it spends nothing, and a release that did not work is not waiting on anybody's "
-     "yes.\n"
-     "        _close_release(project, loop, verdict)\n",
-     "        # it: it spends nothing, and a release that did not work is not waiting on anybody's "
-     "yes.\n"),
+     "        _at_the_last_gate(project, loop, CardEvent.STAGE_REJECTED, user=user,\n"
+     '                          why=" ".join(str(said or "").split())[:280])\n',
+     ""),
 
+    # re-pinned 2026-10-05: #448 slice 6 — a yes the job did not take closes the question as the door's `accepted`
     ("an authorised worked closes the release only when the workflow took it (#273)", ENGINE,
-     # re-pinned 2026-10-04: the release's comment says whose yes it was (#448)
-     "    _close_release(project, loop, verdict)\n\n"
-     "    from openfactory.product.release import release\n\n"
-     "    ok, why = release(project, issue, approver=user,\n"
-     '                      comment=engine_said(said, language=lang))\n'
-     "    if not ok:\n"
-     '        return f"{head}{why}"\n',
-     "    from openfactory.product.release import release\n\n"
-     "    ok, why = release(project, issue, approver=user,\n"
-     '                      comment=engine_said(said, language=lang))\n'
-     "    if not ok:\n"
-     '        return f"{head}{why}"\n'
-     "    _close_release(project, loop, verdict)\n"),
+     "        _at_the_last_gate(project, loop, CardEvent.ACCEPTED, user=user,\n"
+     '                          facts={"unreleased": str(moved.answer)[:280], "note": ""})\n',
+     ""),
 
     ("every acceptance, not only a release, is handed back open (#273)", MODULE,
      "        if is_release(loop):\n            return verdict, loop, ambiguous\n",

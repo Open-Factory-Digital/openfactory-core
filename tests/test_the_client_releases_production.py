@@ -34,6 +34,7 @@ import pytest
 
 from openfactory.memory.ledger import ACCEPTANCE, DELIVERY, open_loop
 from openfactory.product import followup
+from tests.the_card_at_its_last_gate import at_its_last_gate
 from tests.the_chat_turn import chat_turn
 
 
@@ -108,6 +109,9 @@ def released(monkeypatch):
         return True, ""
 
     monkeypatch.setattr("openfactory.product.release.release", _fake)
+    # a verdict on a release goes through the card's door, which reads the card first (#448
+    # slice 6): this file's project is a stand-in with no tracker, its card parked at its last gate
+    at_its_last_gate(monkeypatch)
     return calls
 
 
@@ -175,6 +179,7 @@ def test_a_job_no_longer_PARKED_is_told_honestly_not_reassuringly(monkeypatch):
     monkeypatch.setattr("openfactory.product.release.release",
                         lambda p, i, *, approver, comment="": (False, "o #512 não está mais "
                                                                      "esperando essa liberação"))
+    at_its_last_gate(monkeypatch)      # the card's door reads it first (#448 slice 6)
 
     said = _say(_Module(("worked", _release_loop(512), False)))
 

@@ -38,6 +38,8 @@ import textwrap
 
 import pytest
 
+from tests.the_card_at_its_last_gate import at_its_last_gate
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 #: Captured at import so a monkeypatched test always restores the real resolver, even on failure.
@@ -534,6 +536,7 @@ async def test_a_release_that_reached_NOTHING_is_not_reported_as_done(monkeypatc
     monkeypatch.setattr("openfactory.product.module.may_act", lambda *_a, **_k: True)
     monkeypatch.setattr("openfactory.product.release.release",
                         lambda *_a, **_k: (False, "o #41 não está mais esperando essa liberação"))
+    at_its_last_gate(monkeypatch)      # the card's door reads it first (#448 slice 6)
 
     outcome = await catalog._product_release(project="acme", issue="41", by=_actor(), yes=True)
 

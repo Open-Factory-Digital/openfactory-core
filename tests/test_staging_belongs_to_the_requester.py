@@ -43,12 +43,14 @@ from types import SimpleNamespace
 import pytest
 from temporalio.testing import ActivityEnvironment
 
+from openfactory.contracts import JobState
 from openfactory.memory import store as loop_store
 from openfactory.memory.ledger import ACCEPTANCE, CLOSED, DELIVERY, close_by_observation, open_loop
 from openfactory.memory.ledger import waiting as open_loops
 from openfactory.product import accept, agenda, events, followup, voice
 from openfactory.product.conversation import owner_of
 from openfactory.product.speaker import sealed
+from tests.the_card_at_its_last_gate import at_its_last_gate
 
 LANG, AGENT = "en", "Nina"
 #: The product's room — on the panel, the project's own name (`channel_destination`).
@@ -81,6 +83,9 @@ def project(monkeypatch, tmp_path):
     ProjectRegistry().add(Project(
         name=ROOM, repo_path=str(tmp_path), language=LANG,
         product=ProductConfig(docs_repo="acme/docs", admins=[ADMIN], agent_name=AGENT)))
+    # THE CARD'S DOOR READS THE CARD FIRST (#448 slice 6): this project names no tracker, and its
+    # cards are the parked jobs' — open at their production gate
+    at_its_last_gate(monkeypatch)
     return ProjectRegistry().get(ROOM)
 
 
@@ -110,8 +115,11 @@ def card_of_theirs(monkeypatch, tmp_path):
         project = ProjectRegistry().get(ROOM)
         LocalBoardSetup().create(project=project, owner="", title=ROOM, token=None)
         forget_board()
-        ref = build_tracker(project).create_ticket(title=TITLE, body="export the list",
-                                                   requester=ASKER)
+        tracker = build_tracker(project)
+        ref = tracker.create_ticket(title=TITLE, body="export the list", requester=ASKER)
+        # WHERE A JOB PARKED AT ITS LAST GATE LEAVES ITS CARD: the column a person's gate is in,
+        # which the card's door reads before a verdict there counts (#448 slice 6)
+        tracker.set_state(ref, JobState.AWAITING_PROD_APPROVAL)
         return project, ref.lstrip("#")
 
     yield make
@@ -661,13 +669,19 @@ def test_what_they_and_the_room_read_has_no_pipeline_vocabulary(language):
 
 
 def test_the_requesters_yes_is_a_known_event_told_by_the_settling_stage():
+    """Through the card's door since #448 slice 6: the settling stage hands `accepted` at the last
+    gate to it, and the door's port tells the room."""
     from pathlib import Path
 
+    root = Path(__file__).resolve().parent.parent
     assert events.TRIED in events.KINDS
-    assert events.PRODUCERS[events.TRIED] == "openfactory/product/engine.py::_the_requesters_yes"
-    source = (Path(__file__).resolve().parent.parent / "openfactory/product/engine.py").read_text()
+    assert events.PRODUCERS[events.TRIED] == "openfactory/lifecycle/ports.py::tell"
+    source = (root / "openfactory/product/engine.py").read_text()
     start = source.index("def _the_requesters_yes(")
-    assert "events.tried_and_right(" in source[start:source.index("\ndef ", start)]
+    assert "CardEvent.ACCEPTED" in source[start:source.index("\ndef ", start)]
+    ports = (root / "openfactory/lifecycle/ports.py").read_text()
+    start = ports.index("    def tell(")
+    assert "events.tried_it_right(" in ports[start:ports.index("\n    def ", start + 10)]
 
 
 def test_the_flag_is_the_operators_and_off_by_default():
@@ -746,12 +760,16 @@ def test_the_words_are_in_the_projects_language():
 
 
 def test_the_event_is_a_known_kind_told_by_the_hourly_round():
+    """Through the card's door since #448 slice 6: the round hands each asking to it as `staged`,
+    and the door's port tells the requester."""
     from pathlib import Path
 
+    root = Path(__file__).resolve().parent.parent
     assert events.STAGED in events.KINDS
-    assert events.PRODUCERS[events.STAGED] == (
-        "openfactory/runtime/temporal/activities.py::_offer_the_release_to_the_client")
-    source = (Path(__file__).resolve().parent.parent
-              / "openfactory/runtime/temporal/activities.py").read_text()
+    assert events.PRODUCERS[events.STAGED] == "openfactory/lifecycle/ports.py::tell"
+    source = (root / "openfactory/runtime/temporal/activities.py").read_text()
     start = source.index("async def _offer_the_release_to_the_client(")
-    assert "events.staged_for_you," in source[start:source.index("\ndef ", start)]
+    assert "CardEvent.STAGED" in source[start:source.index("\ndef ", start)]
+    ports = (root / "openfactory/lifecycle/ports.py").read_text()
+    start = ports.index("    def tell(")
+    assert "events.to_try_at_the_stage(" in ports[start:ports.index("\n    def ", start + 10)]

@@ -891,7 +891,11 @@ async def _approve_prod(*, project: str, issue: str, version: str, approver: str
     that is already parked waiting for the answer; `promote` RUNS the release itself, synchronously,
     outside Temporal entirely. Two mechanisms because the durable path exists specifically for the
     cloud worker, which has no synchronous request to answer from — the signal is how the answer
-    reaches a workflow that may have been waiting for hours."""
+    reaches a workflow that may have been waiting for hours.
+
+    THROUGH THE CARD'S DOOR (#448 slice 6, ADR-0055 amended 2026-10-05): `released`, whose act is
+    the signal — so a release the job did not take records nothing — and whose row closes every
+    copy of the question the product role asked about it as worked."""
     from openfactory.util.causes import first_message
 
     found, bad = _project(project)
@@ -904,15 +908,26 @@ async def _approve_prod(*, project: str, issue: str, version: str, approver: str
     client, bad = await _connected()
     if bad:
         return bad
+    from openfactory.lifecycle import CardEvent
     from openfactory.runtime.temporal import view as tv
 
-    try:
-        await tv.approve_job(client, found.name, issue, version=version, approver=approver,
-                             comment=comment)
-    except RuntimeError as exc:  # not parked at the approval gate
-        return refused(CONFLICT, first_message(exc))
-    return done(f"#{issue}: production release ({version}) approved by {approver}.",
-                project=found.name, issue=issue, version=version, approver=approver, signaled=True)
+    async def signal() -> Outcome | None:
+        try:
+            await tv.approve_job(client, found.name, issue, version=version, approver=approver,
+                                 comment=comment)
+        except RuntimeError as exc:  # not parked at the approval gate
+            return refused(CONFLICT, first_message(exc))
+        return None
+
+    moved = await _through_the_door(found, issue, CardEvent.RELEASED, by=by, why=comment,
+                                    facts={"gate": "last", "version": version,
+                                           "approver": approver, "note": ""}, act=signal)
+    bad = _refusal_of(moved)
+    if bad:
+        return bad
+    return _after_the_door(moved, done(
+        f"#{issue}: production release ({version}) approved by {approver}.",
+        project=found.name, issue=issue, version=version, approver=approver, signaled=True))
 
 
 # ── promote — run the release in this process ───────────────────────────────────────────────────
@@ -3710,18 +3725,30 @@ async def _product_release(*, project: str, issue: str, by: Actor,
     if not await asyncio.to_thread(lambda: may_act(proj, by.id, via=via)):
         return refused(DENIED, unauthorized_message(proj))
 
+    from openfactory.lifecycle import CardEvent
     from openfactory.product.release import release
 
-    ok, why = await asyncio.to_thread(
-        lambda: release(proj, ref, approver=by.id,
-                        comment=f"approved by {by} on the product surface"))
-    if not ok:
+    async def signal() -> Outcome | None:
+        ok, why = await asyncio.to_thread(
+            lambda: release(proj, ref, approver=by.id,
+                            comment=f"approved by {by} on the product surface"))
+        if ok:
+            return None
         # THE MODULE'S OWN SENTENCE, not a status phrase. It is written for a client and it is the
         # only thing that knows whether the window closed or somebody else already released it.
         return refused(CONFLICT, why or f"#{ref} could not be released, and nothing said why.",
                        project=proj.name, issue=ref)
-    return done(f"#{ref} is going to production now, approved by {by}. Who released it and when "
-                f"is on the record.", project=proj.name, issue=ref, approver=by.id)
+
+    # THROUGH THE CARD'S DOOR (#448 slice 6): `released`, whose act is the release, and whose row
+    # closes every copy of the question the product role asked about it as worked
+    moved = await _through_the_door(proj, ref, CardEvent.RELEASED, by=by,
+                                    facts={"gate": "last", "note": ""}, act=signal)
+    bad = _refusal_of(moved)
+    if bad:
+        return bad
+    return _after_the_door(moved, done(
+        f"#{ref} is going to production now, approved by {by}. Who released it and when is on "
+        f"the record.", project=proj.name, issue=ref, approver=by.id))
 
 
 async def _product_queue(*, project: str, by: Actor, limit: object = 5) -> Outcome:

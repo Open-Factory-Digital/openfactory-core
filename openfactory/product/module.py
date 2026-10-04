@@ -709,6 +709,21 @@ def _named_release(text: str, loops: list) -> object | None:
     return candidates[0] if len({_question_of(x) for x in candidates}) == 1 else None
 
 
+def _close_a_delivery_s_acceptance(project_name: str, ledger, loop, verdict: str) -> None:
+    """Close the acceptance of a DELIVERY — "did it work?" about what was announced — with the
+    person's verdict (`ProductModule.settle_acceptance`). Never a release's: its caller hands every
+    release question back open, and the verdict on one counts only through the card's door, once
+    the release gate knows who gave it (`engine._maybe_release`, #273, #448 slice 6). A function of
+    its own so that the door's guard reads every release question's writer as the door's
+    (`tests/test_the_card_lifecycle_has_one_door.py`)."""
+    from openfactory.memory import store as loop_store
+    from openfactory.memory.ledger import ACCEPTANCE, close_by_observation
+
+    rows = close_by_observation(ledger, {(ACCEPTANCE, loop.subject, loop.about): verdict})
+    if rows:
+        loop_store.write(project_name, rows)
+
+
 def _question_of(loop) -> object:
     """What `loop` asks, for telling questions apart: a RELEASE is one question wherever it was
     asked — the room's copy and the requester's (#448 slice 4) — and any other loop is its own.
@@ -2153,7 +2168,6 @@ class ProductModule:
         reads every acceptance, as before.
         """
         from openfactory.memory import store as loop_store
-        from openfactory.memory.ledger import ACCEPTANCE, close_by_observation
         from openfactory.product.followup import acceptance_verdict
 
         verdict = acceptance_verdict(text)
@@ -2205,10 +2219,7 @@ class ProductModule:
 
         if is_release(loop):
             return verdict, loop, ambiguous
-
-        rows = close_by_observation(ledger, {(ACCEPTANCE, loop.subject, loop.about): verdict})
-        if rows:
-            loop_store.write(self.project.name, rows)
+        _close_a_delivery_s_acceptance(self.project.name, ledger, loop, verdict)
         return verdict, loop, ambiguous
 
     def record_decisions(self, labels: list[str], *, channel: str = "", conversation: str = "",
@@ -4685,39 +4696,88 @@ class ProductModule:
         from openfactory.product.board import forget_board
 
         failed = correction_refused("failed", number=number, language=lang)
-        if text_changed or bar_changed:
-            try:
-                tracker.update_body(f"#{number}", after)
-            except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
-                return _could_not(failed, act=f"correct #{number}", cause=exc, ref=f"#{number}")
-            forget_board(getattr(self.project, "name", ""))   # what we cached is now wrong
+        landed = {"title_changed": title_changed, "residue": ""}
 
-        residue = ""
-        if title_changed:
-            try:
-                rename(f"#{number}", title)
-            except Exception as exc:  # noqa: BLE001 — the text may have landed; the title did not
-                if not (text_changed or bar_changed):
-                    return _could_not(failed, act=f"rename #{number}", cause=exc,
+        def write() -> WriteResult | None:
+            """The text, then the title — TWO WRITES, TWO OUTCOMES. The act of a transition, always
+            (ADR-0055 D9 amended 2026-10-05): before the factory takes the card up, of its own
+            `edited`; at a gate, of the `resumed` its caller is in (`send_back`), whose pass reads
+            the bar this writes."""
+            if text_changed or bar_changed:
+                try:
+                    tracker.update_body(f"#{number}", after)
+                except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
+                    return _could_not(failed, act=f"correct #{number}", cause=exc,
                                       ref=f"#{number}")
-                log.warning("OPENFACTORY_PRODUCT_CORRECT_UNRENAMED card=#%s (%s) — the text was "
-                            "corrected and the title was not", number, exc)
-                residue = correction_refused("unrenamed", number=number, language=lang)
-                title_changed = False
-            else:
-                forget_board(getattr(self.project, "name", ""))
+                forget_board(getattr(self.project, "name", ""))   # what we cached is now wrong
+            if landed["title_changed"]:
+                try:
+                    rename(f"#{number}", title)
+                except Exception as exc:  # noqa: BLE001 — the text may have landed; the title did not
+                    if not (text_changed or bar_changed):
+                        return _could_not(failed, act=f"rename #{number}", cause=exc,
+                                          ref=f"#{number}")
+                    log.warning("OPENFACTORY_PRODUCT_CORRECT_UNRENAMED card=#%s (%s) — the text "
+                                "was corrected and the title was not", number, exc)
+                    landed.update(title_changed=False, residue=correction_refused(
+                        "unrenamed", number=number, language=lang))
+                else:
+                    forget_board(getattr(self.project, "name", ""))
+            return None
 
-        try:
-            tracker.comment(f"#{number}", correction_note(
+        def note() -> str:
+            return correction_note(
                 kind=kind, actor=actor, old_text=old_text, old_title=card.title or "",
-                text_changed=text_changed, title_changed=title_changed,
+                text_changed=text_changed, title_changed=bool(landed["title_changed"]),
                 criteria_removed=removed is not None, language=lang, agent_name=self._name(),
-                bar_changed=bar_changed, old_bar=old_bar, with_a_pass=at_the_gate))
-        except Exception as exc:  # noqa: BLE001 — the correction landed; only its record is lost
-            log.warning("OPENFACTORY_PRODUCT_CORRECT_UNNOTED card=#%s (%s) — the card was "
-                        "corrected and does not say what it said before", number, exc)
-            residue = " ".join(filter(None, [
-                residue, correction_refused("unnoted", number=number, language=lang)]))
+                bar_changed=bar_changed, old_bar=old_bar, with_a_pass=at_the_gate)
+
+        unnoted = correction_refused("unnoted", number=number, language=lang)
+        if at_the_gate:
+            # THE BAR AT A GATE IS THE ENGINE'S HALF OF `resumed` (#448 slice 6): this runs inside
+            # that transition's act, which records the decision once the pass is sent too
+            refusal = write()
+            if refusal is not None:
+                return refusal
+            residue = str(landed["residue"])
+            try:
+                tracker.comment(f"#{number}", note())
+            except Exception as exc:  # noqa: BLE001 — the correction landed; only its record is lost
+                log.warning("OPENFACTORY_PRODUCT_CORRECT_UNNOTED card=#%s (%s) — the card was "
+                            "corrected and does not say what it said before", number, exc)
+                residue = " ".join(filter(None, [residue, unnoted]))
+        else:
+            # BEFORE THE FACTORY TAKES IT UP, A CORRECTION IS `edited` (ADR-0055, #448 slice 6):
+            # the text is the transition's act, and the note is its comment — the door's, the same
+            # on every row (D6)
+            from openfactory.lifecycle import CardEvent, transition
+
+            # THE NOTE IS THE WRITE'S TO NAME — whether the title landed is known only once the act
+            # ran, and the door reads its facts after its act (`catalog._card_edit`'s way)
+            facts = {}
+
+            def act() -> WriteResult | None:
+                refusal = write()
+                if refusal is None:
+                    facts["note"] = note()
+                return refusal
+
+            # THE GATE'S OWN READ OF THE BOARD, handed to the door (#162): the column this method
+            # just judged the card by is the one the door judges it by — never a second read
+            moved = transition(self.project, f"#{number}", CardEvent.EDITED, by=actor,
+                               facts=facts, act=act, tracker=tracker,
+                               board=self._board() if column else None,
+                               columns={number: column} if column else {})
+            if moved.answer is not None:
+                return moved.answer
+            if moved.refused:
+                return WriteResult(ok=False, ref=f"#{number}", detail=moved.refused)
+            residue = str(landed["residue"])
+            if moved.outcome("comment").startswith("failed"):
+                log.warning("OPENFACTORY_PRODUCT_CORRECT_UNNOTED card=#%s (%s) — the card was "
+                            "corrected and does not say what it said before", number,
+                            moved.outcome("comment"))
+                residue = " ".join(filter(None, [residue, unnoted]))
         if residue:
             return WriteResult(ok=True, ref=f"#{number}", detail=residue)
         # A MEASURE, NOT A RESIDUE (`confirm._unfinished`): how many criteria went with the old
@@ -4810,7 +4870,11 @@ class ProductModule:
             the pass       `adjust.send_back`, through the seam every answer crosses.
 
         A PASS THAT COULD NOT BE SENT AFTER THE BAR MOVED says both: the correction stands — it is
-        what the person agreed — and the pass is what to ask for again."""
+        what the person agreed — and the pass is what to ask for again.
+
+        THROUGH THE CARD'S DOOR (#448 slice 6, ADR-0055 amended 2026-10-05): `resumed`, whose act is
+        the bar and the pass — the engine's half of the person's decision, between the door's
+        `allowed` and its record. A pass the job did not take records nothing."""
         from openfactory.product import adjust
         from openfactory.product.voice import adjust_said
 
@@ -4831,28 +4895,46 @@ class ProductModule:
         if not gate.open:
             return WriteResult(ok=False, ref=f"#{number}", detail=adjust_said(
                 gate.why, ref=number, passes=gate.passes, language=lang))
-        corrected, residue = False, ""
-        if any(str(c).strip() for c in criteria or ()):
-            fixed = self.correct_card(number, actor=actor, criteria=list(criteria), gate=gate,
-                                      vouched=vouched)
-            if not fixed.ok:
-                return fixed
-            corrected, residue = not fixed.existed, str(fixed.detail or "")
-        # AT THE LAST GATE, THE GATE'S OWN ANSWER (#448 slice 4): a new change of the card
-        why = adjust.send_back(self.project, number, instruction=said, by=actor,
-                               merged=gate.merged)
-        if why:
+        landed = {"corrected": False, "residue": ""}
+
+        def the_bar_and_the_pass() -> WriteResult | None:
+            """The engine's half, between the door's `allowed` and its record: the bar, then the
+            pass. Its refusal is the person's answer, and nothing is recorded."""
+            if any(str(c).strip() for c in criteria or ()):
+                fixed = self.correct_card(number, actor=actor, criteria=list(criteria),
+                                          gate=gate, vouched=vouched)
+                if not fixed.ok:
+                    return fixed
+                landed.update(corrected=not fixed.existed, residue=str(fixed.detail or ""))
+            # AT THE LAST GATE, THE GATE'S OWN ANSWER (#448 slice 4): a new change of the card
+            why = adjust.send_back(self.project, number, instruction=said, by=actor,
+                                   merged=gate.merged)
+            if not why:
+                return None
             detail = adjust_said(why, ref=number, passes=gate.passes, language=lang)
-            if corrected:
+            if landed["corrected"]:
                 detail += " " + adjust_said("corrected_anyway", ref=number, language=lang)
             return WriteResult(ok=False, ref=f"#{number}", detail=detail)
+
+        from openfactory.lifecycle import CardEvent, transition
+
+        pass_number = (gate.passes - gate.left + 1
+                       if gate.passes is not None and gate.left is not None else None)
+        moved = transition(self.project, f"#{number}", CardEvent.RESUMED, by=actor,
+                           why=" ".join(said.split())[:280],
+                           facts={"gate": "last" if gate.merged else "merge",
+                                  "pr_url": gate.pr_url, "pass_number": pass_number or 0,
+                                  "note": ""},
+                           act=the_bar_and_the_pass, tracker=self._tracker())
+        if moved.answer is not None:
+            return moved.answer
+        if moved.refused:
+            return WriteResult(ok=False, ref=f"#{number}", detail=moved.refused)
         # THE FACTS, AND ON SUCCESS `detail` IS ONLY WHAT DID NOT LAND (`confirm._unfinished`): the
         # headline is composed by whoever answers the person, from these (`adjust.headline`)
-        return adjust.Sent(ok=True, ref=f"#{number}", detail=residue, corrected=corrected,
-                           passes=gate.passes, merged=gate.merged,
-                           pass_number=(gate.passes - gate.left + 1
-                                        if gate.passes is not None and gate.left is not None
-                                        else None))
+        return adjust.Sent(ok=True, ref=f"#{number}", detail=str(landed["residue"]),
+                           corrected=bool(landed["corrected"]), passes=gate.passes,
+                           merged=gate.merged, pass_number=pass_number)
 
     def adjust_view(self, number: str, *, actor: str, vouched: bool = False) -> dict:
         """What the card's "send back for another pass" control needs on the product view (#448):
@@ -4941,8 +5023,13 @@ class ProductModule:
                          is a change the yes never saw. A pull request that moved past it refuses;
             the record   one `card_accepted` row (`accept.record`) — refused by name when it did
                          not land, and nothing after it runs;
-            the merge    only on `_the_yes_merges`, through the seam every answer crosses;
-            the note     on the card, saying who, on which head, and whether it is going in.
+            the note     on the card, saying who, on which head, and whether it is going in;
+            the merge    only on `_the_yes_merges`, through the seam every answer crosses.
+
+        THROUGH THE CARD'S DOOR (#448 slice 6, ADR-0055 amended 2026-10-05): `accepted`, whose act
+        is the record — the engine's half of the decision, written between the door's `allowed`
+        and its own record — and whose comment is the note. The merge the yes gives follows the
+        transition, so the card's record holds the acceptance before the job can merge on it.
 
         A note that failed is reported on a SUCCESS (`close_card`'s rule), never as a failure of
         the acceptance that landed."""
@@ -4969,22 +5056,36 @@ class ProductModule:
             return refused(tried.why)
         if head and head != tried.head:
             return refused(accept.MOVED)        # the preview was rebuilt since it was staged
-        if not accept.record(getattr(self.project, "name", "") or "", accept.Acceptance(
-                card=number, pr_url=gate.pr_url, head=tried.head, by=actor, at=now_iso(),
-                where=where)):
-            return refused(accept.UNRECORDED)
+        from openfactory.lifecycle import CardEvent, transition
+
+        merges = self._the_yes_merges(gate, tried)
+
+        def write() -> WriteResult | None:
+            """The acceptance, recorded between the door's `allowed` and its record."""
+            if not accept.record(getattr(self.project, "name", "") or "", accept.Acceptance(
+                    card=number, pr_url=gate.pr_url, head=tried.head, by=actor, at=now_iso(),
+                    where=where)):
+                return refused(accept.UNRECORDED)
+            return None
+
+        moved = transition(self.project, f"#{number}", CardEvent.ACCEPTED, by=actor,
+                           facts={"gate": "merge", "pr_url": gate.pr_url, "head": tried.head,
+                                  "note": change_accepted_note(
+                                      by=actor, head=tried.head, pr_url=gate.pr_url,
+                                      merging=merges, language=lang, agent_name=self._name())},
+                           act=write, tracker=self._tracker())
+        if moved.answer is not None:
+            return moved.answer
+        if moved.refused:
+            return WriteResult(ok=False, ref=f"#{number}", detail=moved.refused)
         merging, unmerged = False, ""
-        if self._the_yes_merges(gate, tried):
+        if merges:
             unmerged = accept.merge(self.project, number, by=actor)
             merging = not unmerged
         residue = ""
-        try:
-            self._tracker().comment(f"#{number}", change_accepted_note(
-                by=actor, head=tried.head, pr_url=gate.pr_url, merging=merging, language=lang,
-                agent_name=self._name()))
-        except Exception as exc:  # noqa: BLE001 — the acceptance landed; only its note is lost
+        if moved.outcome("comment").startswith("failed"):
             log.warning("OPENFACTORY_PRODUCT_ACCEPT_UNNOTED card=#%s (%s) — the acceptance was "
-                        "recorded and the card does not say so", number, exc)
+                        "recorded and the card does not say so", number, moved.outcome("comment"))
             residue = accept_change_said("unnoted", ref=number, language=lang)
         log.info("OPENFACTORY_PRODUCT_ACCEPTED card=#%s by=%s head=%s merging=%s unmerged=%s",
                  number, actor, tried.head[:12], merging, unmerged)

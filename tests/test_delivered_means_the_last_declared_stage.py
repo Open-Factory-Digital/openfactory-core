@@ -509,7 +509,10 @@ async def test_a_deploy_that_fails_or_is_never_seen_delivers_nothing(
     assert held[2].startswith(said) and "nothing is delivered" in held[2], held[2]
     # held through the card's door — its `parked`, as the box's own park is (#414) — and said there
     assert held[2] in [c.body for c in tracker.comments(f"#{ref}")]
-    assert _journalled() == [JobState.MERGED.value, JobState.ON_HOLD.value]
+    # THE JOB'S END AND THE WATCH'S ARE TWO WORKFLOWS: since its merge telling is a transition of
+    # the card's door (#448 slice 6), the job's tail is a door long, and a deploy red at the watch's
+    # first look may be journalled first — what each journal says is the claim, not their order
+    assert sorted(_journalled()) == sorted([JobState.MERGED.value, JobState.ON_HOLD.value])
     assert _told() == [(KEY, _went_in(ref, stages=True))], "something was announced as delivered"
     assert _column(board, ref) == "Needs Action"
     assert ("notified", status) in _LOG, "the watch stopped saying it where it always did"

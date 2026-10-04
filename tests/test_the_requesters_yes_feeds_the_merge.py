@@ -972,8 +972,13 @@ def test_a_card_nobody_asked_for_in_a_conversation_is_told_to_nobody(product, st
 
 
 async def test_the_activity_is_registered_and_reaches_the_event(monkeypatch, tmp_path):
+    """THROUGH THE CARD'S DOOR since #448 slice 6: the activity hands the job's `merged` to it,
+    with whether stages follow, keyed by the pull request — and the door's port tells the requester
+    (`events.went_in`, `lifecycle/ports.py::tell`)."""
     from temporalio.testing import ActivityEnvironment
 
+    from openfactory.lifecycle import CardEvent, Transition
+    from openfactory.lifecycle.handed_back import merged_event
     from openfactory.runtime.temporal import activities as acts
     from openfactory.runtime.temporal.worker import WORKER_ACTIVITIES
 
@@ -981,14 +986,20 @@ async def test_the_activity_is_registered_and_reaches_the_event(monkeypatch, tmp
     heard: list = []
     monkeypatch.setattr(acts.ProjectRegistry, "get",
                         lambda self, name: SimpleNamespace(name=name))
-    monkeypatch.setattr(events, "merged_for_you",
-                        lambda project, **kw: heard.append((project.name, kw)) or True)
+    monkeypatch.setattr(acts, "_tracker_for", lambda project: None)
+
+    def _door(project, card, event, *, facts, event_id, **_kw):
+        heard.append((project.name, card, event, facts, event_id))
+        return Transition(card=card, event=event, effects=(("tell:merged_for_you", "told"),))
+
+    monkeypatch.setattr("openfactory.lifecycle.transition", _door)
 
     assert await ActivityEnvironment().run(
         acts.tell_the_requester_it_merged,
         MergedInput(project="acme", issue="500", pr_url=PR, stages_follow=True))
-    assert heard == [("acme", {"card": "500", "pr_url": PR, "stages_follow": True})]
-    assert events.PRODUCERS[events.MERGED].endswith("::tell_the_requester_it_merged")
+    assert heard == [("acme", "500", CardEvent.MERGED,
+                      {"pr_url": PR, "stages_follow": True, "note": ""}, merged_event(PR))]
+    assert events.PRODUCERS[events.MERGED] == "openfactory/lifecycle/ports.py::tell"
 
 
 # ── 8. in the client's words ────────────────────────────────────────────────────────────────────

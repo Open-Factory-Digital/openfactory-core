@@ -717,7 +717,7 @@ def settle(project, *, text: str, user: str, thread: str, module, channel: str =
             # not merely record an opinion: it puts software in front of the client's own users.
             # So it leaves this shared path immediately and is handled where its extra rules live.
             released = _maybe_release(project, module, loop, verdict, user, agent, lang,
-                                      ambiguous=ambiguous, via=via)
+                                      ambiguous=ambiguous, via=via, said=text)
             if released is not None:
                 from openfactory.product.followup import is_release
 
@@ -2239,53 +2239,32 @@ def _waiting_release_refs(project) -> list[str]:
         return []
 
 
-def _close_release(project, loop, verdict: str, *, only_theirs: bool = False) -> None:
-    """The release loop closed with a verdict the gate has let count (#273) — and EVERY open copy
-    of the same release with it (#448 slice 4). Never raises.
+def _at_the_last_gate(project, loop, event, *, user: str, why: str = "",
+                      facts: dict | None = None, act=None):
+    """`event` through the card's door for the release `loop` asks about (#448 slice 6) — the
+    verdict that counts on a change parked at its last gate. What follows is the door's table: the
+    release question closed, every copy of it — the room's and the requester's, one question asked
+    in two places and answered once — with the verdict (`lifecycle/loops.py::release_answered`).
+    It closed beside the door until slice 6 (`_close_release`, #273, #448 slice 4).
 
-    `settle_acceptance` hands a release loop back OPEN: it reads what was said and cannot see who
-    said it. `_maybe_release` can, and this is the close it makes once the verdict counts. The
-    ledger is re-read rather than taken from the caller, because another turn may have closed the
-    loop in between, and `close_by_observation` then appends nothing: a settled outcome is never
-    rewritten. Best-effort and loud, like every ledger write (`memory/store.py`): the verdict was
-    heard, and recording it must never cost the reply.
+    The card's door reads the card where it is and refuses one the factory no longer holds; a
+    refusal is logged, never raised: the reply is already earned. `act` is the engine's half — the
+    sealed approval a release delivers — and its refusal is returned as the transition's answer."""
+    from openfactory.lifecycle import transition
+    from openfactory.product.followup import is_release
 
-    ONE RELEASE, ASKED IN TWO PLACES, IS ANSWERED ONCE. The room is asked, and the card's
-    requester is asked in their own conversation (`activities._offer_the_release_to_the_client`):
-    two loops, one question. Closing only the copy the answer landed on left the other one open —
-    an admin's release from the room kept chasing the requester about a change already in front
-    of everyone, and the requester's "não funcionou" left the room still being asked to release
-    it. Every open copy of the release closes in ONE write, with the one verdict that counted.
-
-    `only_theirs` (#448 slice 4): the copies asked of the card's requester in their conversation,
-    and never the room's — their "it worked" is recorded, and the room's question stays open for
-    the product admin who puts it in front of everyone (`_the_requesters_yes`)."""
-    name = getattr(project, "name", "") or ""
-    try:
-        from openfactory.memory import store as loop_store
-        from openfactory.memory.ledger import ACCEPTANCE, close_by_observation, waiting
-        from openfactory.product.followup import OWNER, is_release
-
-        ledger = loop_store.read(name)
-        issue = is_release(loop)
-        observed = {(ACCEPTANCE, x.subject, x.about): verdict
-                    for x in waiting(ledger, owner=OWNER)
-                    if issue and x.kind == ACCEPTANCE and is_release(x) == issue}
-        observed[(ACCEPTANCE, loop.subject, loop.about)] = verdict
-        if only_theirs:
-            asked_of_them = {(ACCEPTANCE, x.subject, x.about) for x in [*ledger, loop]
-                             if (x.context or {}).get("conversation")}
-            observed = {key: said for key, said in observed.items() if key in asked_of_them}
-        rows = close_by_observation(ledger, observed)
-        if rows:
-            loop_store.write(name, rows)
-    except Exception:  # noqa: BLE001 — the reply is already earned; the record is best-effort
-        log.warning("[%s] the verdict %r on %s was heard and could not be recorded — the loop "
-                    "stays open", name, verdict, getattr(loop, "subject", "?"), exc_info=True)
+    context = loop.context or {}
+    known = {"gate": "last", "run": str(context.get("run") or loop.ts or ""),
+             "where": str(context.get("where") or ""), **(facts or {})}
+    moved = transition(project, is_release(loop), event, by=user, why=why, facts=known, act=act)
+    if moved.refused:
+        log.info("[%s] the card's door did not take %s for %s (%s)", getattr(project, "name", "?"),
+                 event, ref_label(is_release(loop)), moved.refused[:160])
+    return moved
 
 
 def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, lang,
-                   *, ambiguous: bool, via: str = "api") -> str | None:
+                   *, ambiguous: bool, via: str = "api", said: str = "") -> str | None:
     """The client's answer to "is it ready to go live?" — or None when this was an ordinary one.
 
     None rather than a boolean, so the caller's normal path is untouched by a branch that does not
@@ -2326,6 +2305,12 @@ def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, l
     nothing and still took the question away from the admin who could have answered it — and the
     ledger said the release was accepted. It hands a release loop back open now, and this is the
     one place that closes it: on a "não funcionou", and on a "funcionou" after `may_act` passes.
+
+    THROUGH THE CARD'S DOOR (#448 slice 6, ADR-0055 amended 2026-10-05): a "not yet" that counts is
+    `stage_rejected`, the release is `released` — its act the sealed approval, so a release the job
+    did not take closes nothing and records nothing — and the requester's yes their word does not
+    release is `accepted` at the last gate. Each closes the question through the door's table.
+    `said` is what the person wrote: a "not yet"'s words travel on its transition.
     """
     # IMPORTED AT THE TOP OF THIS FUNCTION, never inside the branch that uses them. `may_act` was
     # imported inside one branch of `_run_intent` earlier today; the client read "algo quebrou do
@@ -2348,7 +2333,11 @@ def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, l
             return head + engine_said("not_yet_ambiguous", language=lang, which=which)
         # A "NÃO FUNCIONOU" CLOSES THE LOOP from whoever says it, as it did when the module closed
         # it: it spends nothing, and a release that did not work is not waiting on anybody's yes.
-        _close_release(project, loop, verdict)
+        # Through the card's door: `stage_rejected`, the words on its record (#448 slice 6)
+        from openfactory.lifecycle import CardEvent
+
+        _at_the_last_gate(project, loop, CardEvent.STAGE_REJECTED, user=user,
+                          why=" ".join(str(said or "").split())[:280])
         return head + engine_said("release_declined", language=lang)
     if ambiguous:
         # NOTHING was released AND nothing was closed (module.settle_acceptance hands every release
@@ -2372,20 +2361,34 @@ def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, l
         return unauthorized_message(project)
     # WHOSE YES IT WAS, IN THE RECORD THE RELEASE LEAVES (#448 slice 4): the requester's own, where
     # the project lets it count; an admin's after the requester had said it is right; an admin's.
-    said = ("released_by_requester" if not admin
-            else "released_after_the_requester" if _the_requester_said_right(project, loop)
-            else "released_by_client")
-    # CLOSED NOW, by the verdict of somebody who may act (#273) — and before the release, not
-    # after it: the loop records what they said, and `release()` says separately, and honestly,
-    # whether the workflow was still there to take it.
-    _close_release(project, loop, verdict)
+    whose = ("released_by_requester" if not admin
+             else "released_after_the_requester" if _the_requester_said_right(project, loop)
+             else "released_by_client")
+    # THROUGH THE CARD'S DOOR (#448 slice 6): `released`, whose act is the release — `release()`
+    # re-asks the workflow whether it is still parked and says, honestly, when it was not. Once the
+    # job took it, every copy of the question closes as worked, by the verdict of somebody who may
+    # act (#273).
+    from openfactory.lifecycle import CardEvent
 
-    from openfactory.product.release import release
+    def _release() -> str | None:
+        from openfactory.product.release import release
 
-    ok, why = release(project, issue, approver=user,
-                      comment=engine_said(said, language=lang))
-    if not ok:
-        return f"{head}{why}"
+        ok, why = release(project, issue, approver=user,
+                          comment=engine_said(whose, language=lang))
+        return None if ok else why
+
+    moved = _at_the_last_gate(project, loop, CardEvent.RELEASED, user=user,
+                              facts={"note": ""}, act=_release)
+    if moved.answer is not None:
+        # THE JOB WAS NO LONGER THERE TO TAKE IT, AND THE VERDICT STILL COUNTS (#273): the question
+        # closes as worked whatever the release answered — left open, it would be chased about a
+        # release nobody can make any more. Nothing was released, so the record says what was
+        # said, `accepted` at the last gate, with why nothing went out — never `released`
+        _at_the_last_gate(project, loop, CardEvent.ACCEPTED, user=user,
+                          facts={"unreleased": str(moved.answer)[:280], "note": ""})
+        return f"{head}{moved.answer}"
+    if moved.refused:
+        return f"{head}{moved.refused}"
     return head + engine_said("releasing", language=lang)
 
 
@@ -2410,14 +2413,15 @@ def _the_requesters_yes(project, loop, issue: str, user: str, *, head: str, lang
     room's stays open for a product admin, the room is told once (`events.tried_and_right`, per
     card and run), and they hear that it is recorded and who puts it in front of everyone. Before
     this they read "you cannot approve this" about their own change. Never raises."""
-    from openfactory.product import events
+    from openfactory.lifecycle import CardEvent
     from openfactory.product.voice import requester_said_right
 
-    _close_release(project, loop, "worked", only_theirs=True)
-    context = loop.context or {}
-    told = events.tried_and_right(project, card=issue,
-                                  run=str(context.get("run") or loop.ts or ""),
-                                  where=str(context.get("where") or ""), who=_name_of(user))
+    # THROUGH THE CARD'S DOOR (#448 slice 6): `accepted` at the last gate — their copy closed as
+    # worked and the room told, by the door's table, once per card and run
+    moved = _at_the_last_gate(project, loop, CardEvent.ACCEPTED, user=user,
+                              facts={"who": _name_of(user), "note": ""})
+    told = any(name == "tell:tried" and outcome in ("told", "told already")
+               for name, outcome in moved.effects)
     return head + requester_said_right(ref=issue, told=told, language=lang)
 
 

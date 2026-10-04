@@ -108,10 +108,11 @@ MUTATIONS = [
     ("an instruction longer than the pass takes is sent, to be cut", MODULE,
      "        if len(said) > adjust.INSTRUCTION_LIMIT:\n",
      "        if False:\n"),
+    # re-pinned 2026-10-05: #448 slice 6 — the bar and the pass are `resumed`'s act now
     ("the pass is sent before the bar moves", MODULE,
-     '        corrected, residue = False, ""\n',
+     '        landed = {"corrected": False, "residue": ""}\n',
      '        adjust.send_back(self.project, number, instruction=said, by=actor)\n'
-     '        corrected, residue = False, ""\n'),
+     '        landed = {"corrected": False, "residue": ""}\n'),
     # RE-PINNED 2026-10-02 (#448 slice 3): `accept_view` asks the same question in the same
     # words, so the anchor carries the next two lines, which are `adjust_view`'s alone
     ("the card view offers the pass to anybody who opens it", MODULE,

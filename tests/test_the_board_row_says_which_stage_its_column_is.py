@@ -557,6 +557,11 @@ def test_the_product_roles_correction_gate_asks_the_same_row(monkeypatch):
         def comment(self, ref: str, body: str) -> None:
             self.said.append(body)
 
+        def get_ticket(self, ref: str):
+            """What the card's door reads first: a correction before the factory takes the card
+            up is `edited`, through it (#448 slice 6)."""
+            return card
+
     card = Ticket(number=701, title="Relatório", column=TODO, state="open",
                   body=ticket_body(described="um relatório mensal", reported_by="<@U0PO>",
                                    source="chat"))

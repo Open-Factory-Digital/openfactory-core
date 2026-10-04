@@ -41,17 +41,20 @@ line on that conversation — behind the turn in progress, never inside one.
                         ended the work on a card (discarded, skipped, stopped: it is back in the
                         backlog), took it off the table (closed, withdrawn, removed: it will not
                         be built), or put it back (reopened); once per transition (#384, #412)
-    merged              `activities.tell_the_requester_it_merged` — the job, the moment its pull
-                        request merged, whoever merged it (#448 slice 3); not where the delivery
-                        says it at that same moment
-    staged              the tech-lead's hourly round (`activities._offer_the_release_to_the_client`)
-                        — a job parked at the last gate before the product's users, ready for its
-                        requester to try (#448 slice 4); once per card and run of its job, and
-                        only after the room's own question landed
-    tried               the product role's settling stage (`engine._the_requesters_yes`) — the
-                        card's requester tried the change at the last gate and said it is right,
-                        and the project does not let their word release it, so the ROOM hears
-                        it, for a product admin (#448 slice 4); once per card and run
+    merged              the card's door (`lifecycle/ports.py::tell`, #448 slice 6), from the
+                        job's `merged` as `activities.tell_the_requester_it_merged` hands it in —
+                        the moment its pull request merged, whoever merged it (#448 slice 3); not
+                        where the delivery says it at that same moment
+    staged              the card's door, from the round's `staged`
+                        (`activities._offer_the_release_to_the_client`) — a job parked at the last
+                        gate before the product's users, ready for its requester to try (#448
+                        slice 4); once per card and run of its job, and only after the room's own
+                        question landed
+    tried               the card's door, from `accepted` at the last gate
+                        (`engine._the_requesters_yes`) — the card's requester tried the change
+                        there and said it is right, and the project does not let their word
+                        release it, so the ROOM hears it, for a product admin (#448 slice 4); once
+                        per card and run
 
 WHERE AN EVENT IS SAID (`conversation_for`). About a card: to the conversation its REQUESTER asked
 in — recorded on the card's delivery loop when the work was filed, from what they had staged
@@ -116,9 +119,11 @@ PRODUCERS = {
     DOCUMENT_INGESTED: "openfactory/product/documents/ingest.py::announce",
     CARD_MOVED: "openfactory/lifecycle/ports.py::tell",
     READY_FOR_YOU: "openfactory/runtime/temporal/activities.py::tell_the_requester",
-    MERGED: "openfactory/runtime/temporal/activities.py::tell_the_requester_it_merged",
-    STAGED: "openfactory/runtime/temporal/activities.py::_offer_the_release_to_the_client",
-    TRIED: "openfactory/product/engine.py::_the_requesters_yes",
+    # #448 slice 6: the requester's loop past the pull request is told by the card's door, from
+    # the job's `merged`, the round's `staged` and `accepted` at the last gate
+    MERGED: "openfactory/lifecycle/ports.py::tell",
+    STAGED: "openfactory/lifecycle/ports.py::tell",
+    TRIED: "openfactory/lifecycle/ports.py::tell",
 }
 
 #: Whose loops these are.

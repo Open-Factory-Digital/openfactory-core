@@ -11,10 +11,24 @@ anywhere else:
     a promise about a card  `open_loop` / `close_by_observation` in a function that names the
                             loops keyed to a card (DELIVERY, CARD_QUESTION)
     a card's notice         `events.card_finished`, `deliver`, `ready_for_you`,
-                            `ready_to_try`, `ready_at_the_gate`, `card_moved`
+                            `ready_to_try`, `ready_at_the_gate`, `card_moved` — and the requester's
+                            loop past the pull request (#448 slice 6): `merged_for_you`,
+                            `staged_for_you`, `tried_and_right` and their door-side forms
+                            (`went_in`, `to_try_at_the_stage`, `tried_it_right`), on `events` or
+                            imported from it by name
     the door's promise half any call into `lifecycle/loops.py` — `announce`, `deliver`, `owe`,
                             `ask`, … — whose callers are the door's effects (#414): a delivery
                             announced from there by anybody else is a second announcer
+    a card's text beside    `update_body` / `update_title` in a function that goes through the
+    its door                door (`transition`, `_through_the_door`), anywhere but inside a
+                            function that is a transition's `act=` (#448 slice 6): the bar moved
+                            at a gate is the engine's half of the decision, never a write beside it
+    a release question      `open_loop` / `close_by_observation` in a function that names a release
+                            (`is_release`, `release_of`), and any `followup.release_of` — asked
+                            and answered by the round's `staged` and the verdicts' transitions
+                            (#448 slice 6)
+    the requester's yes     `accept.record`, anywhere but inside a transition's `act=` (#448
+                            slice 6): the acceptance is the engine's half of `accepted`
 
 `events.ci_went_red`, `preview_up` and `pull_requests_at_the_gate` are not card notices in this
 sense: a red check, a live preview and a reminder of a waiting gate say how far a job is, and no
@@ -30,6 +44,8 @@ THE WRITERS NOT MOVED YET are in `card_writers_outside_the_door.py`, each with w
 that moves it, under a ceiling and a baseline held HERE — so a new exemption is a visible change of
 this file, never a quiet line in that one. THERE ARE NONE since #414 (ADR-0055 D9): a requirement's
 delivery, the last, goes through each of its cards' doors as `promised`, and the ceiling is zero.
+#448 slice 6 widened the walk to the requester's loop past the pull request and moved every writer
+it found through the door in the same change, so the ceiling stayed where it was.
 """
 
 from __future__ import annotations
@@ -46,7 +62,22 @@ WRITES = frozenset({"set_state", "set_column", "set_status", "close_ticket", "re
 LOOP_WRITES = frozenset({"open_loop", "close_by_observation"})
 CARD_LOOPS = frozenset({"DELIVERY", "CARD_QUESTION"})
 NOTICES = frozenset({"card_finished", "deliver", "ready_for_you", "ready_to_try",
-                     "ready_at_the_gate", "card_moved"})
+                     "ready_at_the_gate", "card_moved",
+                     # #448 slice 6: the requester's loop past the pull request
+                     "merged_for_you", "staged_for_you", "tried_and_right",
+                     "went_in", "to_try_at_the_stage", "tried_it_right"})
+#: Where the notices live, the module a file reaches them by — or imports them from by name.
+EVENTS = "openfactory.product.events"
+#: A card's TEXT (#448 slice 6), admitted only inside a transition's `act=` in a function that
+#: goes through the door — the door's own names, as the files call it.
+TEXT_WRITES = frozenset({"update_body", "update_title"})
+THE_DOOR = frozenset({"transition", "_through_the_door"})
+#: A release question (#448 slice 6): the names that make a function one about a release, and the
+#: one constructor of its loop, whose every caller asks or answers a release beside the door.
+RELEASES = frozenset({"is_release", "release_of"})
+FOLLOWUP = "openfactory.product.followup"
+#: The requester's yes (#448 slice 6): its record, admitted only inside a transition's `act=`.
+ACCEPT = "openfactory.product.accept"
 
 #: Where a write is not a caller's, BY RULE — each a directory or one file, with why.
 NOT_CALLERS = {
@@ -133,17 +164,37 @@ def card_writes(root: pathlib.Path, *, rel_to: pathlib.Path) -> tuple[set[tuple]
                      if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]
         # the names this file reaches the door's promise half by: the module, or what it exports
         promise_module, promise_functions = _the_door_s_loops(tree)
+        # and the notices, a release's loop and the requester's yes, likewise (#448 slice 6)
+        events_module, events_functions = _bound_to(tree, EVENTS, package="openfactory.product")
+        events_module |= {"events"}
+        followup_module, followup_functions = _bound_to(tree, FOLLOWUP,
+                                                        package="openfactory.product")
+        accept_module, accept_functions = _bound_to(tree, ACCEPT, package="openfactory.product")
+        acts, in_lambda_acts = _acts(tree)
 
         def where(line: int, functions=functions):
             inside = [f for f in functions if f.lineno <= line <= (f.end_lineno or f.lineno)]
             return max(inside, key=lambda f: f.lineno) if inside else None
 
+        def around(line: int, functions=functions):
+            return [f for f in functions if f.lineno <= line <= (f.end_lineno or f.lineno)]
+
         for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute | ast.Name) and _a_notice_handed_on(
+                    node, events_module, events_functions):
+                # A NOTICE HANDED ON, NOT CALLED (#448 slice 6): `asyncio.to_thread(events.
+                # staged_for_you, …)` tells as surely as a call, and the round told that way
+                fn = where(node.lineno)
+                found.add((rel, fn.name if fn is not None else "<module>",
+                           node.attr if isinstance(node, ast.Attribute)
+                           else events_functions[node.id]))
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
             name = (func.attr if isinstance(func, ast.Attribute)
                     else func.id if isinstance(func, ast.Name) else "")
+            on = func.value.id if (isinstance(func, ast.Attribute)
+                                   and isinstance(func.value, ast.Name)) else ""
             fn = where(node.lineno)
             here = fn.name if fn is not None else "<module>"
             if name in WRITES:
@@ -151,17 +202,78 @@ def card_writes(root: pathlib.Path, *, rel_to: pathlib.Path) -> tuple[set[tuple]
                         and _a_progress_mark(fn, node)):
                     continue      # the box's progress mark, by rule (D7)
                 found.add((rel, here, name))
-            elif name in LOOP_WRITES and fn is not None and _named(fn) & CARD_LOOPS:
+            elif name in TEXT_WRITES:
+                enclosing = around(node.lineno)
+                beside_the_door = any(_named(f) & THE_DOOR for f in enclosing)
+                in_an_act = id(node) in in_lambda_acts or any(f.name in acts for f in enclosing)
+                if beside_the_door and not in_an_act:
+                    found.add((rel, here, name))
+            elif name in LOOP_WRITES and fn is not None and _named(fn) & (CARD_LOOPS | RELEASES):
                 found.add((rel, here, name))
-            elif (name in NOTICES and isinstance(func, ast.Attribute)
-                  and isinstance(func.value, ast.Name) and func.value.id == "events"):
-                found.add((rel, here, name))
+            elif (name in NOTICES and on in events_module) or (
+                    isinstance(func, ast.Name) and events_functions.get(name) in NOTICES):
+                found.add((rel, here, events_functions.get(name) or name))
+            elif (name == "release_of" and on in followup_module) or (
+                    isinstance(func, ast.Name) and followup_functions.get(name) == "release_of"):
+                found.add((rel, here, "followup.release_of"))
+            elif (name == "record" and on in accept_module) or (
+                    isinstance(func, ast.Name) and accept_functions.get(name) == "record"):
+                if not (id(node) in in_lambda_acts
+                        or any(f.name in acts for f in around(node.lineno))):
+                    found.add((rel, here, "accept.record"))
             elif (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
                   and func.value.id in promise_module):
                 found.add((rel, here, f"loops.{name}"))
             elif isinstance(func, ast.Name) and name in promise_functions:
                 found.add((rel, here, f"loops.{name}"))
     return found, read
+
+
+def _a_notice_handed_on(node: ast.AST, events_module: set[str],
+                        events_functions: dict[str, str]) -> bool:
+    """Whether `node` names a card's notice as a VALUE — `events.staged_for_you`, or a notice
+    imported by name — in a load that is not itself the call (`card_writes` reads those)."""
+    if not isinstance(getattr(node, "ctx", None), ast.Load):
+        return False
+    if isinstance(node, ast.Attribute):
+        return (node.attr in NOTICES and isinstance(node.value, ast.Name)
+                and node.value.id in events_module)
+    return events_functions.get(node.id) in NOTICES
+
+
+def _bound_to(tree: ast.AST, module: str, *, package: str) -> tuple[set[str], dict[str, str]]:
+    """`(module aliases, {bound name: its name in the module})` a file binds to `module` — `from
+    <package> import x`, `import <module> as y`, or `from <module> import f as g` — at any depth:
+    the house imports inside functions."""
+    leaf = module.rsplit(".", 1)[-1]
+    aliases: set[str] = set()
+    functions: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == package:
+            aliases |= {a.asname or a.name for a in node.names if a.name == leaf}
+        elif isinstance(node, ast.ImportFrom) and node.module == module:
+            functions.update({a.asname or a.name: a.name for a in node.names})
+        elif isinstance(node, ast.Import):
+            aliases |= {a.asname for a in node.names if a.name == module and a.asname}
+    return aliases, functions
+
+
+def _acts(tree: ast.AST) -> tuple[set[str], set[int]]:
+    """What a file hands a transition as its `act=`: the functions, by name, and every call that
+    lies in a `lambda` handed so (by `id`) — read once per file."""
+    named: set[str] = set()
+    in_lambdas: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for kw in node.keywords:
+            if kw.arg != "act":
+                continue
+            if isinstance(kw.value, ast.Name):
+                named.add(kw.value.id)
+            elif isinstance(kw.value, ast.Lambda):
+                in_lambdas |= {id(sub) for sub in ast.walk(kw.value) if isinstance(sub, ast.Call)}
+    return named, in_lambdas
 
 
 def _the_door_s_loops(tree: ast.AST) -> tuple[set[str], set[str]]:
@@ -336,3 +448,117 @@ def test_a_progress_mark_from_the_box_is_admitted_and_an_outcome_from_it_fails(t
                             "        self.tracker.set_state(ticket.id, state)\n",
                   function="_finish") == {("openfactory/orchestrator/machine.py", "_finish",
                                            "set_state")}
+
+
+# ── the requester's loop past the pull request (#448 slice 6, ADR-0055 D9 amended 2026-10-05) ──
+
+def _planted(tmp_path, source: str, *, where: str = "openfactory/product/rogue.py") -> set:
+    rogue = tmp_path / where
+    rogue.parent.mkdir(parents=True, exist_ok=True)
+    rogue.write_text(source, encoding="utf-8")
+    found, _ = card_writes(tmp_path / "openfactory", rel_to=tmp_path)
+    return found
+
+
+def test_the_walk_sees_the_loops_notices_on_events_and_imported_by_name(tmp_path):
+    """The requester hears the change went in, is theirs to try at a stage, and — the room — that
+    they say it is right, only from the card's door (`lifecycle/ports.py::tell`). Said from anywhere
+    else, on `events` or imported from it by name, under its old name or its door-side one, called
+    or handed on to a thread (as the round told it until #448 slice 6), it is a second teller the
+    walk finds."""
+    found = _planted(tmp_path,
+                     "from openfactory.product import events\n"
+                     "from openfactory.product import events as ev\n"
+                     "def merged(project):\n"
+                     "    events.merged_for_you(project, card='1', pr_url='p')\n"
+                     "def staged(project):\n"
+                     "    ev.staged_for_you(project, card='1', run='r')\n"
+                     "def tried(project):\n"
+                     "    from openfactory.product.events import tried_and_right\n"
+                     "    tried_and_right(project, card='1', run='r')\n"
+                     "def went(project):\n"
+                     "    from openfactory.product.events import went_in as said\n"
+                     "    said(project, card='1', pr_url='p')\n"
+                     "def stage(project):\n"
+                     "    events.to_try_at_the_stage(project, card='1')\n"
+                     "def right(project):\n"
+                     "    events.tried_it_right(project, card='1', run='r')\n"
+                     "async def handed_on(project):\n"
+                     "    import asyncio\n"
+                     "    await asyncio.to_thread(events.staged_for_you, project, card='1')\n"
+                     "def harmless(project):\n"
+                     "    events.room_of(project)\n")
+    rel = "openfactory/product/rogue.py"
+    assert found == {(rel, "merged", "merged_for_you"), (rel, "staged", "staged_for_you"),
+                     (rel, "tried", "tried_and_right"), (rel, "went", "went_in"),
+                     (rel, "stage", "to_try_at_the_stage"), (rel, "right", "tried_it_right"),
+                     (rel, "handed_on", "staged_for_you")}, found
+
+
+def test_the_walk_sees_a_cards_text_written_beside_its_door_and_not_inside_its_act(tmp_path):
+    """The bar moved at a gate is the engine's half of the decision (`resumed`'s act), and a
+    correction before the factory takes the card up is `edited`'s: in a function that goes through
+    the door, the text is written only inside a function — or a lambda — handed to it as `act=`."""
+    found = _planted(tmp_path,
+                     "from openfactory.lifecycle import transition\n"
+                     "def beside(project, tracker):\n"
+                     "    tracker.update_body('#1', 'new')\n"
+                     "    return transition(project, '1', 'edited', by='ana')\n"
+                     "def renamed_beside(project, tracker):\n"
+                     "    tracker.update_title('#1', 'new')\n"
+                     "    return _through_the_door(project, '1', 'edited', by='ana')\n"
+                     "def inside(project, tracker):\n"
+                     "    def write():\n"
+                     "        tracker.update_body('#1', 'new')\n"
+                     "    return transition(project, '1', 'edited', by='ana', act=write)\n"
+                     "def in_a_lambda(project, tracker):\n"
+                     "    return transition(project, '1', 'edited', by='ana',\n"
+                     "                      act=lambda: tracker.update_title('#1', 'new'))\n"
+                     "def nowhere_near_a_door(tracker):\n"
+                     "    tracker.update_body('#1', 'criteria')\n")
+    rel = "openfactory/product/rogue.py"
+    assert found == {(rel, "beside", "update_body"),
+                     (rel, "renamed_beside", "update_title")}, found
+
+
+def test_the_walk_sees_a_release_question_asked_or_answered_beside_the_door(tmp_path):
+    """The release question is asked by the round's `staged` and answered by the verdicts'
+    transitions (`lifecycle/loops.py`); a loop written in a function about a release, or any
+    `followup.release_of`, is a second asker or answerer the walk finds."""
+    found = _planted(tmp_path,
+                     "from openfactory.memory.ledger import ACCEPTANCE, close_by_observation\n"
+                     "from openfactory.product import followup\n"
+                     "def answered(ledger, loop):\n"
+                     "    if followup.is_release(loop):\n"
+                     "        return close_by_observation(ledger, {})\n"
+                     "def asked(issue):\n"
+                     "    return followup.release_of(issue, channel='room', ts='t')\n"
+                     "def asked_by_name(issue):\n"
+                     "    from openfactory.product.followup import release_of\n"
+                     "    return release_of(issue, channel='room', ts='t')\n"
+                     "def read_only(loops):\n"
+                     "    return [followup.is_release(x) for x in loops]\n")
+    rel = "openfactory/product/rogue.py"
+    assert found == {(rel, "answered", "close_by_observation"),
+                     (rel, "asked", "followup.release_of"),
+                     (rel, "asked_by_name", "followup.release_of")}, found
+
+
+def test_the_walk_sees_the_requesters_yes_recorded_outside_a_transitions_act(tmp_path):
+    """`accepted`'s act is the acceptance's record: written anywhere else — beside the door, or
+    with no door at all — it is a yes no card's record holds."""
+    found = _planted(tmp_path,
+                     "from openfactory.product import accept\n"
+                     "def beside(project, acc):\n"
+                     "    accept.record(project.name, acc)\n"
+                     "def by_name(project, acc):\n"
+                     "    from openfactory.product.accept import record\n"
+                     "    record(project.name, acc)\n"
+                     "def inside(project, acc):\n"
+                     "    def write():\n"
+                     "        return None if accept.record(project.name, acc) else 'no'\n"
+                     "    return transition(project, '1', 'accepted', by='ana', act=write)\n"
+                     "def read_only(project):\n"
+                     "    return accept.standing(project.name, '1')\n")
+    rel = "openfactory/product/rogue.py"
+    assert found == {(rel, "beside", "accept.record"), (rel, "by_name", "accept.record")}, found

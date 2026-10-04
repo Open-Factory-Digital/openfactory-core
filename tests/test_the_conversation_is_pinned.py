@@ -102,6 +102,7 @@ from openfactory.product.module import ProductModule, _not_a_promise, unauthoriz
 from openfactory.product.queue import Proposed, QueueProposal, Readiness
 from openfactory.product.role import ProductAnswer, RequirementDraft
 from openfactory.product.triage import TriageReport
+from tests.the_card_at_its_last_gate import at_its_last_gate
 from tests.the_sink_door import SINK_DOOR
 
 #: The product room. A bare message's conversation IS the room (the transport's key), which is how
@@ -1947,6 +1948,9 @@ def released(monkeypatch) -> list:
         return True, ""
 
     monkeypatch.setattr("openfactory.product.release.release", _release)
+    # a verdict on a release goes through the card's door, which reads the card first (#448
+    # slice 6): this suite's project names no tracker, and its card is parked at its last gate
+    at_its_last_gate(monkeypatch)
     return calls
 
 
@@ -1996,6 +2000,7 @@ def test_a_release_the_workflow_refused_is_said_as_refused_never_as_going_live(t
                                                                              monkeypatch):
     """The act is observed before it is claimed: when the release comes back refused, the reply is
     the workflow's own reason — never "estou subindo para produção"."""
+    at_its_last_gate(monkeypatch)      # the card's door reads it first (#448 slice 6)
     project = _project()
     _awaiting_release(ledger)
     why = "o #12 já não está esperando para subir — alguém mexeu nele antes."
@@ -2081,6 +2086,7 @@ def test_an_admin_s_it_worked_closes_the_release_even_when_the_workflow_refuses_
     release answers (#273): the loop records what somebody who may act said, and the reply says
     separately that the workflow was no longer there to take it. Left open, the loop would be
     chased about a release nobody can make any more."""
+    at_its_last_gate(monkeypatch)      # the card's door reads it first (#448 slice 6)
     project = _project()
     _awaiting_release(ledger)
     why = "o #12 já não está esperando para subir — alguém mexeu nele antes."

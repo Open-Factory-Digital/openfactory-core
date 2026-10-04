@@ -100,14 +100,16 @@ MUTATIONS = [
      '        if residue:\n'
      '            return WriteResult(ok=False, ref=f"#{number}", detail=residue)'),
 
+    # re-pinned 2026-10-05: #448 slice 6 — the correction's writes are a transition's act now
     ("a body the forge refused goes on to rename the card and tell it about a correction", MODULE,
-     '                return _could_not(failed, act=f"correct #{number}", cause=exc, '
-     'ref=f"#{number}")',
-     "                pass"),
+     '                    return _could_not(failed, act=f"correct #{number}", cause=exc,\n'
+     '                                      ref=f"#{number}")\n',
+     "                    pass\n"),
 
+    # re-pinned 2026-10-05: #448 slice 6 — the text and the title are a transition's act now
     ("a title that failed after the text landed is claimed by the note anyway", MODULE,
-     "                title_changed = False\n",
-     "                pass\n"),
+     "                    landed.update(title_changed=False, residue=correction_refused(\n",
+     "                    landed.update(residue=correction_refused(\n"),
 
     ("a tracker that cannot rename has the text corrected under a title it could not change",
      MODULE,

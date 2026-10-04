@@ -703,6 +703,10 @@ def test_the_product_role_names_a_column_only_through_its_two_keys():
                 continue
             event = call.args[2].attr if isinstance(call.args[2], ast.Attribute) else ""
             [facts] = [k.value for k in call.keywords if k.arg == "facts"] or [ast.Dict([], [])]
+            # A NAME BOUND TO A DICT IN THE SAME FUNCTION IS READ THERE (#448 slice 6): a correction
+            # before pickup hands `edited` the facts its act fills — the note, once it knows whether
+            # the title landed — as `catalog._card_edit` does; what it is bound to is what is read
+            facts = bound.get(facts.id, facts) if isinstance(facts, ast.Name) else facts
             assert isinstance(facts, ast.Dict), f"{fn.name}: the door's facts are not read here"
             said = {k.value: v for k, v in zip(facts.keys, facts.values, strict=True)
                     if isinstance(k, ast.Constant)}

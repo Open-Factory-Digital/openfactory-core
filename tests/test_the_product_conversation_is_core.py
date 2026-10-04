@@ -64,6 +64,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.test_loops_are_reachable import _call_graph, _called_names, _reachable_from
+from tests.the_card_at_its_last_gate import at_its_last_gate
 from tests.the_sink_door import SINK_DOOR
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -769,6 +770,9 @@ def released(monkeypatch):
         return True, ""
 
     monkeypatch.setattr("openfactory.product.release.release", _fake)
+    # a release goes through the card's door, which reads the card first (#448 slice 6): this
+    # suite's project names no tracker, and its card is parked at its last gate
+    at_its_last_gate(monkeypatch)
     return calls
 
 

@@ -188,14 +188,19 @@ MUTATIONS = [
      TABLE_TEST),
 
     # ── the guard ──────────────────────────────────────────────────────────────────────────────
+    # re-pinned 2026-10-05: #448 slice 6 — the loop form reads a release's functions too
     ("the walk stops seeing a promise about a card written outside the door", GUARD_TEST,
-     "            elif name in LOOP_WRITES and fn is not None and _named(fn) & CARD_LOOPS:\n",
+     "            elif name in LOOP_WRITES and fn is not None and _named(fn) & (CARD_LOOPS | "
+     "RELEASES):\n",
      "            elif False:\n",
      GUARD_TEST),
 
+    # re-pinned 2026-10-05: #448 slice 6 — the notices are read on every name a file binds to `events`
     ("the walk stops seeing a card's notice told outside the door", GUARD_TEST,
-     '                  and isinstance(func.value, ast.Name) and func.value.id == "events"):\n',
-     '                  and isinstance(func.value, ast.Name) and func.value.id == "nobody"):\n',
+     '        events_module, events_functions = _bound_to(tree, EVENTS, package="openfactory.'
+     'product")\n'
+     '        events_module |= {"events"}\n',
+     "        events_module, events_functions = set(), {}\n",
      GUARD_TEST),
 
     ("the ceiling is raised quietly, so the list can grow", GUARD_TEST,

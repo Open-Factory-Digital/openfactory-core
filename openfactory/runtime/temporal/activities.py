@@ -2850,13 +2850,27 @@ async def tell_the_requester_it_merged(inp: MergedInput) -> bool:
     HERE, ON THE WORKER, for `tell_the_requester`'s reason: the ledger that says whose conversation
     a card came from, and the store that says where it was accepted, live here, never in the box.
 
+    THROUGH THE CARD'S DOOR (#448 slice 6, ADR-0055 amended 2026-10-05): `merged`, the one hand of
+    it that knows whether stages follow, keyed by the pull request (`handed_back.merged_event`) —
+    so a retried or replayed activity is answered from the card's record, and its row's telling
+    (`Tell(merged_for_you)`, `events.went_in`) is said once per card and pull request.
+
     NEVER RAISES, AND BOUNDED: the change is in either way. Returns whether it was told now."""
     def _tell() -> bool:
         try:
-            from openfactory.product import events
+            from openfactory.lifecycle import CardEvent, transition
+            from openfactory.lifecycle.handed_back import merged_event
 
-            return events.merged_for_you(ProjectRegistry().get(inp.project), card=inp.issue,
-                                         pr_url=inp.pr_url, stages_follow=inp.stages_follow)
+            project = ProjectRegistry().get(inp.project)
+            moved = transition(project, inp.issue, CardEvent.MERGED, by="the workflow",
+                               facts={"pr_url": inp.pr_url, "stages_follow": inp.stages_follow,
+                                      "note": ""},
+                               tracker=_tracker_for(project),
+                               event_id=merged_event(inp.pr_url) if inp.pr_url else "")
+            if moved.refused:
+                activity.logger.info("#%s: its door did not hand the merge to its requester (%s)",
+                                     inp.issue, moved.refused[:160])
+            return moved.outcome("tell") == "told" and not moved.replayed
         except Exception as exc:  # noqa: BLE001 — the merge stands; only the telling is lost
             activity.logger.warning("could not tell %s#%s's requester it went in (%s)",
                                     inp.project, inp.issue, str(exc)[:160])
@@ -5545,16 +5559,22 @@ async def _offer_the_release_to_the_client(project, client) -> str:
 
     AND THE PERSON WHO ASKED FOR IT HEARS IT WHERE THEY ASKED (#448 slice 4). The room is asked
     exactly as before; once it was, the card's requester is told in their own conversation
-    (`events.staged_for_you`, once per run of the job), and only when they were is a second copy
-    of the question opened there (`followup.release_of(conversation=)`) — so their answer, given
-    where they asked, is read, and the room's turns never see their copy. Neither is asked again
-    while either copy is open; a verdict that counts closes both (`engine._close_release`). A
-    telling the door did not take opens no copy of theirs, and is not retried while the room's is
-    open: the room's question is visible from their conversation too, so their answer still lands.
+    (`events.to_try_at_the_stage`, once per run of the job), and only when they were is a second
+    copy of the question opened there — so their answer, given where they asked, is read, and the
+    room's turns never see their copy. Neither is asked again while either copy is open; a verdict
+    that counts closes both (`engine._maybe_release`). A telling the door did not take opens no copy
+    of theirs: the room's question is visible from their conversation too, so their answer still
+    lands.
+
+    THROUGH THE CARD'S DOOR (#448 slice 6, ADR-0055 amended 2026-10-05): each asking is the card's
+    `staged`, whose ACT is the room's question — so a card the door refuses, or one it cannot read,
+    is asked nothing, and a question that did not land records and opens nothing — and whose row
+    opens the room's copy, tells the requester and opens theirs (`table.consequences`).
     """
+    from openfactory.lifecycle import CardEvent, transition
     from openfactory.memory import store as loop_store
     from openfactory.memory.ledger import waiting
-    from openfactory.product import events, followup, release
+    from openfactory.product import followup, release
 
     cfg = getattr(project, "product", None)
     if cfg is None or not getattr(cfg, "enabled", True) \
@@ -5584,7 +5604,9 @@ async def _offer_the_release_to_the_client(project, client) -> str:
     # (#122). Kept working for deployments that already set it, and said out loud when it is what
     # ends up being used, because a value nobody can find is a value nobody can correct.
     fallback = str(getattr(cfg, "staging_url", "") or "")
-    opened = []
+    tracker = _tracker_for(project)
+    offered: set[str] = set()
+    theirs = 0
     for issue, declared, run in pending:
         if str(issue) in asked:
             continue
@@ -5598,32 +5620,37 @@ async def _offer_the_release_to_the_client(project, client) -> str:
             requirement=requirement,
             where=where, agent_name=name,
             language=getattr(project, "language", None))
-        if not await asyncio.to_thread(_product_post, channel, project, cfg, text):
+
+        def _the_room_is_asked(text: str = text) -> str | None:
+            """The asking's act: the room's question, posted — the transition is recorded only
+            once it landed, so nothing is opened for a post nobody received."""
+            return None if _product_post(channel, project, cfg, text) else "not landed"
+
+        # THE CARD'S `staged`, ONE PER ASKING: its act asks the room, and its row opens the room's
+        # copy, tells the requester (once per run) and opens THEIR copy only if they were told
+        # (#448 slice 4) — a question of theirs recorded for a telling that never reached them would
+        # be chased, in their conversation, as the first they ever heard of it
+        moved = await asyncio.to_thread(
+            lambda issue=issue, where=where, run=run, requirement=requirement,
+            ask=_the_room_is_asked: transition(
+                project, str(issue), CardEvent.STAGED, by="the tech-lead's round",
+                facts={"asked_at": _now_iso(), "run": run, "where": where,
+                       "requirement": requirement, "note": "",
+                       "room": channel_destination(project, product=True)},
+                act=ask, tracker=tracker))
+        if moved.refused or moved.answer is not None:
+            activity.logger.info("release watch: %s#%s was not asked (%s)", project.name, issue,
+                                 moved.refused[:160] or moved.answer)
             continue
-        room = channel_destination(project, product=True)
-        ts = _now_iso()
-        opened.append(followup.release_of(issue, channel=room, ts=ts,
-                                          requirement=requirement,
-                                          where=where, run=run))
-        # THEIR COPY, ONLY IF THEY WERE TOLD (#448 slice 4) — the rule above, for the requester: a
-        # question of theirs recorded for a telling that never reached them would be chased, in
-        # their conversation, as the first they ever heard of it.
-        if await asyncio.to_thread(events.staged_for_you, project, card=str(issue), where=where,
-                                   run=run):
-            theirs, who = await asyncio.to_thread(events.requester_of, project, str(issue),
-                                                  rows=ledger)
-            if theirs:
-                opened.append(followup.release_of(issue, channel=room, ts=ts,
-                                                  requirement=requirement, where=where,
-                                                  conversation=theirs, requester=who, run=run))
+        said = dict(moved.effects)
+        if said.get("loops:release:ask", "").startswith(("asked", "the room was asked")):
+            offered.add(str(issue))
+        theirs += said.get("loops:release:ask-theirs", "") == "asked them"
     # ONE ISSUE ASKED IN TWO PLACES IS ONE OFFER: the log and the count are of releases, not rows
-    offered = sorted({followup.is_release(x) for x in opened})
-    if opened:
-        await asyncio.to_thread(loop_store.write, project.name, opened)
+    if offered:
         activity.logger.warning(
             "OPENFACTORY_RELEASE_OFFERED project=%s issues=%s requesters=%d — the client was asked "
-            "to try it; their answer is what releases", project.name, offered,
-            sum(1 for x in opened if (x.context or {}).get("conversation")))
+            "to try it; their answer is what releases", project.name, sorted(offered), theirs)
     return f"release-asked:{len(offered)}"
 
 

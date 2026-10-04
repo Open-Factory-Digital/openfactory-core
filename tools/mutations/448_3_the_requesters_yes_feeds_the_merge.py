@@ -72,11 +72,11 @@ MUTATIONS = [
      "    # #448 — and told it went in, the moment it merged, whoever merged it\n"
      "    tell_the_requester_it_merged,\n",
      ""),
+    # re-pinned 2026-10-05: #448 slice 6 — the activity hands the job's `merged` to the card's door
     ("the activity reaches no event", ACTIVITIES,
-     "            return events.merged_for_you(ProjectRegistry().get(inp.project), "
-     "card=inp.issue,\n",
-     "            return (lambda *a, **k: False)(ProjectRegistry().get(inp.project), "
-     "card=inp.issue,\n"),
+     '            moved = transition(project, inp.issue, CardEvent.MERGED, by="the workflow",\n',
+     '            moved = (lambda *a, **k: None)(project, inp.issue, CardEvent.MERGED, '
+     'by="the workflow",\n'),
 
     # ── the head they tried, and nothing else ────────────────────────────────────────────────
     ("the gate's word on the look is never read", ADJUST,
@@ -115,9 +115,11 @@ MUTATIONS = [
      '            return refused("not_yours")\n',
      "        if False:\n"
      '            return refused("not_yours")\n'),
+    # re-pinned 2026-10-05: #448 slice 6 — the note is the door's comment on `accepted`
     ("the card says nothing of the yes", MODULE,
-     '            self._tracker().comment(f"#{number}", change_accepted_note(\n',
-     '            (lambda *a: None)(f"#{number}", change_accepted_note(\n'),
+     '"head": tried.head,\n                                  "note": change_accepted_note(\n',
+     '"head": tried.head,\n                                  "note": "" and change_accepted_note('
+     '\n'),
     ("the store refuses the row the yes is", METRICS,
      '                     "card_accepted",\n',
      ""),

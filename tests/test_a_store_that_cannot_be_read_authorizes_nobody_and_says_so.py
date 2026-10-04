@@ -36,6 +36,7 @@ from typer.testing import CliRunner
 
 from openfactory import approvals
 from openfactory.cli import app
+from tests.the_card_at_its_last_gate import at_its_last_gate
 
 VARIABLE = "OPENFACTORY_APPROVERS"
 
@@ -398,6 +399,7 @@ def panel(store, tmp_path, monkeypatch):
     """The real routes over a registered project with no checkout (the deployed shape, where the
     store's own logins are the allowlist), an engine that records the signal instead of dialing,
     and a forge that answers the one thing the prefetch asks of it."""
+    at_its_last_gate(monkeypatch)      # the card's door reads it first (#448 slice 6)
     import openfactory.adapters.forge.registry as forge_registry
     from openfactory.api import app as app_module
     from openfactory.contracts.project import Project, ProviderRef

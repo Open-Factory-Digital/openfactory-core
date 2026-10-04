@@ -485,14 +485,17 @@ def _row(event: CardEvent, facts: Mapping[str, object]) -> tuple[Effect, ...]:
         return (Column("pr_open", needs_person=facts.get("needs_person")), *_said(facts), *tell,
                 Forget())
     if event is CardEvent.MERGED:
+        if "stages_follow" in facts and facts.get("pr_url"):
+            # ITS REQUESTER HEARS IT WENT IN (#448 slice 6), from the job's telling — the one hand
+            # that knows whether stages follow, keyed by the pull request
+            # (`handed_back.merged_event`). It writes no column: the box's hand-back, the settle
+            # and the stages place the card, and a deploy watch may already have held it in Needs
+            # Action by the time the job says it — a column here would move that card back
+            return (Tell(MERGED_FOR_YOU), Forget())
         # MERGED, AND OVERSEEN WHILE IT DEPLOYS: `in_review` until the delivery — the promotion's
-        # last stage, or the settle when nothing follows the merge (ADR-0049 slice 5). AND ITS
-        # REQUESTER HEARS IT WENT IN (#448 slice 6) when the job's telling hands it in — the one
-        # hand that knows whether stages follow (`stages_follow`), keyed by the pull request
-        # (`handed_back.merged_event`); the box's hand-back and the settle tell nobody
-        tell = ((Tell(MERGED_FOR_YOU),) if "stages_follow" in facts and facts.get("pr_url")
-                else ())
-        return (Column("merged"), *_said(facts), *tell, Forget())
+        # last stage, or the settle when nothing follows the merge (ADR-0049 slice 5). The box's
+        # hand-back and the settle tell nobody
+        return (Column("merged"), *_said(facts), Forget())
     if event is CardEvent.RESUMED:
         # A PERSON SENT IT BACK FOR ANOTHER PASS (#448 slice 6) — from the merge gate, on the same
         # pull request, or from the last gate, as a new change. The bar was corrected and the pass
@@ -500,6 +503,11 @@ def _row(event: CardEvent, facts: Mapping[str, object]) -> tuple[Effect, ...]:
         # ends it, so nothing else is written here
         return (*_said(facts), Forget())
     if event is CardEvent.ACCEPTED:
+        if facts.get("gate") == "last" and facts.get("unreleased"):
+            # A YES THAT MAY RELEASE, AND THE JOB WAS NO LONGER THERE TO TAKE IT (#273): the verdict
+            # still counts — every copy of the question closes as worked, and nobody is told the
+            # room's news; the person heard why nothing went out
+            return (Loops(RELEASE_WORKED), *_said(facts), Forget())
         if facts.get("gate") == "last":
             # THE REQUESTER TRIED IT AT THE LAST GATE AND SAYS IT IS RIGHT, AND THEIR WORD DOES
             # NOT RELEASE IT (#448 slice 4, `release_by_requester` off): their copy of the question
