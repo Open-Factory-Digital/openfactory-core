@@ -60,15 +60,15 @@ MUTATIONS = [
      '        return WriteResult(ok=True, ref=str(ref), url="", detail=detail)'),
 
     # RE-PINNED 2026-10-02: the placement is keyed on the tracker's own ref (#479)
+    # re-pinned 2026-10-04: the column is the board's name for the filing key (#496)
     ("a board that refuses the placement is read as having placed it",
      "openfactory/product/module.py",
      # anchored THROUGH the log line, which is the only text in this block that `file_defect` and
      # `_file_one` do not share byte for byte — a bare `placed = bool(...)` matches three times
-     "                placed = bool(board.set_column(issue=key, issue_url=url,\n"
-     "                                               name=self.FILING_COLUMN))\n"
+     "                placed = bool(board.set_column(issue=key, issue_url=url, name=column))\n"
      "            except Exception as exc:  # noqa: BLE001 — the card exists; placement is repairable\n"
      "                log.info(\"card %s opened but not placed on the board (%s)\", ref, exc)",
-     "                board.set_column(issue=key, issue_url=url, name=self.FILING_COLUMN)\n"
+     "                board.set_column(issue=key, issue_url=url, name=column)\n"
      "                placed = True\n"
      "            except Exception as exc:  # noqa: BLE001 — the card exists; placement is repairable\n"
      "                log.info(\"card %s opened but not placed on the board (%s)\", ref, exc)"),
