@@ -12,19 +12,21 @@ MUTATIONS = [
      '                "split.straggler-one" if len(stragglers) == 1 else "split.stragglers",',
      '                "split.stragglers",', SPLIT),
 
+    # re-pinned 2026-10-04: the queue is named as the board calls it (review of #507)
     ("…and the singular row loses its own words", V,
-     '        "en": " I created all {n}, but could not move {stuck} to TO-DO — drag that one '
+     '        "en": " I created all {n}, but could not move {stuck} to {queue} — drag that one '
      'onto the "\n'
      '              "board, after the others, or it will never run:\\n{children}",',
-     '        "en": " I created all {n}, but could not move {stuck} to TO-DO — drag those onto '
+     '        "en": " I created all {n}, but could not move {stuck} to {queue} — drag those onto '
      'the "\n'
      '              "board, in order, or they will never run:\\n{children}",'),
 
+    # re-pinned 2026-10-04: the queue is named as the board calls it (review of #507)
     ("the plural row is written in the singular, so several read as one", V,
-     '        "en": " I created all {n}, but could not move {stuck} to TO-DO — drag those onto '
+     '        "en": " I created all {n}, but could not move {stuck} to {queue} — drag those onto '
      'the "\n'
      '              "board, in order, or they will never run:\\n{children}",',
-     '        "en": " I created all {n}, but could not move {stuck} to TO-DO — drag that one '
+     '        "en": " I created all {n}, but could not move {stuck} to {queue} — drag that one '
      'onto the "\n'
      '              "board, after the others, or it will never run:\\n{children}",'),
 
@@ -64,9 +66,11 @@ MUTATIONS = [
      '    clean = " ".join((text or "").split())', "    clean = text or \"\""),
 
     # ── and the announcement still goes out at all ───────────────────────────────────────────────
+    # re-pinned 2026-10-04: the call also names the queue (review of #507)
     ("the split stops announcing the stragglers", ACT,
      "            body = tl_voice.say(\n                tl_voice.NARRATION,\n"
      '                "split.straggler-one" if len(stragglers) == 1 else "split.stragglers",\n'
-     "                lang, n=n, stuck=\", \".join(stragglers), children=kids)",
+     "                lang, n=n, stuck=\", \".join(stragglers), children=kids, "
+     "queue=named[\"todo\"])",
      '            body = ""', SPLIT),
 ]

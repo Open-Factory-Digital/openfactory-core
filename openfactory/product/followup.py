@@ -30,7 +30,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from openfactory.contracts.refs import canonical_ref, canonical_refs
+from openfactory.contracts.refs import canonical_ref, canonical_refs, ref_label
 from openfactory.memory.ledger import ACCEPTANCE, DELIVERY, QUESTION, Loop, open_loop
 
 OWNER = "product"
@@ -350,7 +350,7 @@ def _say(catalogue: dict[str, str], language: str | None) -> str:
 def _one_line(loop: Loop, mention: str = "", *, language: str | None = None) -> str:
     who = f"{mention} — " if mention else ""
     title = (loop.context or {}).get("title", "")
-    about = f"#{loop.subject} ({title})" if title else f"#{loop.subject}"
+    about = f"{ref_label(loop.subject)} ({title})" if title else ref_label(loop.subject)
     return _say(_ONE_LINE, language).format(
         who=who, about=about, asked=loop.context.get("asked", ""))
 
@@ -397,7 +397,7 @@ def chase_text(loop: Loop, *, mention: str = "", agent_name: str = "", days: int
     who = f"{mention} — " if mention else ""
     sig = f"{agent_name}: " if agent_name else ""
     title = (loop.context or {}).get("title", "")
-    about = f"#{loop.subject} ({title})" if title else f"#{loop.subject}"
+    about = f"{ref_label(loop.subject)} ({title})" if title else ref_label(loop.subject)
     return _say(_CHASE, language).format(sig=sig, who=who, about=about, days=days,
                                         asked=loop.context.get("asked", ""))
 

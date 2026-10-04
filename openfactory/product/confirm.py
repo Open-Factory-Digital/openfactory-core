@@ -61,8 +61,8 @@ _SAID = {
         "already_split": ("O requisito {number} já estava dividido em **{count}** {noun}{tail} — "
                           "não criei nada novo e não mudei nada de lugar."),
         "it_is": ("Está", "Estão"), "is": ("está", "estão"),
-        "in_backlog": ("\n\n{where} no Backlog — começar a trabalhar {them} continua sendo "
-                       "decisão de uma pessoa."),
+        "in_backlog": ("\n\n{where} na coluna {backlog} — começar a trabalhar {them} continua "
+                       "sendo decisão de uma pessoa."),
         "them": ("nela", "nelas"),
         "existed": ("\n\n{refs} já {existed} de antes — não criei de novo, e {stays} onde "
                     "{was}."),
@@ -87,7 +87,7 @@ _SAID = {
         "already_split": ("Requirement {number} was already split into **{count}** {noun}{tail} "
                           "— I created nothing new and moved nothing."),
         "it_is": ("It is", "They are"), "is": ("is", "are"),
-        "in_backlog": ("\n\n{where} in the Backlog — starting work on {them} is still a "
+        "in_backlog": ("\n\n{where} in the {backlog} — starting work on {them} is still a "
                        "person's decision."),
         "them": ("it", "them"),
         "existed": ("\n\n{refs} already {existed} — I did not create {it} again, and {stays} "
@@ -286,13 +286,14 @@ def _confirm_queue(project, entry, *, module, user, lang) -> str:
     """the action that spends money."""
     numbers = entry["numbers"]
     results = module.promote(numbers, actor=user)
-    from openfactory.contracts.refs import canonical_refs
+    from openfactory.contracts.refs import canonical_ref
 
-    # EVERY CARD THAT MOVED, AS THE TRACKER SPELLS IT (#491). `ref_numbers` kept only the refs that
-    # are numbers, and `promote` answers `#CONT-412` on Jira: every card went into the queue and
-    # the person was told nothing had. `canonical_refs` keeps them all, in the order `ref_numbers`
-    # gave a numbered board, so what a GitHub project reads does not change by a byte.
-    landed = canonical_refs(r.ref for r in results if r.ok and r.ref)
+    # EVERY CARD THAT MOVED, AS THE TRACKER SPELLS IT (#491), IN THE ORDER IT WAS APPROVED, NEVER
+    # SORTED (#497). `ref_numbers` kept only the refs that are numbers, and `promote` answers
+    # `#CONT-412` on Jira: every card went into the queue and the person was told nothing had. And
+    # `promote` moves the cards in the sequence the person approved, while `queued` says "nesta
+    # ordem" over what it is handed: a sorted list read "3, 1, 2" back as "#1, #2, #3".
+    landed = list(dict.fromkeys(canonical_ref(r.ref) for r in results if r.ok and r.ref))
     failed = [r for r in results if not r.ok]
     if not landed:
         return (_client_detail(failed[0].detail, lang, project=project) if failed
@@ -342,6 +343,26 @@ def _confirm_defect(project, entry, *, module, user, lang) -> str:
         result, lang, project=project)
 
 
+def _board_word(module, key: str) -> str:
+    """What the module's board calls the stage `key` — `""` from a module that cannot say, and the
+    sentence then names the platform's word (`voice.column_said`, #502).
+
+    ASKED OF THE MODULE, NEVER OF A BOARD BUILT HERE: the module holds the board its cards were
+    just filed on, and a reply naming a column must name that one. A double standing in for the
+    module, an older build, a board that cannot be built — each is a sentence with the platform's
+    word in it, never a reply lost to a traceback."""
+    ask = getattr(module, "board_words", None)
+    if not callable(ask):
+        return ""
+    try:
+        said = ask()
+    except Exception:  # noqa: BLE001 — a column's name is a courtesy; the reply is not
+        log.info("could not ask the board what it calls %s", key, exc_info=True)
+        return ""
+    named = said.get(key, "") if isinstance(said, dict) else ""
+    return named if isinstance(named, str) else ""
+
+
 def _takes_card(module, verb: str = "file_ticket", param: str = "card") -> bool:
     import inspect
 
@@ -371,7 +392,8 @@ def _confirm_ticket(project, entry, *, module, user, lang) -> str:
     return _still_to_say(
         ticket_filed(ref=result.ref, url=getattr(result, "url", ""), language=lang,
                      existed=result.existed,
-                     just_asked=bool(getattr(result, "just_asked", False))),
+                     just_asked=bool(getattr(result, "just_asked", False)),
+                     backlog=_board_word(module, "backlog")),
         result, lang, project=project)
 
 
@@ -647,7 +669,8 @@ def _the_official_cards(module, number: int, user: str, project, lang, said: str
         return said, []
     cards = [str(r.ref) for r in results if getattr(r, "ok", False) and getattr(r, "ref", "")]
     if cards:
-        said += "\n\n" + cards_opened_awaiting(cards=cards, number=number, language=lang)
+        said += "\n\n" + cards_opened_awaiting(cards=cards, number=number, language=lang,
+                                                backlog=_board_word(module, "backlog"))
     for result in results:
         if getattr(result, "ok", False):
             said = _still_to_say(said, result, lang, project=project)
@@ -896,7 +919,8 @@ def _also_broke_it_down(module, number: int, user: str, head: str, lang, project
         return head + "\n\n" + nothing_to_build(number=number, language=lang)
 
     if results and any(r.ok for r in results):
-        return head + "\n\n" + _breakdown_reply(results, number, "", lang, project=project)
+        return head + "\n\n" + _breakdown_reply(results, number, "", lang, project=project,
+                                                  backlog=_board_word(module, "backlog"))
 
     detail = ""
     if results:
@@ -908,7 +932,8 @@ def _also_broke_it_down(module, number: int, user: str, head: str, lang, project
     return f"{head}\n\n{tail}"
 
 
-def _breakdown_reply(results, number: int, name: str, lang=None, project=None) -> str:
+def _breakdown_reply(results, number: int, name: str, lang=None, project=None, *,
+                     backlog: str = "") -> str:
     """What the client reads after a requirement was broken into tasks.
 
     BOTH failure branches pass through `_client_detail`: the guard that found the second one is the
@@ -928,6 +953,8 @@ def _breakdown_reply(results, number: int, name: str, lang=None, project=None) -
     was already there needs the reply ITSELF to say so, because `_unfinished` stays deliberately
     quiet on `existed` — the same split `defect_filed(existed=True)` makes one layer up.
     """
+    from openfactory.product.voice import column_said
+
     head = f"{name}: " if name else ""
     failed = [r for r in results if not r.ok]
     if failed and len(failed) == len(results):
@@ -956,7 +983,10 @@ def _breakdown_reply(results, number: int, name: str, lang=None, project=None) -
         n = 0 if len(placed) == 1 else 1
         where = (said["it_is"][n] if len(placed) == len(landed)
                  else f"{', '.join(r.ref for r in placed if r.ref)} {said['is'][n]}")
-        out += said["in_backlog"].format(where=where, them=said["them"][n])
+        # THE BACKLOG AS THIS BOARD CALLS IT (#502): the cards are in its `Pendências`, not in a
+        # column the platform names and the person's board does not have
+        out += said["in_backlog"].format(where=where, them=said["them"][n],
+                                         backlog=column_said(backlog, "backlog"))
     if already and fresh:
         n = 0 if len(already) == 1 else 1
         existed, stays, was = (words[n] for words in said["existed_words"])

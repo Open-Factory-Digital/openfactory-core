@@ -55,8 +55,11 @@ infra/terraform/*.auto.tfvars
 # image — never commit; use registry.yaml.example as the template)
 deploy/registry.yaml
 
-# local agent scratch (worktrees, session state) — never part of the product
-.claude/
+# local agent scratch (worktrees, session state) — never part of the product. The one exception is
+# the agents a maintainer runs on this repository (`.claude/agents/`, the release process's agent
+# among them): they are how the process is replicated, so they are reviewed like the rest of it.
+.claude/*
+!.claude/agents/
 
 # setuptools' build tree. It was TRACKED — 201 stale copies of `sdlc/` swept in by a `git add -A`
 # — and that is worse than untidy: `test_the_wheel_ships_what_the_platform_needs` exists because

@@ -1231,14 +1231,34 @@ definition**, and it is never automatic: the job parks at a human gate, the pane
 somebody approves with a version. The approval tags `<prod_tag_prefix><version>`, and production
 is observed the same way.
 
-Your names are yours: `[dev, qa, producao]` works exactly like `[staging, prod]`. Declare a stage
-with neither `deploy_ref` nor `health_url` and it passes through unchecked — which is allowed,
-and is why the ticket says which stages were actually verified rather than claiming all of them.
+Your names are yours: `[dev, qa, producao]` works exactly like `[staging, prod]`. **Every stage
+of the chain, production included, declares `deploy_ref`, `health_url`, or both.** A stage with
+neither would count as reached with nothing seen, and the delivery would be announced about it —
+so the manifest is refused when it loads, naming the stage (#501). An environment the chain does
+not walk may carry only a `url:`; it is named as unwatched in the log and loads.
 
-**No production at all?** Declare the environments you do have and leave them out of `promote:`,
-or omit `promote:` entirely. The ticket then finishes at the merge saying this project declares
-no production environment, so there is no release step — a state this platform treats as ordinary,
-not as a misconfiguration. Something under construction has nowhere to release to yet.
+A deploy still **pending** is not a reached stage. The walk reads it again every minute — up to
+20 minutes for the whole walk — and a deploy still pending then holds the ticket saying the stage
+was *not reached*, which is a different sentence from a red one.
+
+**A stage counts as reached only on what was observed** (#518): a deploy of this change that
+finished green, or a `health_url` that answered healthy (both, when both are declared). A
+`deploy_ref` that nothing recorded a deploy of this change against — your provider answers
+*unknown* — is handed to the `health_url` when there is one; when there is not, the stage is held
+as *not reached*, and the ticket asks you to check the name or declare a probe. **On a project
+with no CI (`ci: none`, which is what a `forge: local` project gets by default)** nothing reads a deploy at all, so
+`deploy_ref` alone observes nothing there: every stage of the chain, production included, needs a
+`health_url`, and the manifest is refused when it loads until it has one — or until the registry
+names a CI that reads deploys in `forge.options.ci`.
+
+**No production at all?** Omit `promote:` and call the stage you do have `staging`: with no
+`promote:` the chain is derived from the two fixed names, `staging` observed and `prod` gated. The
+ticket then finishes once `staging` is observed, saying this project declares no production
+environment, so there is no release step — a state this platform treats as ordinary, not as a
+misconfiguration. Something under construction has nowhere to release to yet. Environments with
+no `promote:` and **neither** fixed name are refused when the manifest loads: that chain walks
+nothing, and the delivery would be announced at the merge (#501). A `promote:` always ends at
+production, so a name of your own goes there in order.
 
 You are still **asked to confirm** the last stage. There is no gate behind it, so a person saying
 the change is right is the whole of what is left — the ticket names the stage and its `url:`, and

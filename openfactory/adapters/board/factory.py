@@ -67,11 +67,54 @@ def declared_columns(project, options: dict) -> dict[str, str] | None:
     string, like the Jira `status_map` beside it — got `AttributeError: 'str' object has no
     attribute 'items'` out of `build_board`, inside a poll tick. Parsed here, every reader is handed
     a mapping or `None`, and a value a person typed wrong is an ERROR with a remedy rather than a
-    traceback somewhere downstream. `adapters/tracker/registry.py` reads it through this too."""
-    return _json_map(
+    traceback somewhere downstream. `adapters/tracker/registry.py` reads it through this too.
+
+    AND THE QUEUE A DEPLOYMENT NAMED DIRECTLY IS IN IT (#502) — see `with_the_queue`."""
+    return with_the_queue(project, options, _json_map(
         options.get("columns"), project, "columns",
         "falling back to the platform's default column names, which will NOT match a board that "
-        "renamed them")
+        "renamed them"), option="columns")
+
+
+def declared_queue(options: dict) -> str:
+    """The column a deployment named its queue with `pickup_status`, or `""` when it did not."""
+    return str((options or {}).get("pickup_status") or "").strip()
+
+
+def with_the_queue(project, options: dict, named: dict[str, str] | None, *,
+                   option: str) -> dict[str, str] | None:
+    """`named` — a row's map of the deployment's column names — with `pickup_status`, when the
+    deployment declared one, as the name of the queue key `todo` (#502).
+
+    TWO READERS OF ONE COLUMN, AND ONLY ONE OF THEM READ THE OPTION. The poller has always pulled
+    from `pickup_status` when a project names it (`activities.scan_projects`, `cli pickup`,
+    `actions/catalog._scan`); the product role queues an approved card through the row's own map
+    (`stage_column(board, "todo")`, #496), which never heard of it. A deployment that named its
+    queue `Pronto` with `pickup_status` and nothing in the map had every promotion land in `TO-DO`,
+    a column the poller never looks at — accepted, announced, and never started, which is the
+    money path failing in silence.
+
+    SO `pickup_status` IS THE QUEUE'S NAME, folded into the map every shipped row names its
+    stages from, rather than a second answer one caller knows about. The row then says it in
+    every direction at once: `pickup_column()` is it, `stage_column("todo")` is it, and a card
+    sitting in it is `todo` to `stage_key` — the edit and close gate stops calling the queue a
+    column nobody maps. Refusing the option at registry load was the other way, and it was not
+    taken: the doctor's own remedy offers `pickup_status` as a way to name the queue, and one bad
+    row would make every project in the registry unloadable.
+
+    DECLARED BOTH WAYS AND APART, THE POLLER'S PRECEDENCE HOLDS — `pickup_status` wins, as it
+    always has where the money is spent — and the disagreement is logged naming both, because
+    the column the map named is the one now nobody reads."""
+    queue = declared_queue(options)
+    if not queue:
+        return named
+    mapped = str((named or {}).get("todo") or "").strip()
+    if mapped and mapped != queue:
+        log.warning("OPENFACTORY_BOARD_QUEUE_NAMED_TWICE project=%s — `pickup_status` names the "
+                    "queue %r and `%s` maps `todo` to %r; the poller pulls from %r, so the product "
+                    "role queues there too and %r is read as no stage at all. Keep one of them.",
+                    getattr(project, "name", "?"), queue, option, mapped, queue, mapped)
+    return {**(named or {}), "todo": queue}
 
 
 def _local(project, *, token, token_provider, options):
@@ -82,7 +125,10 @@ def _local(project, *, token, token_provider, options):
     from openfactory.adapters.board.local import LocalBoard
     from openfactory.adapters.tracker.registry import build_tracker
 
-    return LocalBoard(build_tracker(project, token=token, token_provider=token_provider))
+    # THE QUEUE A DEPLOYMENT NAMED DIRECTLY (#502): this row's names are its own rows, so the one
+    # it is told is folded in where it reads them — see `with_the_queue`
+    return LocalBoard(build_tracker(project, token=token, token_provider=token_provider),
+                      queue=declared_queue(options))
 
 
 def _jira(project, *, token, token_provider, options):

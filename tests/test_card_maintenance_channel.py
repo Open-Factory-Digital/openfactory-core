@@ -1014,7 +1014,7 @@ def test_a_card_THE_BOARD_REFUSED_is_not_announced_as_being_in_Backlog():
     assert module.broke_down == (7, "UADM"), "the gesture never reached the write"
     assert "recusou a colocação" in said, (
         f"the module wrote a sentence for the client and the channel dropped it: {said}")
-    assert "no Backlog" not in said, (
+    assert "na coluna Backlog" not in said, (
         f"a card the board refused to place was announced as being in Backlog: {said}")
 
 
@@ -1035,7 +1035,7 @@ def test_a_card_that_ALREADY_EXISTED_is_not_announced_as_being_in_Backlog():
     said = chat_turn(project, text="quebra o requisito 7 em tarefas", user="UADM", thread="C1",
                      channel="C1", module=module)
 
-    assert "no Backlog" not in said, (
+    assert "na coluna Backlog" not in said, (
         f"a card this turn never filed and never placed was announced as being in Backlog: {said}")
     assert "#404" in said and "já estava" in said, said
     # and never the tracker's own English explanation, which is written for us
@@ -1056,10 +1056,10 @@ def test_the_cards_that_DID_land_are_still_claimed_as_such():
     said = chat_turn(project, text="quebra o requisito 7 em tarefas", user="UADM", thread="C1",
                      channel="C1", module=module)
 
-    assert "#101 está no Backlog" in said, f"the card that landed lost its sentence: {said}"
+    assert "#101 está na coluna Backlog" in said, f"the card that landed lost its sentence: {said}"
     assert "#404 já existia" in said, said
     assert "Sobre #102" in said and "recusou a colocação" in said, said
-    backlog = next(line for line in said.splitlines() if "no Backlog" in line)
+    backlog = next(line for line in said.splitlines() if "na coluna Backlog" in line)
     assert "#102" not in backlog and "#404" not in backlog, backlog
 
 

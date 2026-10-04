@@ -160,20 +160,28 @@ def hand_back_comment(verdict: Verdict, *, agent_name: str = "",
     return voice._pick(voice._HANDBACK_NOT_MINE, language).format(sig=sig, what=what, why=why)
 
 
-def fix_comment(verdict: Verdict, *, agent_name: str = "", language: str | None = None) -> str:
+def fix_comment(verdict: Verdict, *, agent_name: str = "", language: str | None = None,
+                columns: dict[str, str] | None = None) -> str:
     """Said when the role DOES act. Names what it changed and why, because a sign-off that cannot
-    see what moved is a rubber stamp."""
+    see what moved is a rubber stamp.
+
+    `columns` is `{key: name}` as the card's board calls the backlog and the queue
+    (`ProductModule.board_words`, #502) — the comment sits on that board's card, and a person told
+    to promote it "to TO-DO" looks for a column their board does not have."""
     from openfactory.product import voice
 
     v = verdict.normalised()
     why = f" — {v.reason}" if v.reason else ""
     fix = voice._pick(voice._FIX_CLAUSE, language).format(fix=v.fix) if v.fix else ""
+    named = columns or {}
     return voice._pick(voice._FIX_COMMENT, language).format(
-        sig=_sig(agent_name), why=why, fix=fix)
+        sig=_sig(agent_name), why=why, fix=fix,
+        backlog=voice.column_said(named.get("backlog", ""), "backlog"),
+        queue=voice.column_said(named.get("todo", ""), "todo"))
 
 
 def review(verdicts: list[Verdict], *, may_act: bool, agent_name: str = "",
-           language: str | None = None) -> Review:
+           language: str | None = None, columns: dict[str, str] | None = None) -> Review:
     """Turn verdicts into decisions. Pure, so the rule that decides whether an agent rewrites
     somebody's ticket is testable without a network.
 
@@ -190,9 +198,11 @@ def review(verdicts: list[Verdict], *, may_act: bool, agent_name: str = "",
         if not may_act:
             out.append(Decision(
                 verdict=v, acted=False,
-                comment=fix_comment(v, agent_name=agent_name, language=language),
+                comment=fix_comment(v, agent_name=agent_name, language=language,
+                                    columns=columns),
                 detail="nobody has authorised this role to change tickets yet"))
             continue
         out.append(Decision(verdict=v, acted=True,
-                            comment=fix_comment(v, agent_name=agent_name, language=language)))
+                            comment=fix_comment(v, agent_name=agent_name, language=language,
+                                                columns=columns)))
     return Review(decisions=out)
