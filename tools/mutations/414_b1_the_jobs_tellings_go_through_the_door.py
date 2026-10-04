@@ -29,7 +29,11 @@ THE CLAIMS, one or more rows each:
   5. the factory's own card closes with its evidence, its record apart from the product's when it
      lives on another tracker;
   6. the door stays the only writer: a split child queued beside it, or the round telling beside
-     it, fails the guard.
+     it, fails the guard;
+  7. (after B2 merged in) every way a card reaches Done announces through the door, once: the box's
+     Done at its last stage is `delivered`; a card's transition says only what IT completes; the
+     job's exit and the weekly sweep announce nothing of their own — the sweep's second chance is
+     the door's converge — and the questions the sweep closes are seen to be no card's promise.
 """
 
 TEST = "tests/test_the_life_of_a_card.py"
@@ -39,6 +43,7 @@ SPLIT_TEST = "tests/test_a_card_that_was_split_is_not_delivered_until_its_childr
 GUARD_TEST = "tests/test_the_card_lifecycle_has_one_door.py"
 
 TABLE = "openfactory/lifecycle/table.py"
+HANDED = "openfactory/lifecycle/handed_back.py"
 EXECUTOR = "openfactory/lifecycle/executor.py"
 LOOPS = "openfactory/lifecycle/loops.py"
 PORTS = "openfactory/lifecycle/ports.py"
@@ -181,5 +186,50 @@ MUTATIONS = [
      "        events.pull_requests_at_the_gate(project, gates)\n    except Exception as exc:",
      "        events.ready_at_the_gate(project, gates)\n"
      "        events.pull_requests_at_the_gate(project, gates)\n    except Exception as exc:",
+     GUARD_TEST),
+
+    # ── 7. every way to Done announces through the door, once (after B2 merged in) ─────────────
+    ("a card the box delivers at its last stage is no delivery of the door's, so nothing says it",
+     HANDED,
+     "    JobState.DONE: CardEvent.DELIVERED,\n",
+     "    JobState.DONE: CardEvent.MERGED,\n"),
+
+    ("a card's transition announces deliveries it does not complete — the hidden catch-all",
+     LOOPS,
+     "                         and (cards is None or events.issues_of(x) & cards)]:\n",
+     "                         ]:\n"),
+
+    ("a delivery a cancellation narrowed is never announced by the door's converge", PORTS,
+     "                loops.announce(self.project, delivered=delivered)\n",
+     "                loops.announce(self.project, delivered=delivered, cards=set())\n"),
+
+    ("the job's exit announces a delivery beside the door again", ACTIVITIES,
+     '        recorded = "unrecorded"\n    return recorded\n',
+     '        recorded = "unrecorded"\n'
+     "    from openfactory.lifecycle import loops\n"
+     "    loops.announce_what_it_completes(ProjectRegistry().get(inp.project), inp.issue)\n"
+     "    return recorded\n",
+     GUARD_TEST),
+
+    ("the weekly sweep announces what its board shows, beside the door — the catch-all back",
+     ACTIVITIES,
+     "    _the_door_converges(project)\n    ledger = loop_store.read(project.name)\n",
+     "    _the_door_converges(project)\n"
+     "    from openfactory.lifecycle.loops import announce\n"
+     "    from openfactory.product.triage import delivered_numbers\n"
+     "    announce(project, delivered=delivered_numbers(list(module._board_tickets or [])))\n"
+     "    ledger = loop_store.read(project.name)\n"),
+
+    ("the weekly sweep no longer converges the door, so what it could not say waits", ACTIVITIES,
+     "        said = converge(project)\n",
+     "        said = []\n"),
+
+    ("the sweep's own questions are closed beside a delivery's promise, and the guard sees it",
+     ACTIVITIES,
+     "    settled = close_by_observation(ledger, followup.answered(open_now, live))\n",
+     "    from openfactory.memory.ledger import DELIVERY\n"
+     "    settled = close_by_observation(ledger, {**followup.answered(open_now, live), **{\n"
+     "        (DELIVERY, x.subject, x.about): \"delivered\" for x in open_now\n"
+     "        if x.kind == DELIVERY}})\n",
      GUARD_TEST),
 ]

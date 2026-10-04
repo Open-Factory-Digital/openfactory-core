@@ -24,8 +24,11 @@ for the card-question sweep to close when the answer arrives (ADR-0048 §6).
 
 THE CARD IS DELIVERED (`delivered`, or closed as finished work, #414): every delivery it completes
 is announced to the conversation its requester asked in, closed, and its "did it work?" opened —
-the one place a delivery is announced (`announce`), which the weekly catch-all and the job's own
-exit still reach directly until the box hands its promotion back through the door.
+the one place a delivery is announced (`announce`), reached only through the door: a transition's
+`Loops("deliver")` — the job's settle, the box's hand-back at its last stage, a person's close, a
+close observed on the vendor's own screen — and the converge of a delivery a cancellation
+narrowed (`Ports.deliver_what_remains`). The job's exit and the weekly sweep announced it beside
+the door until #414; the sweep's second chance is the door's converge now.
 """
 
 from __future__ import annotations
@@ -194,15 +197,23 @@ def ask(project, card: str, *, about: str, context: dict) -> str:
     return "1 opened"
 
 
-def deliver(project, card: str, *, title: str = "") -> str:
-    """What `card`, now delivered, completes (#414): every open delivery whose work is ALL delivered
-    is announced (`announce`). Cheap when there is nothing to say — the ledger is read first, and
-    the board only when an open delivery waits on this card or on the card it was split from (a
-    split card's delivery is its parent's, `triage.delivered_numbers`).
+def announce_what_it_completes(project, card: str, *, title: str = "") -> str:
+    """What `card`, now delivered, completes (#414): every open delivery that waits on this card, or
+    on the card it was split from (a split card's delivery is its parent's,
+    `triage.delivered_numbers`), and whose work is ALL delivered, is announced (`announce`). Cheap
+    when there is nothing to say — the ledger is read first, and the board only when such a
+    delivery is open.
+
+    ONLY WHAT THIS CARD COMPLETES, recorded once per card: a delivery due on cards none of which is
+    this one is not its transition's to say — a card closed beside the door is said when the door
+    sees it (`observe`), and a delivery a cancellation narrowed is said by the door's converge
+    (`Ports.deliver_what_remains`). Announcing them here would put another card's news on this
+    card's record, and make every delivery the hidden catch-all the weekly sweep was.
 
     RAISES WHEN NOTHING COULD BE DECIDED OR SAID — the board could not be read, or the
-    conversation did not take a due announcement — so the hourly sweep applies it again, where the
-    weekly catch-all used to be the only second chance."""
+    conversation did not take a due announcement — so the door's converge applies it again, on
+    the hourly round and the weekly sweep, where a weekly catch-all beside the door used to be the
+    only second chance."""
     from openfactory.contracts.refs import split_parent_of
     from openfactory.memory import store as loop_store
     from openfactory.memory.ledger import DELIVERY, waiting
@@ -218,17 +229,20 @@ def deliver(project, card: str, *, title: str = "") -> str:
     delivered = events._delivered_now(project)
     if delivered is None:
         raise RuntimeError("the board could not be read to see what it delivered")
-    written, missed = announce(project, delivered=delivered)
+    written, missed = announce(project, delivered=delivered, cards=mine)
     if missed:
         raise RuntimeError(f"{missed} announcement(s) the conversation did not take")
     closed = sum(1 for x in written if x.kind == DELIVERY)
     return f"{closed} announced" if closed else "nothing it completes is due yet"
 
 
-def announce(project, *, delivered: set[str]) -> tuple[list, int]:
-    """ANNOUNCE EVERY OPEN DELIVERY WHOSE WORK IS ALL DELIVERED. Returns the rows written — each
-    delivery closed, and the acceptance loop its announcement opened — and how many due ones were
-    NOT announced (the conversation did not take one, or another telling held the lock).
+def announce(project, *, delivered: set[str], cards: set[str] | None = None) -> tuple[list, int]:
+    """ANNOUNCE EVERY OPEN DELIVERY WHOSE WORK IS ALL DELIVERED — of those that wait on `cards`,
+    when a card's transition asks (`announce_what_it_completes`); of all of them, when nothing is
+    left to ask (a delivery a cancellation narrowed, `Ports.deliver_what_remains`). Returns the
+    rows written — each delivery closed, and the acceptance loop its announcement opened — and how
+    many due ones were NOT announced (the conversation did not take one, or another telling held
+    the lock).
 
     TO ITS REQUESTER'S CONVERSATION, the one recorded on the loop (`conversation`), else the room.
     The sentence is the one the sweep always said — the requirement's or the fix's — with the "did
@@ -255,7 +269,8 @@ def announce(project, *, delivered: set[str]) -> tuple[list, int]:
             open_now = waiting(loop_store.read(name), owner=events.OWNER)
             # ALL OF ITS WORK, NEVER SOME — the one rule for it (`followup.delivered`)
             due = followup.delivered(open_now, delivered)
-            for loop in [x for x in open_now if (x.kind, x.subject, x.about) in due]:
+            for loop in [x for x in open_now if (x.kind, x.subject, x.about) in due
+                         and (cards is None or events.issues_of(x) & cards)]:
                 where = (str((loop.context or {}).get("conversation") or "")
                          or events.room_of(project))
                 text = (followup.delivered_text(loop, agent_name=agent, language=language)

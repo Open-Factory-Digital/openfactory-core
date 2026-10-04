@@ -7,9 +7,11 @@ order of the slice's acceptance and its security rules:
     factory's own paths are the only way in;
   - a proactive message waits its turn in the conversation's line — never inside a turn, never
     coalesced into a person's words, never counted as somebody's place in the queue;
-  - a delivered card is announced when the job that delivered it ends, in its requester's
-    conversation, once — the board deciding what was delivered, the ledger what was said;
-  - the weekly sweep is the catch-all, and says nothing twice;
+  - a delivered card is announced when it is delivered — by the card's door since #414, where the
+    job's exit announced it before — in its requester's conversation, once: the board deciding
+    what was delivered, the ledger what was said;
+  - the weekly sweep announces nothing of its own since #414 (the door's converge is its second
+    chance, `tools/mutations/414_b1_…`), and nothing is said twice;
   - the other events are said once each, to the requester else the room;
   - the agenda: one rule for who sees an item, on the panel, on the operator's list, in the role's
     own facts, and in which acceptance a reply may answer;
@@ -86,19 +88,22 @@ MUTATIONS = [
      "        self._publish([arrival.id], list(arrival.replies), final=True)\n"),
 
     # ── a delivered card, when it is delivered, where it was asked ──────────────────────────────
-    ("the job's one exit no longer asks what it delivered", ACTIVITIES,
-     "    if inp.state in _THE_CARD_IS_DONE:\n",
-     "    if False:\n"),
-    ("a job that parked asks what it delivered", ACTIVITIES,
-     "_THE_CARD_IS_DONE = frozenset({JobState.DONE.value, JobState.MERGED.value})\n",
-     "_THE_CARD_IS_DONE = frozenset({JobState.DONE.value, JobState.MERGED.value,\n"
-     "                               JobState.ON_HOLD.value})\n"),
-    ("a finished card never looks for the delivery it completes", EVENTS,
-     '        if not _deliveries_of(loop_store.read(getattr(project, "name", "") or ""), card):\n',
-     "        if True:\n"),
-    ("the job's word is trusted when the board cannot be read", EVENTS,
-     "        if delivered is None:\n            return []\n",
-     "        if delivered is None:\n            delivered = {str(card)}\n"),
+    # RETIRED 2026-10-04 (#414): "the job's one exit no longer asks what it delivered" and "a job
+    # that parked asks what it delivered". The exit asks nothing in any state now — every way a
+    # card reaches Done is a transition of its door, whose `Loops("deliver")` says it — and the
+    # set the two rows cut went with it. The exit planted as an announcer again is the b1 plan's
+    # row, and `test_the_jobs_exit_asks_nothing_however_it_ended` holds the exit silent.
+    # re-pinned 2026-10-04: a finished card is the card door's to read (#414,
+    # `loops.announce_what_it_completes`)
+    ("a finished card never looks for the delivery it completes", LOOPS,
+     "    if not any(x.kind == DELIVERY and events.issues_of(x) & mine\n",
+     "    if True or not any(x.kind == DELIVERY and events.issues_of(x) & mine\n"),
+    # re-pinned 2026-10-04: a finished card is the card door's to read (#414,
+    # `loops.announce_what_it_completes`)
+    ("the job's word is trusted when the board cannot be read", LOOPS,
+     "    if delivered is None:\n"
+     "        raise RuntimeError(\"the board could not be read to see what it delivered\")\n",
+     "    if delivered is None:\n        delivered = {_bare(card)}\n"),
     # re-pinned 2026-10-04: the announcement is the card door's (`loops.announce`, #414)
     ("a delivery is announced in the room, not where its requester asked", LOOPS,
      '                where = (str((loop.context or {}).get("conversation") or "")\n'
@@ -119,10 +124,10 @@ MUTATIONS = [
      "    for loop in reversed(_deliveries_of(rows, card)):\n",
      "    for loop in _deliveries_of(rows, card):\n"),
 
-    # ── the sweep is the catch-all, and nothing is said twice ────────────────────────────────────
-    ("the sweep no longer catches what an event missed", ACTIVITIES,
-     "    told = events.deliver(project, delivered=_closed_issue_numbers(module))\n",
-     "    told = []\n"),
+    # ── nothing is said twice ────────────────────────────────────────────────────────────────────
+    # RETIRED 2026-10-04 (#414): "the sweep no longer catches what an event missed". The claim
+    # turned over: the weekly sweep is no announcer, and its second chance is the card door's
+    # converge — both held by the b1 plan (`414_b1_the_jobs_tellings_go_through_the_door.py`).
     # re-pinned 2026-10-04: the announcement is the card door's (`loops.announce`, #414)
     ("the telling reads every row, and announces a closed delivery again", LOOPS,
      "            open_now = waiting(loop_store.read(name), owner=events.OWNER)\n",

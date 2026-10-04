@@ -2651,6 +2651,12 @@ async def record_outcome(inp: HoldSyncInput) -> str:
     APPENDS, NEVER REWRITES. The journal is append-only like every other record here: the run's
     own `reviewing` stays true (it WAS reviewing), and this adds what it became.
 
+    NO ANNOUNCEMENT HERE SINCE #414. It asked, for a job that ended with its card done, whether
+    that completed a delivery — the second producer beside the card's door. Every way a card
+    reaches Done is a transition of that door now (the settle at the merge, the box's hand-back at
+    its last stage, a person's close, a close observed on the vendor's own screen), and its
+    `Loops("deliver")` announces what the card completes, recorded once per card.
+
     NEVER RAISES. The job has already ended; nothing about recording that may fail it.
     """
     def _write() -> str:
@@ -2675,23 +2681,11 @@ async def record_outcome(inp: HoldSyncInput) -> str:
             "(%s) — once the engine's retention window passes, nothing will",
             inp.project, inp.issue, inp.state, str(exc)[:160])
         recorded = "unrecorded"
-    if inp.state in _THE_CARD_IS_DONE:
-        try:
-            # BOUNDED INSIDE THE JOURNAL'S OWN TWO MINUTES: a slow board must not time this
-            # activity out and have it retried — the journal line is the job, this is courtesy
-            await asyncio.wait_for(asyncio.to_thread(_a_card_was_finished, inp),
-                                   timeout=_ANNOUNCE_WITHIN)
-        except TimeoutError:
-            activity.logger.warning("the delivery check for %s#%s outlived %ss — left to finish on "
-                                    "its own; the sweep catches what it could not say",
-                                    inp.project, inp.issue, _ANNOUNCE_WITHIN)
     return recorded
 
 
-#: The terminal states a job ends in with its card in Done: `done`, and `merged` when nothing
-#: follows the merge (`JobWorkflow._finish_at_the_merge` settles the card Done and returns merged).
-_THE_CARD_IS_DONE = frozenset({JobState.DONE.value, JobState.MERGED.value})
-#: How long the journal's activity waits for the delivery check — well inside its two minutes.
+#: How long an activity that tells a requester something waits for it — well inside its two
+#: minutes (`tell_the_requester`, `card_adjusted`).
 _ANNOUNCE_WITHIN = 75.0
 
 
@@ -2818,27 +2812,6 @@ async def card_adjusted(inp: AdjustedInput) -> str:
         activity.logger.warning("the adjust pass of %s#%s was not recorded as such (%s)",
                                 inp.project, inp.issue, str(exc)[:160])
         return "unrecorded"
-
-
-def _a_card_was_finished(inp: HoldSyncInput) -> None:
-    """THE DELIVERY IS ANNOUNCED WHEN IT HAPPENS, NOT AT THE NEXT SWEEP (#267 slice 3). Every job
-    ends at `record_outcome` — the one exit, which is why this is here and not in a dozen
-    terminal branches — and one that ended with its card done asks whether that completed a
-    delivery: the board decides, and the requester hears it in the conversation they asked in
-    (`events.card_finished`). Never raises: the job has ended, and the weekly sweep still catches
-    whatever this could not say.
-
-    THE CARD'S DOOR ANNOUNCES IT FIRST since #414: a job settled Done is `delivered`, whose
-    `Loops("deliver")` says it, so this finds the delivery closed. It stays for the one ending the
-    door does not hold yet — a card the box's promotion moved to Done itself — until the box hands
-    that outcome back to the worker (`tests/card_writers_outside_the_door.py`)."""
-    try:
-        from openfactory.product import events
-
-        events.card_finished(ProjectRegistry().get(inp.project), card=inp.issue)
-    except Exception as exc:  # noqa: BLE001 — the catch-all says it, a week late at worst
-        activity.logger.warning("could not see what %s#%s delivered (%s) — the sweep will",
-                                inp.project, inp.issue, str(exc)[:160])
 
 
 @activity.defn
@@ -5006,16 +4979,7 @@ def _product_followup(project, module, report, cfg) -> str:
     the one that has to be visible."""
     from openfactory.adapters.channel import build_channel
     from openfactory.memory import store as loop_store
-    from openfactory.memory.ledger import (
-        ACCEPTANCE,
-        CHASED,
-        DECISION,
-        DELIVERY,
-        QUESTION,
-        chase_due,
-        close_by_observation,
-        waiting,
-    )
+    from openfactory.memory.ledger import ACCEPTANCE, CHASED, DECISION, QUESTION, chase_due, waiting
     from openfactory.product import agenda, events, followup
 
     name = getattr(cfg, "agent_name", "") or ""
@@ -5039,30 +5003,26 @@ def _product_followup(project, module, report, cfg) -> str:
 
     # 1. CLOSE what the world resolved. A question whose finding is gone was answered by the world,
     #    which is the only kind of answer that counts (see followup.py).
-    live = {f"{o.ticket}:{o.kind}" for o in report.observations}
-    resolved = followup.answered(open_now, live)
-    settled = close_by_observation(ledger, resolved)
-
+    settled = _the_board_answered(project, ledger, open_now, report)
     if settled:
-        loop_store.write(project.name, settled)
         # The in-memory view must include what was just settled, or the chase pass below reads the
         # PRE-close ledger and reminds somebody about a question this very round resolved — a
         # message that tells the reader, precisely, that the agent is not paying attention.
         ledger = ledger + settled
 
-    # 2. SAY what got delivered — THE CATCH-ALL NOW (#267 slice 3). The sentence she could never
-    #    say unprompted is said when the job that finished the work ends (`events.card_finished`),
-    #    to the conversation the requester asked in. What an event missed — a card closed by hand,
-    #    a worker that was down, a door that did not take it — is said here, by the SAME function,
-    #    under the same lock and the same ledger, so a delivery the event announced is closed and
-    #    this finds nothing to say: never twice. The close and the acceptance question are gated
-    #    on the door taking the announcement (a dropped "está pronto" stays open for the next
-    #    telling), and THE DELIVERY LOOP CLOSES; THE ACCEPTANCE LOOP OPENS — only the person's
-    #    answer closes that one (ADR-0025).
-    told = events.deliver(project, delivered=_closed_issue_numbers(module))
-    accepting = [x for x in told if x.kind == ACCEPTANCE]
-    settled += [x for x in told if x.kind == DELIVERY]
-    ledger = ledger + told
+    # 2. WHAT GOT DELIVERED IS THE CARD'S DOOR'S TO SAY, NEVER THIS SWEEP'S (#414). Every way a card
+    #    reaches Done — its job's settle at the merge, the box's hand-back at its last stage, a
+    #    person's close, a close observed on the vendor's own screen — is a transition whose
+    #    `Loops("deliver")` announces what the card completes, to the conversation its requester
+    #    asked in, recorded once per card; THE DELIVERY LOOP CLOSES AND THE ACCEPTANCE LOOP OPENS
+    #    there (ADR-0025). This sweep was the catch-all beside it, a second announcer reading the
+    #    board; its second chance is the door's own now — `converge`, which applies again an
+    #    announcement the board or the conversation did not take, as the hourly round does.
+    asking = {x.key for x in waiting(ledger, owner=followup.OWNER) if x.kind == ACCEPTANCE}
+    _the_door_converges(project)
+    ledger = loop_store.read(project.name)
+    accepting = [x for x in waiting(ledger, owner=followup.OWNER)
+                 if x.kind == ACCEPTANCE and x.key not in asking]
 
     # 3. ASK what is new, at the person who can answer.
     ts = _now_iso()
@@ -5144,10 +5104,49 @@ def _product_followup(project, module, report, cfg) -> str:
     #    message while this sweep's cadence is a week.
     _land_product_proposals(project, token=module.token or "")
 
-    # `accepting` is not written again: the telling that opened each wrote it (`events.deliver`)
+    # `accepting` is not written again: the door's announcement that opened each wrote it
+    # (`lifecycle.loops.announce`)
     loop_store.write(project.name, fresh + chased + acc_chased + dec_chased)
     return (f"asked:{len(fresh)} chased:{len(chased)} closed:{len(settled)} "
             f"accepting:{len(accepting)}")
+
+
+def _the_board_answered(project, ledger, open_now, report) -> list:
+    """Close the product role's QUESTIONS the board resolved — a question whose finding is gone was
+    answered by the world, the only kind of answer that counts (`followup.answered`). Returns the
+    rows written.
+
+    APART FROM THE SWEEP ON PURPOSE (#414): these are the role's questions about the board, not a
+    promise about a card. The door's guard reads a function that names a card's loops (a
+    delivery, a card question) and closes a loop as a promise kept beside the door; this one names
+    neither, so it is seen for what it is, and a delivery closed here would be seen too."""
+    from openfactory.memory import store as loop_store
+    from openfactory.memory.ledger import close_by_observation
+    from openfactory.product import followup
+
+    live = {f"{o.ticket}:{o.kind}" for o in report.observations}
+    settled = close_by_observation(ledger, followup.answered(open_now, live))
+    if settled:
+        loop_store.write(project.name, settled)
+    return settled
+
+
+def _the_door_converges(project) -> list[str]:
+    """`lifecycle.converge`, on the weekly sweep: what the card's door applied and the world did
+    not take — a delivery the board could not be read for, an announcement the conversation
+    refused — applied again, logged. The sweep's second chance for a delivery is the door's own
+    (#414). Never raises: the sweep's other steps are not its price."""
+    try:
+        from openfactory.lifecycle import converge
+
+        said = converge(project)
+    except Exception as exc:  # noqa: BLE001 — see the docstring
+        activity.logger.warning("the weekly sweep could not converge the card door (%s)",
+                                str(exc)[:160])
+        return []
+    for line in said:
+        activity.logger.info("card transition converged: %s", line)
+    return said
 
 
 def _land_product_proposals(project, *, token: str | None = None) -> list[str]:
@@ -5736,33 +5735,6 @@ def _finding_reminders(project_name: str, ledger: list, language: str = "") -> l
         )
         for loop in chased
     ]
-
-
-def _closed_issue_numbers(module) -> set[str]:
-    """Which of the board's tickets were actually DELIVERED. Read from what the sweep already
-    fetched — a second board read for this would spend the same GitHub quota twice for one number.
-
-    CLOSED IS NOT DELIVERED. The previous rule was `state != "open"`, so an issue closed as a
-    duplicate or as `not_planned` counted as delivery and the client was told "o que foi pedido no
-    requisito N está pronto" about work that was cancelled. On 2026-07-29 eleven cards were closed
-    as not_planned in one sitting — the failure was one sweep away.
-
-    `not_planned` is excluded by NAME rather than `completed` being required, deliberately: a
-    tracker that reports no reason at all (or a provider with no such concept) then still delivers,
-    which is the behaviour every existing deployment had. Requiring the positive signal would
-    silently stop announcing real deliveries the day a tracker omitted the field — trading a false
-    delivery for a lost one.
-    """
-    # THE PREDICATE MOVED TO `Ticket.delivered` (product/triage.py), where `state_reason` already
-    # lives, so the conversational surface reads the SAME rule instead of having none. The argument
-    # above is preserved verbatim there; this is now the one caller that filters a set by it.
-    #
-    # …AND A CARD THAT WAS SPLIT IS ASKED OF THE BOARD, NOT OF ITSELF (`triage.delivered_numbers`):
-    # the loop holds the parent, the parent's work is in its children, and until 2026-09-19 the
-    # split's own close made this set say "delivered" before any of them had started.
-    from openfactory.product.triage import delivered_numbers
-
-    return delivered_numbers(list(module._board_tickets or []))
 
 
 def _hours_since(iso: str) -> float:

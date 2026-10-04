@@ -11,6 +11,8 @@ REGISTRY = "openfactory/adapters/tracker/registry.py"
 IMPEDIMENT = "openfactory/ops/impediment.py"
 #: the card's door's ports — where a split's close and the impediment's reach the row since #414
 PORTS = "openfactory/lifecycle/ports.py"
+#: where the card's door reads what the board delivered, since the sweep stopped announcing (#414)
+EVENTS = "openfactory/product/events.py"
 VOICE = "openfactory/techlead/voice.py"
 
 MUTATIONS = [
@@ -29,10 +31,13 @@ MUTATIONS = [
      "        self.tracker.close_ticket(card, note)\n"),
 
     # ── what the sweep counts ───────────────────────────────────────────────────────────────────
+    # re-pinned 2026-10-04: the delivery is read by the card's door (`events._delivered_now`), the
+    # sweep's reading went with its announcing (#414)
     ("the delivery sweep asks the CARD, not the board, so a split parent is never followed",
-     ACTIVITIES,
-     "    return delivered_numbers(list(module._board_tickets or []))",
-     "    return {t.number for t in (module._board_tickets or []) if t.delivered}"),
+     EVENTS,
+     "    return delivered_numbers(list(tickets or []))",
+     "    return {t.number for t in (tickets or []) if t.delivered}",
+     "tests/test_the_life_of_a_card.py"),
 
     ("a card that was split counts the moment it is closed, whatever its children are doing",
      TRIAGE,

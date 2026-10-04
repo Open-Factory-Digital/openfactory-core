@@ -596,11 +596,12 @@ def _acceptances_here(project, ledger, conversation: str | None) -> list:
     """The open acceptances a message in `conversation` may answer (#267 slice 3).
 
     AN ACCEPTANCE ASKED IN A PRIVATE CONVERSATION IS ANSWERED THERE, AND NOWHERE ELSE: the delivery
-    was announced to the person who asked, where they asked (`events.deliver`), and somebody else's
-    "funcionou" in the room must neither close it nor be told which delivery it closed. One asked
-    in the room is answered from anywhere, as every acceptance was before. `None` — a caller that
-    names no conversation — reads them all, as before; "" is a conversation nobody could name,
-    which answers the room's alone. The one rule the agenda and the chat use (`agenda.sees`)."""
+    was announced to the person who asked, where they asked (`lifecycle.loops.announce`), and
+    somebody else's "funcionou" in the room must neither close it nor be told which delivery it
+    closed. One asked in the room is answered from anywhere, as every acceptance was before.
+    `None` — a caller that names no conversation — reads them all, as before; "" is a conversation
+    nobody could name, which answers the room's alone. The one rule the agenda and the chat use
+    (`agenda.sees`)."""
     from openfactory.memory.ledger import ACCEPTANCE, waiting
     from openfactory.product.followup import OWNER
 
@@ -3256,9 +3257,10 @@ class ProductModule:
                        requester: str = "") -> None:
         """The moment a requirement becomes filed work is the moment she starts WAITING on it
         (ADR-0021): a `delivery` loop opens here, and it closes when every one of these issues is
-        delivered — observed the moment a job finishes one (`events.card_finished`), or by the
-        weekly sweep as the catch-all — and only then does she say "está pronto", in the
-        conversation it was asked in (`conversation`), else the room (#267 slice 3).
+        delivered — each card's delivery through its door announces what it completes
+        (`lifecycle.loops.announce_what_it_completes`, #414) — and only then does she say "está
+        pronto", in the conversation it was asked in (`conversation`), else the room (#267 slice
+        3).
 
         Filing is the ONLY place this can open. `followup.deliveries_to_open` existed, was tested,
         and was called by nothing — the twelfth instance of this repo's signature defect, caught

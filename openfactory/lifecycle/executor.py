@@ -89,7 +89,8 @@ def _one(ports, row: record.Row, effect: Effect, *, carried: bool) -> str:
             # THE PROMISE A FILING MAKES, as the filing carried it (#414)
             return ports.loops(row.card, effect.action, owed=dict(facts.get("owed") or {}))
         # `asked` is the loop a question opens, as its asker composed it (`_do_gather`); the
-        # title is how a delivery finds the card a split card was split from (`loops.deliver`)
+        # title is how a delivery finds the card a split card was split from
+        # (`loops.announce_what_it_completes`)
         return ports.loops(row.card, effect.action, about=str(facts.get("about") or ""),
                            context=dict(facts.get("asked") or {}),
                            title=str(facts.get("title") or ""))
@@ -205,7 +206,7 @@ def converge(project, *, ports=None) -> list[str]:
                 said.append(f"#{card} {row.event} {name}: {outcome}")
     if any(_narrowed(row, now=now) for history in histories.values() for row in history.rows):
         # A DELIVERY SHARED BY SEVERAL CARDS lost one; if the rest were delivered before, it is due
-        # now, and nothing else would announce it before the weekly catch-all (D10)
+        # now, and no card's transition is left to announce it (D10)
         ports.deliver_what_remains()
     return said
 

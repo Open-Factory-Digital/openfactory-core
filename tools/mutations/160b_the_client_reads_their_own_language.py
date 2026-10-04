@@ -47,7 +47,7 @@ MUTATIONS = [
     # RE-PINNED 2026-09-24 (#267 slice 3): the delivery is told where it happens now
     # (`events.deliver`, the event's and the sweep's catch-all alike), so its sentence moved there
     # re-pinned 2026-10-04: the announcement is the card door's (`lifecycle/loops.py::announce`,
-    # #414), which `events.deliver` reaches
+    # #414), which a card's `Loops("deliver")` reaches
     ("…and to the delivery announcement", "openfactory/lifecycle/loops.py",
      "                text = (followup.delivered_text(loop, agent_name=agent, language=language)",
      "                text = (followup.delivered_text(loop, agent_name=agent)",

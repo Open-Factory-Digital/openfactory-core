@@ -12,6 +12,9 @@ anywhere else:
                             loops keyed to a card (DELIVERY, CARD_QUESTION)
     a card's notice         `events.card_finished`, `deliver`, `ready_for_you`,
                             `ready_to_try`, `ready_at_the_gate`, `card_moved`
+    the door's promise half any call into `lifecycle/loops.py` — `announce`, `deliver`, `owe`,
+                            `ask`, … — whose callers are the door's effects (#414): a delivery
+                            announced from there by anybody else is a second announcer
 
 `events.ci_went_red`, `preview_up` and `pull_requests_at_the_gate` are not card notices in this
 sense: a red check, a live preview and a reminder of a waiting gate say how far a job is, and no
@@ -71,16 +74,20 @@ BOX_WRITERS = frozenset({("openfactory/orchestrator/machine.py", "_set_state"),
 #: #414's B1 and B2, merged: B1 moved a split's children and parent, the gather's question, the
 #: ready-for-you tellings, the delivery's loop and the factory's own impediment card; B2 the box's
 #: outcomes, which it hands back for the worker to apply (D7) — its progress marks stay, by rule
-#: (`BOX_WRITERS`) — and the promise one card's filing opens (`Loops("open")`).
-#: Each slice lowers the ceiling and drops what it moved in from both; slice 3 ends at zero, and
-#: the four left are its own (`card_writers_outside_the_door.py`).
-CEILING = 4
+#: (`BOX_WRITERS`) — and the promise one card's filing opens (`Loops("open")`); 1 since the job's
+#: exit and the weekly sweep stopped announcing beside the door, and the sweep's own questions were
+#: closed apart from any card's promise.
+#: Each slice lowers the ceiling and drops what it moved in from both. Slice 3 ends at one: a
+#: requirement's delivery, which needs an event ADR-0055 does not have (the list says why).
+CEILING = 1
 BASELINE = frozenset({
-    ("openfactory/runtime/temporal/activities.py", "_a_card_was_finished", "card_finished"),
-    ("openfactory/runtime/temporal/activities.py", "_product_followup", "deliver"),
-    ("openfactory/runtime/temporal/activities.py", "_product_followup", "close_by_observation"),
     ("openfactory/product/followup.py", "deliveries_to_open", "open_loop"),
 })
+
+#: THE DOOR'S PROMISE HALF (#414): `lifecycle/loops.py`, whose callers are the door's effects. A
+#: call into it from anywhere the walk reads is a promise about a card kept beside the door — the
+#: delivery announced by the job's exit and the weekly sweep, under another name.
+DOOR_LOOPS = "openfactory.lifecycle.loops"
 
 
 def _named(node: ast.AST) -> set[str]:
@@ -124,6 +131,8 @@ def card_writes(root: pathlib.Path, *, rel_to: pathlib.Path) -> tuple[set[tuple]
         tree = ast.parse(path.read_text(encoding="utf-8"))
         functions = [n for n in ast.walk(tree)
                      if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]
+        # the names this file reaches the door's promise half by: the module, or what it exports
+        promise_module, promise_functions = _the_door_s_loops(tree)
 
         def where(line: int, functions=functions):
             inside = [f for f in functions if f.lineno <= line <= (f.end_lineno or f.lineno)]
@@ -147,7 +156,29 @@ def card_writes(root: pathlib.Path, *, rel_to: pathlib.Path) -> tuple[set[tuple]
             elif (name in NOTICES and isinstance(func, ast.Attribute)
                   and isinstance(func.value, ast.Name) and func.value.id == "events"):
                 found.add((rel, here, name))
+            elif (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
+                  and func.value.id in promise_module):
+                found.add((rel, here, f"loops.{name}"))
+            elif isinstance(func, ast.Name) and name in promise_functions:
+                found.add((rel, here, f"loops.{name}"))
     return found, read
+
+
+def _the_door_s_loops(tree: ast.AST) -> tuple[set[str], set[str]]:
+    """`(module aliases, function names)` a file binds to `lifecycle/loops.py` — imported as a
+    module (`from openfactory.lifecycle import loops`, `import openfactory.lifecycle.loops as x`)
+    or by name (`from openfactory.lifecycle.loops import announce`), at any depth: the house
+    imports inside functions."""
+    module: set[str] = set()
+    functions: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "openfactory.lifecycle":
+            module |= {a.asname or a.name for a in node.names if a.name == "loops"}
+        elif isinstance(node, ast.ImportFrom) and node.module == DOOR_LOOPS:
+            functions |= {a.asname or a.name for a in node.names}
+        elif isinstance(node, ast.Import):
+            module |= {a.asname for a in node.names if a.name == DOOR_LOOPS and a.asname}
+    return module, functions
 
 
 def test_nothing_outside_the_door_changes_a_card_unless_it_is_named():
@@ -212,6 +243,33 @@ def test_the_walk_reads_the_package_and_sees_a_writer_planted_in_it(tmp_path):
     assert found == {("openfactory/product/rogue.py", "drop", "close_ticket"),
                      ("openfactory/product/rogue.py", "promise", "open_loop"),
                      ("openfactory/product/rogue.py", "say", "card_moved")}, found
+
+
+def test_the_walk_sees_a_delivery_announced_beside_the_door_under_the_door_s_own_name(tmp_path):
+    """The job's exit and the weekly sweep announced a delivery beside the door (#414); the one
+    announcer is `lifecycle/loops.py` now, and a caller reaching it by name — as a module or a
+    function, imported anywhere in the file — is a second announcer the walk finds."""
+    rogue = tmp_path / "openfactory" / "runtime" / "rogue.py"
+    rogue.parent.mkdir(parents=True)
+    rogue.write_text(
+        "def job_ended(project, card):\n"
+        "    from openfactory.lifecycle import loops\n"
+        "    loops.announce_what_it_completes(project, card)\n"
+        "def weekly(project, delivered):\n"
+        "    from openfactory.lifecycle.loops import announce\n"
+        "    announce(project, delivered=delivered)\n"
+        "def aliased(project, card):\n"
+        "    import openfactory.lifecycle.loops as promises\n"
+        "    promises.owe(project, card, {})\n"
+        "def converged(project):\n"
+        "    from openfactory.lifecycle import converge\n"
+        "    return converge(project)\n",
+        encoding="utf-8")
+    found, _ = card_writes(tmp_path / "openfactory", rel_to=tmp_path)
+    assert found == {("openfactory/runtime/rogue.py", "job_ended",
+                      "loops.announce_what_it_completes"),
+                     ("openfactory/runtime/rogue.py", "weekly", "loops.announce"),
+                     ("openfactory/runtime/rogue.py", "aliased", "loops.owe")}, found
 
 
 # ── the box writes its progress marks, and hands every outcome back (D7, #414) ────────────────

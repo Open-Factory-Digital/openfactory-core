@@ -284,7 +284,7 @@ class Ports:
         if action == "ask":
             return loops.ask(self.project, card, about=about, context=context or {})
         if action == "deliver":
-            return loops.deliver(self.project, card, title=title)
+            return loops.announce_what_it_completes(self.project, card, title=title)
         if action != "cancel":
             return loops.restore(self.project, card)
         said, _still = loops.cancel(self.project, card)
@@ -293,15 +293,16 @@ class Ports:
     def deliver_what_remains(self) -> None:
         """A delivery whose remaining cards were all delivered before one of its cards was cancelled
         is due — announced through the delivery's own path, which reads the board and the ledger
-        again under the telling lock (`events.deliver`). The hourly sweep asks it (`converge`),
+        again under the telling lock (`loops.announce`). The door's sweep asks it (`converge`),
         never a person's turn: a turn reaching the delivery path is a second way into it."""
+        from openfactory.lifecycle import loops
         from openfactory.product import events
 
         try:
             delivered = events._delivered_now(self.project)
             if delivered:
-                events.deliver(self.project, delivered=delivered)
-        except Exception:  # noqa: BLE001 — the weekly catch-all announces what this missed
+                loops.announce(self.project, delivered=delivered)
+        except Exception:  # noqa: BLE001 — the next round asks again, for a day (`NARROWED_FOR`)
             log.exception("[%s] could not see whether what remains of a delivery is delivered",
                           self.name)
 

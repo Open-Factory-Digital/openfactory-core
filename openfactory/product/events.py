@@ -14,12 +14,13 @@ line on that conversation — behind the turn in progress, never inside one.
 
     kind                producer on this branch
     ─────────────────   ──────────────────────────────────────────────────────────────────────
-    delivered           the card's door (`lifecycle/loops.py::deliver`, #414) — a card closed
-                        as delivered, by its job, a person or the vendor's own screen, announces
-                        what it completes; and, until the box hands its promotion back through
-                        the door, `activities.record_outcome` — every job ends there; one that
-                        ended with its card done asks whether that completed a delivery
-                        (`card_finished`) — with the weekly sweep as the catch-all (`deliver`)
+    delivered           the card's door (`lifecycle/loops.py`, `announce_what_it_completes`,
+                        #414) — a card that reaches Done, by its job's settle, the box's
+                        hand-back at its last stage, a person's close or the vendor's own screen,
+                        announces what it completes as one of its transition's effects, recorded
+                        once per card; what the board or the conversation did not take, the
+                        door's converge applies again (hourly, and on the weekly sweep). Nothing
+                        else announces a delivery
     ci_red              `activities.repair_ci` — the merge watch sends a pull request there
                         because a check that blocks it failed on the code, and the factory is
                         repairing it; said once per pull request, however many passes it takes
@@ -57,9 +58,9 @@ conversation drops a second telling of it (`ConversationWorkflow.admit`); and be
 checked against what was already said:
 
     a delivery      the ledger: an open delivery loop is announced, closed and followed by its
-                    acceptance loop, under the product's lock, so the event and the catch-all
-                    racing each other announce it once; a telling the door did not take leaves
-                    it open for the next
+                    acceptance loop, under the product's lock, so two cards' transitions (or a
+                    transition and the door's converge) racing each other announce it once; a
+                    telling the door did not take leaves it open for the next
     everything else this module's own record of what it told (`events.json` in the project's
                     memory directory, under its lock), written only after the door took it
 
@@ -91,7 +92,7 @@ KINDS = (DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED, CARD_MOVE
 #: Which producer tells each kind on this branch — "" for a kind whose producer lives elsewhere.
 #: The guard reads this, so a producer claimed here is a call that exists.
 PRODUCERS = {
-    DELIVERED: "openfactory/runtime/temporal/activities.py::record_outcome",
+    DELIVERED: "openfactory/lifecycle/loops.py::announce_what_it_completes",
     CI_RED: "openfactory/runtime/temporal/activities.py::repair_ci",
     PR_WAITING: "openfactory/runtime/temporal/activities.py::techlead_watch",
     PREVIEW_UP: "openfactory/runtime/temporal/activities.py::preview_up",
@@ -338,8 +339,8 @@ def _title_of(project, card: str) -> str:
 # ── delivered ────────────────────────────────────────────────────────────────────────────────────
 
 def _delivered_now(project) -> set[str] | None:
-    """The cards the board says were delivered, read FRESH — the job that just finished moved
-    one — or None when it could not be read (the catch-all reads it next time)."""
+    """The cards the board says were delivered, read FRESH — the transition that asks just closed
+    one — or None when it could not be read (the door's converge asks again)."""
     from openfactory.product.module import ProductModule
     from openfactory.product.triage import delivered_numbers
 
@@ -349,46 +350,6 @@ def _delivered_now(project) -> set[str] | None:
                  getattr(project, "name", "?"), error)
         return None
     return delivered_numbers(list(tickets or []))
-
-
-def card_finished(project, *, card: str) -> list:
-    """A JOB ENDED WITH ITS CARD DONE (`activities.record_outcome`): every delivery that completes
-    is announced NOW, to its requester's conversation. Returns the ledger rows it wrote.
-
-    Cheap when there is nothing to say: the ledger is read first, and the board only when an open
-    delivery waits on this card. A card that is done is not always delivered — a split card is
-    closed and ships nothing itself — so the board decides (`triage.delivered_numbers`), not the
-    job's word. Never raises."""
-    if not _speaks(project) or not str(card or "").strip():
-        return []
-    try:
-        from openfactory.memory import store as loop_store
-
-        if not _deliveries_of(loop_store.read(getattr(project, "name", "") or ""), card):
-            return []
-        delivered = _delivered_now(project)
-        if delivered is None:
-            return []
-        return deliver(project, delivered=delivered)
-    except Exception:  # noqa: BLE001 — the job ended; the announcement is the catch-all's then
-        log.exception("[%s] could not see what #%s delivered — the sweep announces it",
-                      getattr(project, "name", "?"), card)
-        return []
-
-
-def deliver(project, *, delivered: set[str]) -> list:
-    """ANNOUNCE EVERY OPEN DELIVERY WHOSE WORK IS ALL DELIVERED — the event's work, and the sweep's
-    as the catch-all for whatever an event missed. Returns the rows written: each delivery closed,
-    and the acceptance loop its announcement opened.
-
-    THE ANNOUNCEMENT IS THE CARD'S DOOR'S SINCE #414 (`lifecycle.loops.announce`): a card closed as
-    delivered — by its job, by a person, or on the vendor's own screen — announces what it
-    completes as one of its consequences, and the delivery's loop closes where the card's other
-    promises do. This name stays for the two producers that still reach it directly: the job's
-    one exit (`card_finished`) and the weekly catch-all, which the box's promotion still needs."""
-    from openfactory.lifecycle.loops import announce
-
-    return announce(project, delivered=delivered)[0]
 
 
 # ── the others ───────────────────────────────────────────────────────────────────────────────────
@@ -650,8 +611,8 @@ def ready_for_you(project, *, card: str, pr_url: str, verdict: dict | None = Non
 
 
 __all__ = ["CARD_MOVED", "CI_RED", "DELIVERED", "DOCUMENT_INGESTED", "KINDS", "PREVIEW_UP",
-           "PRODUCERS", "PR_WAITING", "PR_WAIT_HOURS", "READY_FOR_YOU", "card_finished",
-           "card_moved", "ci_went_red", "conversation_for", "deliver", "document_ingested",
+           "PRODUCERS", "PR_WAITING", "PR_WAIT_HOURS", "READY_FOR_YOU", "card_moved",
+           "ci_went_red", "conversation_for", "document_ingested",
            "forget_record", "issues_of", "preview_up", "pull_requests_at_the_gate",
            "ready_for_you", "ready_to_try", "requester_conversation", "room_of", "say_to",
            "to_room"]

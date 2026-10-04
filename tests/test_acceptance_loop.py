@@ -13,7 +13,8 @@ open, because silence is not acceptance.
 The tests are ordered by how easy each is to get wrong:
 
   1. the verdict reader, where a complaint containing "resolveu" must never read as success;
-  2. the sweep, which must OPEN the loop while announcing (production orchestration, not helpers);
+  2. the announcement, which must OPEN the loop while announcing — the card's door's since #414
+     (`Loops("deliver")`), where the weekly sweep announced it before (the effect, not a helper);
   3. the conversation, which must CLOSE it from a real message through `handle()`;
   4. and the negative space — silence, ambiguity, and a pending draft that outranks it.
 """
@@ -31,7 +32,7 @@ from openfactory.product import followup
 from openfactory.product.triage import Ticket, TriageReport
 from openfactory.runtime.temporal.activities import _product_followup
 from tests.the_chat_turn import chat_turn
-from tests.the_room_heard import through
+from tests.the_room_heard import delivered_through_the_door, through
 from tests.the_sink_door import SINK_DOOR
 
 
@@ -140,51 +141,59 @@ def test_the_verdict_is_read_from_the_clients_own_words(text, expected):
     assert followup.acceptance_verdict(text) == expected, text
 
 
-# ── 2. the sweep opens it ──────────────────────────────────────────────────────────────────────
-def test_announcing_a_delivery_OPENS_an_acceptance_loop(wired):
-    """Driven through `_product_followup`, not the helper: the whole defect class in this repo is
-    a capability that works in isolation and is wired to nothing."""
+# ── 2. the card's door opens it ─────────────────────────────────────────────────────────────────
+#
+# DRIVEN THROUGH THE DOOR'S OWN EFFECT, not the helper below it: the whole defect class in this repo
+# is a capability that works in isolation and is wired to nothing. The weekly sweep announced a
+# delivery until #414; a card's `delivered` transition does (`Loops("deliver")`), and its wiring
+# from the transition is held in `tests/test_the_life_of_a_card.py`.
+
+DONE = [Ticket(number=500, title="a", state="closed", column="Done", body="")]
+
+
+def test_announcing_a_delivery_OPENS_an_acceptance_loop(wired, monkeypatch):
     channel, rows = wired
     rows.append(open_loop(DELIVERY, "7", owner="product", ts="2026-07-28T10:00:00+00:00",
                           context={"issues": "500", "person": "rob"}))
-    module = _Module([Ticket(number=500, title="a", state="closed", column="Done", body="")])
 
-    result = _product_followup(_project(), module, TriageReport(), _project().product)
+    said = delivered_through_the_door(_project(), "500", tickets=DONE, monkeypatch=monkeypatch)
 
-    assert "accepting:1" in result, result
+    assert said == "1 announced", said
     opened = [x for x in waiting(fold(rows), owner="product") if x.kind == ACCEPTANCE]
     assert len(opened) == 1, [x.kind for x in fold(rows)]
     assert opened[0].subject == "7"
     assert opened[0].about == "C0PROD", "the acceptance must remember which room it was asked in"
 
 
-def test_the_announcement_ASKS_rather_than_declaring_victory(wired):
+def test_the_announcement_ASKS_rather_than_declaring_victory(wired, monkeypatch):
     """The sentence is the product. 'está pronto' alone trains a client to ignore delivery notes;
     a question with a stated exit is what a colleague sends."""
     channel, rows = wired
     rows.append(open_loop(DELIVERY, "7", owner="product", ts="2026-07-28T10:00:00+00:00",
                           context={"issues": "500"}))
 
-    _product_followup(_project(), _Module(
-        [Ticket(number=500, title="a", state="closed", column="Done", body="")]),
-        TriageReport(), _project().product)
+    delivered_through_the_door(_project(), "500", tickets=DONE, monkeypatch=monkeypatch)
 
     said = "\n".join(channel.posts)
     assert "conferir" in said, said
     assert "não quero dar como resolvido" in said, "no exit offered — that is a chase, not a check"
 
 
-def test_the_delivery_loop_still_closes_so_it_is_never_announced_twice(wired):
+def test_the_delivery_loop_still_closes_so_it_is_never_announced_twice(wired, monkeypatch):
+    """Two cards' transitions, or the door's converge applying one again: the second finds the
+    delivery closed, and the weekly sweep that ran after them says nothing either."""
     channel, rows = wired
     rows.append(open_loop(DELIVERY, "7", owner="product", ts="2026-07-28T10:00:00+00:00",
                           context={"issues": "500"}))
-    module = _Module([Ticket(number=500, title="a", state="closed", column="Done", body="")])
     project = _project()
 
-    _product_followup(project, module, TriageReport(), project.product)
+    delivered_through_the_door(project, "500", tickets=DONE, monkeypatch=monkeypatch)
     first = len(channel.posts)
-    _product_followup(project, module, TriageReport(), project.product)
+    assert first and "está pronto" in channel.posts[-1], channel.posts
+    again = delivered_through_the_door(project, "500", tickets=DONE, monkeypatch=monkeypatch)
+    _product_followup(project, _Module(DONE), TriageReport(), project.product)
 
+    assert again == "nothing was promised about it", again
     delivered_again = [p for p in channel.posts[first:] if "está pronto" in p]
     assert not delivered_again, f"announced the same delivery twice: {channel.posts[first:]}"
 
@@ -381,35 +390,35 @@ def test_the_sweep_reaches_the_landing_step_through_the_faked_seam(wired):
 
 
 # ── 6. closed is not delivered ─────────────────────────────────────────────────────────────────
-def test_work_closed_as_NOT_PLANNED_is_never_announced_as_delivered(wired):
+def test_work_closed_as_NOT_PLANNED_is_never_announced_as_delivered(wired, monkeypatch):
     """The sweep read `state != "open"`, so an issue closed as a duplicate or as not-planned counted
     as a delivery and the client was told "o que foi pedido no requisito N está pronto" about work
     that was CANCELLED. Eleven cards were closed as not_planned on 2026-07-29 in one sitting — this
-    was one sweep away from happening for real."""
-    from openfactory.runtime.temporal.activities import _closed_issue_numbers
+    was one sweep away from happening for real. The board's reading is the door's now (#414)."""
+    from openfactory.product.triage import delivered_numbers
 
     channel, rows = wired
     rows.append(open_loop(DELIVERY, "7", owner="product", ts="2026-07-28T10:00:00+00:00",
                           context={"issues": "500"}))
-    module = _Module([Ticket(number=500, title="a", state="closed", state_reason="not_planned",
-                             column="Done", body="")])
+    cancelled = [Ticket(number=500, title="a", state="closed", state_reason="not_planned",
+                        column="Done", body="")]
 
-    assert _closed_issue_numbers(module) == set(), "cancelled work counts as delivered"
-    _product_followup(_project(), module, TriageReport(), _project().product)
+    assert delivered_numbers(cancelled) == set(), "cancelled work counts as delivered"
+    delivered_through_the_door(_project(), "500", tickets=cancelled, monkeypatch=monkeypatch)
     assert not [p for p in channel.posts if "está pronto" in p], channel.posts
 
 
-def test_work_closed_as_COMPLETED_is_still_announced(wired):
-    from openfactory.runtime.temporal.activities import _closed_issue_numbers
+def test_work_closed_as_COMPLETED_is_still_announced(wired, monkeypatch):
+    from openfactory.product.triage import delivered_numbers
 
     channel, rows = wired
     rows.append(open_loop(DELIVERY, "7", owner="product", ts="2026-07-28T10:00:00+00:00",
                           context={"issues": "500"}))
-    module = _Module([Ticket(number=500, title="a", state="closed", state_reason="completed",
-                             column="Done", body="")])
+    completed = [Ticket(number=500, title="a", state="closed", state_reason="completed",
+                        column="Done", body="")]
 
-    assert _closed_issue_numbers(module) == {"500"}
-    _product_followup(_project(), module, TriageReport(), _project().product)
+    assert delivered_numbers(completed) == {"500"}
+    delivered_through_the_door(_project(), "500", tickets=completed, monkeypatch=monkeypatch)
     assert [p for p in channel.posts if "está pronto" in p], channel.posts
 
 
@@ -418,10 +427,9 @@ def test_a_tracker_that_reports_NO_reason_still_delivers():
     field (or a provider with no such concept) must keep announcing real deliveries. Requiring the
     positive signal would trade a false delivery for a LOST one, which is the worse trade — a
     delivery nobody announces is work the client never learns about."""
-    from openfactory.runtime.temporal.activities import _closed_issue_numbers
+    from openfactory.product.triage import delivered_numbers
 
-    module = _Module([Ticket(number=500, title="a", state="closed", column="Done", body="")])
-    assert _closed_issue_numbers(module) == {"500"}
+    assert delivered_numbers(DONE) == {"500"}
 
 
 def test_the_board_actually_ASKS_for_the_close_reason():

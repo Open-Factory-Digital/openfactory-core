@@ -199,8 +199,8 @@ MUTATIONS = [
 
     ("the ceiling is raised quietly, so the list can grow", GUARD_TEST,
      # RE-PINNED 2026-10-02 (#414): the ceiling is 16 since #414's first part
-     # re-pinned 2026-10-04: and 4 since its B1 and B2, merged (#414)
-     "CEILING = 4\n",
-     "CEILING = 5\n",
+     # re-pinned 2026-10-04: and 1 since its B1 and B2, merged, and the last delivery producers (#414)
+     "CEILING = 1\n",
+     "CEILING = 2\n",
      GUARD_TEST),
 ]

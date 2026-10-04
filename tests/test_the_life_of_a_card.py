@@ -22,6 +22,8 @@ take down and the door says so).
     pull request → ready to try, from the watch and the round, said once (#414, B1)
     pull request handed back by the box → the same one the watch and the round find told; a
         later pass back at the gate placed again (#414, B1 and B2 merged)
+    delivered at the box's last stage, or beside the door → announced by the door, once; the
+        job's exit and the weekly sweep announce nothing of their own (#414)
     the factory's own card closed when its trouble is gone, kept apart from the product's (B1)
 """
 
@@ -360,7 +362,8 @@ def test_a_delivery_of_two_cards_waits_on_the_one_that_remains_and_is_announced_
         deployment, heard):
     """D10: a delivery spanning several cards closes only when what REMAINS is delivered. One card
     removed leaves the promise open for the other; that other already delivered, the hourly round
-    announces the delivery — nothing else would before the weekly catch-all."""
+    announces the delivery — no card's transition is left to say it, and since #414 no weekly
+    catch-all beside the door either."""
     from openfactory.adapters.board_db import now_iso
     from openfactory.adapters.tracker.base import close_ticket
     from openfactory.lifecycle import converge
@@ -438,8 +441,8 @@ def test_the_stale_pickup_healer_files_a_closed_card_where_its_close_put_it(depl
 
 def _settle(project, ref: str, state: str, note: str = "") -> str:
     """The workflow's `settle_ticket`, called as the worker calls it — and, for a job that ended,
-    its one exit after it (`record_outcome`), which journals the outcome and announces what the
-    card delivered."""
+    its one exit after it (`record_outcome`), which journals the outcome. What the card delivered
+    is the settle's own effect since #414 (`Loops("deliver")`): the exit announces nothing."""
     from openfactory.runtime.temporal.activities import record_outcome, settle_ticket
     from openfactory.runtime.temporal.io import HoldSyncInput
 
@@ -903,8 +906,9 @@ def test_a_closed_card_is_never_filed_into_the_queue(deployment):
 def test_a_split_cards_promise_is_announced_once_when_its_last_child_is_delivered(
         deployment, heard, monkeypatch):
     """The requirement holds the parent, and the parent's work is in its children: the door that
-    delivers a child follows its title to the card it was split from (`loops.deliver`), so the
-    requester hears it when — and only when — the last child is delivered."""
+    delivers a child follows its title to the card it was split from
+    (`loops.announce_what_it_completes`), so the requester hears it when — and only when — the
+    last child is delivered."""
     from openfactory.contracts import JobState
     from openfactory.memory.ledger import ACCEPTANCE, DELIVERY
 
@@ -984,6 +988,109 @@ def test_a_delivery_the_door_could_not_announce_is_announced_by_the_hourly_round
     [delivery] = _loops(deployment, DELIVERY)
     assert delivery.outcome == "delivered"
     assert len([m for m in heard if m.conversation == CONVERSATION]) == 1
+
+
+def test_a_card_the_box_delivers_at_its_last_stage_is_announced_by_its_door_and_the_exit_adds_nothing(  # noqa: E501
+        deployment, heard):
+    """The promotion's last stage — or a merge nothing follows — is Done reached inside the box,
+    which hands it back (B2): the worker applies `merged`, then `delivered`, whose `Loops("deliver")`
+    announces what the card completes. The job's exit after it, which announced deliveries beside
+    the door until #414, says nothing."""
+    from openfactory.contracts import JobState
+    from openfactory.contracts.run import HandedBack, RunResult
+    from openfactory.memory.ledger import DELIVERY
+    from openfactory.runtime.temporal import activities as acts
+    from openfactory.runtime.temporal.io import HoldSyncInput
+
+    ref = _filed(deployment)
+    _at_the_merge_gate(deployment, ref)
+    bare = ref.lstrip("#")
+
+    acts._the_worker_applies("acme", bare, "handed-back-run-1-act-9", RunResult(
+        ticket_id=ref, state=JobState.DONE,
+        handed_back=[HandedBack(state=JobState.MERGED), HandedBack(state=JobState.DONE)]))
+
+    merged, delivered = _history(deployment, ref)
+    assert (merged.event, delivered.event) == ("merged", "delivered")
+    assert delivered.outcome(delivered.effects.index("loops:deliver")) == "1 announced"
+    [delivery] = _loops(deployment, DELIVERY)
+    assert delivery.outcome == "delivered"
+    asyncio.run(acts.record_outcome(HoldSyncInput(project="acme", issue=bare, state="done")))
+    told = [m.text for m in heard if m.conversation == CONVERSATION]
+    assert len(told) == 1 and "is ready" in told[0], told
+
+
+def test_a_card_delivered_beside_the_door_is_announced_by_the_door_when_it_is_seen_and_never_by_the_exit(  # noqa: E501
+        deployment, heard):
+    """A box from before the hand-back, or a person on the vendor's own screen, closes the card as
+    finished work beside the door. The job's exit says nothing; the hourly round sees the close
+    (`observe`) and hands it to the door, whose `closed` announces the delivery — once."""
+    from openfactory.adapters.tracker.base import close_ticket
+    from openfactory.lifecycle import observe
+    from openfactory.runtime.temporal import activities as acts
+    from openfactory.runtime.temporal.io import HoldSyncInput
+
+    ref = _filed(deployment)
+    _at_the_merge_gate(deployment, ref)
+    close_ticket(_tracker(deployment), ref, "merged, and nothing follows", delivered=True)
+
+    asyncio.run(acts.record_outcome(HoldSyncInput(project="acme", issue=ref.lstrip("#"),
+                                                  state="done")))
+    assert [m for m in heard if m.conversation == CONVERSATION] == [], "the job's exit announced"
+
+    said = observe(deployment)
+
+    assert any("closed, observed" in line and "loops:deliver=1 announced" in line
+               for line in said), said
+    assert observe(deployment) == []
+    told = [m.text for m in heard if m.conversation == CONVERSATION]
+    assert len(told) == 1 and "is ready" in told[0], told
+
+
+def test_the_weekly_sweep_says_again_what_the_door_could_not_and_nothing_of_its_own(
+        deployment, heard, monkeypatch):
+    """The weekly sweep was the catch-all beside the door: it read the board and announced every
+    delivery it showed done. Its second chance is the door's own now — `converge`, applying again
+    an announcement the conversation did not take — and a delivery the door never made (a card
+    closed beside it, not yet seen by the hourly round) is not the sweep's to announce."""
+    from types import SimpleNamespace
+
+    from openfactory.adapters.tracker.base import close_ticket
+    from openfactory.memory.ledger import DELIVERY
+    from openfactory.product import events
+    from openfactory.product.triage import TriageReport
+    from openfactory.runtime.temporal import activities as acts
+
+    monkeypatch.setattr(acts, "_land_product_proposals", lambda project, **kw: [])
+    ref = _filed(deployment)
+    _at_the_merge_gate(deployment, ref)
+    beside = _filed(deployment, promised="8")
+    close_ticket(_tracker(deployment), beside, "closed by hand, outside", delivered=True)
+    with monkeypatch.context() as broken:
+        broken.setattr(events, "_tell", lambda project, **kw: False)
+        assert _settle(deployment, ref, "done", note="merged") == "done"
+    [row] = _history(deployment, ref)
+    assert row.outcome(row.effects.index("loops:deliver")).startswith("failed")
+
+    def _weekly() -> str:
+        """The sweep's follow-through, with the board the sweep read — a card closed beside the
+        door among it, which the catch-all used to announce."""
+        from openfactory.product.board import read_board
+
+        tickets, error = read_board(deployment)
+        assert not error, error
+        return acts._product_followup(deployment, SimpleNamespace(_board_tickets=tickets,
+                                                                  token=None),
+                                      TriageReport(), deployment.product)
+
+    assert "accepting:1" in _weekly()
+    assert "accepting:0" in _weekly()
+
+    told = [m.text for m in heard if m.conversation == CONVERSATION]
+    assert len(told) == 1 and "is ready" in told[0], told
+    by_subject = {x.subject: x for x in _loops(deployment, DELIVERY)}
+    assert by_subject["7"].outcome == "delivered"
+    assert by_subject["8"].waiting, "the weekly sweep announced a delivery beside the card's door"
 
 
 def test_a_question_before_the_plan_parks_the_card_and_a_retry_asks_nothing_twice(deployment):

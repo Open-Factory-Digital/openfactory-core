@@ -44,3 +44,27 @@ def taken_at_the_door(monkeypatch) -> list:
 
     monkeypatch.setattr(door, "_admit", _admit)
     return taken
+
+
+def delivered_through_the_door(project, card: str, *, tickets, monkeypatch) -> str:
+    """What a card's `delivered` transition does for the promises about it — its `Loops("deliver")`
+    effect, the one announcer of a delivery since #414 — with the board a test says it read
+    (`events._delivered_now` reads it fresh). Returns the effect's outcome as the door records it:
+    `failed: …` when the board could not be read or the conversation did not take it, which the
+    door's converge applies again.
+
+    FOR THE SUITES THAT HELD THE ANNOUNCEMENT'S RULES WHEN THE WEEKLY SWEEP ANNOUNCED BESIDE THE
+    DOOR: the sentence, the acceptance it opens, never twice, closed is not delivered. The rules
+    are the announcement's; who reaches it is the door, whose wiring from a transition is held in
+    `tests/test_the_life_of_a_card.py`."""
+    from openfactory.lifecycle import loops
+    from openfactory.lifecycle.executor import FAILED
+    from openfactory.product import events
+    from openfactory.product.triage import delivered_numbers
+
+    monkeypatch.setattr(events, "_delivered_now",
+                        lambda project: delivered_numbers(list(tickets or [])))
+    try:
+        return loops.announce_what_it_completes(project, card)
+    except Exception as exc:  # noqa: BLE001 — recorded as the door records it
+        return f"{FAILED}: {exc}"
