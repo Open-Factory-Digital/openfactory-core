@@ -1296,10 +1296,32 @@ async def answer_merge_gate(client: Client, project: str, issue: str, *, answer:
     deaf = gate_cannot_hear(gate)
     if deaf:
         raise GateDeaf(deaf)
+    # `address` (#330) is the same pass with its words from the pull request: the same budget
+    if answer in ("adjust", "address") and gate.get("adjusts_left") == 0:
+        # THE JOB WOULD REFUSE IT, SO THE SEAM DOES (#448). Delivered, the answer was consumed by
+        # the workflow's own cap and the caller had already been told "sent back for one pass" —
+        # the requester's "not yet" confirmed, then dropped. `adjusts_left` absent is a job whose
+        # binary predates the number: delivered, as before, and its own branch decides.
+        raise AdjustsSpent(int(gate.get("adjust_passes") or 0))
     # Sealed for `approve_job`'s reason above.
     seal = gate_seal.seal(gate_seal.MERGE_GATE, wf_id, answer, instruction, by)
     await handle.signal(JobWorkflow.human_merge_gate, args=[answer, instruction, by, seal])
     return dict(gate)
+
+
+async def merge_gate(client: Client, project: str, issue: str) -> dict | None:
+    """What the job on this card publishes at its merge gate — None when no job is RUNNING on it
+    (#448).
+
+    THE STATUS FIRST, because a query is answered by a closed workflow too: a job that merged and
+    completed still holds the last `_merge_wait` it set, and reading that as a gate would offer a
+    person another pass on a change already in the product. A workflow that never ran raises, as
+    the engine says it; the caller decides what that means to the person it answers."""
+    handle = client.get_workflow_handle(job_id(project, issue))
+    described = await handle.describe()
+    if described.status != WorkflowExecutionStatus.RUNNING:
+        return None
+    return await handle.query(JobWorkflow.awaiting_merge) or None
 
 
 async def merge_gate_of(client: Client, project: str, issue: str) -> dict | None:
@@ -1315,6 +1337,20 @@ class GateDeaf(RuntimeError):
     because the generic RuntimeError above means the opposite ('not waiting on a merge'), and a
     caller folding the two into one sentence tells the operator the PR may have merged when the
     truth is the gate is deaf."""
+
+
+class AdjustsSpent(RuntimeError):
+    """The job IS waiting on a person, and every pass its project allows has been spent (#448).
+
+    A TYPE AND A NUMBER, NOT A SENTENCE: the floor answers an operator in the catalog's words and
+    the product role answers the requester in the project's language (`product/voice.py`), and
+    both must say what happens next — a person decides — never only what was refused. A subclass
+    of `RuntimeError` like `GateDeaf`, so a caller that knows neither still refuses; one that
+    folds it into "not waiting on a merge" is wrong in the same way, and catches it first."""
+
+    def __init__(self, passes: int) -> None:
+        self.passes = passes
+        super().__init__(f"the {passes} extra passes this project allows for one change are spent")
 
 
 def gate_cannot_hear(gate: dict) -> str:

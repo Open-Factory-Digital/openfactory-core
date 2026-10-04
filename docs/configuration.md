@@ -715,7 +715,8 @@ keep their own. It is confirmed by that person, if they are on `admins`. Another
 is refused unless `accept_on_behalf: true`, which lets any admin confirm for the requester — both
 the draft and, later, the ticket (ADR-0047 §4, ADR-0051 D11). A requester who is not on `admins`
 confirms nothing either way: with `accept_on_behalf` off, what they ask for is written only once an
-admin asks for it in their own words.
+admin asks for it in their own words. One exception, below: another pass on the change of a card
+they asked for is theirs to confirm (#448).
 
 **Who is speaking.** Every person talking to the role has one of three roles in the product:
 `admins` are product admins, `engineers` are engineers, and everybody else is a client — the
@@ -864,6 +865,28 @@ the rubric is runtime behaviour.
   version and source, the attempt, the scores and the verdict. This is what you compare against the
   cards people later corrected or closed before you move the bar. The judge's cost is metered as
   `product_card_judge`, and the draft's as `product_card_draft`.
+
+### Another pass on a change that waits on you (#448)
+
+When a card's change is built and waits for a person before it goes into the product, the person
+who asked for the card can try it and say what is still wrong — in the conversation, or with
+**Send back for another pass** on the card in the product view's Board tab. The role drafts, from
+the conversation, what the next pass must change and the card's criteria as they must read now, and
+asks: *"I'll send #N back for another pass, with these criteria as the bar: … and correct the card
+to match. Confirm?"* The yes corrects the card first, then sends one more pass on the same change.
+
+- **Who may:** the card's own requester, a product admin, or an operator (an admin whose credential
+  may enter the floor). The requester needs no `admins` entry for this one act on their own card.
+- **The bar moves only at the gate.** A card's criteria are corrected only while its job waits on a
+  person, by the engine's own answer, and only with the pass; while a job is running on the card
+  they are refused as before. A card that carries out a requirement, or one a person wrote on the
+  board, keeps its bar — the pass is sent and the proposal says the bar stays.
+- **How many passes:** `adjust_passes` in the project's registry entry, `2` when unset, clamped to
+  `0..10`. It is the operator's, never the manifest's, because it bounds what the factory spends. A
+  job keeps the budget it started with. Past it, nothing is refused bare: the requester is told a
+  person decides now — the change goes in as it is, or is discarded and the card waits to be
+  started again — and the floor's gate says the same and stops offering **Adjust**.
+- The draft is metered as `product_adjust_draft`, and every draft logs `OPENFACTORY_ADJUST_DRAFTED`.
 
 ### What it never does
 
