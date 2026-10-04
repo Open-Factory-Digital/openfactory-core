@@ -36,6 +36,7 @@ delivered` says which, and why.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 from types import SimpleNamespace
 
@@ -271,11 +272,35 @@ async def _notified(inp: DeployNotifyInput) -> None:
     _LOG.append(("notified", inp.status))
 
 
+#: THE TRACKER AT ITS SLOWEST, for the test that asks for it (`client`, `watch_settled`): a settle
+#: In review that finds the card's watch ALREADY RUNNING is held until the watch has settled the
+#: card. That interleaving is one the engine permits once a watch starts before the job's own
+#: settle; here it is made certain, rather than left to which activity a worker picks up first.
+_SLOW: dict = {}
+
+
 @activity.defn(name="settle_ticket")
 async def _settle(inp: HoldSyncInput) -> str:
     """The REAL settle, on the real local board — recorded on its way past."""
     _LOG.append(("settle", inp.state, inp.note))
-    return await acts.settle_ticket(inp)
+    if _SLOW and inp.state == JobState.MERGED.value and await _watch_running(inp.issue):
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(_SLOW["watch_settled"].wait(), timeout=30)
+    done = await acts.settle_ticket(inp)
+    if _SLOW and inp.state != JobState.MERGED.value:
+        _SLOW["watch_settled"].set()
+    return done
+
+
+async def _watch_running(ref: str) -> bool:
+    from temporalio.client import WorkflowExecutionStatus
+
+    try:
+        desc = await _SLOW["client"].get_workflow_handle(f"openfactory-deploy-{ROOM}-{ref}"
+                                                         ).describe()
+    except Exception:  # noqa: BLE001 — not started: the order this file expects
+        return False
+    return desc.status == WorkflowExecutionStatus.RUNNING
 
 
 @activity.defn(name="record_outcome")
@@ -322,7 +347,7 @@ async def env():
     from temporalio.contrib.pydantic import pydantic_data_converter
     from temporalio.testing import WorkflowEnvironment
 
-    _RUN.clear(), _PROBES.clear()
+    _RUN.clear(), _PROBES.clear(), _SLOW.clear()
     e = await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter)
     try:
         yield e
@@ -405,6 +430,30 @@ async def test_a_watched_deploy_is_the_last_stage_and_the_delivery_waits_for_it_
     assert _column(board, ref) == "Done"
     # …and the watch still spoke where it always spoke
     assert ("notified", "success") in _LOG
+
+
+@pytest.mark.owns_its_engine
+async def test_a_deploy_green_at_the_watchs_first_look_leaves_the_card_done(
+        env, deployment, tracker, board, door, done_reads_delivered, tmp_path, monkeypatch):
+    """THE CARD IS SETTLED IN REVIEW BEFORE ITS WATCH STARTS (#448 slice 5, the review of #503).
+    Two awaits in one workflow happen in the order they are written, and here the order is the
+    claim: a deploy already green at the watch's first look settles the card Done, and a settle In
+    review that came after the watch started would put the delivered card back. The tracker is
+    as slow as it can be (`_SLOW`), so the wrong order loses every time, not when a worker happens
+    to pick the activities that way."""
+    ref = _asked_for(deployment, tracker, board, tmp_path, monkeypatch)
+    _RUN["post_merge_deploy"] = _deploy()
+    _PROBES[:] = [{"status": "success", "run_url": "u/7"}]
+    _SLOW.update(client=env.client, watch_settled=asyncio.Event())
+
+    result, watched, _, _ = await _job(env, ref)
+
+    assert result.state is JobState.MERGED and watched == "success"
+    assert [e for e in _LOG if e[0] == "probe"] == [("probe", "success")], _LOG
+    assert _settled() == [JobState.MERGED.value, JobState.DONE.value], _LOG
+    assert _column(board, ref) == "Done", (
+        "the card went back to In review after its deploy was green — settled after its watch")
+    assert _told().count((KEY, _announced(deployment, ref))) == 1, _told()
 
 
 @pytest.mark.parametrize("probes,status,said", [
