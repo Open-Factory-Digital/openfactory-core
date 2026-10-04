@@ -930,6 +930,84 @@ def test_a_question_and_a_crash_reply_is_marked_read_never_distilled(tmp_path, b
     assert len(_marked(base)) == 1, "a span is marked once, whoever runs it"
 
 
+@pytest.mark.parametrize("language", ["pt-BR", "en"])
+def test_an_unmarked_crash_reply_reaches_no_model(language):
+    """A crash reply recorded BEFORE the kind existed carries no mark, yet it is still the
+    platform's OWN sentence, not the role's answer: recognised by its text (`voice.own_voice_kind`),
+    so `spans()` hands it to no model and does not count it toward `MIN_LINES` (#457, review 1).
+    The real `voice.broke()` text, in both languages the platform speaks."""
+    from openfactory.product import voice
+
+    project = _project()
+    t = NOW - timedelta(hours=9)
+    said = [
+        _said(ROOM, "Can you add a fuel surcharge line to every invoice?", at=t, actor="helena"),
+        # the real crash sentence, recorded with NO kind — a row from before this change
+        _said(ROOM, voice.broke(language=language), at=t + timedelta(minutes=1), role="agent"),
+    ]
+    [span] = distillation.spans(project, said, distilled={}, now=NOW)
+    assert span.lines == (), "the unmarked crash is handed to no model, nor counted a line"
+
+
+def test_a_thanks_beside_an_announcement_is_not_distilled(tmp_path, base):
+    """AN ANNOUNCEMENT IS THE PLATFORM SPEAKING, NOT THE ROLE (#457, review 4). A span whose only
+    role line is an announcement — "card delivered" — beside a person's "thanks" keeps nothing: the
+    announcement is handed to no model and not counted toward `MIN_LINES`, so no model is asked and
+    no distillate is written; the span is marked read."""
+    project = _project()
+    t = NOW - timedelta(hours=9)
+    said = [
+        _said(ROOM, "Card #500 is delivered — the fuel surcharge line is live.", at=t,
+              role="agent", kind="announcement"),
+        _said(ROOM, "Thanks!", at=t + timedelta(minutes=1), actor="helena"),
+    ]
+    distiller = _Distiller(project)
+    report = distillation.distil(project, module=_writer(project, base,
+                                                         _checkout(base, tmp_path / "a")),
+                                 root=tmp_path / "a", said=said, distiller=distiller, now=NOW)
+
+    assert distiller.spans == [], "no model was asked — the only role line was an announcement"
+    assert _distillates(base) == [], "a thanks beside an announcement is not distilled"
+    assert len(report.marked) == 1 and len(_marked(base)) == 1, "the span was marked read"
+
+
+def test_a_span_marked_in_one_tree_is_not_distilled_in_the_other(tmp_path, base):
+    """ONCE PER SPAN ACROSS BOTH TREES (#457, review 2). The model's reading runs OUTSIDE the lock
+    and is not deterministic: one process reads a span as nothing-to-keep and MARKS it in
+    `.distilled/`; another, from a checkout that never saw the mark, reads the same span as worth
+    keeping and would write a distillate under `conversations/`. The compare-and-swap re-reads the
+    base under the semaphore and takes the latest `until` across BOTH trees for the conversation —
+    as `distilled_in` does — so the second write finds the span already read and writes nothing."""
+    project = _project()
+    t = NOW - timedelta(hours=9)
+    said = [
+        _said(ROOM, "Please add a fuel surcharge line to every invoice.", at=t, actor="helena"),
+        _said(ROOM, "Noted — a fuel surcharge line on every invoice.",
+              at=t + timedelta(minutes=1), role="agent"),
+    ]
+
+    class _KeepsNothing:
+        def distil(self, span):
+            return distillation.Distilled(nothing=True, by="stub/distiller")
+
+    # process A reads the span as nothing-to-keep and marks it in `.distilled/`
+    marking = distillation.distil(project, module=_writer(project, base,
+                                                          _checkout(base, tmp_path / "a")),
+                                  root=tmp_path / "a", said=said, distiller=_KeepsNothing(),
+                                  now=NOW)
+    assert len(marking.marked) == 1 and len(_marked(base)) == 1
+
+    # process B, from a checkout made BEFORE the mark, reads the SAME span as worth keeping
+    stale = tmp_path / "stale"
+    shutil.copytree(bed.FIXTURE / "context", stale)
+    distilling = distillation.distil(project, module=_writer(project, base, stale), root=stale,
+                                     said=said, distiller=_Distiller(project), now=NOW)
+
+    assert _distillates(base) == [], "the span was already marked read in the other tree"
+    assert distilling.written == [] and len(distilling.already) == 1
+    assert len(_marked(base)) == 1, "one record of the span stands, whichever tree it is in"
+
+
 def test_a_span_a_model_finds_nothing_in_is_marked_read_not_distilled(tmp_path, base):
     """An all-empty reading, or the model's explicit nothing-to-keep answer, keeps nothing: no
     distillate, the span marked read (#457). The model WAS asked — there were lines to read — and
@@ -954,6 +1032,17 @@ def test_a_span_a_model_finds_nothing_in_is_marked_read_not_distilled(tmp_path, 
     assert _distillates(base) == [], "neither kept anything — no distillate"
     assert len(report.marked) == 2 and report.written == []
     assert len(_marked(base)) == 2, "each span that kept nothing is marked read"
+
+    # THE CURSOR ADVANCED, SO THE MODEL IS NOT ASKED AGAIN: a second pass over the same lines, from
+    # a fresh checkout that reads the mark, finds nothing ready — no model call, no second mark.
+    second = _KeepsNothing()
+    later = distillation.distil(project, module=_writer(project, base,
+                                                        _checkout(base, tmp_path / "b")),
+                                root=tmp_path / "b", said=_conversations(), distiller=second,
+                                now=NOW + timedelta(hours=2))
+    assert second.spans == [], "a span marked read is never handed to the model a second time"
+    assert later.marked == [] and later.marked_already == []
+    assert len(_marked(base)) == 2, "no span was marked twice"
 
 
 def test_a_real_agreement_beside_a_platform_sentence_is_still_distilled_without_it(tmp_path, base):
@@ -998,27 +1087,37 @@ def test_the_prompt_offers_nothing_to_keep_and_tells_a_question_from_a_request()
 
 def test_a_marked_span_is_not_a_document(tmp_path, base):
     """The mark is a hidden record, not a document: ingestion never reads it, so there is no index
-    item and no Documents entry for it (#457)."""
+    item and no Documents entry for it (#457). Asserted against the mark's own path
+    (`distil.marker_path`) and the hidden tree it lives in (`record.MARKED`), never a bare literal:
+    the path the code writes is the path the test holds it to."""
     from openfactory.product.documents.ingest import documents_in, ingest, overview
+    from openfactory.product.documents.record import MARKED
     from openfactory.product.key import product_key
 
     project = _project()
+    said = _question_then_crash()
+    [span] = distillation.spans(project, said, distilled={}, now=NOW)
+    mark = distillation.marker_path(span)
+    assert mark.startswith(MARKED + "/"), mark
+
     distillation.distil(project, module=_writer(project, base, _checkout(base, tmp_path / "a")),
-                        root=tmp_path / "a", said=_question_then_crash(),
-                        distiller=_Distiller(project), now=NOW)
-    assert _marked(base), "the span was marked read"
+                        root=tmp_path / "a", said=said, distiller=_Distiller(project), now=NOW)
+    assert _marked(base) == [mark], "the span was marked read, at its marker path"
 
     root = _checkout(base, tmp_path / "read")
-    assert not any(p.startswith(".distilled") for p in documents_in(root)), \
+    assert (root / mark).is_file(), "the mark is on disk, in the hidden tree"
+    walked = documents_in(root)
+    assert mark not in walked and not any(p.startswith(MARKED + "/") for p in walked), \
         "ingestion does not walk the hidden mark tree"
     report = ingest(project, root=root, reader=bed.FixtureReader(), announce=lambda *_a, **_k: False)
-    assert not any(p.startswith(".distilled") for p in report.ingested)
-    assert not any(p.startswith(".distilled") for p, _why in report.unreadable)
+    assert mark not in report.ingested
+    assert mark not in [p for p, _why in report.unreadable]
 
     ov = overview(product_key(project), internal=True)
     listed = ov["documents"] + ov.get("documents_internal", []) + ov["unreadable"] \
         + ov.get("unreadable_internal", [])
-    assert not any(d["path"].startswith(".distilled") for d in listed), "no Documents entry"
+    assert not any(d["path"] == mark or d["path"].startswith(MARKED + "/") for d in listed), \
+        "no Documents entry for the mark"
 
 
 def test_the_default_distiller_reads_one_conversation_in_a_room_of_its_own(tmp_path):

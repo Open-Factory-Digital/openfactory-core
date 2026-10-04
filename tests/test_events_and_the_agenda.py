@@ -264,6 +264,9 @@ async def test_a_delivered_card_is_announced_in_its_REQUESTERS_conversation_WHEN
             for x in asked] == [(ANAS, ANAS, sealed(ANA))]
     assert [(m["thread"], m["role"], m["text"]) for m in memory] == [
         (ANAS, "agent", _announcement())], "the announcement is not in the product's memory"
+    # AN ANNOUNCEMENT IS THE PLATFORM SPEAKING, NOT THE ROLE'S ANSWER (#457): recorded with a kind
+    # that is not an answer, so the distillation never reads it as the role's answer.
+    assert [m.get("kind") for m in memory] == ["announcement"], memory
 
 
 @engine_of_its_own

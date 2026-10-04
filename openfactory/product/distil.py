@@ -287,10 +287,17 @@ def spans(project, said, *, distilled: dict[str, str], now: datetime | None = No
 
 def _is_platform(line) -> bool:
     """A line the platform said in its OWN voice, not the model's answer (#457): a role line
-    recorded with a kind that is not `ANSWER`. Only the role speaks these; a person's line, and
-    every line recorded before the kind existed, reads as an answer."""
-    return (str(getattr(line, "role", "")) == "agent"
-            and str(getattr(line, "kind", ANSWER) or ANSWER) != ANSWER)
+    recorded with a kind that is not `ANSWER`, OR — for a row recorded before the kind existed, so
+    unmarked — a role line whose text is one of the platform's own fixed sentences
+    (`voice.own_voice_kind`: a crash reply, an unavailable). Only the role speaks these; a person's
+    line reads as an answer whatever it says."""
+    from openfactory.product import voice
+
+    if str(getattr(line, "role", "")) != "agent":
+        return False
+    if str(getattr(line, "kind", ANSWER) or ANSWER) != ANSWER:
+        return True
+    return bool(voice.own_voice_kind(str(getattr(line, "text", "") or "")))
 
 
 # ── the reading ─────────────────────────────────────────────────────────────────────────────────
