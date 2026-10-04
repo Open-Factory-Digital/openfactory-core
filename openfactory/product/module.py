@@ -3327,25 +3327,20 @@ class ProductModule:
         and was called by nothing — the twelfth instance of this repo's signature defect, caught
         the same hour it was written. Closing worked; nothing ever opened, so "it's done" was a
         sentence she could still never say. Best-effort: the issues were filed either way, and a
-        delivery she fails to track is a missing courtesy, not lost work — but it says so."""
+        delivery she fails to track is a missing courtesy, not lost work — but it says so.
+
+        EVERY CARD IT BECAME, AS THE TRACKER NAMED IT (#485). The loop was keyed on the refs that
+        are numbers, so on Jira (`CONT-412`) it never opened, and a card filed in another
+        repository of the product (`owner/web#3`) was dropped from it — the delivery then closed
+        when the cards it kept shipped, with that one still open. `deliveries_to_open` keys it on
+        the refs themselves, in the spelling its readers compare."""
         import logging
 
         log = logging.getLogger("openfactory.product")
         try:
-            from openfactory.contracts.refs import ref_numbers
-
             landed = [r.ref for r in results if r.ok and r.ref]
-            numbers = ref_numbers(landed)
-            if not numbers:
-                # No numeric ref among them. On a numeric tracker that means nothing landed; on a
-                # provider whose refs are not numbers it means the ledger cannot key this delivery
-                # yet (C-05). Either way the work IS filed — say which, rather than returning as if
-                # nothing had happened.
-                if landed:
-                    log.info("delivery not tracked for %s: none of %s is a numeric ref — the "
-                             "issues exist and the open-loop ledger is keyed by number",
-                             self.project.name, landed)
-                return
+            if not landed:
+                return  # nothing was filed, so nothing is owed
             from datetime import UTC, datetime
 
             from openfactory.memory import store as loop_store
@@ -3353,7 +3348,7 @@ class ProductModule:
             from openfactory.product.followup import OWNER, deliveries_to_open
 
             ledger = loop_store.read(self.project.name)
-            fresh = deliveries_to_open({requirement.number: numbers},
+            fresh = deliveries_to_open({requirement.number: landed},
                                        waiting(ledger, owner=OWNER),
                                        ts=datetime.now(UTC).isoformat(),
                                        conversation=conversation, requester=requester)
