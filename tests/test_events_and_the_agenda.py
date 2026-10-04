@@ -1097,7 +1097,11 @@ _TELLING = {"door": {"announce", "announce_now", "report", "_admit", "tell"},
                        # through the card's door since #414 (`ready_to_try`, from its port)
                        "ready_for_you", "ready_to_try",
                        # #448 slice 3 — the change went in: the job, the moment it merged
-                       "merged_for_you"}}
+                       "merged_for_you",
+                       # #448 slice 4 — it is theirs to try: the tech-lead's hourly round
+                       "staged_for_you",
+                       # #448 slice 4 — they tried it and say it is right: the settling stage
+                       "tried_and_right"}}
 _PRODUCERS = {"openfactory/product/door.py", "openfactory/product/events.py",
               "openfactory/runtime/temporal/activities.py", "openfactory/product/engine.py",
               # #269: a document the ingestion READ — its name is the file's path, and the
@@ -1136,7 +1140,7 @@ def test_the_guard_above_is_LOOKING():
     """It would pass over an empty tree: the producers it allows are where it finds the calls."""
     source = (ROOT / "openfactory/runtime/temporal/activities.py").read_text()
     for call in ("events.ci_went_red(", "events.pull_requests_at_the_gate(", "events.to_room(",
-                 "door.report(", "events.merged_for_you("):
+                 "door.report(", "events.merged_for_you(", "events.staged_for_you,"):
         assert call in source, call
     # #414: the ready-for-you telling and the delivery's are the card's door's — said from its port
     # and its loops, which the guard above allows, and found there

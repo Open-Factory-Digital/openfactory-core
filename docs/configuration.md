@@ -911,6 +911,24 @@ who and which head.
   except where, with no stage declared, the delivery's own "it is ready, did it work?" says it at
   the same moment.
 
+### The last gate: their yes, and their "not yet" (#448)
+
+When the change has merged and waits before the product's users, the person who asked for the card
+is asked to try it in their own conversation, beside the room's question.
+
+- **Their "it worked"** is recorded. With `release_by_requester: true` in the project's registry
+  entry it puts the change in front of everyone, as a product admin's does. Unset (the default),
+  their copy of the question closes as answered, the room is told once that they tried it and say it
+  is right, and a product admin's "it worked" releases it — and the release's record says the
+  requester had said so. The flag is the operator's, never the manifest's: it decides who may put
+  software in front of the client's users. It is only ever the card's own requester, never a guest.
+- **Their "not yet"** is another pass, never a promise: the role drafts it from the conversation as
+  above, worded *"… as a new change — what is live stays as it is"*, and the yes corrects the card
+  and sends the job back. The change already merged, so the job builds a **new change** of the card
+  from the base, on a branch of its own (`openfactory/<n>-2`, `-3`, …), with the person's words in its
+  brief. It counts against the same `adjust_passes`, across all of the card's changes; past it,
+  nothing is sent and a person decides — release it as it is, or leave it unreleased.
+
 ### What it never does
 
 It does not write to a code repo, does not review a diff, does not promote to TO-DO, and does not

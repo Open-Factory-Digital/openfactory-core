@@ -729,6 +729,12 @@ class JobRunner:
     #: The outcomes this call reached on the card and did not write, in order — stamped on the
     #: result its public method returns (`outcomes.hands_back`, ADR-0055 D7, #414).
     _handed_back: list[HandedBack] = field(default_factory=list, init=False, repr=False)
+    #: WHICH CHANGE OF ITS CARD THIS RUNNER BUILDS (#448 slice 4): 0 the first, one more for each
+    #: "not yet" its requester said at the last gate, after the change before it had merged. It
+    #: names the branch (`namespace.job_branch`), so a new change never pushes over a merged one —
+    #: and every runner of the same job (the run, a repair, an adjust, a re-review) is built with
+    #: the same number, so they all find the branch the open pull request tracks.
+    change: int = 0
 
     def _review(self, *, sandbox, workspace, review_input: ReviewInput) -> ReviewResult:
         """The reviewer's verdict with its evidence checked against the gates that ran (#447).
@@ -752,8 +758,10 @@ class JobRunner:
         rename of this prefix has to preserve: while the platform carried two spellings, a repair
         that recalculated the new name for a PR opened under the old one pushed its fix to a
         branch nobody watched — an agent ran, money was spent, and the repair appeared to have
-        done nothing. The second spelling left on 2026-08-25; the property stays, in one place."""
-        return namespace.job_branch(ticket.id)
+        done nothing. The second spelling left on 2026-08-25; the property stays, in one place.
+
+        A LATER CHANGE OF THE SAME CARD HAS A NAME OF ITS OWN (#448 slice 4, `self.change`)."""
+        return namespace.job_branch(ticket.id, change=self.change)
 
     def _already_delivered(self, ticket: Ticket, owner: str | None,
                            branch: str) -> RunResult | None:
@@ -827,7 +835,7 @@ class JobRunner:
 
     def run(
         self, ticket_ref: str, resume_handle: str | None = None, spent_turns: int = 0,
-        decision: str = "",
+        decision: str = "", another_pass: str = "",
     ) -> RunResult:
         """Drive one ticket to a PR. `resume_handle` (C2) is an OPAQUE token from a prior
         rate-limit PAUSE: when set, we RESTORE the paused attempt's partial worktree from its
@@ -836,10 +844,14 @@ class JobRunner:
         `spent_turns` carries the ticket's cumulative agent-turn count across resumes — the
         effort budget (ADR-0013 D4) governs the TICKET, not one attempt. `decision` is a human's
         resolved answer to a DecisionRequest this ticket parked on (a planner blocker): injected
-        into the agent so it proceeds with that choice instead of re-asking."""
+        into the agent so it proceeds with that choice instead of re-asking. `another_pass` is what
+        the card's requester said is still wrong with the change before this one, which merged
+        (#448 slice 4): this run builds a NEW change of the card, and its brief carries those words
+        beside the card, whose criteria were corrected before the run was asked for."""
         self._turns = spent_turns  # cumulative effort; bumped by _count() after each agent call
         self._agent_runs: list[AgentRunMetric] = []  # per-invocation cost telemetry (metrics sink)
         self._decision = decision  # a resolved human choice to feed the planner/executor (once)
+        self._another_pass = another_pass  # what is still wrong with the last change (#448)
         self._assumptions: list[str] = []  # planner `assume` notes → surfaced in the PR
         ticket = self.tracker.get_ticket(ticket_ref)
 
@@ -1024,6 +1036,7 @@ class JobRunner:
             ctx = self._build_context(ticket, ws)
             ctx.resume_handle = resume_handle or ""  # the agent resumes its session if it can
             ctx.decision = self._decision  # a resolved human choice, injected into the agents
+            ctx.another_pass = self._another_pass  # what the last change still got wrong (#448)
 
             # PLAN → the planner investigates (read-only) and drafts a testable plan. Optional:
             # an adapter that doesn't split roles simply has no plan() and we go straight to

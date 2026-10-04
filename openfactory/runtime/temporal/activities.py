@@ -662,7 +662,7 @@ def _do_run_job(inp: RunJobInput, run_id: str | None = None,
     view, repo_key = _runner_view(project, inp.issue)
     runner = build_runner(
         view, inp.issue, sandbox=inp.sandbox, image=inp.image, review=inp.review,
-        repo_key=repo_key,
+        repo_key=repo_key, change=inp.change,
     )
     # THE HANDOFF, and it is the whole reason the watcher is reachable at all. The box is built
     # inside `build_runner`, three layers below this activity, and the agent adapter calls it three
@@ -672,7 +672,8 @@ def _do_run_job(inp: RunJobInput, run_id: str | None = None,
     if watch is not None:
         watch.attach(runner)
     result = runner.run(inp.issue, resume_handle=inp.resume_handle,
-                        spent_turns=inp.spent_turns, decision=inp.decision)  # C2 + D4 + a choice
+                        spent_turns=inp.spent_turns, decision=inp.decision,  # C2 + D4 + a choice
+                        another_pass=inp.another_pass)  # #448 slice 4: the card's next change
     # which A/B arm this run was in (ADR-0017's gate) — see the box path for why it's stamped
     # at the boundary, and why a dashboard dimension is never allowed to fail a finished run.
     try:
@@ -714,7 +715,21 @@ def _box_for(inp: RunJobInput):
         resume_handle=inp.resume_handle,  # C2: propagate to the remote box via env
         spent_turns=inp.spent_turns,  # D4: the effort budget's running total
         decision=inp.decision,  # a resolved human choice, injected into the box's agent
+        another_pass=inp.another_pass, change=inp.change,  # #448 slice 4: the card's next change
     )
+
+
+def _the_change_env(change: int, another_pass: str = "") -> dict[str, str]:
+    """WHICH CHANGE OF THE CARD, AND WHAT IS STILL WRONG WITH THE LAST ONE, for a remote box
+    (#448 slice 4) — as variables the box reads itself (`boxed_job.config_from_env`), so they
+    reach it whatever a launcher row does with `BoxConfig`. Empty on a card's first change: a
+    box launched for it is launched exactly as before."""
+    out: dict[str, str] = {}
+    if change:
+        out["OPENFACTORY_CHANGE"] = str(change)
+    if another_pass:
+        out["OPENFACTORY_ANOTHER_PASS"] = another_pass
+    return out
 
 
 def _run_remote(inp: RunJobInput, run_id: str | None = None) -> RunResult:
@@ -736,7 +751,8 @@ def _run_remote(inp: RunJobInput, run_id: str | None = None) -> RunResult:
                  else arm_env(arm_for(project)))
     return remote_box(inp.sandbox).launch(
         _box_for(inp), journal=journal, run_id=run_id,
-        extra_env={**extra_env, **box_credential_env(project)} or None
+        extra_env={**extra_env, **_the_change_env(inp.change, inp.another_pass),
+                   **box_credential_env(project)} or None
     )
 
 
@@ -2327,7 +2343,7 @@ def _run_adjust(inp: AdjustInput, run_id: str | None = None) -> RunResult:
     is about; and because what arrives there is the bare comment, an EMPTY one is finally refused
     by the door that says "the review comment was empty" — a briefing was never empty."""
     repair = CiRepairInput(project=inp.project, issue=inp.issue, pr_url=inp.pr_url,
-                           sandbox=inp.sandbox, attempt=inp.attempt)
+                           sandbox=inp.sandbox, attempt=inp.attempt, change=inp.change)
     if inp.source == REVIEW_THREAD:
         words, held = _the_review_comments(inp)
         if held is not None:
@@ -2407,7 +2423,7 @@ def _run_review_pass(inp: ReviewPassInput, run_id: str | None = None) -> RunResu
         return build_runner(
             view, inp.issue, sandbox=inp.sandbox,
             image=_resolved_image(project, sandbox=inp.sandbox), review=True,
-            repo_key=repo_key,
+            repo_key=repo_key, change=inp.change,
         ).review_pr(inp.issue, pr_url=inp.pr_url)
 
     from openfactory.observability.registry import journal_for
@@ -2427,7 +2443,7 @@ def _run_review_pass(inp: ReviewPassInput, run_id: str | None = None) -> RunResu
     return remote_box(inp.sandbox).launch(
         box, variant="-review",
         extra_env={"OPENFACTORY_PR": inp.pr_url, "OPENFACTORY_REVIEW_PASS": "1",
-                   **box_credential_env(project)},
+                   **_the_change_env(inp.change), **box_credential_env(project)},
         journal=journal, timeout=1800, run_id=run_id,
     )
 
@@ -2540,7 +2556,7 @@ def _run_ci_repair(inp: CiRepairInput, run_id: str | None = None,
         return build_runner(
             view, inp.issue, sandbox=inp.sandbox,
             image=_resolved_image(project, sandbox=inp.sandbox), review=False,
-            repo_key=repo_key,
+            repo_key=repo_key, change=inp.change,
         ).repair_ci(inp.issue, ci_log, pr_url=inp.pr_url, human=human)
 
     from openfactory.observability.registry import journal_for
@@ -2566,7 +2582,7 @@ def _run_ci_repair(inp: CiRepairInput, run_id: str | None = None,
         extra["OPENFACTORY_ADJUST_TEXT"] = ci_log
     return remote_box(inp.sandbox).launch(
         box, variant="-adjust" if human else "-ci-repair",
-        extra_env={**extra, **box_credential_env(project)},
+        extra_env={**extra, **_the_change_env(inp.change), **box_credential_env(project)},
         journal=journal, timeout=1800, run_id=run_id,
     )
 
@@ -5516,10 +5532,19 @@ async def _offer_the_release_to_the_client(project, client) -> str:
     OPENED ONLY IF THE ASK LANDED, the rule the delivery announcement already learned the hard way:
     a loop recorded for a post nobody received turns the 20h chase into the client's first-ever
     message about the release — a reminder about something they were never told.
+
+    AND THE PERSON WHO ASKED FOR IT HEARS IT WHERE THEY ASKED (#448 slice 4). The room is asked
+    exactly as before; once it was, the card's requester is told in their own conversation
+    (`events.staged_for_you`, once per run of the job), and only when they were is a second copy
+    of the question opened there (`followup.release_of(conversation=)`) — so their answer, given
+    where they asked, is read, and the room's turns never see their copy. Neither is asked again
+    while either copy is open; a verdict that counts closes both (`engine._close_release`). A
+    telling the door did not take opens no copy of theirs, and is not retried while the room's is
+    open: the room's question is visible from their conversation too, so their answer still lands.
     """
     from openfactory.memory import store as loop_store
     from openfactory.memory.ledger import waiting
-    from openfactory.product import followup, release
+    from openfactory.product import events, followup, release
 
     cfg = getattr(project, "product", None)
     if cfg is None or not getattr(cfg, "enabled", True) \
@@ -5550,7 +5575,7 @@ async def _offer_the_release_to_the_client(project, client) -> str:
     # ends up being used, because a value nobody can find is a value nobody can correct.
     fallback = str(getattr(cfg, "staging_url", "") or "")
     opened = []
-    for issue, declared in pending:
+    for issue, declared, run in pending:
         if str(issue) in asked:
             continue
         where = declared or fallback
@@ -5558,23 +5583,38 @@ async def _offer_the_release_to_the_client(project, client) -> str:
             activity.logger.info(
                 "%s#%s has no `url:` in its manifest — falling back to the deployment's "
                 "`staging_url`, which is deprecated", project.name, issue)
+        requirement = followup.requirement_behind(issue, open_now)
         text = followup.release_question(
-            requirement=followup.requirement_behind(issue, open_now),
+            requirement=requirement,
             where=where, agent_name=name,
             language=getattr(project, "language", None))
         if not await asyncio.to_thread(_product_post, channel, project, cfg, text):
             continue
         room = channel_destination(project, product=True)
-        opened.append(followup.release_of(issue, channel=room, ts=_now_iso(),
-                                          requirement=followup.requirement_behind(issue, open_now),
-                                          where=where))
+        ts = _now_iso()
+        opened.append(followup.release_of(issue, channel=room, ts=ts,
+                                          requirement=requirement,
+                                          where=where, run=run))
+        # THEIR COPY, ONLY IF THEY WERE TOLD (#448 slice 4) — the rule above, for the requester: a
+        # question of theirs recorded for a telling that never reached them would be chased, in
+        # their conversation, as the first they ever heard of it.
+        if await asyncio.to_thread(events.staged_for_you, project, card=str(issue), where=where,
+                                   run=run):
+            theirs, who = await asyncio.to_thread(events.requester_of, project, str(issue),
+                                                  rows=ledger)
+            if theirs:
+                opened.append(followup.release_of(issue, channel=room, ts=ts,
+                                                  requirement=requirement, where=where,
+                                                  conversation=theirs, requester=who, run=run))
+    # ONE ISSUE ASKED IN TWO PLACES IS ONE OFFER: the log and the count are of releases, not rows
+    offered = sorted({followup.is_release(x) for x in opened})
     if opened:
         await asyncio.to_thread(loop_store.write, project.name, opened)
         activity.logger.warning(
-            "OPENFACTORY_RELEASE_OFFERED project=%s issues=%s — the client was asked to try it; "
-            "their "
-            "answer is what releases", project.name, [x.subject for x in opened])
-    return f"release-asked:{len(opened)}"
+            "OPENFACTORY_RELEASE_OFFERED project=%s issues=%s requesters=%d — the client was asked "
+            "to try it; their answer is what releases", project.name, offered,
+            sum(1 for x in opened if (x.context or {}).get("conversation")))
+    return f"release-asked:{len(offered)}"
 
 
 def _repoint_product_orphans(project) -> str:

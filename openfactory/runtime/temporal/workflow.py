@@ -20,7 +20,7 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError
+from temporalio.exceptions import ActivityError, WorkflowAlreadyStartedError
 from temporalio.workflow import ParentClosePolicy
 
 with workflow.unsafe.imports_passed_through():
@@ -150,7 +150,11 @@ with workflow.unsafe.imports_passed_through():
     # which prints the sentence, answered 500 on an install without the `runtime` extra. Imported
     # HERE, inside the sandbox pass-through, like the phrasebook below: a pure function of one
     # bool, so replay reads the same words it recorded. `workflow.merge_wait_note` stays a name.
-    from openfactory.runtime.temporal.vocabulary import adjusts_spent_note, merge_wait_note
+    from openfactory.runtime.temporal.vocabulary import (
+        adjusts_spent_note,
+        merge_wait_note,
+        release_passes_spent_note,
+    )
     from openfactory.techlead import CODE as CAUSE_CODE
     from openfactory.techlead import classify, remedy_for
 
@@ -222,6 +226,13 @@ _CI_SLOW_POLL = timedelta(minutes=15)
 #: a panel, and it lands in an agent's context at the same trust level as the ticket body — so it
 #: is bounded here, at the boundary, rather than trusted to be short.
 _ADJUST_CHARS = 2000
+#: The patch a run's last gate is asked under, once, whether it hears "not yet" (#448 slice 4). A
+#: run parked there before it existed replays without it — deaf, and saying so.
+_NOT_YET_AT_THE_LAST_GATE = "a-not-yet-at-the-last-gate-is-another-change"
+#: The patch a LATER change of a card is asked under before it starts its deploy watch (#448 slice
+#: 4, from the review of #503): the change's number is in the watch's id from then on. Asked only
+#: for a change past the first, so a first change records no marker and keeps the id it always had.
+_A_LATER_CHANGE_WATCHES_ITS_OWN_DEPLOY = "a-later-change-watches-its-own-deploy"
 # Post-merge deploy watch (ADR-0005): a project's own CI deploys on push to main; we observe
 # that run on the merge commit and notify its outcome. Poll gently — a deploy is minutes.
 _DEPLOY_POLL = timedelta(minutes=1)
@@ -1030,6 +1041,15 @@ class JobWorkflow:
         # WHERE A PERSON IS SENT to confirm this change, once the promotion has read the client's
         # manifest in the box (#122). Display-only and replay-safe, like `_merge_wait`.
         self._look: dict | None = None
+        # "NOT YET" AT THE LAST GATE (#448 slice 4) — {instruction, by, seal}, the requester's
+        # answer that sends a MERGED change back for another pass as a new change of the card.
+        # `_hears_not_yet` is whether THIS run's gate can act on one (`workflow.patched` at the
+        # gate, so a run parked there before the code existed stays deaf, and says so), and
+        # `_release_wait` is what the gate publishes about it (`release_wait`): the budget,
+        # and what is left of it. Workflow state, not commands — replay rebuilds them.
+        self._not_yet: dict | None = None
+        self._hears_not_yet = False
+        self._release_wait: dict | None = None
 
     @workflow.signal
     async def advise_decision(self, advice: dict) -> None:
@@ -1342,6 +1362,38 @@ class JobWorkflow:
         this before sending an approval, so a signal is never silently dropped (M6)."""
         return self._awaiting_approval
 
+    @workflow.signal
+    async def not_yet(self, instruction: str, by: str = "", seal: str = "") -> None:
+        """THE OTHER ANSWER THE LAST GATE TAKES (#448 slice 4): the person who asked for the card
+        tried the merged change before it reached anybody else and said what is still wrong. With
+        a pass of the project's budget left, the job leaves the gate for a NEW change of the card
+        (`_another_change`) instead of waiting out the window and holding.
+
+        DROPPED WHEN THE GATE IS NOT OPEN, or cannot hear it, exactly as `approve_prod` drops a
+        premature or replayed approval (M6). `seal` is the product role's proof that it checked who
+        may send the card back (`gate_seal.NOT_YET`), verified where the answer is consumed, in an
+        activity — a signal handler cannot read a key without making replay depend on it."""
+        if not (self._awaiting_approval and self._hears_not_yet):
+            return
+        self._not_yet = {"instruction": instruction, "by": by, "seal": seal}
+
+    @workflow.query
+    def release_wait(self) -> dict | None:
+        """While the job waits at the last gate: `{adjust_passes, adjusts_left, hears}` and, when
+        the passes are spent or the last "not yet" was refused, a `note` saying what happens next
+        (#448 slice 4). None anywhere else. `hears` False is a run that parked here before it
+        could act on a "not yet" — the seam refuses one by name (`view.another_change`).
+
+        NOT AN `awaiting_*` QUERY, because it is no gate of its own: `awaiting_approval` is the
+        gate every reader asks (`view.HUMAN_GATES`), and this is what it publishes about a "not
+        yet" while it waits."""
+        if not self._awaiting_approval:
+            return None
+        wait = dict(self._release_wait or {"hears": False})
+        if self._gate_refused and wait.get("hears"):
+            wait["refused"] = self._gate_refused
+        return wait
+
     async def _cleanup(self, params: JobParams, *, shield: bool) -> None:
         """Best-effort: stop any lingering Fargate task when the job ends abnormally,
         so nothing is left orphaned. Shielded from cancellation when the workflow itself
@@ -1381,6 +1433,10 @@ class JobWorkflow:
                 attempt=attempt,  # discriminates loop iterations for launcher idempotency
                 spent_turns=spent_turns,  # the ticket-wide effort budget's running total (D4)
                 decision=decision,  # a resolved human choice injected into the resumed agent
+                # #448 slice 4: a NEW change of a card whose last one merged — what is still
+                # wrong with it, on every attempt of this run, and which change it is (the branch)
+                another_pass=params.another_pass,
+                change=params.change,
             ),
             # strictly MORE than the agent's own wall, so the wall fires first and the
             # stop arrives as a diagnosis rather than a silent cancel — see timeouts.py
@@ -1901,6 +1957,7 @@ class JobWorkflow:
                     CiRepairInput(
                         project=params.project, issue=params.issue,
                         pr_url=pr_url, sandbox=params.sandbox, attempt=attempts,
+                        change=params.change,  # #448 slice 4: the branch of this change
                     ),
                     start_to_close_timeout=timedelta(seconds=ACTIVITY_CEILING),
                     heartbeat_timeout=timedelta(seconds=120),
@@ -2302,7 +2359,8 @@ class JobWorkflow:
             read = await workflow.execute_activity(
                 review_pr,
                 ReviewPassInput(project=params.project, issue=params.issue, pr_url=pr_url,
-                                sandbox=params.sandbox, attempt=self._review_passes),
+                                sandbox=params.sandbox, attempt=self._review_passes,
+                                change=params.change),
                 start_to_close_timeout=timedelta(seconds=ACTIVITY_CEILING),
                 heartbeat_timeout=timedelta(seconds=120),
                 retry_policy=(_RETRY_REATTACHING
@@ -2353,7 +2411,8 @@ class JobWorkflow:
                         sandbox=params.sandbox, attempt=self._adjust_passes,
                         instruction=("" if threads else
                                      str(gate.get("instruction") or "")[:_ADJUST_CHARS]),
-                        source=REVIEW_THREAD if threads else "", by=who),
+                        source=REVIEW_THREAD if threads else "", by=who,
+                        change=params.change),
             start_to_close_timeout=timedelta(seconds=ACTIVITY_CEILING),
             heartbeat_timeout=timedelta(seconds=120),
             retry_policy=(_RETRY_REATTACHING if params.traits().idempotent else _ONCE),
@@ -2541,10 +2600,33 @@ class JobWorkflow:
 
         `delivers` says the deploy is the card's LAST stage (#448 slice 5): the card waits In
         review, and the watch settles it — Done and announced when green, held when not. Returns
-        whether a watch was started, so a card whose watch never started is not left waiting."""
+        whether a watch is on this change, so a card whose watch never started is not left waiting.
+
+        ONE WATCH PER CHANGE OF THE CARD (#448 slice 4, from the review of #503). The id was the
+        project and the card, and a card has more than one change since its requester can say "not
+        yet" at the last gate: the first change's watch can still be running when the second
+        merges, the engine refuses a second workflow under a running one's id, and the refusal was
+        read as a re-run — so the second change's deploy was never watched. A later change's watch
+        carries its number, the one its branch carries (`namespace.job_branch`: `-2` for the
+        second change), so the two are told apart on the engine as they are on the forge. The first
+        change keeps the id it always had, byte for byte: the panel reads it (`view._deploy_state`)
+        and every history recorded before this replays it.
+
+        PATCHED, because an id is the shape of a command (TMPRL1100) — and asked only for a later
+        change, so a first change records no marker. A later change whose history predates it
+        replays the id it had.
+
+        AND A REFUSAL SAYS WHICH IT IS. "Already started" is the engine saying this very watch is
+        running — a re-run of the same change, whose watch settles the card as the first run's
+        would; anything else is the engine refusing to start it at all, and the log says so rather
+        than passing it off as the harmless case — and the card is not left for a watch that is
+        not coming."""
         cfg = result.post_merge_deploy
         if not (cfg and result.pr_url):
             return False
+        watch_id = f"openfactory-deploy-{params.project}-{params.issue}"
+        if params.change and workflow.patched(_A_LATER_CHANGE_WATCHES_ITS_OWN_DEPLOY):
+            watch_id = f"{watch_id}-{params.change + 1}"
         try:
             await workflow.start_child_workflow(
                 DeployWatchWorkflow.run,
@@ -2553,17 +2635,23 @@ class JobWorkflow:
                     workflow=cfg.workflow, env=cfg.env, timeout_minutes=cfg.timeout_minutes,
                     url=getattr(cfg, "url", "") or "", delivers=delivers,
                 ),
-                id=f"openfactory-deploy-{params.project}-{params.issue}",
+                id=watch_id,
                 # inherit the parent's task queue (openfactory-jobs in prod) so the same worker
                 # fleet
                 # runs the watch — no separate deployment, and tests run it on their own queue.
                 parent_close_policy=ParentClosePolicy.ABANDON,
             )
-        except Exception:
-            # already-watching (a re-run) or a transient start error — the merge stands and
-            # the floor must free regardless. Never let the watch's start block the job (A3).
-            workflow.logger.warning("deploy-watch not started for %s#%s", params.project,
-                                    params.issue)
+        except WorkflowAlreadyStartedError:
+            # ALREADY WATCHING THIS CHANGE — a re-run of it. The merge stands and the floor must
+            # free regardless. Never let the watch's start block the job (A3). The watch that is
+            # running is this change's, and it is what ends the card
+            workflow.logger.warning("deploy-watch %s is already running — a re-run of %s#%s; it "
+                                    "goes on watching", watch_id, params.project, params.issue)
+        except Exception as exc:  # noqa: BLE001 — the merge stands whatever the engine says
+            # THE ENGINE REFUSED TO START IT — not a re-run, and nothing is watching this deploy.
+            workflow.logger.warning("the engine refused to start deploy-watch %s for %s#%s (%s) — "
+                                    "the merge stands, and this deploy will not be reported",
+                                    watch_id, params.project, params.issue, exc)
             return False
         return True
 
@@ -2765,8 +2853,44 @@ class JobWorkflow:
             workflow.logger.warning("#%s: the requester was not told the change went in",
                                     params.issue)
 
+    def _the_release_wait(self, params: JobParams) -> dict:
+        """What the last gate publishes about "not yet" (#448 slice 4): whether this run hears
+        one, the project's budget and what is left of it — the merge gate's numbers, ONE budget —
+        and, with none left, what happens next, said where the floor reads it."""
+        left = max(0, params.adjust_passes - self._adjust_passes)
+        wait: dict = {"adjust_passes": params.adjust_passes, "adjusts_left": left,
+                      "hears": self._hears_not_yet}
+        if self._hears_not_yet and not left:
+            wait["note"] = release_passes_spent_note(params.adjust_passes)
+        return wait
+
+    async def _another_change(self, params: JobParams, asked: dict) -> None:
+        """LEAVE THE LAST GATE FOR A NEW CHANGE OF THE CARD (#448 slice 4) — the run continues as
+        new, under the same workflow id, so the card's one job builds it and holds the floor.
+
+        A NEW CHANGE, NOT ANOTHER PASS ON THE OLD ONE: that pull request MERGED, so what is wrong
+        is built from the base, on a branch of its own (`JobParams.change` names it — the old one
+        is never pushed over), with the person's words in the brief (`another_pass`) beside the
+        card, whose criteria were corrected before this was sent. The pass is counted here, on
+        the project's one budget, and carried (`passes_spent`): the next run starts where this one
+        stopped, never at zero. Nothing was released, and the tech-lead says so."""
+        self._adjust_passes += 1
+        await self._coord_say(
+            tl_voice.say(tl_voice.NARRATION, "prod.another-change", params.language,
+                         issue=params.issue, n=self._adjust_passes, of=params.adjust_passes),
+            "pickup")
+        workflow.continue_as_new(params.model_copy(update={
+            "another_pass": str(asked.get("instruction") or "")[:_ADJUST_CHARS],
+            "passes_spent": self._adjust_passes,
+            "change": params.change + 1}))
+
     async def _lifecycle(self, params: JobParams) -> RunResult:
         self._params = params  # so _wait_operator can reach the project's coordinator
+        # ONE BUDGET ACROSS THE CARD'S CHANGES (#448 slice 4): a run that continued as new from
+        # the last gate starts with the passes its job had spent, so `adjust_passes` bounds the
+        # card and never starts again. State from the input, not a command — a history that
+        # predates the field reads 0, the count it always started from.
+        self._adjust_passes = params.passes_spent
         await self._coord_say(tl_voice.say(tl_voice.NARRATION, "pickup", params.language,
                                           issue=params.issue), "pickup")  # the tech-lead narrates
         await self._stamp_title(params)
@@ -2786,7 +2910,11 @@ class JobWorkflow:
         # the human clarifies re-arms the gate to judge the improved ticket. Re-armed ONLY for
         # preflight's own parks: a mid-run resumable hold must never be re-gated (a late `split`
         # would orphan preserved partial work). fit/degraded/error → run exactly as before.
-        pre_pending = True
+        # NOT FOR A LATER CHANGE OF THE CARD (#448 slice 4): it was sized when it was first taken
+        # up, it is merged, and the sizer's `split` would close it and open children over a change
+        # its requester is waiting on. Read from the input, so a history that predates it — which
+        # never carries one — sizes the card exactly as it did.
+        pre_pending = not params.another_pass
         spent_turns = 0  # ticket-wide effort total, carried across every attempt (D4)
         decision = ""  # a resolved human choice to inject into the NEXT run (a resumed blocker)
         result: RunResult | None = None
@@ -3220,24 +3348,50 @@ class JobWorkflow:
         # approval. No compute burned, no polling, nothing lost if we crash. The gate
         # flag makes the signal only count while we're actually parked here (M6).
         self._awaiting_approval = True
+        # "NOT YET" IS HEARD AT THIS GATE TOO (#448 slice 4). Its requester's "não funcionou"
+        # was answered "I'll take this back to the team and come back when it is fixed", and
+        # nothing took anything anywhere: the job waited out the window here and held. Asked
+        # ONCE, at the gate, so a run that parked here before the code existed replays deaf —
+        # and publishes that it is (`release_wait`), so the seam refuses one by name.
+        self._hears_not_yet = workflow.patched(_NOT_YET_AT_THE_LAST_GATE)
+        self._release_wait = self._the_release_wait(params)
+        another: dict | None = None
         try:
             deadline = workflow.now() + timedelta(days=params.approval_deadline_days)
             window = timedelta(days=params.approval_deadline_days)
             while True:
-                await workflow.wait_condition(lambda: self._approval is not None, timeout=window)
-                # AN APPROVAL IS ACTED ON ONLY WITH THE PANEL'S SEAL (`gate_seal`). One without
-                # it — sent straight to the engine — is dropped and the gate waits on, for what
-                # is left of the SAME window: a forged answer must not buy the job more time.
-                # The answer is taken as it stands NOW: another signal can land while the seal is
-                # checked, and it must not ride out on this one's verdict.
-                approval, seal = self._approval, self._approval_seal
-                if not workflow.patched("signed-gates") or await self._gate_sealed(
-                        "approve_prod",
-                        [approval["version"], approval["approver"], approval["comment"]], seal):
-                    self._approval = approval
-                    break
-                if self._approval is approval:
-                    self._approval, self._approval_seal = None, ""
+                await workflow.wait_condition(
+                    lambda: self._approval is not None or self._not_yet is not None,
+                    timeout=window)
+                if self._approval is not None:
+                    # AN APPROVAL IS ACTED ON ONLY WITH THE PANEL'S SEAL (`gate_seal`). One
+                    # without it — sent straight to the engine — is dropped and the gate waits
+                    # on, for what is left of the SAME window: a forged answer must not buy the
+                    # job more time. The answer is taken as it stands NOW: another signal can land
+                    # while the seal is checked, and it must not ride out on this one's verdict.
+                    approval, seal = self._approval, self._approval_seal
+                    if not workflow.patched("signed-gates") or await self._gate_sealed(
+                            "approve_prod",
+                            [approval["version"], approval["approver"], approval["comment"]],
+                            seal):
+                        self._approval = approval
+                        break
+                    if self._approval is approval:
+                        self._approval, self._approval_seal = None, ""
+                else:
+                    # A "NOT YET" (#448 slice 4), consumed first, whatever happens next — the seal
+                    # checked like every answer a gate acts on, and the budget the merge gate
+                    # spends: with a pass left the job leaves for a new change; with none it stays
+                    # here, saying a person decides, for what is left of the same window.
+                    asked, self._not_yet = self._not_yet, None
+                    if await self._gate_sealed(
+                            "not_yet", [str(asked.get("instruction") or ""),
+                                        str(asked.get("by") or "")],
+                            str(asked.get("seal") or "")):
+                        if self._adjust_passes < params.adjust_passes:
+                            another = asked
+                            break
+                    self._release_wait = self._the_release_wait(params)
                 window = deadline - workflow.now()
                 if window <= timedelta(0):
                     raise TimeoutError("prod approval window elapsed")
@@ -3258,6 +3412,8 @@ class JobWorkflow:
         finally:
             self._awaiting_approval = False  # gate is closed; further signals are ignored
 
+        if another is not None:
+            await self._another_change(params, another)    # continues as new; never returns
         assert self._approval is not None
         released = await workflow.execute_activity(
             release_prod,

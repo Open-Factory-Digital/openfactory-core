@@ -127,11 +127,17 @@ def test_the_clients_yes_releases_production(released):
 
 
 def test_a_NO_releases_nothing_and_says_so(released):
+    """And promises nothing (#448 slice 4): "vou devolver isso ao time… e volto quando estiver
+    corrigido" was a promise no code kept. A module that can stage another pass stages it
+    (`tests/test_not_yet_at_the_last_gate_is_another_pass.py`); one that cannot, like this one,
+    says what the person can do."""
     said = _say(_Module(("did-not-work", _release_loop(512), False)), text="não funcionou")
 
     assert released == [], "a rejection released production"
     assert "não subi nada" in said.lower(), said
-    assert "time" in said, "the client was not told what happens to what they reported"
+    assert "mais uma passada" in said, "the client was not told what they can do next"
+    assert "volto quando" not in said and "devolver isso ao time" not in said, (
+        "the reply promises what nothing does")
 
 
 def test_an_ORDINARY_delivery_acceptance_is_untouched(released):

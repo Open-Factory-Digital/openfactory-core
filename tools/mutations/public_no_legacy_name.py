@@ -135,13 +135,16 @@ MUTATIONS = [
     # ── the branch ─────────────────────────────────────────────────────────────────────────────
     ("a job branch is minted under the old prefix",
      "openfactory/namespace.py",
-     "    return f\"{BRANCH_PREFIX}/{str(ticket_id).lstrip('#')}\"",
-     "    return f\"sdlc/{str(ticket_id).lstrip('#')}\"",
+     # re-pinned 2026-10-04: a card's later change has a name of its own (#448)
+     "else f\"{BRANCH_PREFIX}/{bare}\"",
+     "else f\"sdlc/{bare}\"",
      BRANCH),
     ("the runner asks a remote for the branch again",
      "openfactory/orchestrator/machine.py",
-     "        return namespace.job_branch(ticket.id)",
-     "        self.forge.push_remote()\n        return namespace.job_branch(ticket.id)",
+     # re-pinned 2026-10-04: the runner names which change of the card it builds (#448)
+     "        return namespace.job_branch(ticket.id, change=self.change)",
+     "        self.forge.push_remote()\n"
+     "        return namespace.job_branch(ticket.id, change=self.change)",
      BRANCH),
     # ── the stale document path ────────────────────────────────────────────────────────────────
     ("the refusal points at a document that does not exist",

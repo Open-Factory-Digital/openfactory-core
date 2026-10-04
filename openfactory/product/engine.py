@@ -511,6 +511,12 @@ def _answer(ex: Exchange, *, arrival_ts: str = "") -> Reply | str | None:
     # conversation with its staged drafts.
     settled = settle(ex.project, text=ex.text, user=ex.user, thread=ex.thread, module=ex.module,
                      channel=ex.channel, fingerprint=ex.fingerprint, on_it=ex.on_it, via=ex.via)
+    if settled.not_yet:
+        # "NOT YET" AT THE LAST GATE IS ANOTHER PASS, NEVER A PROMISE (#448 slice 4) — staged here,
+        # where the conversation it is drafted from can be read
+        offered = _offer_another_pass(ex, settled.not_yet, arrival_ts=arrival_ts)
+        if offered is not None:
+            return offered
     if settled.reply is not None:
         return settled.reply
     waiting = settled.waiting
@@ -568,6 +574,10 @@ class Settled:
 
     reply: Reply | str | None
     waiting: dict | None
+    #: THE CARD WHOSE CHANGE, AT THE LAST GATE, A PERSON SAID IS NOT RIGHT YET (#448 slice 4) —
+    #: `_answer`, which holds the whole exchange, stages another pass on it from the conversation
+    #: (`_offer_another_pass`), and `reply` is what is said where none can be staged. "" otherwise.
+    not_yet: str = ""
 
 
 def settle(project, *, text: str, user: str, thread: str, module, channel: str = "",
@@ -709,7 +719,12 @@ def settle(project, *, text: str, user: str, thread: str, module, channel: str =
             released = _maybe_release(project, module, loop, verdict, user, agent, lang,
                                       ambiguous=ambiguous, via=via)
             if released is not None:
-                return Settled(released, waiting)
+                from openfactory.product.followup import is_release
+
+                # A "NÃO FUNCIONOU" THAT NAMED ONE RELEASE goes on to another pass (#448 slice 4)
+                return Settled(released, waiting,
+                               not_yet=(is_release(loop) or "")
+                               if verdict != "worked" and not ambiguous else "")
             if verdict == "did-not-work":
                 # WHAT THEY SAID IS THE REPORT (#448 slice 5): a defect linked to what was
                 # delivered, staged for their yes — never a request to say it all again
@@ -1277,8 +1292,6 @@ def _offer_adjust(ex: Exchange, answer) -> Reply | str | None:
     pass, the bar it is judged against, and that the card is corrected to match. When no pass can
     be sent (not theirs, nothing waiting, a pass already running, the project's passes spent) the
     reply says why and what happens next, and nothing is staged: NEVER A BARE REFUSAL."""
-    from openfactory.product.voice import adjust_confirmation
-
     prepare = getattr(ex.module, "prepare_adjustment", None)
     if not callable(prepare):
         return None
@@ -1289,6 +1302,48 @@ def _offer_adjust(ex: Exchange, answer) -> Reply | str | None:
                        reply=answer.text or "", request=ex.text, language=ex.lang)
     if not prepared.ok:
         return preamble + prepared.said
+    return _stage_the_pass(ex, number, prepared, preamble)
+
+
+def _offer_another_pass(ex: Exchange, card: str, *, arrival_ts: str = "") -> Reply | str | None:
+    """"NOT YET" ON A CHANGE AT THE LAST GATE, staged as another pass for the person's yes — or
+    what happens instead, said plainly (#448 slice 4). None for a module that cannot prepare one
+    (an add-on's, a double), and the settling stage's own sentence is said.
+
+    IT WAS A PROMISE NOBODY KEPT. "I will take this back to the team with what you said, and come
+    back when it is fixed" — and nothing took anything to anybody: the job waited out its window at
+    the gate and held, and the requester's words were in no record a pass could read. Now it is
+    slice 1's proposal, drafted from THIS conversation by the same module (`prepare_adjustment`),
+    worded for a change already in (`Gate.merged`): the pass is a new change and what is live
+    stays as it is. When no pass can be sent — not theirs, passes spent, the engine unreachable —
+    the reply says why and what happens next, and nothing is staged: NEVER A PROMISE."""
+    from openfactory.product.voice import engine_said
+
+    prepare = getattr(ex.module, "prepare_adjustment", None)
+    if not callable(prepare):
+        return None
+    number = canonical_ref(card)
+    agent = getattr(getattr(ex.project, "product", None), "agent_name", "") or ""
+    preamble = (f"{agent}: " if agent else "") + engine_said("nothing_released",
+                                                             language=ex.lang) + "\n\n"
+    ex.on_it()
+    # FROM THE CONVERSATION, NEVER THE MESSAGE ALONE (ADR-0054 D1): read here, as the answer
+    # stage reads it, because the settling stage that heard "não funcionou" never builds it
+    said, _before = _this_conversation(ex, arrival_ts=arrival_ts)
+    ex.conversation = said
+    prepared = prepare(number, actor=ex.user, conversation=said, reply="", request=ex.text,
+                       language=ex.lang)
+    if not prepared.ok:
+        why = prepared.said or ""
+        return preamble + (why[:1].upper() + why[1:])
+    return _stage_the_pass(ex, number, prepared, preamble)
+
+
+def _stage_the_pass(ex: Exchange, number: str, prepared, preamble: str) -> Reply | str:
+    """A prepared pass staged for this person's yes, under the proposal that names it — the one
+    staging of another pass, whether the role read the gesture or a "not yet" at the last gate."""
+    from openfactory.product.voice import adjust_confirmation
+
     gate = prepared.gate
     this = (gate.passes - gate.left + 1
             if gate is not None and gate.passes is not None and gate.left is not None else None)
@@ -1303,7 +1358,39 @@ def _offer_adjust(ex: Exchange, answer) -> Reply | str | None:
     ask = adjust_confirmation(number=number, instruction=prepared.instruction,
                               criteria=prepared.criteria, keeps=prepared.keeps,
                               pass_number=this, passes=getattr(gate, "passes", None),
-                              language=ex.lang)
+                              language=ex.lang, merged=bool(getattr(gate, "merged", False)))
+    return offer(ex.project, ex.key, replaced + preamble + ask)
+
+
+def _offer_accept(ex: Exchange, answer) -> Reply | str | None:
+    """The requester's yes to the change that waits on them, staged for their confirmation — or
+    why nothing can be recorded, said in the conversation (#448 slice 3). None for a module that
+    cannot prepare one (an add-on's, a double), and the turn goes on as before.
+
+    THE HEAD IS FIXED HERE, when it is staged: the one the preview was built from, which is what
+    the person tried. The yes records THAT head, and is refused if the preview was rebuilt from
+    another in between (`ProductModule.accept_change`) — a yes never stands for a later push.
+    Nothing is staged when there is nothing to accept (not theirs, nothing waiting, a pass
+    running, nothing tried, the change moved since): NEVER A BARE REFUSAL."""
+    from openfactory.product.voice import accept_change_confirmation
+
+    prepare = getattr(ex.module, "prepare_acceptance", None)
+    if not callable(prepare):
+        return None
+    number = canonical_ref(getattr(answer, "gesture_card", "") or "")
+    preamble = (answer.text + "\n\n") if answer.text else ""
+    ex.on_it()
+    prepared = prepare(number, actor=ex.user, language=ex.lang)
+    if not prepared.ok:
+        return preamble + prepared.said
+    # WHERE IT WAS SAID travels as every staged entry's `conversation` (`staging.remember`): it
+    # is where "it went in" is told when no delivery of the card names one (`merged_for_you`)
+    replaced = remember(ex.key, {"kind": "accept_change", "number": number,
+                                 "head": prepared.head, "pr_url": prepared.pr_url,
+                                 "seq": ex.seen, "source": ex.source or "",
+                                 "channel": ex.channel},
+                        lang=ex.lang, project=ex.project, person=ex.user)
+    ask = accept_change_confirmation(number=number, merges=prepared.merges, language=ex.lang)
     return offer(ex.project, ex.key, replaced + preamble + ask)
 
 
@@ -2144,28 +2231,52 @@ def _waiting_release_refs(project) -> list[str]:
 
         loops = [x for x in waiting(loop_store.read(project.name), owner=OWNER)
                  if x.kind == ACCEPTANCE and is_release(x)]
-        return [is_release(x) for x in sorted(loops, key=lambda x: x.ts)]
+        # ONCE EACH (#448 slice 4): a release asked in the room AND of its requester is two loops
+        # and one release — "(#12, #12, #13)" asks the person to choose between a thing and itself
+        return list(dict.fromkeys(is_release(x) for x in sorted(loops, key=lambda x: x.ts)))
     except Exception as exc:  # noqa: BLE001 — the parenthesis is decoration; the ask is not
         log.info("could not list the waiting releases for the ambiguity reply (%s)", exc)
         return []
 
 
-def _close_release(project, loop, verdict: str) -> None:
-    """The release loop closed with a verdict the gate has let count (#273). Never raises.
+def _close_release(project, loop, verdict: str, *, only_theirs: bool = False) -> None:
+    """The release loop closed with a verdict the gate has let count (#273) — and EVERY open copy
+    of the same release with it (#448 slice 4). Never raises.
 
     `settle_acceptance` hands a release loop back OPEN: it reads what was said and cannot see who
     said it. `_maybe_release` can, and this is the close it makes once the verdict counts. The
     ledger is re-read rather than taken from the caller, because another turn may have closed the
     loop in between, and `close_by_observation` then appends nothing: a settled outcome is never
     rewritten. Best-effort and loud, like every ledger write (`memory/store.py`): the verdict was
-    heard, and recording it must never cost the reply."""
+    heard, and recording it must never cost the reply.
+
+    ONE RELEASE, ASKED IN TWO PLACES, IS ANSWERED ONCE. The room is asked, and the card's
+    requester is asked in their own conversation (`activities._offer_the_release_to_the_client`):
+    two loops, one question. Closing only the copy the answer landed on left the other one open —
+    an admin's release from the room kept chasing the requester about a change already in front
+    of everyone, and the requester's "não funcionou" left the room still being asked to release
+    it. Every open copy of the release closes in ONE write, with the one verdict that counted.
+
+    `only_theirs` (#448 slice 4): the copies asked of the card's requester in their conversation,
+    and never the room's — their "it worked" is recorded, and the room's question stays open for
+    the product admin who puts it in front of everyone (`_the_requesters_yes`)."""
     name = getattr(project, "name", "") or ""
     try:
         from openfactory.memory import store as loop_store
-        from openfactory.memory.ledger import ACCEPTANCE, close_by_observation
+        from openfactory.memory.ledger import ACCEPTANCE, close_by_observation, waiting
+        from openfactory.product.followup import OWNER, is_release
 
-        rows = close_by_observation(loop_store.read(name),
-                                    {(ACCEPTANCE, loop.subject, loop.about): verdict})
+        ledger = loop_store.read(name)
+        issue = is_release(loop)
+        observed = {(ACCEPTANCE, x.subject, x.about): verdict
+                    for x in waiting(ledger, owner=OWNER)
+                    if issue and x.kind == ACCEPTANCE and is_release(x) == issue}
+        observed[(ACCEPTANCE, loop.subject, loop.about)] = verdict
+        if only_theirs:
+            asked_of_them = {(ACCEPTANCE, x.subject, x.about) for x in [*ledger, loop]
+                             if (x.context or {}).get("conversation")}
+            observed = {key: said for key, said in observed.items() if key in asked_of_them}
+        rows = close_by_observation(ledger, observed)
         if rows:
             loop_store.write(name, rows)
     except Exception:  # noqa: BLE001 — the reply is already earned; the record is best-effort
@@ -2198,7 +2309,17 @@ def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, l
        signal that reached nothing is the worst outcome available on this path.
 
     A "não funcionou" releases NOTHING and says so plainly, and closes the loop as
-    `did-not-work`, which is the record that matters.
+    `did-not-work`, which is the record that matters. What it does next is another pass, staged
+    by the turn that holds the conversation (`_offer_another_pass`, #448 slice 4) — this says only
+    what is said where none can be staged, and never promises one. An AMBIGUOUS one closes and
+    stages nothing: a pass sent on a guess would rebuild the wrong card.
+
+    WHO MAY SAY "IT WORKED" (#448 slice 4). A product admin (`may_act`), as always — and the
+    card's own requester (`ProductModule.asked_for`), whose word releases it only where the
+    project says so (`Project.release_by_requester`, the operator's, off by default). Where it
+    does not, their yes is RECORDED, not refused: their copy of the question closes as `worked`,
+    the room's stays open, the room is told once that they say it is right, and they hear who puts
+    it in front of everyone (`_the_requesters_yes`).
 
     THE LOOP IS CLOSED HERE, AND ONLY ONCE THE VERDICT COUNTS (#273). `settle_acceptance` used to
     close it as `worked` before this asked who was speaking, so a refused "funcionou" released
@@ -2218,6 +2339,13 @@ def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, l
 
     head = f"{agent}: " if agent else ""
     if verdict != "worked":
+        if ambiguous:
+            # NOR IS A "NOT YET" GUESSED (#448 slice 4): it closes the question it lands on and
+            # sends that card back for another pass, and the newest of two is a guess — nothing
+            # is closed, and the person is asked which one, in the sentence the parser reads
+            listed = _waiting_release_refs(project)
+            which = f" ({', '.join(ref_label(r) for r in listed)})" if listed else ""
+            return head + engine_said("not_yet_ambiguous", language=lang, which=which)
         # A "NÃO FUNCIONOU" CLOSES THE LOOP from whoever says it, as it did when the module closed
         # it: it spends nothing, and a release that did not work is not waiting on anybody's yes.
         _close_release(project, loop, verdict)
@@ -2232,11 +2360,21 @@ def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, l
         listed = _waiting_release_refs(project)
         which = f" ({', '.join(ref_label(r) for r in listed)})" if listed else ""
         return head + engine_said("release_ambiguous", language=lang, which=which)
-    if not may_act(project, user, via=via):
+    admin = may_act(project, user, via=via)
+    theirs = not admin and _asked_for(module, issue, user)
+    if not admin and not (theirs and getattr(project, "release_by_requester", False) is True):
+        if theirs:
+            # THEIR YES IS RECORDED, AND THE ROOM'S QUESTION STAYS FOR AN ADMIN (#448 slice 4)
+            return _the_requesters_yes(project, loop, issue, user, head=head, lang=lang)
         # THE QUESTION STAYS OPEN FOR SOMEBODY WHO MAY ANSWER IT (#273). Nothing has closed the
         # loop before this line, so it is still waiting — still chased — and an admin's own
         # "funcionou" lands on it and releases.
         return unauthorized_message(project)
+    # WHOSE YES IT WAS, IN THE RECORD THE RELEASE LEAVES (#448 slice 4): the requester's own, where
+    # the project lets it count; an admin's after the requester had said it is right; an admin's.
+    said = ("released_by_requester" if not admin
+            else "released_after_the_requester" if _the_requester_said_right(project, loop)
+            else "released_by_client")
     # CLOSED NOW, by the verdict of somebody who may act (#273) — and before the release, not
     # after it: the loop records what they said, and `release()` says separately, and honestly,
     # whether the workflow was still there to take it.
@@ -2245,10 +2383,77 @@ def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, l
     from openfactory.product.release import release
 
     ok, why = release(project, issue, approver=user,
-                      comment=engine_said("released_by_client", language=lang))
+                      comment=engine_said(said, language=lang))
     if not ok:
         return f"{head}{why}"
     return head + engine_said("releasing", language=lang)
+
+
+def _asked_for(module, issue: str, user: str) -> bool:
+    """Whether `user` is the person `issue`'s card records as having asked for it — the rule
+    another pass is sent back by (`ProductModule.asked_for`: never a guest, never nobody). False
+    for a module that cannot say (an add-on's, a double), and for one that could not read it."""
+    asks = getattr(module, "asked_for", None)
+    if not callable(asks):
+        return False
+    try:
+        return bool(asks(issue, user))
+    except Exception:  # noqa: BLE001 — "could not tell" authorises nobody
+        log.info("could not tell whether %s asked for %s", user, ref_label(issue), exc_info=True)
+        return False
+
+
+def _the_requesters_yes(project, loop, issue: str, user: str, *, head: str, lang) -> str:
+    """THE CARD'S REQUESTER SAYS IT WORKED, AND THE PROJECT DOES NOT LET THEIR WORD RELEASE IT
+    (#448 slice 4, `Project.release_by_requester` off). Their yes is the input the last gate waits
+    for, so it is RECORDED rather than refused: their copy of the question closes as `worked`, the
+    room's stays open for a product admin, the room is told once (`events.tried_and_right`, per
+    card and run), and they hear that it is recorded and who puts it in front of everyone. Before
+    this they read "you cannot approve this" about their own change. Never raises."""
+    from openfactory.product import events
+    from openfactory.product.voice import requester_said_right
+
+    _close_release(project, loop, "worked", only_theirs=True)
+    context = loop.context or {}
+    told = events.tried_and_right(project, card=issue,
+                                  run=str(context.get("run") or loop.ts or ""),
+                                  where=str(context.get("where") or ""), who=_name_of(user))
+    return head + requester_said_right(ref=issue, told=told, language=lang)
+
+
+def _the_requester_said_right(project, loop) -> bool:
+    """Whether the card's requester said "it worked" to THIS asking of the release — a copy asked
+    in their conversation, opened with the room's in the same round (the same `ts`), closed as
+    `worked` (#448 slice 4). For the record an admin's release leaves. Never raises."""
+    try:
+        from openfactory.memory import store as loop_store
+        from openfactory.memory.ledger import ACCEPTANCE, CLOSED, fold
+        from openfactory.product.followup import is_release
+
+        issue = is_release(loop)
+        return any(x.kind == ACCEPTANCE and is_release(x) == issue and x.ts == loop.ts
+                   and (x.context or {}).get("conversation") and x.state == CLOSED
+                   and x.outcome == "worked"
+                   for x in fold(loop_store.read(getattr(project, "name", "") or "")))
+    except Exception:  # noqa: BLE001 — a plainer record, never a lost release
+        log.info("could not read whether the requester said it was right", exc_info=True)
+        return False
+
+
+def _name_of(user: str) -> str:
+    """The name the platform's people store knows `user` by, or "" — "the person who asked for
+    it" is said then. Never the id itself: an identity provider's key is not a name a room reads.
+    Never raises."""
+    try:
+        from openfactory.identity.people import PeopleStore
+
+        person = PeopleStore().snapshot().people.get(str(user or ""))
+    except Exception:  # noqa: BLE001 — a vaguer sentence, never a lost one
+        log.info("could not read the people store for a display name — the room hears \"the "
+                 "person who asked for it\"", exc_info=True)
+        return ""
+    display = str(getattr(person, "display", "") or "").strip()
+    return display if display and display != str(user) else ""
 
 
 # ── `_where_it_came_from`, `_also_broke_it_down` and `_breakdown_reply` moved with the executor ──
