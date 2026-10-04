@@ -1830,9 +1830,15 @@ def queue_proposal(readiness, proposal, *, titles: dict[str, str] | None = None,
 
 
 def queued(numbers: list[str], *, language: str | None = None, agent_name: str = "") -> str:
+    """The cards a confirmed queue moved, named AS THE TRACKER SPELLS THEM (#491).
+
+    `ref_label`, never `f"#{n}"`: `#12` on GitHub, as it always read, and `CONT-412` on Jira —
+    not `#CONT-412`, which nobody there writes and nobody can paste back."""
+    from openfactory.contracts.refs import ref_label
+
     sig = f"{agent_name.strip()}: " if agent_name.strip() else ""
     return sig + _pick(_QUEUED, language).format(
-        items=", ".join(f"#{n}" for n in numbers))
+        items=", ".join(ref_label(n) for n in numbers))
 
 
 _SITUATION = {
