@@ -280,6 +280,9 @@ async def test_a_delivered_card_is_announced_in_its_REQUESTERS_conversation_WHEN
             for x in asked] == [(ANAS, ANAS, sealed(ANA))]
     assert [(m["thread"], m["role"], m["text"]) for m in memory] == [
         (ANAS, "agent", _announcement())], "the announcement is not in the product's memory"
+    # AN ANNOUNCEMENT IS THE PLATFORM SPEAKING, NOT THE ROLE'S ANSWER (#457): recorded with a kind
+    # that is not an answer, so the distillation never reads it as the role's answer.
+    assert [m.get("kind") for m in memory] == ["announcement"], memory
 
 
 @engine_of_its_own
@@ -1000,8 +1003,9 @@ def _filing(registry, **overrides) -> SimpleNamespace:
             handed.setdefault("_open_delivery", {"conversation": conversation,
                                                  "requester": requester}),
         _track_defect=lambda number, **kw: handed.setdefault("_track_defect", kw),
-        # the card's door, which files it (#414) — not this case's subject
-        _filed_through_the_door=lambda ref, **kw: True,
+        # the card's door, which files it (#414) and names the column as the board does (#496)
+        # — not this case's subject
+        _filed_through_the_door=lambda ref, **kw: (True, "Backlog"),
         _track_ticket=lambda ref, **kw: handed.setdefault("_track_ticket", kw),
         _checked_write=lambda **_k: WriteResult(ok=True, ref="#88"), _same_as=None,
         _cannot_see_the_product=lambda: None)
@@ -1091,7 +1095,9 @@ _TELLING = {"door": {"announce", "announce_now", "report", "_admit", "tell"},
                        "_tell", "_once",
                        # #401 — the change is the requester's to try: the watch and the round,
                        # through the card's door since #414 (`ready_to_try`, from its port)
-                       "ready_for_you", "ready_to_try"}}
+                       "ready_for_you", "ready_to_try",
+                       # #448 slice 3 — the change went in: the job, the moment it merged
+                       "merged_for_you"}}
 _PRODUCERS = {"openfactory/product/door.py", "openfactory/product/events.py",
               "openfactory/runtime/temporal/activities.py", "openfactory/product/engine.py",
               # #269: a document the ingestion READ — its name is the file's path, and the
@@ -1130,7 +1136,7 @@ def test_the_guard_above_is_LOOKING():
     """It would pass over an empty tree: the producers it allows are where it finds the calls."""
     source = (ROOT / "openfactory/runtime/temporal/activities.py").read_text()
     for call in ("events.ci_went_red(", "events.pull_requests_at_the_gate(", "events.to_room(",
-                 "door.report("):
+                 "door.report(", "events.merged_for_you("):
         assert call in source, call
     # #414: the ready-for-you telling and the delivery's are the card's door's — said from its port
     # and its loops, which the guard above allows, and found there

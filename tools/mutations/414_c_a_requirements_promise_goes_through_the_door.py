@@ -68,14 +68,17 @@ MUTATIONS = [
      "            landed = [r.ref for r in results if r.ok and r.ref]\n",
      "            landed = [r.ref for r in results if r.ok and r.ref and not r.existed]\n"),
 
+    # re-pinned 2026-10-05: integration of slices 4/5 with the door stack — the promise is
+    # keyed on the tracker's own refs (#485), not on the numbers
     ("each card carries a promise of the first card alone, so it names one card of three", MODULE,
-     "            owed = self._track_requirement(requirement.number, numbers,\n",
-     "            owed = self._track_requirement(requirement.number, numbers[:1],\n"),
+     "            owed = self._track_requirement(requirement.number, cards,\n",
+     "            owed = self._track_requirement(requirement.number, cards[:1],\n"),
 
+    # re-pinned 2026-10-05: integration of slices 4/5 with the door stack (#485)
     ("the promise forgets where it was asked and who asked", MODULE,
-     "            owed = self._track_requirement(requirement.number, numbers,\n"
+     "            owed = self._track_requirement(requirement.number, cards,\n"
      "                                           conversation=conversation, requester=requester)\n",
-     "            owed = self._track_requirement(requirement.number, numbers)\n"),
+     "            owed = self._track_requirement(requirement.number, cards)\n"),
 
     # ── 3. one promise, once ────────────────────────────────────────────────────────────────────
     ("every card of a breakdown opens a promise of its own", LOOPS,

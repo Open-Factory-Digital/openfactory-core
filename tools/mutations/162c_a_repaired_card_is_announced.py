@@ -56,12 +56,14 @@ MUTATIONS = [
      '",".join(ref_label(c) for c in illegal))', "            pass"),
 
     # ── how a person reads it ───────────────────────────────────────────────────────────────────
+    # re-pinned 2026-10-04: `ref_label` takes the decoration off first, so the line reads the bare
+    # text — the claims are the same (#497)
     ("GitHub's hash is put on a Jira ref", REFS,
-     '    return f"#{text.lstrip(\'#\')}" if text.lstrip("#").isdigit() else text',
-     '    return f"#{text.lstrip(chr(35))}"'),
+     '    return f"#{text}" if text.isdigit() else text',
+     '    return f"#{text}"'),
 
     ("…and the reverse: the hash is dropped from a numeric ref", REFS,
-     '    return f"#{text.lstrip(\'#\')}" if text.lstrip("#").isdigit() else text',
+     '    return f"#{text}" if text.isdigit() else text',
      "    return text"),
 
     ("the cards are ordered as strings — #510 before #59", ACT,

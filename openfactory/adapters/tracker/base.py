@@ -306,9 +306,14 @@ class TrackerAdapter(Protocol):
           - where an item has an open/closed state of its own beside its column (GitHub issues),
             the row closes it as completed here. It did not, and a delivered issue stayed open in
             Done on every pairing whose forge does not own the card;
-          - the local board keeps a delivered card OPEN in Done, deliberately: its board lists open
-            cards, so closing would take delivered work off the column that shows it. Taking it
-            off is a person's act (`card_close`, which records such a card as delivered).
+          - the local board closes it as completed in Done too (#500). It kept a delivered card
+            OPEN there, deliberately (#195), so the panel's board would go on showing delivered
+            work in Done; but delivery is read from the closed state (`triage.Ticket.delivered`),
+            and no card the factory finished on that row was ever announced to whoever asked for
+            it. The intent stands, kept where it belongs: the panel shows delivered work in Done
+            because `/api/board` reads the recent cards closed as delivered back
+            (`api/app.py::_delivered_cards`), on every row, not because a card stays open. A move
+            out of Done opens it again (`tracker/local.py::move_card`).
 
         A close that fails must not fail the delivery: the change is merged, and the answer this
         returns is about the MOVE."""
@@ -775,6 +780,38 @@ def removed_since(tracker, since: str) -> list[str] | None:
             "whole instead", since, exc_info=True)
         return None
     return None if found is None else [str(r) for r in found]
+
+
+# ── one card read by its ref, as the bulk read answers it (#492) ─────────────────────────────────
+
+def summary_of(tracker, ref: str) -> TicketSummary | None:
+    """`ref` as `list_tickets` would answer it — `state` AND `state_reason` — read by itself; or
+    `None` when this row has no such read, or could not read it just now (#492).
+
+    A CARD THE ROW'S LIST NEVER HOLDS. `list_tickets` answers for the row's own place, and a row
+    that files a card in another repository of the product (`create_ticket(repo=…)`, C-18) answers
+    a qualified ref (`acme/web#1`) for a card no list of it ever shows. A delivery waiting on one
+    could never see it delivered. The row that can read such a card by its ref implements
+    `ticket_summary(ref)` (GitHub's does); `get_ticket` is no substitute, because the pipeline's
+    `Ticket` has no `state_reason`, and a card closed as not planned read as merely closed is a
+    false "it is ready".
+
+    OFF THE PORT, like `removed_since`: a method added to `TrackerAdapter` fails every adapter a
+    stranger already shipped. NEVER RAISES, and anything that is not a `TicketSummary` — a double's
+    `MagicMock` included — is `None`: the caller counts that card as not delivered, which is the
+    side that never tells somebody early."""
+    read = getattr(tracker, "ticket_summary", None)
+    if not callable(read):
+        return None
+    try:
+        found = read(ref)
+    except Exception:  # noqa: BLE001 — "could not read" is an answer: the card is not delivered
+        import logging
+
+        logging.getLogger("openfactory.tracker").info(
+            "the tracker raised reading %s by its ref — read as unreadable", ref, exc_info=True)
+        return None
+    return found if isinstance(found, TicketSummary) else None
 
 
 def remove_ticket(tracker, ref: str, reason: str, *, by: str, note: str) -> bool:

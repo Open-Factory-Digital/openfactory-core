@@ -38,7 +38,10 @@ with workflow.unsafe.imports_passed_through():
     )
     from openfactory.contracts.project import ADJUST_PASSES
     from openfactory.lifecycle.handed_back import recorded_park
-    from openfactory.review.verdict import of_result
+
+    # #448 slice 3: whether the reading standing now still admits a merge nobody presses — pure,
+    # on the `verdict` query's own shape, so replay reads the same answer it recorded
+    from openfactory.review.verdict import of_result, still_admits_the_merge
     from openfactory.runtime.temporal.activities import (
         adjust_pr,
         card_adjusted,
@@ -94,6 +97,7 @@ with workflow.unsafe.imports_passed_through():
         techlead_ask,
         techlead_watch,
         tell_the_requester,
+        tell_the_requester_it_merged,
         update_pr_branch,
         verify_gate_seal,
     )
@@ -116,6 +120,7 @@ with workflow.unsafe.imports_passed_through():
         JobParams,
         KnowledgeRefreshInput,
         MergeCheckInput,
+        MergedInput,
         PreflightInput,
         PreviewParams,
         PreviewPlanInput,
@@ -2043,6 +2048,16 @@ class JobWorkflow:
                     self._merge_wait["adjust_passes"] = params.adjust_passes
                     self._merge_wait["adjusts_left"] = max(
                         0, params.adjust_passes - self._adjust_passes)
+                    # AND WHETHER THE LOOK IS ALL THAT HOLDS IT (#448 slice 3): the machine's
+                    # judgement when the pull request opened (`RunResult.auto_but_for_the_look`),
+                    # while the reading standing now still admits it — a pass the requester asked
+                    # for since may have rewritten what was judged. Then the requester's recorded
+                    # acceptance of the head they tried answers this gate with `merge`
+                    # (`product/accept.py`). A FIELD, not a command: a result written before it
+                    # carries False, and a person merges that one, shown the acceptance.
+                    self._merge_wait["auto_but_for_the_look"] = bool(
+                        result.auto_but_for_the_look and still_admits_the_merge(
+                            self._verdict, judged=getattr(result.review, "decision", "") or ""))
                     if gate_live:
                         with contextlib.suppress(TimeoutError):
                             await workflow.wait_condition(lambda: self._gate is not None,
@@ -2661,6 +2676,33 @@ class JobWorkflow:
             workflow.logger.warning("#%s: the requester was not told the change is theirs to "
                                     "try — the tech-lead's round tells them", params.issue)
 
+    async def _tell_the_requester_it_merged(self, params: JobParams, result: RunResult, *,
+                                            stages_follow: bool) -> None:
+        """THE PERSON WHO ASKED FOR THE CARD HEARS IT WENT IN (#448 slice 3), whoever merged it.
+
+        MEASURED FIRST: with no stage declared the job ends Done at this merge and the delivery is
+        announced by the card's door (`delivered`, `loops.announce_what_it_completes`, #414), so
+        the event says nothing where that does. With stages the delivery waits for the last one,
+        and a card the role opened from a request has no delivery at all — at the merge, the
+        requester heard nothing. `stages_follow` says which: it is the promotion's own condition.
+
+        PATCHED, because it is a new command on a path every job takes (TMPRL1100): a job whose
+        history reached its merge before this replays without it. Best-effort like
+        `_tell_the_requester` — the change is in whether or not they were told."""
+        if not workflow.patched("the-requester-hears-it-went-in"):
+            return
+        try:
+            await workflow.execute_activity(
+                tell_the_requester_it_merged,
+                MergedInput(project=params.project, issue=params.issue,
+                            pr_url=result.pr_url or "", stages_follow=stages_follow),
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=_ONCE,  # never raises; a telling is never repeated
+            )
+        except Exception:  # noqa: BLE001 — never hold the floor on a courtesy
+            workflow.logger.warning("#%s: the requester was not told the change went in",
+                                    params.issue)
+
     async def _lifecycle(self, params: JobParams) -> RunResult:
         self._params = params  # so _wait_operator can reach the project's coordinator
         await self._coord_say(tl_voice.say(tl_voice.NARRATION, "pickup", params.language,
@@ -3008,6 +3050,10 @@ class JobWorkflow:
                 return result
             break  # resolved (merged / pr_open) → deploy-watch + promotion below
 
+        # Promote when requested OR when the project's manifest declares environments —
+        # the CONFIG decides (three-layer model), not a start-time flag (A2/C3). Read before the
+        # merge's own steps, because the requester's telling says whether stages follow (#448).
+        should_promote = params.promote or bool(result.environments)
         # Merged → observe the project's own dev deploy (ADR-0005). An ABANDONED child does the
         # watching; this returns immediately, so the merge frees the floor for the next ticket
         # right away and the deploy notification arrives async — watching never gates.
@@ -3017,9 +3063,7 @@ class JobWorkflow:
             await self._flag_review_findings(params, result)
             await self._spawn_deploy_watch(params, result)
             await self._refresh_knowledge(params)
-        # Promote when requested OR when the project's manifest declares environments —
-        # the CONFIG decides (three-layer model), not a start-time flag (A2/C3).
-        should_promote = params.promote or bool(result.environments)
+            await self._tell_the_requester_it_merged(params, result, stages_follow=should_promote)
         if result.state not in (JobState.PR_OPEN, JobState.MERGED) or not should_promote:
             if result.state == JobState.MERGED:
                 await self._finish_at_the_merge(params, result)

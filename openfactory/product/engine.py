@@ -73,9 +73,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from openfactory.contracts.refs import canonical_ref
+from openfactory.contracts.refs import canonical_ref, ref_label
 from openfactory.product import progress as _progress
 from openfactory.product.confirm import (
+    _board_word,
     _breakdown_reply,
     _client_detail,
     _is_requester,
@@ -424,11 +425,25 @@ def _answered(project, message: Message, reply: Reply | str, *, again: bool) -> 
     if again:
         transcript.supersede(project, thread=message.conversation, answering=message.id)
     transcript.record(project, thread=message.conversation, role="agent",
-                      text=_text_of(reply), channel=message.room, in_reply_to=message.id)
+                      text=_text_of(reply), channel=message.room, in_reply_to=message.id,
+                      kind=_reply_kind(reply))
 
 
 def _text_of(reply: Reply | str) -> str:
     return reply.text if isinstance(reply, Reply) else str(reply)
+
+
+def _reply_kind(reply: Reply | str) -> str:
+    """WHAT KIND OF REPLY the role's line was, for the transcript (#457): a `Reply` that already
+    names a kind other than the model's answer carries it (a hand-off); otherwise the platform's
+    own sentences are recognised by their text (`voice.own_voice_kind`) — a crash reply, an
+    unavailable — and everything else is the role's answer (`""`, which `transcript.record` leaves
+    unmarked, so it reads as an answer like every row written before this)."""
+    from openfactory.product import voice
+
+    if isinstance(reply, Reply) and reply.kind not in ("", "answer", "receipt"):
+        return reply.kind
+    return voice.own_voice_kind(_text_of(reply))
 
 
 def _files_of(message) -> dict:
@@ -1072,6 +1087,12 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
         offered = _offer_adjust(ex, answer)
         if offered is not None:
             return offered
+    if getattr(answer, "gesture", "") == "accept" and getattr(answer, "gesture_card", ""):
+        # …AND "THAT'S IT" IS ITS OTHER HALF (#448 slice 3): a yes to what they tried, recorded
+        # against the head the preview was built from — never a request, never a requirement
+        offered = _offer_accept(ex, answer)
+        if offered is not None:
+            return offered
     if getattr(answer, "is_defect", False):
         # Who can actually unlock the pen. Asking the REPORTER to confirm and then refusing their
         # confirmation — with a refusal written for the requirement flow ("registrar como
@@ -1219,6 +1240,38 @@ def _offer_adjust(ex: Exchange, answer) -> Reply | str | None:
                               criteria=prepared.criteria, keeps=prepared.keeps,
                               pass_number=this, passes=getattr(gate, "passes", None),
                               language=ex.lang)
+    return offer(ex.project, ex.key, replaced + preamble + ask)
+
+
+def _offer_accept(ex: Exchange, answer) -> Reply | str | None:
+    """The requester's yes to the change that waits on them, staged for their confirmation — or
+    why nothing can be recorded, said in the conversation (#448 slice 3). None for a module that
+    cannot prepare one (an add-on's, a double), and the turn goes on as before.
+
+    THE HEAD IS FIXED HERE, when it is staged: the one the preview was built from, which is what
+    the person tried. The yes records THAT head, and is refused if the preview was rebuilt from
+    another in between (`ProductModule.accept_change`) — a yes never stands for a later push.
+    Nothing is staged when there is nothing to accept (not theirs, nothing waiting, a pass
+    running, nothing tried, the change moved since): NEVER A BARE REFUSAL."""
+    from openfactory.product.voice import accept_change_confirmation
+
+    prepare = getattr(ex.module, "prepare_acceptance", None)
+    if not callable(prepare):
+        return None
+    number = canonical_ref(getattr(answer, "gesture_card", "") or "")
+    preamble = (answer.text + "\n\n") if answer.text else ""
+    ex.on_it()
+    prepared = prepare(number, actor=ex.user, language=ex.lang)
+    if not prepared.ok:
+        return preamble + prepared.said
+    # WHERE IT WAS SAID travels as every staged entry's `conversation` (`staging.remember`): it
+    # is where "it went in" is told when no delivery of the card names one (`merged_for_you`)
+    replaced = remember(ex.key, {"kind": "accept_change", "number": number,
+                                 "head": prepared.head, "pr_url": prepared.pr_url,
+                                 "seq": ex.seen, "source": ex.source or "",
+                                 "channel": ex.channel},
+                        lang=ex.lang, project=ex.project, person=ex.user)
+    ask = accept_change_confirmation(number=number, merges=prepared.merges, language=ex.lang)
     return offer(ex.project, ex.key, replaced + preamble + ask)
 
 
@@ -1648,7 +1701,8 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         # the file cannot show that, and a person saying so can (#182).
         _progress.stage("breaking_down")
         results = module.break_down(number, actor=user, asked_for=True)
-        return _breakdown_reply(results, number, name, lang, project)
+        return _breakdown_reply(results, number, name, lang, project,
+                                backlog=_board_word(module, "backlog"))
 
     if intent == "accept":
         number = int(captures.get("number") or 0)
@@ -2112,7 +2166,7 @@ def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, l
         # reply no code path could read — an unfollowable instruction from the platform's own
         # mouth.
         listed = _waiting_release_refs(project)
-        which = f" ({', '.join(f'#{r}' for r in listed)})" if listed else ""
+        which = f" ({', '.join(ref_label(r) for r in listed)})" if listed else ""
         return head + engine_said("release_ambiguous", language=lang, which=which)
     if not may_act(project, user, via=via):
         # THE QUESTION STAYS OPEN FOR SOMEBODY WHO MAY ANSWER IT (#273). Nothing has closed the

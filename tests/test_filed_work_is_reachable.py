@@ -134,15 +134,18 @@ def test_a_defect_that_cannot_be_placed_is_still_filed():
     assert result.ok and result.ref == "88", result.detail
 
 
-def test_FILING_COLUMN_is_the_column_readiness_can_actually_see():
+def test_FILING_KEY_is_the_column_readiness_can_actually_see():
     """The column has to be one the role's own deterministic readings match, or placing the card
-    changes nothing. `readiness` compares names exactly and has no else-branch."""
+    changes nothing. `readiness` compares names exactly and has no else-branch. A KEY since #496,
+    named by the board — on a board this platform created, by the platform's own word."""
+    from openfactory.adapters.board.columns import name_for
     from openfactory.product import queue
 
     src = Path(queue.__file__).read_text()
-    assert ProductModule.FILING_COLUMN.lower() in src.lower(), (
-        f"{ProductModule.FILING_COLUMN!r} is not a column readiness() recognises — filed work would "
-        f"be invisible to propose_queue even when placed")
+    named = name_for(ProductModule.FILING_KEY)
+    assert named and named.lower() in src.lower(), (
+        f"{named!r} is not a column readiness() recognises — filed work would be invisible to "
+        f"propose_queue even when placed")
 
 
 @pytest.mark.parametrize("fn", ["file_issues", "file_defect", "break_down"])

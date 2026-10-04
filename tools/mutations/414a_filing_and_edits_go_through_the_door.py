@@ -87,16 +87,17 @@ MUTATIONS = [
      '    parked = event is CardEvent.PROMOTED and stage.key == "needs_action"',
      "    parked = False"),
 
+    # re-pinned 2026-10-04: filing goes through the door (#458) with the board's name (#505)
     ("the product role files a card by writing its column itself again, beside the door",
      MODULE,
      # re-pinned 2026-10-04: the filing carries the promise it makes to the door (#414)
-     "            placed = self._filed_through_the_door(str(ref), by=reported_by, "
-     "tracker=tracker,\n"
-     "                                                  board=board, owed=owed)\n"
+     "            placed, column = self._filed_through_the_door(str(ref), by=reported_by,\n"
+     "                                                          tracker=tracker, board=board,\n"
+     "                                                          owed=owed)\n"
      "            if not placed:\n"
      "                log.warning(\"OPENFACTORY_PRODUCT_TICKET_NOT_PLACED",
-     "            placed = bool(board.set_column(issue=str(number), issue_url=url,\n"
-     "                                           name=self.FILING_COLUMN))\n"
+     "            column = stage_column(board, self.FILING_KEY)\n"
+     "            placed = bool(board.set_column(issue=key, issue_url=url, name=column))\n"
      "            if not placed:\n"
      "                log.warning(\"OPENFACTORY_PRODUCT_TICKET_NOT_PLACED",
      GUARD_TEST),
@@ -132,12 +133,13 @@ MUTATIONS = [
      "        return True",
      ROWS_TEST),
 
+    # re-pinned 2026-10-04: `set_state` ends in main's `move_card` (#506) (review of #458)
     ("the local board writes the reason too, the double comment on the one row that had none",
      LOCAL,
-     "        return bool(changed)",
-     "        if reason:\n"
-     "            self.comment(ref, reason)\n"
-     "        return bool(changed)",
+     "            return move_card(conn, self.project, _number(ref), key, closes_at_done=True)",
+     "            if reason:\n"
+     "                self.comment(ref, reason)\n"
+     "            return move_card(conn, self.project, _number(ref), key, closes_at_done=True)",
      ROWS_TEST),
 
     ("the test of the four rows stops driving one of them, and still passes for the rest",

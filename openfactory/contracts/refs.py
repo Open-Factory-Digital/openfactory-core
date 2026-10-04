@@ -67,6 +67,22 @@ def canonical_ref(ref: object) -> str:
     return str(ref or "").strip().lstrip("#").strip()
 
 
+def canonical_refs(refs: Iterable[object]) -> list[str]:
+    """The refs in a collection in their one spelling (`canonical_ref`), deduplicated and in board
+    order (`ref_sort_key`) — EVERY provider's, where `ref_numbers` keeps only the numbers (#485).
+
+    WHAT A LEDGER KEYS ON. A requirement's delivery loop was keyed on `ref_numbers`, which drops
+    `CONT-412` and `owner/web#3`: on Jira no requirement's delivery was ever tracked, and on a
+    product of several repositories a card filed in another one was not waited for — or, sharing
+    its number with a card of the tracker's own repository, was mistaken for it. These are the
+    refs the loop's readers compare (`events._deliveries_of`), spelled as they compare them.
+
+    BOARD ORDER, so a numeric collection comes out exactly as `ref_numbers` sorts it: what a
+    GitHub project of one repository writes does not change by a byte."""
+    unique = {canonical_ref(r) for r in refs} - {""}
+    return sorted(unique, key=ref_sort_key)
+
+
 #: The tag the pre-flight splitter writes into the title of every card it creates —
 #: `Plan 92a — Guest hardening [auto-split of #37]`. ONE SPELLING, HERE, because it has two
 #: readers on opposite sides of the package: pre-flight, which recognises its own children and
@@ -130,11 +146,16 @@ def ref_label(ref: object) -> str:
 
     One home, because the question — how do I show this ref to somebody — recurs at every sentence
     a client reads, and the answer is provider-shaped.
+
+    THE DECORATION COMES OFF A KEY TOO (#497). `promote` answers each card `#{number}`, and a person
+    types `#CONT-412` as readily as `#412`: either is the same ticket, and `#CONT-412` is the
+    spelling this function exists to never show. Stripped like `canonical_ref` strips it, so a
+    label is the same whether its caller held the ref bare or decorated.
     """
-    text = str(ref or "").strip()
+    text = str(ref or "").strip().lstrip("#").strip()
     if not text:
         return ""
-    return f"#{text.lstrip('#')}" if text.lstrip("#").isdigit() else text
+    return f"#{text}" if text.isdigit() else text
 
 
 def ref_sort_key(ref: object) -> tuple[str, int, str]:

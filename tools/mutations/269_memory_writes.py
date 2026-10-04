@@ -194,8 +194,8 @@ MUTATIONS = [
      "        items = list(getattr(reading, name))"),
 
     ("the model is handed the lines with their names", DISTIL,
-     "                             text=scrub(str(s.text).strip(), people)) for s in spoken),",
-     "                             text=str(s.text).strip()) for s in spoken),"),
+     "                             text=scrub(str(s.text).strip(), people)) for s in spoken)",
+     "                             text=str(s.text).strip()) for s in spoken)"),
 
     ("a speaker is handed to the model by id", DISTIL,
      "    return SAID_AS.get(person(project, str(getattr(line, \"actor\", \"\") or \"\")).role, "
@@ -203,8 +203,8 @@ MUTATIONS = [
      "    return str(getattr(line, \"actor\", \"\") or \"\")"),
 
     ("a line said in a group to somebody else is handed over", DISTIL,
-     "        spoken = [s for s in taken if s.addressed]",
-     "        spoken = list(taken)"),
+     "        addressed = [s for s in taken if s.addressed]",
+     "        addressed = list(taken)"),
 
     ("a conversation still talking is distilled", DISTIL,
      "        if newest is None or newest > cutoff:",
@@ -236,10 +236,10 @@ MUTATIONS = [
      "    return distillate_path(private=False, digest=span.digest,"),
 
     ("what was distilled is never read back", DISTIL,
-     "            if until:\n                out[folder.name] = max(out.get(folder.name, \"\"), "
-     "until)",
-     "            if False:\n                out[folder.name] = max(out.get(folder.name, \"\"), "
-     "until)"),
+     "                if until:\n                    out[folder.name] = max(out.get(folder.name, "
+     "\"\"), until)",
+     "                if False:\n                    out[folder.name] = max(out.get(folder.name, "
+     "\"\"), until)"),
 
     ("a pass distils without bound", DISTIL,
      "        if n >= limit or (deadline is not None and clock() > deadline):",

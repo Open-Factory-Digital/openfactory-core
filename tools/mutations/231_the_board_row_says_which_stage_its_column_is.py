@@ -41,16 +41,18 @@ MUTATIONS = [
      "        return key_for(column, renamed=getattr(self._tracker, \"status_map\", None) or {})",
      "        return key_for(column)"),
 
+    # re-pinned 2026-10-04: the row's map is built once, in `_renamed`, which also folds in the
+    # queue a deployment named with `pickup_status` (#502) — the claims are unchanged
     ("the local row stops reading its own rows, so a column renamed on the board is unmappable",
      LOCAL,
-     "        return key_for(column, renamed={r[\"key\"]: r[\"name\"] for r in rows\n"
-     "                                        if r[\"name\"] and r[\"key\"] in CANONICAL_COLUMNS})",
+     "        return key_for(column, renamed=self._renamed(rows))",
      "        return key_for(column)"),
 
     ("the local row answers with a key that is not a stage, so a card in a deployment's own "
      "column reads as one the factory has taken up", LOCAL,
-     "                                        if r[\"name\"] and r[\"key\"] in CANONICAL_COLUMNS})",
-     "                                        if r[\"name\"]})"),
+     "        named = {r[\"key\"]: r[\"name\"] for r in rows if r[\"name\"] and r[\"key\"] in "
+     "CANONICAL_COLUMNS}",
+     "        named = {r[\"key\"]: r[\"name\"] for r in rows if r[\"name\"]}"),
 
     ("the GitHub board answers from the defaults only, so a client's renamed column stops mapping",
      GH_BOARD,

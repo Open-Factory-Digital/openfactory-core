@@ -507,7 +507,16 @@ def the_job_returned(engine, monkeypatch):
     monkeypatch.setattr(activities, "_do_run_job", lambda inp, run_id=None, watch=None: OPEN)
     monkeypatch.setattr(activities, "_watch_for", lambda inp: None)
     monkeypatch.setattr(activities, "_A_PREVIEW_STARTS_WITHIN", CUT)
-    preview.record(_offered())
+    # THE STEPS BEFORE THE ONE UNDER TEST ARE INSTANT (review of #483). The tail reads the
+    # registry, the card's unit and the preview's record before it reaches the probe or the start
+    # these tests make hang; on a loaded runner those real reads outlasted `CUT`, the bound cut the
+    # coroutine before it got there, and "it was reached" failed for a bound doing its job (CI
+    # 19:32 against the usual ~5 minutes). Stood in here, the bound has one thing left to cut.
+    offered = _offered()
+    monkeypatch.setattr(activities, "ProjectRegistry",
+                        lambda: SimpleNamespace(get=lambda name: _acme()))
+    monkeypatch.setattr(preview, "unit_of_card", lambda project, card: "12")
+    monkeypatch.setattr(preview, "latest", lambda project, token: offered)
     return RunJobInput(project="acme", issue="#12", sandbox="worktree")
 
 

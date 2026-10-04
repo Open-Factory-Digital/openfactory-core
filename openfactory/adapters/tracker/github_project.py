@@ -13,6 +13,7 @@ import os
 import subprocess
 
 from openfactory.adapters.board.columns import CANONICAL_COLUMNS
+from openfactory.adapters.github_cli import nothing_named, refused
 from openfactory.adapters.tracker.base import Budget, BudgetUnreadable
 from openfactory.contracts import JobState
 from openfactory.contracts.refs import qualify_ref, ref_number, split_repo_ref
@@ -98,6 +99,12 @@ def _run_gh(args: list[str], token: str | None):
     gh's own spelling for "the authenticated user", and it needs no organisation scope. It is
     tried ONLY on that one error string, so a real permission failure still surfaces as itself
     rather than being retried into a confusing second message."""
+    # NEVER A GUESSED OWNER (`adapters/github_cli.py`): an empty `--owner` is the logged-in
+    # account's projects, not the client's, and is answered as a failed call before `gh` runs
+    why = nothing_named(args)
+    if why:
+        log.warning("OPENFACTORY_GH_NOTHING_NAMED %s", why)
+        return refused(args, why)
     try:
         p = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60,
                            env=_env(token))
@@ -609,6 +616,17 @@ class GitHubProjectBoard:
         from openfactory.adapters.board.columns import key_for
 
         return key_for(column, renamed=self._columns)
+
+    def stage_column(self, key: str) -> str:
+        """The Status option this board calls the stage `key`. See `Staged.stage_column`.
+
+        `self._columns` again — the lookup `set_status` already does, offered to a caller that
+        holds a key and no `JobState` (#496). The product role's filing and queueing are such
+        callers, and they asked `set_column` for the platform's names, which a board whose client
+        renamed `TO-DO` to `A Fazer` does not carry as an option."""
+        from openfactory.adapters.board.columns import name_for
+
+        return name_for(key, renamed=self._columns)
 
     def pickup_column(self) -> str:
         """`TO-DO` here, or whatever this client renamed it to. See `BoardAdapter.pickup_column`.

@@ -85,19 +85,23 @@ MUTATIONS = [
      "DEFAULT_COLUMNS: dict[str, str] = dict(CANONICAL_COLUMNS)",
      "DEFAULT_COLUMNS: dict[str, str] = CANONICAL_COLUMNS", COLUMNS),
 
+    # re-pinned 2026-10-04: the two constants hold the platform's KEYS, and each board names
+    # them (#496) — the claim is unchanged: the key is the platform's backlog and its queue
     ("the product role files work into a column that is not the platform's backlog — filed work "
      "lands where readiness cannot see it", MODULE,
-     '    FILING_COLUMN = CANONICAL_COLUMNS["backlog"]',
-     '    FILING_COLUMN = CANONICAL_COLUMNS["done"]', COLUMNS),
+     '    FILING_KEY = "backlog"',
+     '    FILING_KEY = "done"', COLUMNS),
 
     ("the queue column stops being the one the poller pulls from", MODULE,
-     '    QUEUE_COLUMN = CANONICAL_COLUMNS["todo"]',
-     '    QUEUE_COLUMN = CANONICAL_COLUMNS["in_progress"]', COLUMNS),
+     '    QUEUE_KEY = "todo"',
+     '    QUEUE_KEY = "in_progress"', COLUMNS),
 
+    # re-pinned 2026-10-04: the triage's three arguments are KEYS, and the board names each one
+    # (#502) — the claim is unchanged: work in flight is the platform's `in_progress`
     ("the triage reads the wrong column for work in flight, so every active card reports as "
      "something else", TRIAGE,
-     '           active_columns: tuple[str, ...] = (CANONICAL_COLUMNS["in_progress"],),',
-     '           active_columns: tuple[str, ...] = (CANONICAL_COLUMNS["in_review"],),', COLUMNS),
+     '           active_keys: tuple[str, ...] = ("in_progress",),',
+     '           active_keys: tuple[str, ...] = ("in_review",),', COLUMNS),
 
     # RE-PINNED 2026-09-20 (#231): the step between — `(options.get("columns") or {}).get("todo")`
     # — is gone. `options` is `dict[str, str]`, so it raised `AttributeError` on the one shape the

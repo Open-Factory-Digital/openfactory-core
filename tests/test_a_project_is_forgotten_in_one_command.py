@@ -71,7 +71,8 @@ def _remember_everything(project: Project, *, thread: str = "sala") -> None:
     from openfactory.observability.metrics import MetricRecord
     from openfactory.observability.registry import deployment_metrics_sink
     from openfactory.paths import project_memory_dir
-    from openfactory.product import attachments, case, sessions
+    from openfactory.preview import own
+    from openfactory.product import accept, attachments, case, sessions
 
     now = datetime.now(UTC).isoformat()
     transcript.record(project, thread=thread, role="person", text=f"{project.name}: o saldo",
@@ -81,6 +82,9 @@ def _remember_everything(project: Project, *, thread: str = "sala") -> None:
     for kind in ("card_verdict", "preview"):
         assert sink.record(MetricRecord(project=project.name, ticket="7", ts=now, kind=kind,
                                         role=kind))
+    assert own.allow_shape(project.name, "7", "3f9a1c2b4d5e", by="ana")
+    assert accept.record(project.name, accept.Acceptance(
+        card="7", pr_url="https://github.com/acme/x/pull/7", head="3f9a1c2", by="ana", where=thread))
     assert messages.say(project.name, "staged: a monthly report", channel=project.name)
     case.note_turn(project, thread, "ana", "o saldo vem errado", SimpleNamespace(text="Qual tela?"))
     told = Path(project_memory_dir(project)) / "events.json"
@@ -102,7 +106,8 @@ def _what_is_remembered(project: Project, *, thread: str = "sala") -> dict:
     from openfactory.memory import store as loop_store
     from openfactory.observability.query import records_of_kind
     from openfactory.paths import project_memory_dir
-    from openfactory.product import attachments, case, sessions
+    from openfactory.preview import own
+    from openfactory.product import accept, attachments, case, sessions
 
     key = product_key(project)
     tracker = build_tracker(project)
@@ -111,6 +116,8 @@ def _what_is_remembered(project: Project, *, thread: str = "sala") -> dict:
         "loops": len(loop_store.read(project.name)),
         "verdicts": len(records_of_kind(project.name, "card_verdict")),
         "previews": len(records_of_kind(project.name, "preview")),
+        "allowed": own.allowed(project.name, "7"),
+        "accepted": getattr(accept.standing(project.name, "7"), "by", None),
         "messages": len(messages.read(project.name)),
         "cases": len(case.open_cases(project, thread)),
         "told": (Path(project_memory_dir(project)) / "events.json").is_file(),
@@ -163,13 +170,15 @@ def test_every_layer_the_role_remembers_goes_and_nothing_of_another_project_does
 
     assert done.exit_code == 0, done.output
     books = _what_is_remembered(remembered["books"])
-    assert books == {"said": [], "loops": 0, "verdicts": 0, "previews": 0, "messages": 0,
-                     "cases": 0, "told": False, "files": 0, "names": {}, "closed": [],
-                     "open": ["books: still open"]}, books
+    assert books == {"said": [], "loops": 0, "verdicts": 0, "previews": 0, "allowed": None,
+                     "accepted": None, "messages": 0, "cases": 0, "told": False, "files": 0, "names": {},
+                     "closed": [], "open": ["books: still open"]}, books
     assert not _bytes_kept(remembered["books"]), "a file's bytes outlived its claims"
     assert _what_is_remembered(remembered["shop"]) == shop_before, "another product's went"
     assert _bytes_kept(remembered["shop"]), "another product's files went"
     assert shop_before["said"] and shop_before["closed"] and shop_before["files"], shop_before
+    assert shop_before["allowed"] == ("3f9a1c2b4d5e", "ana"), shop_before
+    assert shop_before["accepted"] == "ana", shop_before
     assert _people() == people_before == ["ana@acme.example"], "the deployment's people went"
 
 
@@ -183,6 +192,7 @@ def test_each_layer_says_what_went_with_its_count(remembered):
     assert "1 files sent in them" in lines["conversations"], lines
     assert "1 ledger rows" in lines["loops"], lines
     assert "1 card verdicts, 1 preview records, 1 panel messages" in lines["records"], lines
+    assert lines["records"].endswith(", 1 preview allowances"), lines
     assert "1 intake cases, 2 events told" in lines["intake"], lines
     assert "1 closed cards" in lines["closed cards"], lines
     assert lines["context"].startswith("· context: kept"), lines
@@ -432,6 +442,7 @@ def test_every_kind_it_forgets_is_one_the_store_knows_and_never_the_people():
 
     from openfactory.identity.people import KIND as PEOPLE
     from openfactory.memory.store import LEDGER_KIND
+    from openfactory.memory.transcript import TRANSCRIPT_KIND
     from openfactory.observability.metrics import MetricKind
 
     known = set(get_args(MetricKind))
@@ -440,7 +451,13 @@ def test_every_kind_it_forgets_is_one_the_store_knows_and_never_the_people():
     # the card's door keeps a record of every transition (ADR-0055); a forgotten project's cards
     # are removed, and that record must not outlive them
     assert "card_transition" in forget.RECORD_KINDS
-    assert not {"agent_run", "job", "techlead_watch", "product_sweep"} & set(forget.RECORD_KINDS)
+    kept = {"agent_run", "job", "techlead_watch", "product_sweep"}
+    assert not kept & set(forget.RECORD_KINDS)
+    # EVERY KIND IS DECIDED, NOT ONLY THE ONES LISTED: #477 added `preview_shape` — who allowed a
+    # change its own shape — and nothing forgot it. A new kind is forgotten by a layer or kept by
+    # name here, never left out of both.
+    forgotten = set(forget.RECORD_KINDS) | {LEDGER_KIND, TRANSCRIPT_KIND}
+    assert known == forgotten | kept | {PEOPLE}, sorted(known - forgotten - kept - {PEOPLE})
 
 
 def test_a_process_that_was_not_restarted_cannot_write_forgotten_cases_back(deployment):

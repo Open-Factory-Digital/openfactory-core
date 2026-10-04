@@ -32,6 +32,9 @@ class Seen:
     opened_by: str = ""
     #: whether the tracker says the card is open — a finished card can be either (`delivered`)
     open: bool = True
+    #: the column the card sits in AS ITS BOARD CALLS IT, `""` when no board places it — what a
+    #: refusal names, so the person looks for `A Fazer` on their board rather than `TO-DO` (#502)
+    column: str = ""
 
 
 #: How a tracker says a card was closed as NOT delivered, in its own word (`Ticket.state_reason`).
@@ -118,9 +121,12 @@ class Ports:
     def seen(self, card: str) -> Seen:
         """Where `card` is. Absent from its tracker: `removed`. Closed: `closed`. Open: what its
         board's column says — `None` when no board places it, and a sentence when a board cannot be
-        read or names a column this platform does not map, which refuses rather than guesses."""
+        read or names a column this platform does not map, which refuses rather than guesses.
+
+        A REFUSAL NAMES THE CARD AS ITS TRACKER DOES (#497): `promote` answers a person with it
+        since it queues through the door (#414), and nobody on Jira writes `#DAR-9`."""
         from openfactory.adapters.board.base import stage_key
-        from openfactory.contracts.refs import canonical_ref
+        from openfactory.contracts.refs import canonical_ref, ref_label
 
         try:
             ticket = self.tracker.get_ticket(card)
@@ -128,7 +134,7 @@ class Ports:
             return Seen(state=State.REMOVED)
         except Exception as exc:  # noqa: BLE001 — an unreadable card is an answer, and it refuses
             log.warning("OPENFACTORY_CARD_UNREAD card=%s: %s", card, exc)
-            return Seen(cannot_tell=(f"#{card.lstrip('#')} could not be read ({str(exc)[:120]}), "
+            return Seen(cannot_tell=(f"{ref_label(card)} could not be read ({str(exc)[:120]}), "
                                      f"so there is no way to tell where it is. Nothing was "
                                      f"changed — try again."))
         from openfactory.product.authoring import filed_by_the_product_role
@@ -145,17 +151,17 @@ class Ports:
         if where is None:
             return Seen(title=title, cannot_tell=(
                 f"{self.name}'s board could not be read, so there is no way to tell where "
-                f"#{card.lstrip('#')} is. Nothing was changed — try again."))
+                f"{ref_label(card)} is. Nothing was changed — try again."))
         column = where.get(canonical_ref(card)) or where.get(str(card))
         if not column:
             return Seen(state=None, title=title, opened_by=opened_by)
         state = BY_COLUMN.get(stage_key(board, column))
         if state is None:
             return Seen(title=title, cannot_tell=(
-                f"#{card.lstrip('#')} is in {column!r}, which is not a column this platform "
+                f"{ref_label(card)} is in {column!r}, which is not a column this platform "
                 f"maps, so it cannot tell where the card is in its life. Map it in the "
                 f"project's tracker options. Nothing was changed."))
-        return Seen(state=state, title=title, opened_by=opened_by)
+        return Seen(state=state, title=title, opened_by=opened_by, column=column)
 
     def _closed_as(self, card: str, ticket) -> State:
         """A closed card is `delivered` when it was closed as finished work — the tracker's own
@@ -300,7 +306,9 @@ class Ports:
 
         try:
             delivered = events._delivered_now(self.project)
-            if delivered:
+            # AN EMPTY BOARD ANSWER STILL ASKS: what a delivery names in another repository of the
+            # product is read by the announcement itself (#492), whatever this board holds
+            if delivered is not None:
                 loops.announce(self.project, delivered=delivered)
         except Exception:  # noqa: BLE001 — the next round asks again, for a day (`NARROWED_FOR`)
             log.exception("[%s] could not see whether what remains of a delivery is delivered",

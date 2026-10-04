@@ -129,6 +129,35 @@ def test_a_crash_answers_honestly_and_still_records(store, monkeypatch, caplog):
 
 
 # ── 3. working memory reaches the model ────────────────────────────────────────────────────────
+def test_a_role_line_carries_the_kind_of_reply_it_was(store, monkeypatch):
+    """The platform's own sentences — a crash reply, an unavailable — are recorded as a role line
+    with a kind that is NOT an answer, so the distillation never reads them as the role's answer
+    (#457). A real answer, and every row written before this change, reads as an answer."""
+    from openfactory.memory import recall
+    from openfactory.product import engine, voice
+
+    # a crash: the engine's own `broke` sentence, recorded as `broke`
+    monkeypatch.setattr(engine, "_answer",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    chat_turn(_project(), text="isto quebra", user="U1", thread="K1", module=None)
+    # a real answer carries no mark, so it reads as an answer
+    transcript.record(_project().name, thread="K2", role="agent", text="uma resposta de verdade")
+
+    agent_rows = {r.ticket: (r.extra.get("text", ""), r.extra.get(transcript.KIND_MARK))
+                  for r in store.rows if r.kind == "message" and r.role == "agent"}
+    assert agent_rows["K1"][1] == "broke", agent_rows
+    assert voice.own_voice_kind(agent_rows["K1"][0]) == "broke"
+    assert agent_rows["K2"][1] is None, "a real answer carries no mark — it reads as an answer"
+
+    # `Said`, as the distillation reads the row, carries the kind — a row with no mark is an answer
+    marked = {"ts": "2026-02-01T00:00:00+00:00", "ticket": "K1", "role": "agent",
+              "extra": {"text": "broke", transcript.KIND_MARK: "broke"}}
+    old_row = {"ts": "2026-01-01T00:00:00+00:00", "ticket": "K0", "role": "agent",
+               "extra": {"text": "an answer from before this change"}}
+    assert recall._from_transcript([marked])[0].kind == "broke"
+    assert recall._from_transcript([old_row])[0].kind == transcript.ANSWER
+
+
 def test_the_second_message_carries_the_first_INTO_THE_PROMPT(store, monkeypatch):
     """The assertion that matters: not that `recent()` returns rows, but that the prior turn is in
     the string handed to the agent. Everything upstream can be right and this still be empty."""

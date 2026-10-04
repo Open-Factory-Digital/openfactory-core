@@ -336,9 +336,13 @@ def test_the_waiting_line_names_at_most_five_and_counts_the_rest():
 
 
 def test_a_non_numeric_ref_is_printed_as_the_tracker_wrote_it():
+    """`CONT-412`, as Jira writes it. This pinned `#CONT-412` until #497 — GitHub's punctuation on
+    another tracker's key, which nobody there writes."""
     from openfactory.product.voice import still_waiting
 
-    assert "#CONT-412" in still_waiting(questions=["CONT-412"], deliveries=0)
+    said = still_waiting(questions=["CONT-412"], deliveries=0)
+
+    assert "CONT-412" in said and "#CONT-412" not in said, said
 
 
 # ── a failed clone must not publish the credential it carried ───────────────────────────────────

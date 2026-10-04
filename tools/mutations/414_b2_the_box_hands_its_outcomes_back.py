@@ -205,9 +205,12 @@ MUTATIONS = [
      "        raise RuntimeError(\"the ledger did not take the promise\")\n",
      "        pass\n"),
 
+    # re-pinned 2026-10-05: integration of slices 4/5 with the door stack — the filing answers
+    # with the board's column name (#496) beside the promise
     ("a card asked for in a conversation is filed owing nothing", MODULE,
-     "                                                  board=board, owed=owed)\n",
-     "                                                  board=board)\n"),
+     "                                                          tracker=tracker, board=board,\n"
+     "                                                          owed=owed)\n",
+     "                                                          tracker=tracker, board=board)\n"),
 
     ("a defect is filed owing nothing", MODULE,
      "                owed=self._track_defect(key, conversation=conversation, requester=requester))\n",

@@ -23,9 +23,11 @@ LOCAL = "openfactory/adapters/tracker/local.py"
 ACTIVITIES = "openfactory/runtime/temporal/activities.py"
 
 MUTATIONS = [
+    # re-pinned 2026-10-04: main's `move_card` (#506) replaced the inline close at Done (review of
+    # #458)
     ("a local card settled DONE stays open, and its delivery is never announced", LOCAL,
-     "            if state is JobState.DONE:\n",
-     "            if False:\n"),
+     "            return move_card(conn, self.project, _number(ref), key, closes_at_done=True)\n",
+     "            return move_card(conn, self.project, _number(ref), key, closes_at_done=False)\n"),
 
     # re-pinned 2026-10-04: the row announces what the card completes since #414's B1
     ("a delivered card is not moved to Done, so nothing closes it", TABLE,

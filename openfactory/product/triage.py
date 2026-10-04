@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator
 
-from openfactory.adapters.board.columns import CANONICAL_COLUMNS
+from openfactory.adapters.board.columns import key_for
 
 #: A ticket whose body or labels say a human owns it. The pipeline is not supposed to touch these,
 #: so their sitting in an active column is intended, not rot.
@@ -221,22 +221,46 @@ class TriageReport(BaseModel):
 STALE_DAYS = 14
 
 
+def stage_of(column: str, stages: dict[str, str] | None) -> str:
+    """The neutral key a ticket's `column` is — read BY KEY, never by the platform's name (#502).
+
+    `stages` IS THE BOARD'S OWN ANSWER, `{column as the board calls it: key}`, asked once per board
+    read (`product/board.stages_of`). This module compared `t.column` with `"TO-DO"`, `"Backlog"`
+    and `"In progress"`, and only a board this platform created says those: on a Jira project whose
+    `status_map` calls the queue `A Fazer`, every queued and every filed card matched nothing, so
+    the floor read idle with work waiting and `propose_queue` proposed from an empty backlog. A
+    column the map does not name is `""` — a column nobody maps, which is what `stage_key` answers
+    for one and what every rule here already skips.
+
+    `None` IS A CALLER WITH NO BOARD TO ASK, read by the platform's own six names — the degrade
+    `stage_key` takes for a row that says nothing, and exactly what every caller read before."""
+    if stages is None:
+        return key_for(column)
+    return stages.get(column, "")
+
+
 def triage(tickets: list[Ticket], *,
-           active_columns: tuple[str, ...] = (CANONICAL_COLUMNS["in_progress"],),
-           waiting_column: str = CANONICAL_COLUMNS["needs_action"],
-           done_column: str = CANONICAL_COLUMNS["done"],
-           stale_days: int = STALE_DAYS) -> TriageReport:
+           active_keys: tuple[str, ...] = ("in_progress",),
+           waiting_key: str = "needs_action",
+           done_key: str = "done",
+           stale_days: int = STALE_DAYS,
+           stages: dict[str, str] | None = None) -> TriageReport:
     """Read the board and report where it disagrees with reality.
 
     Pure: it takes tickets and returns findings, so every rule here is testable without a network —
-    which matters, because the failure mode is a confident wrong reading, not a crash."""
+    which matters, because the failure mode is a confident wrong reading, not a crash.
+
+    THE COLUMNS ARE KEYS (#502), and `stages` is how the board said which key each of its columns
+    is — see `stage_of`. The three arguments were the platform's names, so on a renamed board a
+    card in flight, one waiting on a person and one in Done were each read as none of them."""
     observations: list[Observation] = []
     skipped: dict[str, str] = {}
     by_number = {t.number: t for t in tickets}
 
     for t in tickets:
+        stage = stage_of(t.column, stages)
         # ---- the checks that must read the ticket before judging the column -------------------
-        if t.column in active_columns and t.state == "open":
+        if stage in active_keys and t.state == "open":
             if t.human_owned:
                 skipped[t.number] = ("a person owns this deliberately — it says so in the ticket, "
                                      "so its being in an active column is intended")
@@ -251,7 +275,7 @@ def triage(tickets: list[Ticket], *,
                                "move it back"))
 
         # ---- waiting on a person, for too long ------------------------------------------------
-        if t.column == waiting_column and t.state == "open":
+        if stage == waiting_key and t.state == "open":
             if t.updated_days_ago is not None and t.updated_days_ago > stale_days:
                 observations.append(Observation(
                     ticket=t.number, kind="waiting-too-long",
@@ -259,20 +283,20 @@ def triage(tickets: list[Ticket], *,
                     suggestion="decide it, or say out loud that it is parked on purpose"))
 
         # ---- a ticket that cannot be sized will park later ------------------------------------
-        if t.state == "open" and t.column not in (done_column,) and not has_criteria(t):
+        if t.state == "open" and stage != done_key and not has_criteria(t):
             observations.append(Observation(
                 ticket=t.number, kind="no-criteria",
                 detail="no acceptance criteria, so nobody can say when it is done",
                 suggestion="write what must be true before this is picked up"))
 
         # ---- finished, but not finished -------------------------------------------------------
-        if t.column == done_column and t.state == "open" and not t.has_open_pr:
+        if stage == done_key and t.state == "open" and not t.has_open_pr:
             observations.append(Observation(
                 ticket=t.number, kind="done-but-open",
-                detail="sits in Done but the ticket was never closed",
+                detail=f"sits in {t.column!r} but the ticket was never closed",
                 suggestion="close it, or move it back if it is not actually done"))
 
-        if t.state == "closed" and t.column not in (done_column, ""):
+        if t.state == "closed" and t.column and stage != done_key:
             observations.append(Observation(
                 ticket=t.number, kind="closed-elsewhere",
                 detail=f"closed, but its card is still in {t.column!r}",

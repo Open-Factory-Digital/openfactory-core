@@ -55,6 +55,7 @@ from openfactory.runtime.temporal.io import (
     JobParams,
     KnowledgeRefreshInput,
     MergeCheckInput,
+    MergedInput,
     OverheardInput,
     PreflightInput,
     PreflightVerdict,
@@ -1205,6 +1206,9 @@ def _do_split(inp: SplitInput) -> str:
     board = _board_beside(project, tracker)
     _pf_emit(events, inp.project, inp.issue, "state", "splitting",
              note=f"creating {n} children and closing the parent")
+    # WHERE EACH CHILD WENT, AS THIS PROJECT'S BOARD CALLS IT (#502): the note is read by a person
+    # looking at their own board, which may say `A Fazer` where the platform says `TO-DO`
+    named = _named_columns(project, "todo", "backlog")
     refs: list[str] = []
     stragglers: list[str] = []  # created but NOT positively queued — every claim below wears this
     for i, child in enumerate(inp.children):
@@ -1235,8 +1239,8 @@ def _do_split(inp: SplitInput) -> str:
                     "OPENFACTORY_SPLIT_CHILD_NOT_QUEUED %s — created but not in TO-DO; nothing "
                     "picks "
                     "it up until somebody moves it", ref)
-        dest_note = ("TO-DO" if queued
-                     else ("NOT QUEUED — move it by hand" if to_todo else "Backlog"))
+        dest_note = (named["todo"] if queued
+                     else ("NOT QUEUED — move it by hand" if to_todo else named["backlog"]))
         _pf_emit(events, inp.project, inp.issue, "note", f"created {title} → {dest_note}")
     links = ", ".join(refs)
     from openfactory.lifecycle import CardEvent, transition
@@ -1309,12 +1313,13 @@ def _do_split(inp: SplitInput) -> str:
             body = tl_voice.say(
                 tl_voice.NARRATION,
                 "split.straggler-one" if len(stragglers) == 1 else "split.stragglers",
-                lang, n=n, stuck=", ".join(stragglers), children=kids)
+                lang, n=n, stuck=", ".join(stragglers), children=kids, queue=named["todo"])
         else:
             body = tl_voice.say(
                 tl_voice.NARRATION, "split.created", lang, children=kids,
                 where=tl_voice.say(tl_voice.NARRATION,
-                                   "split.to-todo" if to_todo else "split.to-backlog", lang))
+                                   "split.to-todo" if to_todo else "split.to-backlog", lang,
+                                   queue=named["todo"], backlog=named["backlog"]))
         notifier_for_project(project).notify(
             message=head + body, level="warning" if stragglers else "info")
     except Exception:  # noqa: BLE001 — the narration is additive; never fail the split
@@ -2815,6 +2820,35 @@ async def card_adjusted(inp: AdjustedInput) -> str:
 
 
 @activity.defn
+async def tell_the_requester_it_merged(inp: MergedInput) -> bool:
+    """A CARD'S PULL REQUEST MERGED, and whoever asked for the card hears it went in (#448 slice 3,
+    `events.merged_for_you`) — whoever merged it: a person, the factory on its own, or the merge a
+    requester's acceptance gave when the look was all that held it.
+
+    HERE, ON THE WORKER, for `tell_the_requester`'s reason: the ledger that says whose conversation
+    a card came from, and the store that says where it was accepted, live here, never in the box.
+
+    NEVER RAISES, AND BOUNDED: the change is in either way. Returns whether it was told now."""
+    def _tell() -> bool:
+        try:
+            from openfactory.product import events
+
+            return events.merged_for_you(ProjectRegistry().get(inp.project), card=inp.issue,
+                                         pr_url=inp.pr_url, stages_follow=inp.stages_follow)
+        except Exception as exc:  # noqa: BLE001 — the merge stands; only the telling is lost
+            activity.logger.warning("could not tell %s#%s's requester it went in (%s)",
+                                    inp.project, inp.issue, str(exc)[:160])
+            return False
+
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_tell), timeout=_ANNOUNCE_WITHIN)
+    except TimeoutError:
+        activity.logger.warning("telling %s#%s's requester it went in outlived %ss — nothing else "
+                                "says it", inp.project, inp.issue, _ANNOUNCE_WITHIN)
+        return False
+
+
+@activity.defn
 async def settle_ticket(inp: HoldSyncInput) -> str:
     """Record a job's TERMINAL outcome on the tracker: the board column, and one comment saying
     why it ended there.
@@ -3128,6 +3162,22 @@ async def scan_projects() -> list[dict]:
                                   or _pickup_column(p)),
             })
     return out
+
+
+def _named_columns(project, *keys: str) -> dict[str, str]:
+    """What this project's board calls each of `keys` — the platform's word for a board that cannot
+    be built or asked (#502). For a sentence about where a card went, never for a move: a move
+    goes through the row's own map (`set_state`), and a name here is only what a person reads."""
+    from openfactory.adapters.board import build_board
+    from openfactory.adapters.board.base import stage_column
+
+    try:
+        board = build_board(project)
+    except Exception as exc:  # noqa: BLE001 — a name in a note must not cost the split
+        activity.logger.info("could not build %s's board to name its columns (%s)",
+                             getattr(project, "name", "?"), str(exc)[:160])
+        board = None
+    return {key: stage_column(board, key) for key in keys}
 
 
 def _pickup_column(project) -> str:
@@ -5815,7 +5865,11 @@ def _a_closed_card_in_the_queue(project, tracker, board, ref: str) -> str:
                        tracker=tracker, board=board)
     if moved.refused:
         return f"not moved: {moved.refused}"
-    where = "Done" if target is JobState.DONE else "Backlog"
+    # THE COLUMN AS THIS BOARD CALLS IT (#502): the line names where the close put the card, and a
+    # renamed board has no `Done` for the operator to find
+    from openfactory.adapters.board.base import stage_column
+
+    where = stage_column(board, "done" if target is JobState.DONE else "backlog")
     return f"moving the card to {where} ({moved.outcome('column') or 'nothing to move'})"
 
 
@@ -6308,7 +6362,12 @@ def _queued_tickets(project) -> list[str]:
             "techlead watch: could not read the board (%s) — this round cannot tell whether the "
             "floor is idle with work waiting, so it will not claim either way", error)
         return []
-    return [str(n) for n in readiness(tickets).todo]
+    # BY KEY, AS THIS BOARD NAMES ITS COLUMNS (#502): read by the platform's `TO-DO`, a board whose
+    # queue is `A Fazer` had nothing queued, and the idle-floor finding fired beside a full queue
+    from openfactory.product.board import stages_for
+
+    return [str(n) for n in readiness(tickets, stages=stages_for(project, tickets,
+                                                                 token=token)).todo]
 
 
 def _recent_causes(project_name: str) -> dict[str, int]:

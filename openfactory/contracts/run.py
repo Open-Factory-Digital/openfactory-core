@@ -256,6 +256,14 @@ class RunResult(BaseModel):
     #: ADR-0050 D9 — the operator requires a person to look at a preview of this project before a
     #: merge (`preview.required` in the registry), so the factory never merges it on its own.
     preview_required: bool = False
+    #: THE LOOK IS THE ONLY THING HOLDING THIS MERGE (#448 slice 3). `merge_policy: auto`, every
+    #: other hold of `merge_policy.should_auto_merge` passed, and `preview_required` alone sent it
+    #: to a person — judged by the machine, which holds the manifest and the profile, with the one
+    #: hold taken out. The workflow publishes it on its merge wait, and the requester's recorded
+    #: acceptance of the head they tried is then what lets the factory merge (ADR-0055 D1,
+    #: `accepted`): the look ADR-0050 D9 requires, given by the person who asked for the change.
+    #: False on every result written before it, which reads as today's hard block.
+    auto_but_for_the_look: bool = False
     #: ADR-0050 §8 — when this change edits the product's SHAPE (a compose file, `.openfactory/
     #: preview/**`, the manifest's `preview:`), every file a preview would read after it merges, as
     #: `<path> <sha256 prefix>` (or `<path> absent`), so the person merging sees what the lines

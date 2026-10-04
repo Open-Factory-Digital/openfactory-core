@@ -260,6 +260,32 @@ def test_it_starts_itself_only_where_should_start_would_let_it(monkeypatch, auto
     assert events._preview_starts_itself(project) is expected
 
 
+@pytest.mark.parametrize("required", [False, True])
+@pytest.mark.parametrize("auto_start", [True, False])
+@pytest.mark.parametrize("kind", ["compose", "none", ""])
+def test_the_sentence_and_the_start_agree_wherever_the_offer_is_startable(monkeypatch, kind,
+                                                                         auto_start, required):
+    """THE TWO ARE ASKED THE SAME QUESTION, NOT TESTED SEPARATELY (review of #439). The test above
+    checks `_preview_starts_itself` against a table written beside it; `should_start` could gain a
+    refusal on a policy field and both would stay green while the role told a requester "wait,
+    it is starting itself" about a start that never comes. Here the real `should_start` is handed
+    an offer that passes every one of its other gates, and the two must answer alike."""
+    from openfactory import preview
+    from openfactory.contracts.project import PreviewPolicy
+    from openfactory.preview import live
+    from openfactory.runtime.temporal import io
+
+    monkeypatch.setattr(io, "default_preview_runtime", lambda: kind)
+    project = SimpleNamespace(name="books",
+                              preview=PreviewPolicy(auto_start=auto_start, required=required))
+    offered = preview.Preview(project="books", unit="500", cards=("500",), state=preview.OFFERED,
+                              pr_urls=(PR,), branches={PR: "openfactory/500"})
+
+    start, _why = live.should_start(project, offered, kind=kind, running=lambda: ())
+
+    assert events._preview_starts_itself(project) is start
+
+
 def test_with_no_preview_on_offer_it_never_sends_them_to_a_button_that_is_not_there(
         registry, ledger, told, monkeypatch):
     monkeypatch.setattr(events, "_preview_offered", lambda project, card: False)

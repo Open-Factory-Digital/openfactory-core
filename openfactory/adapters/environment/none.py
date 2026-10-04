@@ -15,14 +15,25 @@ having to know which.
 
 WHY THE ANSWERS ARE THE SHAPES THEY ARE. `[]` from `ci_status` is *there are no checks*, which is
 what the merge loop reads as "nothing to wait for"; `"none"` from `deploy_status` is the Status
-vocabulary's own word for *no run found*; and `health` answers False, because a probe that was
-never made must not report a healthy service. None of the three is `None`: this row is not failing
-to look, it is looking at a system that does not exist.
+vocabulary's own word for *no run found*; and `health` PROBES, like every other row's. None of the
+answers is `None`: this row is not failing to look, it is looking at a system that does not exist.
+
+`health` USED TO ANSWER False WITHOUT LOOKING (#518). Its reasoning was right — a probe that was
+never made must not report a healthy service — and the conclusion was not: the URL is the client's
+own page, not a CI's, and every other row probes it the same way ("provider-independent by
+nature", the Azure row says). Once `"none"` stopped counting as a reached stage, a `health_url` is
+the ONE observation a project without a CI has, and a `False` that never looked held every such
+stage red with "deploy/health failed" — a failure nobody saw. A probe that IS made reports what it
+got: healthy only when the page answered, False when it did not or could not be reached.
 """
 
 from __future__ import annotations
 
+import logging
+
 from openfactory.adapters.environment.base import CheckStatus
+
+log = logging.getLogger("openfactory.environment.none")
 
 
 class NoObserver:
@@ -48,6 +59,17 @@ class NoObserver:
         return "none"
 
     def health(self, *, url: str, timeout: int = 10) -> bool:
-        """`False`. A probe nobody made must not report a healthy service — the caller then says
-        it could not confirm, which is true, rather than confirming something it never saw."""
-        return False
+        """The client's own page, probed: healthy only when it answered with a success status.
+
+        THE ONE OBSERVATION THIS PROJECT HAS (#518). There is no CI to read a deploy from, so a
+        stage of its chain is reached on its `health_url` or not at all — which is why the
+        manifest is refused when a stage declares none. Never raises: an unreachable page, or a
+        `health_url` that is not a URL, is False, the same answer and the same reason as the
+        other rows."""
+        import httpx
+
+        try:
+            return httpx.get(url, timeout=timeout).is_success
+        except (httpx.HTTPError, httpx.InvalidURL) as exc:
+            log.warning("health probe %s failed: %s", url, exc)
+            return False

@@ -104,7 +104,9 @@ def test_a_delivery_closes_only_when_ALL_of_the_work_is_done():
 def test_a_requirement_that_produced_no_work_opens_no_delivery_loop(monkeypatch):
     """A loop nothing can ever close is a row that sits open for ever and teaches everyone to
     ignore the list. A requirement's promise goes through its cards' doors since #414 — and a
-    breakdown that landed no card it can key the promise by hands no door anything."""
+    breakdown that landed no card hands no door anything. A Jira key IS a card since #485
+    (`test_a_requirements_delivery_keys_on_the_trackers_refs.py`), so what lands here is nothing,
+    and a ref that names no card."""
     from types import SimpleNamespace
 
     from openfactory import lifecycle
@@ -116,7 +118,7 @@ def test_a_requirement_that_produced_no_work_opens_no_delivery_loop(monkeypatch)
     fake = SimpleNamespace(project=SimpleNamespace(name="books"))
     ProductModule._open_delivery(fake, SimpleNamespace(number=7),
                                  [WriteResult(ok=False, detail="refused"),
-                                  WriteResult(ok=True, ref="CONT-4")])
+                                  WriteResult(ok=True, ref="#")])
     assert handed == []
 
 

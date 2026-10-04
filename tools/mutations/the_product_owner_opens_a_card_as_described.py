@@ -61,10 +61,11 @@ MUTATIONS = [
 
     # RE-PINNED 2026-10-02 (#414): the three filing writers place a card through its door now, and
     # read one answer for whether it landed — the cut is that answer read as yes whatever it was
+    # re-pinned 2026-10-04: filing goes through the door (#458) with the board's name (#505)
     ("a board that refuses the placement is read as having placed it",
      "openfactory/product/module.py",
-     '        return board is None or moved.outcome("place").startswith("placed")',
-     "        return True"),
+     '        return board is None or moved.outcome("place").startswith("placed"), column',
+     "        return True, column"),
 
     ("the row opens cards without a yes — the spend gate the whole product area shares, gone "
      "for one verb",

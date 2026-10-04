@@ -113,6 +113,18 @@ class JiraProjectBoard:
 
         return key_for(column, renamed=getattr(self._tracker, "status_map", None) or {})
 
+    def stage_column(self, key: str) -> str:
+        """The status this project calls the stage `key`. See `Staged.stage_column`.
+
+        THE ROW THE DEFECT WAS MEASURED ON (#496): with `status_map: {"todo": "A Fazer"}` the
+        product role asked `set_column` for `TO-DO`, the site's workflow offered `A Fazer`, and the
+        match below is by name — so each promotion was refused. Read off the same `status_map` as
+        `stage_key` and `set_status`, with the platform's names under it for a status the
+        deployment did not declare, which is what this row has always been asked for."""
+        from openfactory.adapters.board.columns import name_for
+
+        return name_for(key, renamed=getattr(self._tracker, "status_map", None) or {})
+
     def _search(self, jql: str) -> list[dict] | None:
         """Issues matching `jql`, or None when the search could not be made at all.
 

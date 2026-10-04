@@ -30,7 +30,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from openfactory.contracts.refs import canonical_ref
+from openfactory.contracts.refs import canonical_ref, ref_label
 from openfactory.memory.ledger import ACCEPTANCE, DELIVERY, QUESTION, Loop, open_loop
 
 OWNER = "product"
@@ -326,7 +326,7 @@ def _say(catalogue: dict[str, str], language: str | None) -> str:
 def _one_line(loop: Loop, mention: str = "", *, language: str | None = None) -> str:
     who = f"{mention} — " if mention else ""
     title = (loop.context or {}).get("title", "")
-    about = f"#{loop.subject} ({title})" if title else f"#{loop.subject}"
+    about = f"{ref_label(loop.subject)} ({title})" if title else ref_label(loop.subject)
     return _say(_ONE_LINE, language).format(
         who=who, about=about, asked=loop.context.get("asked", ""))
 
@@ -373,7 +373,7 @@ def chase_text(loop: Loop, *, mention: str = "", agent_name: str = "", days: int
     who = f"{mention} — " if mention else ""
     sig = f"{agent_name}: " if agent_name else ""
     title = (loop.context or {}).get("title", "")
-    about = f"#{loop.subject} ({title})" if title else f"#{loop.subject}"
+    about = f"{ref_label(loop.subject)} ({title})" if title else ref_label(loop.subject)
     return _say(_CHASE, language).format(sig=sig, who=who, about=about, days=days,
                                         asked=loop.context.get("asked", ""))
 
@@ -594,13 +594,19 @@ def requirement_behind(issue: str, waiting: list[Loop]) -> str:
 
     NOR DOES A CARD SOMEBODY ASKED FOR, OR A DEFECT (#481): their loops' subjects are handles
     (`cartao-12`, `defeito-88`), and the release question read one as "do requisito defeito-88".
+
+    COMPARED IN THE ONE SPELLING (#485), as every other reader of the loop compares
+    (`events._deliveries_of`): this was the one that matched the ref as typed, so `#12` asked
+    about the card the loop holds as `12` found no requirement behind it.
     """
+    want = canonical_ref(issue)
     for loop in waiting:
         marks = loop.context or {}
         if loop.kind != DELIVERY or marks.get("ticket") or marks.get("defect"):
             continue
-        issues = str(marks.get("issues") or "").split(",")
-        if str(issue) in [i.strip() for i in issues]:
+        issues = {canonical_ref(i) for i in str(marks.get("issues") or "").split(",")
+                  if i.strip()}
+        if want in issues:
             return loop.subject
     return ""
 

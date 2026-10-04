@@ -1577,6 +1577,21 @@ def _verdict_of(read: dict, job: dict) -> dict:
     return verdict_read.headline(raw)
 
 
+async def _stamp_the_acceptances(jobs: list[dict]) -> None:
+    """THE REQUESTER'S "THAT'S IT" ON EVERY MERGE GATE A PERSON IS ASKED (#448 slice 3): `accepted`
+    on each such job — who, on which head, and the one sentence (`accept.line`) — read from the
+    platform's own store, once per project, off the event loop. Never raises: a gate shown without
+    it is the gate as it was, and the reader logs why."""
+    import asyncio
+
+    from openfactory.product.accept import at_the_gates
+
+    found = await asyncio.to_thread(at_the_gates, jobs)
+    for job, accepted in zip(jobs, found, strict=True):
+        if accepted:
+            job["accepted"] = accepted
+
+
 @app.get("/api/inbox")
 async def inbox() -> list[dict]:
     """THE single 'what needs a human right now' feed — one shape for every channel (panel,
@@ -1594,7 +1609,9 @@ async def inbox() -> list[dict]:
 
     out: list[dict] = []
     waiting: list[tuple[dict, dict]] = []  # (the job, its item's `review`), filled after the loop
-    for j in await tv.list_jobs(client, ns):
+    jobs = await tv.list_jobs(client, ns)
+    await _stamp_the_acceptances(jobs)
+    for j in jobs:
         # WHETHER IT ASKS AT ALL IS THE ENGINE'S ANSWER, read once (#339); the branches below
         # decide only what can be answered. The generic branch tested `state` alone, and a run's
         # state outlives the run: a stopped job whose ticket a later run merged kept asking here
@@ -1690,6 +1707,9 @@ async def inbox() -> list[dict]:
                 })
             out.append({**base, "kind": kind,
                         "options": options,
+                        # THE REQUESTER'S "THAT'S IT", where the person merging decides (#448 slice
+                        # 3): who accepted, on which head — absent when nobody has
+                        **({"accepted": j["accepted"]} if j.get("accepted") else {}),
                         "answer": {"method": "POST",
                                    "url": "/api/act/<merge|adjust|address|discard|review>",
                                    "body": {"params": {"project": j.get("project"),
@@ -1784,6 +1804,87 @@ def _project_or_404(project: str) -> Project:
             status_code=404, detail=f"no project named {project!r} in this deployment") from None
 
 
+#: HOW MUCH DELIVERED WORK THE BOARD SHOWS IN DONE (#500): the cards closed as delivered in the last
+#: `DELIVERED_SHOWN_DAYS` days, and never more than `DELIVERED_SHOWN_AT_MOST` of them.
+#:
+#: BOUNDED, BECAUSE A BOARD'S CLOSED CARDS ARE ITS WHOLE HISTORY. Done is where a person sees what
+#: the factory finished, and every row closes a delivered card there — GitHub since #180, the local
+#: board since #500 — so the open cards alone leave Done empty but for the moment between a move and
+#: a close. Reading the closed ones back is what puts them there, and that read is re-made on every
+#: tick of a watched board and paid for, card by card, on a hosted one. Two weeks is a sprint and
+#: the review after it; thirty is more than one column shows without scrolling.
+DELIVERED_SHOWN_DAYS = 14
+DELIVERED_SHOWN_AT_MOST = 30
+
+
+def _delivered_cards(project, board, tracker, *, placed: dict, names: list[str] | None,
+                     shown: set[str]) -> list[dict]:
+    """The board's recent cards CLOSED AS DELIVERED, for its Done column (#500, #195).
+
+    DELIVERED IS `triage.Ticket.delivered`, ASKED, NOT RESTATED: closed, and not as `not_planned`.
+    A card withdrawn, removed or closed as a duplicate stays off the board, as it always has — an
+    operator closing a card means "this should not be on my board".
+
+    WHERE: the column the board places the card in, when it places it — a GitHub project keeps its
+    closed items, and a delivered issue whose close landed while its move did not is drawn where
+    its board says, as everywhere else on this page — and otherwise the column THIS board calls
+    `done` (`board.base.stage_column`, asked for a column that EXISTS): the local board places open
+    cards only, and a renamed Done column is the board's own name, never the platform's literal. A
+    board with no such column has nowhere to show delivered work, and shows none — and a name its
+    map declares for `done` that is not one of its columns is no such column either.
+
+    A READ THAT FAILED IS NOT AN UNREADABLE BOARD. The open cards were read, and they are the
+    board's answer; this is what is added to it. So `None` here — or a row breaking the port's
+    promise not to raise — is logged by name and answered with `[]`, and the page still shows
+    every open card where it is."""
+    from datetime import UTC, datetime, timedelta
+
+    from openfactory.adapters.board.base import stage_column
+    from openfactory.product.triage import Ticket
+
+    name = getattr(project, "name", "") or ""
+    try:
+        closed = tracker.list_tickets(state="closed", limit=DELIVERED_SHOWN_AT_MOST)
+    except Exception:  # noqa: BLE001 — the port promises not to raise; the open cards still stand
+        log.warning("the tracker of %s raised listing its closed cards", name, exc_info=True)
+        closed = None
+    if closed is None:
+        log.warning("OPENFACTORY_BOARD_DELIVERED_UNREAD project=%s — the closed cards could not be "
+                    "read, so Done shows only the open cards in it", name)
+        return []
+
+    since = datetime.now(UTC) - timedelta(days=DELIVERED_SHOWN_DAYS)
+    done: str | None = None
+    out: list[dict] = []
+    for s in closed:
+        if s.ref in shown or _updated_before(s.updated_at, since):
+            continue
+        if not Ticket(number=s.ref, title=s.title, state=s.state,
+                      state_reason=s.state_reason).delivered:
+            continue
+        column = placed.get(s.ref, "")
+        if not column:
+            if done is None:
+                done = stage_column(board, "done", existing=True, names=names)
+            column = done
+        if column:
+            out.append({"ref": s.ref, "column": column, "title": s.title,
+                        "labels": list(s.labels or []), "updated_at": s.updated_at or ""})
+    return out
+
+
+def _updated_before(stamp: str, since) -> bool:
+    """Whether a provider's `updated_at` is older than `since`. A stamp nobody can read is NOT old:
+    the card is kept, and `DELIVERED_SHOWN_AT_MOST` still bounds what is shown."""
+    from datetime import UTC, datetime
+
+    try:
+        then = datetime.fromisoformat(str(stamp or "").replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return (then if then.tzinfo else then.replace(tzinfo=UTC)) < since
+
+
 @app.get("/api/board/{project}")
 def board_view(project: str, card: str = "", pr: str = "") -> dict:
     """This project's board, through the ports — one read, for every kind (ADR-0049 D6).
@@ -1801,6 +1902,11 @@ def board_view(project: str, card: str = "", pr: str = "") -> dict:
     THE THREE ANSWERS TRAVEL. `None` for the columns or the cards means the board could not be
     read, `[]`/`{}` means it was read and is empty, and the page renders those differently — the
     distinction the whole read side is built on, and the one a surface destroys by being helpful.
+
+    DONE HOLDS WHAT WAS DELIVERED, NOT ONLY WHAT IS STILL OPEN (#500). Every row closes a card the
+    factory delivers, so the open cards alone left Done empty; the recent cards closed as delivered
+    are read back into it (`_delivered_cards`), and the same card, drawn the same way, opens on the
+    closed card's controls and moves through the same `card_move` as any other.
     """
     from openfactory.adapters.board import build_board
     from openfactory.adapters.board.base import Watchable
@@ -1829,6 +1935,8 @@ def board_view(project: str, card: str = "", pr: str = "") -> dict:
         cards = [{"ref": s.ref, "column": placed.get(s.ref, ""), "title": s.title,
                   "labels": list(s.labels or []), "updated_at": s.updated_at or ""}
                  for s in summaries]
+        cards += _delivered_cards(proj, board, tracker, placed=placed, names=names,
+                                  shown={c["ref"] for c in cards})
 
     detail = None
     if (wanted := (card or "").strip()):
@@ -2756,6 +2864,7 @@ async def temporal_jobs() -> dict:
     try:
         client = await tv.connect()
         jobs = await tv.list_jobs(client, ns)
+        await _stamp_the_acceptances(jobs)
         return {
             "connected": True, "address": addr, **_engine_ui(tv), "build": build,
             "jobs": jobs,

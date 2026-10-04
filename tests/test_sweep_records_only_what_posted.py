@@ -452,7 +452,7 @@ def test_children_the_board_accepted_are_claimed_in_order(monkeypatch):
     # Measured — welding the Portuguese head back survived that guard untouched.
     assert voice.NARRATION["split.head"]["en"].split("{")[0] in said, said
     assert voice.NARRATION["split.created"]["en"].split("{")[0] in said
-    assert voice.NARRATION["split.to-todo"]["en"] in said
+    assert voice.NARRATION["split.to-todo"]["en"].format(queue="TO-DO") in said
     assert notifier.sent[0]["level"] == "info"
 
 

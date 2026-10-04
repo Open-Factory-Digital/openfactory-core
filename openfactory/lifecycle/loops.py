@@ -257,14 +257,22 @@ def announce(project, *, delivered: set[str], cards: set[str] | None = None) -> 
     UNDER THE TELLING LOCK, RE-READ INSIDE IT: whoever comes second finds the loop closed and says
     nothing. The loop closes only once the door TOOK the announcement — one it did not take stays
     open for the next telling (ADR-0021: closed on observation, never on self-report). Moved here
-    from `events.deliver` (#414): the delivery's loop is the card's promise, and closes with it."""
+    from `events.deliver` (#414): the delivery's loop is the card's promise, and closes with it.
+
+    `delivered` IS THE BOARD'S ANSWER, and the board is one repository: what a waiting delivery
+    names in another repository of the product is asked here (`events._delivered_elsewhere`), for
+    every caller, BEFORE the lock — a read of the forge is seconds, and the lock is what every
+    other telling waits on (#492)."""
     from datetime import UTC, datetime
 
     from openfactory.memory import store as loop_store
     from openfactory.memory.ledger import DELIVERY, close_by_observation, waiting
     from openfactory.product import events, followup
 
-    if not events._speaks(project) or not delivered:
+    if not events._speaks(project):
+        return [], 0
+    delivered = set(delivered or ()) | events._delivered_elsewhere(project, set(delivered or ()))
+    if not delivered:
         return [], 0
     name = getattr(project, "name", "") or ""
     agent, language = events._agent(project), events._language(project)

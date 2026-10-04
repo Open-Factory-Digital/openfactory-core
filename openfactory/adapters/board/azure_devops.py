@@ -276,6 +276,18 @@ class AzureBoardsBoard:
 
         return key_for(column, renamed=self._names)
 
+    def stage_column(self, key: str) -> str:
+        """What this board calls the stage `key`. See `Staged.stage_column`.
+
+        THE ROW THAT REFUSED A PROMOTION WITH NOTHING RENAMED (#496): the product role asked for
+        `TO-DO` by name and this board's own default is `To Do`, which the case-folding match in
+        `set_column` does not equate. Off the same `self._names` as `stage_key` and `set_status`.
+        `backlog` is not one of this row's defaults (see `DEFAULT_COLUMNS`), so a deployment that
+        did not name it is answered with the platform's word — what it was asked for until now."""
+        from openfactory.adapters.board.columns import name_for
+
+        return name_for(key, renamed=self._names)
+
     def _board_columns(self) -> list[dict] | None:
         """The columns as Azure DevOps reports them, in board order. None = could not read."""
         if self._columns_cache is not None:

@@ -193,7 +193,7 @@ def test_an_accepted_defect_placement_keeps_the_reply_clean(tmp_path):
                           violates=1, tracker=_Tracker(), board=board)
 
     assert res.ok is True and res.detail == ""
-    assert board.placed == [("501", ProductModule.FILING_COLUMN)]
+    assert board.placed == [("501", "Backlog")]   # a board that names nothing: the platform's word
 
 
 def test_a_refused_issue_placement_is_surfaced_per_item(tmp_path, caplog):

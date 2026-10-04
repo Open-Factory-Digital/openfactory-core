@@ -172,7 +172,7 @@ def transition(project, card: str, event: CardEvent, *, by: str, why: str = "",
                           "refused", ports.name, card, event.value)
             return Transition(card=card, event=event, before=seen.state, refused=card_refused(
                 event.value, state=(seen.state.value if seen.state else ""), ref=card,
-                language=language))
+                language=language, column=seen.column))
         if act is not None and not acted:
             answer = act()
             if answer is not None:

@@ -77,6 +77,10 @@ class Said:
     #: False for a line said in a group to somebody else (ADR-0051 D14) — found by the explicit
     #: recall, never by a turn's. True for every row indexed before the mark existed.
     addressed: bool = True
+    #: What kind of reply a role line was (#457): `transcript.ANSWER`, or the platform's own voice
+    #: (`broke`, `unavailable`, a `handoff`). `answer` for a person's line and for every row indexed
+    #: before the mark existed — the distillation reads only an answer as the role's.
+    kind: str = transcript.ANSWER
 
 
 @dataclass(frozen=True)
@@ -208,7 +212,8 @@ def _from_transcript(rows: list[dict]) -> list[Said]:
         out.append(Said(id=f"t:{where}:{ts}", ts=ts, store=CONVERSATION, where=where,
                         role=str(r.get("role", "") or "person"),
                         actor=str(extra.get("actor", "") or ""), text=text,
-                        addressed=extra.get(transcript.ADDRESSED_MARK) is not False))
+                        addressed=extra.get(transcript.ADDRESSED_MARK) is not False,
+                        kind=str(extra.get(transcript.KIND_MARK) or transcript.ANSWER)))
     return out
 
 
