@@ -3880,12 +3880,19 @@ class ProductModule:
 
         Gated on the allowlist, and ordered: they are moved in the sequence given, because the
         poller pulls in board order and an approved sequence that arrives shuffled is not the
-        sequence anybody approved."""
+        sequence anybody approved.
+
+        WHAT IT ANSWERS IS SAID IN THE CONVERSATION'S LANGUAGE, the card named as its tracker names
+        it (`voice.board_move_said`, #497): `CONT-412` on Jira, never `#CONT-412`."""
+        from openfactory.product.voice import board_move_said
+
+        lang = getattr(self.project, "language", None)
+        refused = board_move_said("queue_refused", language=lang)
         if not may_act(self.project, actor, via=self._via):
             return [WriteResult(ok=False, detail=unauthorized_message(self.project))]
         board = board or self._board()
         if board is None:
-            return [WriteResult(ok=False, detail="não consegui acessar o quadro")]
+            return [WriteResult(ok=False, detail=board_move_said("unreachable", language=lang))]
 
         from openfactory.product.board import forget_board
 
@@ -3902,14 +3909,13 @@ class ProductModule:
                 moved = board.set_column(issue=str(number), issue_url=url,
                                          name=self.QUEUE_COLUMN)
                 out.append(WriteResult(ok=bool(moved), ref=f"#{number}",
-                                       detail="" if moved else "o quadro recusou a movimentação"))
+                                       detail="" if moved else refused))
             except Exception as exc:  # noqa: BLE001 — one failure must not lose the rest
                 # A CLIENT READS THIS ONE. Both branches of the reply speak it — the whole-failure
                 # branch as the entire message, the partial one under a pt-BR headline — so
                 # `str(exc)` here made "1 não entraram:" continue into a `gh api graphql` argv
                 # carrying the mutation and the board's field ids.
-                out.append(_could_not(f"não consegui mover o #{number} para a fila agora. O time "
-                                      f"foi avisado e resolve.",
+                out.append(_could_not(board_move_said("queue_failed", ref=number, language=lang),
                                       act="queue approved work", cause=exc, ref=f"#{number}"))
         return out
 
@@ -3925,17 +3931,20 @@ class ProductModule:
         an order anybody could write is an order anybody could spend against. Spends nothing itself.
 
         A BOARD THAT CANNOT RANK SAYS SO. `Rankable` is a capability, not a promise every board
-        makes; the refusal names the board rather than raising in a listener."""
+        makes; the refusal names the board rather than raising in a listener. Said like
+        `promote`'s, in the conversation's language (#497)."""
+        from openfactory.product.voice import board_move_said
+
+        lang = getattr(self.project, "language", None)
+        refused = board_move_said("order_refused", language=lang)
         if not may_act(self.project, actor, via=self._via):
             return [WriteResult(ok=False, detail=unauthorized_message(self.project))]
         board = board or self._board()
         if board is None:
-            return [WriteResult(ok=False, detail="não consegui acessar o quadro")]
+            return [WriteResult(ok=False, detail=board_move_said("unreachable", language=lang))]
         from openfactory.adapters.board.base import Rankable
         if not isinstance(board, Rankable):
-            return [WriteResult(ok=False, detail="este quadro ainda não aceita reordenação por "
-                                                 "aqui — a ordem precisa ser mudada no próprio "
-                                                 "quadro")]
+            return [WriteResult(ok=False, detail=board_move_said("unrankable", language=lang))]
         from openfactory.product.board import forget_board
         forget_board(getattr(self.project, "name", ""))
         tracker = self._tracker()
@@ -3947,12 +3956,11 @@ class ProductModule:
                 placed = bool(board.place_after(issue=str(number), issue_url=url, after=previous,
                                                 column=self.FILING_COLUMN))
                 out.append(WriteResult(ok=placed, ref=f"#{number}",
-                                       detail="" if placed else "o quadro recusou a reordenação"))
+                                       detail="" if placed else refused))
                 if placed:
                     previous = str(number)
             except Exception as exc:  # noqa: BLE001 — one failure must not lose the rest
-                out.append(_could_not(f"não consegui reposicionar o #{number} agora. O time foi "
-                                      f"avisado e resolve.",
+                out.append(_could_not(board_move_said("order_failed", ref=number, language=lang),
                                       act="reorder the backlog", cause=exc, ref=f"#{number}"))
         return out
 

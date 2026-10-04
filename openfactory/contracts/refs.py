@@ -130,11 +130,16 @@ def ref_label(ref: object) -> str:
 
     One home, because the question — how do I show this ref to somebody — recurs at every sentence
     a client reads, and the answer is provider-shaped.
+
+    THE DECORATION COMES OFF A KEY TOO (#497). `promote` answers each card `#{number}`, and a person
+    types `#CONT-412` as readily as `#412`: either is the same ticket, and `#CONT-412` is the
+    spelling this function exists to never show. Stripped like `canonical_ref` strips it, so a
+    label is the same whether its caller held the ref bare or decorated.
     """
-    text = str(ref or "").strip()
+    text = str(ref or "").strip().lstrip("#").strip()
     if not text:
         return ""
-    return f"#{text.lstrip('#')}" if text.lstrip("#").isdigit() else text
+    return f"#{text}" if text.isdigit() else text
 
 
 def ref_sort_key(ref: object) -> tuple[str, int, str]:
