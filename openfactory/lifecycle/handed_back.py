@@ -19,10 +19,10 @@ THE SPLIT, AND WHERE IT IS HELD.
                 outcome written from the box fails it (`test_the_card_lifecycle_has_one_door.py`)
 
 WHAT EACH OUTCOME IS, in the card's life (`OUTCOMES`): a pull request is `pr_opened`, a merge
-`merged`, Done `delivered`, a card the factory will not build as written `refused`, and every
-other stop that waits on a person `parked` — a hold, a block, a failure, the production gate.
-The promotion's `staged` and `released` are slice 4's (#448 slices 4–5); until then a production
-gate is a park and a release that lands is a delivery, as the board already showed them.
+`merged`, Done `delivered`, a card the factory will not build as written `refused`, a production
+gate `staged` (#448 slice 6 — a park until then), and every other stop that waits on a person
+`parked` — a hold, a block, a failure. A release that lands is the delivery at the last declared
+stage; `released` is the person's yes before it, given through the door by whoever releases.
 
 NOTHING IS SAID TWICE. The box said each outcome on the card as it reached it (`_say_on_ticket`),
 in words that carry the owner's mention and what to do next; so the door is handed an empty note
@@ -61,7 +61,9 @@ OUTCOMES: dict[JobState, CardEvent] = {
     JobState.ON_HOLD: CardEvent.PARKED,
     JobState.BLOCKED: CardEvent.PARKED,
     JobState.FAILED: CardEvent.PARKED,
-    JobState.AWAITING_PROD_APPROVAL: CardEvent.PARKED,
+    # A PRODUCTION GATE IS A STAGE (#448 slice 6): the change waits there to be tried before it
+    # reaches everyone, and the record says so — no column can (`table.READ_FROM_THE_RECORD`)
+    JobState.AWAITING_PROD_APPROVAL: CardEvent.STAGED,
 }
 
 #: Who the record says caused an outcome: the job, wherever its box ran.
@@ -75,6 +77,17 @@ def gate_event(pr_url: str) -> str:
     import hashlib
 
     return f"pr_opened-{hashlib.sha256(str(pr_url or '').encode()).hexdigest()[:20]}"
+
+
+def merged_event(pr_url: str) -> str:
+    """The id of `merged` as the job's TELLING hands it in (#448 slice 6) — the one hand that knows
+    whether stages follow, so the one whose row tells the requester it went in. Keyed by the pull
+    request, like `gate_event`: a retried or replayed telling is answered from the card's record,
+    and the requester hears it once per card and pull request. The box's hand-back and the job's
+    settle hand their `merged` in with ids of their own, and tell nobody."""
+    import hashlib
+
+    return f"merged-{hashlib.sha256(str(pr_url or '').encode()).hexdigest()[:20]}"
 
 
 def apply(project, card: str, result, *, event_id: str = "", tracker=None) -> list:
@@ -108,6 +121,10 @@ def apply(project, card: str, result, *, event_id: str = "", tracker=None) -> li
         own = f"{event_id}-{index}" if event_id else ""
         if event is CardEvent.PR_OPENED:
             facts.update(_at_the_gate(project, card, result, back, own))
+        if event is CardEvent.STAGED:
+            # WHICH STAGE AND WHERE A PERSON LOOKS, as the box read them from the manifest (#122)
+            facts.update(stage=str(getattr(result, "look_stage", "") or ""),
+                         where=str(getattr(result, "look_at", "") or ""))
         try:
             moved = transition(project, card, event, by=BY, why=why, facts=facts,
                                tracker=tracker, event_id=_this_outcomes_id(project, card, facts,

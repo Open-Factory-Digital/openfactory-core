@@ -11,7 +11,9 @@ THE ONLY WAY A CARD CHANGES STATE — for the events a slice has moved through i
      changes nothing and says why, in the project's language (D2). A change somebody made in the
      vendor's own interface (`by=OBSERVED`, D8) is judged against where the record last placed
      the card instead, since the tracker already shows the change, and what follows it writes
-     nothing to the card (`table.consequences`);
+     nothing to the card (`table.consequences`). The requester's loop past the pull request
+     (`table.READ_FROM_THE_RECORD`, #448 slice 6) is judged where the RECORD says a held card is
+     when its column cannot — merged, or at a stage (`_merged_or_staged`);
   3. `act`, when the caller has one, runs — the engine's half of a person's decision (a signal to
      a parked job, a merge gate's answer, a terminate). Its refusal is the caller's to return, and
      nothing is recorded or applied;
@@ -37,6 +39,7 @@ from dataclasses import dataclass, field, replace
 from openfactory.lifecycle import executor, record
 from openfactory.lifecycle.table import (
     OBSERVED,
+    READ_FROM_THE_RECORD,
     CardEvent,
     State,
     after,
@@ -158,6 +161,8 @@ def transition(project, card: str, event: CardEvent, *, by: str, why: str = "",
             seen = replace(seen, state=_state(latest.after) if latest is not None else
                            _state(str((facts or {}).get("before") or "")))
             seen = replace(seen, open=seen.state not in _NOT_OPEN)
+        elif event in READ_FROM_THE_RECORD:
+            seen = replace(seen, state=_merged_or_staged(seen.state, history))
         refusal = allowed(seen.state, event, open_card=seen.open)
         if refusal is not None and acted and seen.state is after(event, {**(facts or {}),
                                                                         "before": ""}):
@@ -219,6 +224,26 @@ def _state(value: str) -> State | None:
         return State(value) if value else None
     except ValueError:
         return None
+
+
+#: The states a column cannot tell apart from a merged or staged card (`table.BY_COLUMN`), and the
+#: two the record can say instead.
+_A_COLUMN_CANNOT_TELL = frozenset({State.RUNNING, State.WAITING_ON_A_PERSON})
+_ONLY_THE_RECORD_SAYS = frozenset({State.MERGED, State.STAGED})
+
+
+def _merged_or_staged(state: State | None, history: record.History) -> State | None:
+    """WHERE THE RECORD SAYS A HELD CARD IS, when its column cannot (#448 slice 6, ADR-0055 D2
+    amended 2026-10-05). A merged card sits In review like one under review, and a production gate
+    in Needs Action like any park; so for the requester's loop past the pull request
+    (`READ_FROM_THE_RECORD`) a column reading `running` or `waiting_on_a_person` is refined by the
+    card's latest MOVE when that move left it merged or staged. With no record — a store that
+    cannot keep one, or a card nothing recorded — the column stands."""
+    latest = history.latest_move
+    if state not in _A_COLUMN_CANNOT_TELL or latest is None:
+        return state
+    said = _state(latest.after)
+    return said if said in _ONLY_THE_RECORD_SAYS else state
 
 
 #: The endings that leave a card in the backlog with its promise still open (D10).

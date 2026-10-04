@@ -101,19 +101,23 @@ MUTATIONS = [
      "where=where,\n"
      "                                   run=run):\n",
      "        if False:\n"),
+    # re-pinned 2026-10-05: #448 slice 6 — the telling is the door's `to_try_at_the_stage` now
     ("a new run of the card is never told again", EVENTS,
-     "    return _once(project, _event_id(STAGED, project, card, run), lambda: (\n",
-     "    return _once(project, _event_id(STAGED, project, card), lambda: (\n"),
+     "    said = _event_id(STAGED, project, card, run)\n",
+     "    said = _event_id(STAGED, project, card)\n"),
+    # re-pinned 2026-10-05: #448 slice 6 — the telling is the door's `to_try_at_the_stage` now
     ("it is told again every hour of the same run", EVENTS,
-     "    return _once(project, _event_id(STAGED, project, card, run), lambda: (\n",
-     "    return _once(project, _event_id(STAGED, project, card, run, str(time.time())), "
-     "lambda: (\n"),
+     "    said = _event_id(STAGED, project, card, run)\n",
+     "    said = _event_id(STAGED, project, card, run, str(time.time()))\n"),
+    # re-pinned 2026-10-05: #448 slice 6 — the telling is the door's `to_try_at_the_stage` now
     ("a card nobody asked for in a conversation is told to nobody's conversation", EVENTS,
-     "    if not to or to == room_of(project):\n        return False\n",
-     "    if to == room_of(project):\n        return False\n"),
+     "    if not to:\n        return \"nobody to tell: nobody asked for it in a conversation\"\n",
+     ""),
+    # re-pinned 2026-10-05: #448 slice 6 — the telling is the door's `to_try_at_the_stage` now
     ("a requester who asked in the room is told twice there", EVENTS,
-     "    if not to or to == room_of(project):\n        return False\n",
-     "    if not to:\n        return False\n"),
+     "    if to == room_of(project):\n"
+     "        return \"nobody to tell: they asked in the room, which was asked\"\n",
+     ""),
     ("a card with no delivery is told nowhere", EVENTS,
      "        if acc is not None and acc.where:\n            return acc.where, sealed(acc.by)\n",
      ""),
@@ -227,9 +231,10 @@ MUTATIONS = [
     ("a later run is never told", EVENTS,
      "    event = _event_id(TRIED, project, card, run)\n",
      "    event = _event_id(TRIED, project, card)\n"),
+    # re-pinned 2026-10-05: #448 slice 6 — the telling is the door's `tried_it_right` now
     ("a room told already is said not to know", EVENTS,
-     '            return event in _read(path)["told"]\n',
-     "            return False\n"),
+     '            if event in _read(path)["told"]:\n',
+     "            if False:\n"),
     ("the run is not recorded on the question", FOLLOWUP,
      '                              **({"run": str(run)} if str(run or "").strip() else {})})',
      "                              })"),

@@ -237,8 +237,8 @@ OUTCOMES = [
      "waiting_on_a_person"),
     (HandedBack(state=JobState.BLOCKED), "needs_action", "parked", "waiting_on_a_person"),
     (HandedBack(state=JobState.FAILED), "needs_action", "parked", "waiting_on_a_person"),
-    (HandedBack(state=JobState.AWAITING_PROD_APPROVAL), "needs_action", "parked",
-     "waiting_on_a_person"),
+    # A PRODUCTION GATE IS A STAGE since #448 slice 6 — the same column, and the record says it
+    (HandedBack(state=JobState.AWAITING_PROD_APPROVAL), "needs_action", "staged", "staged"),
 ]
 
 

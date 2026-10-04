@@ -3665,6 +3665,11 @@ _CARD_NOTE = {
         "pr_opened": "_A mudança está num pull request._{why}",
         "merged": "_Mergeado._{why}",
         "promised": "_Faz parte da entrega de um requisito, por {who}._{why}",
+        "resumed": "_Devolvido para mais uma passagem por {who}._{why}",
+        "accepted": "_Aceito por {who}: é o que foi pedido._{why}",
+        "staged": "_Num estágio, esperando ser experimentado antes de chegar a todos._{why}",
+        "stage_rejected": "_Ainda não, disse {who} no estágio._{why}",
+        "released": "_Liberado para produção por {who}._{why}",
     },
     "en": {
         "discarded": ("_Pull request closed without merging by {who}._{why} Nothing was "
@@ -3688,6 +3693,11 @@ _CARD_NOTE = {
         "pr_opened": "_The change is in a pull request._{why}",
         "merged": "_Merged._{why}",
         "promised": "_Part of what a requirement delivers, by {who}._{why}",
+        "resumed": "_Sent back for another pass by {who}._{why}",
+        "accepted": "_Accepted by {who}: it is what was asked for._{why}",
+        "staged": "_On a stage, waiting to be tried before it reaches everyone._{why}",
+        "stage_rejected": "_Not yet, said {who} at the stage._{why}",
+        "released": "_Released to production by {who}._{why}",
     },
 }
 _CARD_NOTE_WHY = {"pt-BR": " Motivo: {why}", "en": " Reason: {why}"}
@@ -3759,14 +3769,20 @@ _CARD_DONE_TO = {
               "reordered": "tirado da fila", "edited": "editado",
               "question_asked": "parado à espera de uma resposta",
               "refused": "devolvido para refinamento", "pr_opened": "posto num pull request",
-              "merged": "mergeado", "promised": "prometido na entrega de um requisito"},
+              "merged": "mergeado", "promised": "prometido na entrega de um requisito",
+              "resumed": "devolvido para mais uma passagem", "accepted": "aceito",
+              "staged": "posto num estágio", "stage_rejected": "recusado no estágio",
+              "released": "liberado para produção"},
     "en": {"discarded": "discarded", "skipped": "skipped", "stopped": "stopped",
            "closed": "closed", "withdrawn": "withdrawn", "removed": "removed",
            "reopened": "reopened", "filed": "filed", "promoted": "queued",
            "reordered": "taken out of the queue", "edited": "edited",
            "question_asked": "parked on a question",
            "refused": "sent back to be refined", "pr_opened": "put in a pull request",
-           "merged": "merged", "promised": "promised in a requirement's delivery"},
+           "merged": "merged", "promised": "promised in a requirement's delivery",
+           "resumed": "sent back for another pass", "accepted": "accepted",
+           "staged": "put on a stage", "stage_rejected": "turned down at a stage",
+           "released": "released to production"},
 }
 _CARD_REFUSED = {
     "pt-BR": "O {ref} está {where} — não pode ser {done} a partir daí. Nada foi alterado.",

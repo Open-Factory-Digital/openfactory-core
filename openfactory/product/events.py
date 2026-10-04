@@ -729,11 +729,13 @@ def _the_delivery_says_it(project, card: str, rows) -> bool:
                                    | {canonical_ref(card)}))
 
 
-def merged_for_you(project, *, card: str, pr_url: str, stages_follow: bool = False) -> bool:
+def went_in(project, *, card: str, pr_url: str, stages_follow: bool = False) -> str:
     """THE CHANGE A CARD'S REQUESTER ASKED FOR WENT IN, and they hear it (#448 slice 3) — in the
     conversation they asked in, once per card and pull request, WHOEVER MERGED IT: a person on the
     floor or the forge, the factory on its own, or the requester's acceptance when the look was all
-    that held it. Returns whether it was told now. Never raises.
+    that held it. The card's door says it, from the job's `merged` (#448 slice 6), and this returns
+    what it came to, as the record's outcome — RAISING WHEN THE CONVERSATION DID NOT TAKE IT, or
+    the ledger could not be read, so the sweep applies it again (`_once` makes that safe).
 
     MEASURED BEFORE IT WAS ADDED. With no stage declared, the job ends Done at the merge and the
     card's door announces every delivery that completes (`delivered`, #414) — "what you asked for
@@ -747,28 +749,48 @@ def merged_for_you(project, *, card: str, pr_url: str, stages_follow: bool = Fal
     in. A card nobody asked for in a conversation is the room's card comment, as for
     `ready_for_you`."""
     if not _speaks(project) or not str(card or "").strip() or not str(pr_url or "").strip():
-        return False
-    try:
-        from openfactory.memory import store as loop_store
+        return "nobody to tell: no product role, card or pull request"
+    from openfactory.memory import store as loop_store
 
-        rows = loop_store.read(getattr(project, "name", "") or "")
-        where = requester_conversation(project, card, rows=rows) or _accepted_where(
-            project, card, pr_url)
-        if not where:
-            return False
-        if not stages_follow and _the_delivery_says_it(project, card, rows):
-            return False
+    rows = loop_store.read(getattr(project, "name", "") or "")
+    where = requester_conversation(project, card, rows=rows) or _accepted_where(
+        project, card, pr_url)
+    if not where:
+        return "nobody to tell: nobody asked for it in a conversation"
+    if not stages_follow and _the_delivery_says_it(project, card, rows):
+        return "nothing to tell: the delivery says it"
+    from openfactory.product import voice
+
+    said = _event_id(MERGED, project, card, pr_url)
+    if _once(project, said, lambda: (
+            where,
+            voice.merged_for_you(ref=card, title=_title_of(project, card),
+                                 stages_follow=stages_follow, language=_language(project),
+                                 agent_name=_agent(project)))):
+        return "told"
+    if _said_already(project, said):
+        return "told already"
+    raise RuntimeError("the conversation's door did not take it")
+
+
+def merged_for_you(project, *, card: str, pr_url: str, stages_follow: bool = False) -> bool:
+    """`went_in`, answering only whether it was told NOW — False for told already, nobody to tell,
+    the delivery saying it, and a door or a ledger that did not answer alike. Never raises."""
+    try:
+        return went_in(project, card=card, pr_url=pr_url, stages_follow=stages_follow) == "told"
     except Exception:  # noqa: BLE001 — the merge stands; only its telling is lost
         log.exception("[%s] could not tell #%s's requester it went in",
                       getattr(project, "name", "?"), card)
         return False
-    from openfactory.product import voice
 
-    return _once(project, _event_id(MERGED, project, card, pr_url), lambda: (
-        where,
-        voice.merged_for_you(ref=card, title=_title_of(project, card),
-                             stages_follow=stages_follow, language=_language(project),
-                             agent_name=_agent(project))))
+
+def _said_already(project, event_id: str) -> bool:
+    """Whether `event_id` is in this module's record of what it told — "told already" for the
+    card's door, which answers a telling applied again from its record (`card_moved`)."""
+    try:
+        return event_id in _read(_store_path(project))["told"]
+    except (OSError, TimeoutError):
+        return False
 
 
 # ── it is theirs to try before it reaches anyone ─────────────────────────────────────────────────
@@ -805,18 +827,19 @@ def requester_of(project, card: str, *, rows=None) -> tuple[str, str]:
     return "", ""
 
 
-def staged_for_you(project, *, card: str, where: str = "", run: str = "") -> bool:
+def to_try_at_the_stage(project, *, card: str, where: str = "", run: str = "") -> str:
     """A CARD'S CHANGE IS READY FOR THE PERSON WHO ASKED FOR IT TO TRY, BEFORE IT REACHES ANYONE
     ELSE, and they hear it where they asked (#448 slice 4) — once per card and per run of its job.
-    Returns whether it was told now. Never raises.
+    The card's door says it, from the round's `staged` (#448 slice 6), and this returns what it
+    came to, as the record's outcome — RAISING WHEN THE CONVERSATION DID NOT TAKE IT.
 
     THE ROOM WAS ASKED AND THE REQUESTER WAS NOT. A job parked at the last gate before the
     product's users (`release.parked_for_release`) was offered, hourly, to the product's ROOM and
     nowhere else (`followup.release_question`): the person whose request it was learned it was
     ready to try only if they happened to read the room, and their answer, given where they had
     asked, reached nothing. The room is still asked exactly as before; this is the requester's
-    own telling, and the round opens a question of theirs beside the room's only when this says
-    it was told (`activities._offer_the_release_to_the_client`).
+    own telling, and their own copy of the question opens beside the room's only once this says
+    they were told (`lifecycle/loops.py::release_asked`).
 
     ONCE PER RUN, NOT ONCE PER CARD. `run` is the parked job's run: the round asks every hour,
     and the run is what keeps the second hour silent while a LATER run of the same card — the
@@ -827,31 +850,54 @@ def staged_for_you(project, *, card: str, where: str = "", run: str = "") -> boo
     the room's question alone; and a requester whose conversation IS the room already read the
     room's question there — the same news twice, in the same place, is noise."""
     if not _speaks(project) or not str(card or "").strip():
-        return False
+        return "nobody to tell: no product role or card"
     to, _ = requester_of(project, card)
-    if not to or to == room_of(project):
-        return False
+    if not to:
+        return "nobody to tell: nobody asked for it in a conversation"
+    if to == room_of(project):
+        return "nobody to tell: they asked in the room, which was asked"
     from openfactory.product import voice
 
-    return _once(project, _event_id(STAGED, project, card, run), lambda: (
-        to,
-        voice.staged_for_you(ref=card, title=_title_of(project, card), where=where,
-                             language=_language(project), agent_name=_agent(project))))
+    said = _event_id(STAGED, project, card, run)
+    if _once(project, said, lambda: (
+            to,
+            voice.staged_for_you(ref=card, title=_title_of(project, card), where=where,
+                                 language=_language(project), agent_name=_agent(project)))):
+        return "told"
+    if _said_already(project, said):
+        return "told already"
+    raise RuntimeError("the conversation's door did not take it")
 
 
-def tried_and_right(project, *, card: str, run: str, where: str = "", who: str = "") -> bool:
+def staged_for_you(project, *, card: str, where: str = "", run: str = "") -> bool:
+    """`to_try_at_the_stage`, answering only whether it was told NOW. Never raises."""
+    try:
+        return to_try_at_the_stage(project, card=card, where=where, run=run) == "told"
+    except Exception:  # noqa: BLE001 — the room was asked; only their own telling is lost
+        log.info("could not tell #%s's requester it is theirs to try", card, exc_info=True)
+        return False
+
+
+def told_at_the_stage(project, *, card: str, run: str = "") -> bool:
+    """Whether the card's requester was told, for this run, that its change is theirs to try — what
+    their own copy of the question waits on (`lifecycle/loops.py::release_asked`). Never raises."""
+    return _said_already(project, _event_id(STAGED, project, card, run))
+
+
+def tried_it_right(project, *, card: str, run: str, where: str = "", who: str = "") -> str:
     """THE CARD'S REQUESTER TRIED IT AT THE LAST GATE AND SAYS IT IS RIGHT, and the project does
     not let their word put it in front of everyone (`Project.release_by_requester`) — so the ROOM
-    hears it, where a product admin's "it worked" does (#448 slice 4). Returns whether the room
-    KNOWS — told now, or told already for this run. Never raises.
+    hears it, where a product admin's "it worked" does (#448 slice 4). The card's door says it,
+    from `accepted` at the last gate (#448 slice 6): "told", or "told already" for this run — the
+    room KNOWS either way — RAISING WHEN THE ROOM'S DOOR DID NOT TAKE IT.
 
-    ONCE PER CARD AND RUN OF ITS JOB, like `staged_for_you`: a second "funcionou" from the same
-    person about the same change is not news, and a later run — the work done again — is. `run`
-    is the run the question was asked for (`followup.release_of`), or the time it was asked when
-    the question predates it. `who` is a name a person reads, or "" for "the person who asked for
-    it": the room is told THAT the requester tried it, never handed an identifier."""
+    ONCE PER CARD AND RUN OF ITS JOB, like `to_try_at_the_stage`: a second "funcionou" from the
+    same person about the same change is not news, and a later run — the work done again — is.
+    `run` is the run the question was asked for (`followup.release_of`), or the time it was asked
+    when the question predates it. `who` is a name a person reads, or "" for "the person who asked
+    for it": the room is told THAT the requester tried it, never handed an identifier."""
     if not _speaks(project) or not str(card or "").strip():
-        return False
+        return "nobody to tell: no product role or card"
     from openfactory.product import voice
 
     event = _event_id(TRIED, project, card, run)
@@ -859,11 +905,24 @@ def tried_and_right(project, *, card: str, run: str, where: str = "", who: str =
             room_of(project),
             voice.tried_and_right(ref=card, title=_title_of(project, card), who=who, where=where,
                                   language=_language(project), agent_name=_agent(project)))):
-        return True
+        return "told"
     try:
         with _held(project, required=True) as path:
-            return event in _read(path)["told"]
-    except (OSError, TimeoutError):
+            if event in _read(path)["told"]:
+                return "told already"
+    except (OSError, TimeoutError) as exc:
+        raise RuntimeError(f"what the room was told could not be read ({exc})") from exc
+    raise RuntimeError("the room's door did not take it")
+
+
+def tried_and_right(project, *, card: str, run: str, where: str = "", who: str = "") -> bool:
+    """`tried_it_right`, answering whether the room KNOWS — told now, or told already for this
+    run. Never raises."""
+    try:
+        return tried_it_right(project, card=card, run=run, where=where, who=who) in (
+            "told", "told already")
+    except Exception:  # noqa: BLE001 — their yes is recorded; only the room's telling is lost
+        log.info("could not tell the room #%s's requester says it is right", card, exc_info=True)
         return False
 
 
@@ -873,4 +932,5 @@ __all__ = ["CARD_MOVED", "CI_RED", "DELIVERED", "DOCUMENT_INGESTED", "KINDS", "M
            "forget_record", "issues_of", "merged_for_you", "preview_up",
            "pull_requests_at_the_gate", "ready_for_you", "ready_to_try",
            "requester_conversation", "requester_of", "room_of", "say_to", "staged_for_you",
-           "to_room", "tried_and_right"]
+           "to_room", "to_try_at_the_stage", "told_at_the_stage", "tried_and_right",
+           "tried_it_right", "went_in"]

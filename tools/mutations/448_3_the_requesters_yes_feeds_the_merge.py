@@ -196,20 +196,22 @@ MUTATIONS = [
      "        if False:\n"),
 
     # ── the requester hears it went in ───────────────────────────────────────────────────────
+    # re-pinned 2026-10-05: #448 slice 6 — the telling is the door's `went_in` now
     ("with no stage the requester hears it twice", EVENTS,
-     "        if not stages_follow and _the_delivery_says_it(project, card, rows):\n",
-     "        if False:\n"),
+     "    if not stages_follow and _the_delivery_says_it(project, card, rows):\n",
+     "    if False:\n"),
     ("a delivery waiting on other cards reads as complete", EVENTS,
      "    loops = _deliveries_of(rows, card)\n    if not loops:\n        return False\n",
      "    loops = _deliveries_of(rows, card)\n    if loops:\n        return True\n"),
+    # re-pinned 2026-10-05: #448 slice 6 — the telling is the door's `went_in` now
     ("a card with no delivery is told nowhere", EVENTS,
-     "        where = requester_conversation(project, card, rows=rows) or _accepted_where(\n"
-     "            project, card, pr_url)\n",
-     "        where = requester_conversation(project, card, rows=rows)\n"),
+     "    where = requester_conversation(project, card, rows=rows) or _accepted_where(\n"
+     "        project, card, pr_url)\n",
+     "    where = requester_conversation(project, card, rows=rows)\n"),
+    # re-pinned 2026-10-05: #448 slice 6 — the telling is the door's `went_in` now
     ("it is told again on every merge of the same pull request", EVENTS,
-     "    return _once(project, _event_id(MERGED, project, card, pr_url), lambda: (\n",
-     "    return _once(project, _event_id(MERGED, project, card, pr_url, str(time.time())), "
-     "lambda: (\n"),
+     "    said = _event_id(MERGED, project, card, pr_url)\n",
+     "    said = _event_id(MERGED, project, card, pr_url, str(time.time()))\n"),
     ("a project with stages hears nothing of them", "openfactory/product/voice.py",
      "    if stages_follow:\n        said += _pick(_MERGED_STAGES, language)\n",
      ""),

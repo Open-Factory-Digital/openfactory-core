@@ -280,11 +280,19 @@ class Ports:
     # ── the promise, the conversation, the preview, the snapshot ───────────────────────────────
 
     def loops(self, card: str, action: str, *, about: str = "", context: dict | None = None,
-              title: str = "", owed: dict | None = None) -> str:
+              title: str = "", owed: dict | None = None, release: dict | None = None) -> str:
         from openfactory.lifecycle import loops
+        from openfactory.lifecycle.table import RELEASE_ASKS, RELEASE_CLOSES
 
         if action == "open":
             return loops.owe(self.project, card, owed or {})
+        if action in RELEASE_ASKS:
+            # THE RELEASE QUESTION THE ROUND ASKED (#448 slice 6): the room's copy, and the
+            # requester's once they were told
+            return loops.release_asked(self.project, card, release or {},
+                                       theirs=action != "release:ask")
+        if action in RELEASE_CLOSES:
+            return loops.release_answered(self.project, card, action.split(":", 1)[1])
         if action in ("answer", "moot"):
             return loops.question(self.project, card, about=about, answered=action == "answer")
         if action == "ask":
@@ -316,7 +324,8 @@ class Ports:
 
     def tell(self, card: str, *, notice: str, event_id: str, title: str, removed: bool,
              opened_by: str, conversation: str, pass_number: int = 0, pr_url: str = "",
-             review: str = "", preview_url: str = "") -> str:
+             review: str = "", preview_url: str = "", stages_follow: bool = False,
+             where: str = "", run: str = "", who: str = "") -> str:
         """Tell the conversation the card was asked in. A card nobody asked for in a conversation —
         written on the board, with no delivery recording where — has no requester to tell, and the
         product's room is not told what an operator did on the board; one the product role opened
@@ -325,8 +334,19 @@ class Ports:
         A CHANGE READY TO TRY (`READY_FOR_YOU`, #401) is its own sentence and its own rule: only to
         the conversation somebody asked in — the room already has the card's own comment — and
         once per card and pull request, whichever of the watch and the round hands it over first
-        (`events.ready_to_try`)."""
-        from openfactory.lifecycle.table import READY_FOR_YOU
+        (`events.ready_to_try`).
+
+        THE REQUESTER'S LOOP PAST THE PULL REQUEST (#448 slice 6), each its own sentence and its
+        own rule, as the events module keeps them: the change went in (`MERGED_FOR_YOU`, once per
+        card and pull request, never where the delivery says it), it is theirs to try at a stage
+        (`STAGED_FOR_YOU`, once per card and run, never in the room), and — to the ROOM — they
+        tried it and say it is right (`TRIED`, once per card and run)."""
+        from openfactory.lifecycle.table import (
+            MERGED_FOR_YOU,
+            READY_FOR_YOU,
+            STAGED_FOR_YOU,
+            TRIED,
+        )
         from openfactory.product import events
 
         if not events._speaks(self.project):
@@ -334,6 +354,13 @@ class Ports:
         if notice == READY_FOR_YOU:
             return events.ready_to_try(self.project, card=card, pr_url=pr_url, review=review,
                                        preview_url=preview_url)
+        if notice == MERGED_FOR_YOU:
+            return events.went_in(self.project, card=card, pr_url=pr_url,
+                                  stages_follow=stages_follow)
+        if notice == STAGED_FOR_YOU:
+            return events.to_try_at_the_stage(self.project, card=card, where=where, run=run)
+        if notice == TRIED:
+            return events.tried_it_right(self.project, card=card, run=run, where=where, who=who)
         if not opened_by and not conversation:
             return "nobody to tell: nobody asked for it in a conversation"
         return events.card_moved(self.project, card=card, notice=notice, event_id=event_id,

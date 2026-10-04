@@ -24,7 +24,12 @@ from datetime import UTC, datetime, timedelta
 
 from openfactory.lifecycle import record
 from openfactory.lifecycle.table import (
+    MERGED_FOR_YOU,
+    RELEASE_ASKS,
+    RELEASE_CLOSES,
+    STAGED_FOR_YOU,
     STOPS_AT_A_FAILED_WRITE,
+    TRIED,
     WRITES_THE_CARD,
     CardEvent,
     Close,
@@ -89,6 +94,10 @@ def _one(ports, row: record.Row, effect: Effect, *, carried: bool) -> str:
         if effect.action == "open":
             # THE PROMISE A FILING MAKES, as the filing carried it (#414)
             return ports.loops(row.card, effect.action, owed=dict(facts.get("owed") or {}))
+        if effect.action in RELEASE_ASKS | RELEASE_CLOSES:
+            # THE RELEASE QUESTION (#448 slice 6): asked as the round asked it — when, where to
+            # look, which run — and closed for the card the transition is about
+            return ports.loops(row.card, effect.action, release=_release_facts(facts))
         # `asked` is the loop a question opens, as its asker composed it (`_do_gather`); the
         # title is how a delivery finds the card a split card was split from
         # (`loops.announce_what_it_completes`)
@@ -104,12 +113,32 @@ def _one(ports, row: record.Row, effect: Effect, *, carried: bool) -> str:
                           pass_number=int(facts.get("pass_number") or 0),
                           pr_url=str(facts.get("pr_url") or ""),
                           review=str(facts.get("review") or ""),
-                          preview_url=str(facts.get("preview_url") or ""))
+                          preview_url=str(facts.get("preview_url") or ""),
+                          **_loop_facts(effect.notice, facts))
     if isinstance(effect, Preview):
         return ports.preview(row.card, action=effect.action, by=row.by)
     if isinstance(effect, Forget):
         return ports.forget()
     raise TypeError(f"no port applies {effect!r}")
+
+
+#: What the release question's port reads from a transition's facts (`ports.loops`).
+_RELEASE_FACTS = ("asked_at", "run", "where", "requirement", "room")
+
+
+def _release_facts(facts) -> dict[str, str]:
+    return {key: str(facts.get(key) or "") for key in _RELEASE_FACTS}
+
+
+def _loop_facts(notice: str, facts) -> dict[str, object]:
+    """What a telling of the requester's loop past the pull request carries beyond the card's own
+    (#448 slice 6) — handed only to those, so a port written before them is called as it was."""
+    if notice == MERGED_FOR_YOU:
+        return {"stages_follow": bool(facts.get("stages_follow"))}
+    if notice in (STAGED_FOR_YOU, TRIED):
+        return {"where": str(facts.get("where") or ""), "run": str(facts.get("run") or ""),
+                "who": str(facts.get("who") or "")}
+    return {}
 
 
 def _stops(row: record.Row) -> bool:

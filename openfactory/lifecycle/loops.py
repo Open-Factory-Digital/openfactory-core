@@ -34,6 +34,13 @@ the one place a delivery is announced (`announce`), reached only through the doo
 close observed on the vendor's own screen — and the converge of a delivery a cancellation
 narrowed (`Ports.deliver_what_remains`). The job's exit and the weekly sweep announced it beside
 the door until #414; the sweep's second chance is the door's converge now.
+
+THE RELEASE QUESTION (#448 slices 4 and 6): a change parked at its last gate is asked about in the
+product's room by the hourly round, and of its requester in their own conversation once they were
+told — two copies of one question. The round's `staged` opens them (`release_asked`); the verdict
+that counts closes them (`release_answered`): `accepted` at the last gate closes the requester's
+as worked, `stage_rejected` every copy as not worked, `released` every copy as worked. Asked and
+answered beside the door until slice 6, by the round and the conversation's release gate.
 """
 
 from __future__ import annotations
@@ -313,6 +320,82 @@ def announce(project, *, delivered: set[str], cards: set[str] | None = None) -> 
                     "announce stay open for the next", name, events._WAIT_SECONDS, exc)
         missed = max(missed, 1)
     return written, missed
+
+
+def release_asked(project, card: str, asked: dict, *, theirs: bool) -> str:
+    """Open a copy of the release question the round asked about `card` (#448 slice 4, through the
+    card's door since slice 6) — the ROOM's, once its question landed; or, with `theirs`, the
+    REQUESTER's, in their own conversation, only once they were told the change is theirs to try
+    for this run (`events.told_at_the_stage`). `asked` is what the round's `staged` carried: when
+    it asked (`asked_at`, the question's identity on both copies), where to look, which run, the
+    requirement behind it, the room.
+
+    THEIR COPY ONCE PER RUN: a copy of theirs already asked for this run — open, or closed by a
+    verdict — is never asked again by a later asking of the room, as the round never re-told them.
+    A copy already opened at this asking is not opened twice, so the sweep applying this again
+    opens nothing. Raises when the ledger cannot be written, so the sweep applies it again."""
+    from openfactory.memory import store as loop_store
+    from openfactory.memory.ledger import ACCEPTANCE, fold
+    from openfactory.product import events, followup
+
+    name = getattr(project, "name", "") or ""
+    issue, ts = _bare(card), str(asked.get("asked_at") or "")
+    if not ts:
+        return "nothing asked: the round said no time"
+    run = str(asked.get("run") or "")
+    room = str(asked.get("room") or "") or events.room_of(project)
+    rows = loop_store.read(name)
+    mine = [x for x in fold(rows)
+            if x.kind == ACCEPTANCE and _bare(followup.is_release(x)) == issue]
+    conversation = requester = ""
+    if not theirs:
+        if any(x.ts == ts and not (x.context or {}).get("conversation") for x in mine):
+            return "the room was asked already"
+    else:
+        if not events.told_at_the_stage(project, card=issue, run=run):
+            return "not asked: they were not told it is theirs to try"
+        if any((x.context or {}).get("conversation")
+               and str((x.context or {}).get("run") or "") == run for x in mine):
+            return "they were asked already for this run"
+        conversation, requester = events.requester_of(project, issue, rows=rows)
+        if not conversation:
+            return "not asked: nobody's conversation is known"
+    loop = followup.release_of(issue, channel=room, ts=ts,
+                               requirement=str(asked.get("requirement") or ""),
+                               where=str(asked.get("where") or ""), conversation=conversation,
+                               requester=requester, run=run)
+    if loop_store.write(name, [loop]) < 1:
+        raise RuntimeError("the ledger did not take the question")
+    return "asked them" if theirs else "asked the room"
+
+
+def release_answered(project, card: str, verdict: str) -> str:
+    """Close every open copy of the release question about `card` with the verdict that counted
+    (#448 slice 4, through the card's door since slice 6) — `worked` or `did-not-work`, the room's
+    and the requester's in ONE write: one release asked in two places is answered once. And
+    `theirs-worked`: only the copies asked of the requester, as worked — their yes recorded where
+    their word does not release it, and the room's left open for whoever does.
+
+    The ledger is read here, never taken from the caller: another turn may have closed a copy in
+    between, and `close_by_observation` then appends nothing — a settled outcome is never
+    rewritten. Raises when the ledger cannot be written, so the sweep applies it again."""
+    from openfactory.memory import store as loop_store
+    from openfactory.memory.ledger import ACCEPTANCE, close_by_observation, waiting
+    from openfactory.product import followup
+
+    name = getattr(project, "name", "") or ""
+    issue = _bare(card)
+    only_theirs = verdict == "theirs-worked"
+    said = "worked" if only_theirs else verdict
+    open_now = [x for x in waiting(loop_store.read(name), owner=followup.OWNER)
+                if x.kind == ACCEPTANCE and _bare(followup.is_release(x)) == issue
+                and (not only_theirs or (x.context or {}).get("conversation"))]
+    rows = close_by_observation(open_now, {(x.kind, x.subject, x.about): said for x in open_now})
+    if not rows:
+        return "no question about its release was open"
+    if loop_store.write(name, rows) < len(rows):
+        raise RuntimeError("the ledger did not take every row")
+    return f"{len(rows)} closed as {said}"
 
 
 def _bare(ref: str) -> str:

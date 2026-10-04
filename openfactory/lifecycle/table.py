@@ -16,7 +16,11 @@ the vendor's own interface (`OBSERVED`, D8), the job's tellings — the question
 outcomes the box hands back for the worker to apply (D7): `refused`, `pr_opened`, `merged`,
 beside the `parked` and `delivered` of slice 2 — and `promised`, the one event ADR-0055 gained
 after its slices were cut (amended 2026-10-04): a card joining a requirement's promise, which no
-one card's filing can carry, and which moves nothing (`MOVES_NOTHING`).
+one card's filing can carry, and which moves nothing (`MOVES_NOTHING`). The ADR's slice 4, #448
+slice 6 (amended 2026-10-05), decides the requester's loop past the pull request: `resumed`,
+`accepted`, `staged`, `stage_rejected` and `released`, with `merged` telling its requester and
+`delivered` allowed from a card the record holds merged or staged (`HELD`). Only `picked_up` is
+still undecided.
 """
 
 from __future__ import annotations
@@ -77,8 +81,8 @@ class State(StrEnum):
 #: answer, which the rows still ask in this slice (`catalog._withdraw_refusal`, `_stop`).
 #:
 #: `merged` and `staged` are not read from a column: `in_review` holds a card both before and
-#: after its merge. They become readable when the job's endings write the record (slice 2), and no
-#: event of this slice turns on them.
+#: after its merge, and `needs_action` a production gate like any park. The record says them, and
+#: the door reads it for the events whose legality turns on them (`READ_FROM_THE_RECORD`).
 BY_COLUMN: dict[str, State] = {
     "backlog": State.BACKLOG,
     "todo": State.TODO,
@@ -91,6 +95,13 @@ BY_COLUMN: dict[str, State] = {
 #: The ending a person causes while the factory holds the card: the work stops, the card goes back
 #: to the backlog, and nothing it promised is cancelled (D10).
 _BACK_TO_THE_BACKLOG = (CardEvent.DISCARDED, CardEvent.SKIPPED, CardEvent.STOPPED)
+
+#: A CARD THE FACTORY HOLDS, from its first progress mark to its delivery (#448 slice 6, ADR-0055
+#: amended 2026-10-05): under a job, waiting on a person at a gate, merged, at a stage. Where the
+#: requester's loop past the pull request may happen — the engine says which job waits on what,
+#: and every caller asks its gate first; the table refuses what no gate could be asked about: a
+#: card nobody started, or one done or gone.
+HELD = frozenset({State.RUNNING, State.WAITING_ON_A_PERSON, State.MERGED, State.STAGED})
 
 #: Where each event may happen. EVERY EVENT HAS A ROW, and a pair a row does not name is refused:
 #: an empty set is "refused everywhere, because no slice has decided it yet" — written, never
@@ -129,7 +140,9 @@ ALLOWED: dict[CardEvent, frozenset[State]] = {
     # THE JOB'S OWN ENDINGS (#413, part 2), applied by the worker from the activities that already
     # wrote them — `mark_needs_action` and `settle_ticket` — so no workflow history changes
     CardEvent.PARKED: frozenset({State.TODO, State.RUNNING, State.WAITING_ON_A_PERSON}),
-    CardEvent.DELIVERED: frozenset({State.RUNNING, State.WAITING_ON_A_PERSON}),
+    # AND FROM A CARD THE RECORD HOLDS MERGED OR AT A STAGE (#448 slice 6): its delivery is the
+    # last declared stage's (#448 slice 5), the deploy watch's green or the production release
+    CardEvent.DELIVERED: HELD,
     # A PASS A PERSON ASKED FOR, BACK AT THE MERGE GATE (#413 part 3, #448 slice 2)
     CardEvent.ADJUSTED: frozenset({State.RUNNING, State.WAITING_ON_A_PERSON}),
     # A CARD JUST WRITTEN, PUT IN THE COLUMN IT IS FILED IN (#414). Read the moment after it was
@@ -177,7 +190,25 @@ ALLOWED: dict[CardEvent, frozenset[State]] = {
     # is no longer to come, and a promise waiting on it waits for a transition it will not make
     CardEvent.PROMISED: frozenset({State.BACKLOG, State.TODO, State.RUNNING,
                                    State.WAITING_ON_A_PERSON, State.MERGED, State.STAGED}),
+    # THE REQUESTER'S LOOP PAST THE PULL REQUEST (#448 slice 6, ADR-0055 amended 2026-10-05), on a
+    # card the factory holds. A pass sent back from the merge gate or the last one; a yes recorded
+    # against what was tried; the box at a production gate, and the round asking about it; a "not
+    # yet" there; the yes that releases it
+    CardEvent.RESUMED: HELD,
+    CardEvent.ACCEPTED: HELD,
+    CardEvent.STAGED: HELD,
+    CardEvent.STAGE_REJECTED: HELD,
+    CardEvent.RELEASED: HELD,
 }
+
+#: THE EVENTS WHOSE LEGALITY TURNS ON MERGED OR STAGED (#448 slice 6, ADR-0055 D2 amended
+#: 2026-10-05), which no column holds: a merged card sits In review like one under review, and a
+#: production gate in Needs Action like any park. For these the door refines a column that reads
+#: `running` or `waiting_on_a_person` by the record's latest move when that move left the card
+#: merged or staged (`card.transition`); every other event is judged as it always was.
+READ_FROM_THE_RECORD: frozenset[CardEvent] = frozenset({
+    CardEvent.RESUMED, CardEvent.ACCEPTED, CardEvent.STAGED, CardEvent.STAGE_REJECTED,
+    CardEvent.RELEASED})
 
 #: The events that need the card CLOSED on its tracker, whatever its state says. `delivered` is a
 #: card the factory finished, closed or not yet: every row closes it in Done — the local board too
@@ -196,7 +227,7 @@ WHERE_NO_BOARD_PLACES_IT: frozenset[CardEvent] = frozenset({
     CardEvent.WITHDRAWN, CardEvent.REMOVED, CardEvent.QUESTION_ANSWERED, CardEvent.PARKED,
     CardEvent.DELIVERED, CardEvent.ADJUSTED, CardEvent.FILED, CardEvent.PROMOTED,
     CardEvent.REORDERED, CardEvent.EDITED, CardEvent.QUESTION_ASKED, CardEvent.REFUSED,
-    CardEvent.PR_OPENED, CardEvent.MERGED, CardEvent.PROMISED})
+    CardEvent.PR_OPENED, CardEvent.MERGED, CardEvent.PROMISED, *READ_FROM_THE_RECORD})
 
 #: THE EVENTS THAT MOVE NOTHING (#414): what they record is a fact about the card's promises, never
 #: where the card is — no column, no write to the card, no snapshot to forget, and the state after
@@ -303,14 +334,30 @@ class Loops:
     opens — the delivery a reported defect, or a card somebody asked for in a conversation, is
     owed with its filing; a requirement's, over every card of its breakdown, with each card's
     `promised` — ONE per subject, so the first card to carry it opens it and every other finds it
-    owed already (#414)."""
+    owed already (#414).
+
+    AND THE RELEASE QUESTION, the "did it work?" asked of a change parked at its last gate (#448
+    slice 6): `release:ask` opens the room's copy once the room was asked, `release:ask-theirs` the
+    requester's once they were told (`RELEASE_ASKS`); `release:worked` and `release:did-not-work`
+    close every open copy with the verdict that counted, `release:theirs-worked` only the
+    requester's — their yes recorded, the room's left for whoever releases (`RELEASE_CLOSES`)."""
 
     action: str
 
 
+#: The release question's actions (`Loops`), opened by the round's asking (`staged`) and closed by
+#: the verdicts that count (`accepted` at the last gate, `stage_rejected`, `released`).
+RELEASE_ASK, RELEASE_ASK_THEIRS = "release:ask", "release:ask-theirs"
+RELEASE_WORKED, RELEASE_THEIRS_WORKED = "release:worked", "release:theirs-worked"
+RELEASE_DID_NOT_WORK = "release:did-not-work"
+RELEASE_ASKS = frozenset({RELEASE_ASK, RELEASE_ASK_THEIRS})
+RELEASE_CLOSES = frozenset({RELEASE_WORKED, RELEASE_THEIRS_WORKED, RELEASE_DID_NOT_WORK})
+
+
 @dataclass(frozen=True)
 class Tell:
-    """The requester's conversation is told, once, what happened and where the card is."""
+    """The requester's conversation is told, once, what happened and where the card is — or, for
+    `TRIED`, the product's room, which a product admin reads (#448 slice 4)."""
 
     notice: str
 
@@ -340,6 +387,10 @@ WRITES_THE_CARD = (Column, Place, Close, Remove, Reopen, Comment)
 STOPPED_WORK, WILL_NOT_BE_BUILT, BACK_ON_THE_BOARD = "stopped_work", "will_not_be_built", "back"
 PASS_READY = "pass_ready"
 READY_FOR_YOU = "ready_for_you"
+#: The requester's loop past the pull request (#448 slice 6): the change went in (`merged`), it is
+#: theirs to try at a stage (`staged`), and — to the ROOM — they tried it and say it is right
+#: where their word does not release it (`accepted` at the last gate).
+MERGED_FOR_YOU, STAGED_FOR_YOU, TRIED = "merged_for_you", "staged_for_you", "tried"
 
 _GONE = (Comment(), Loops("cancel"), Tell(WILL_NOT_BE_BUILT), Preview("stop"), Forget())
 
@@ -435,8 +486,46 @@ def _row(event: CardEvent, facts: Mapping[str, object]) -> tuple[Effect, ...]:
                 Forget())
     if event is CardEvent.MERGED:
         # MERGED, AND OVERSEEN WHILE IT DEPLOYS: `in_review` until the delivery — the promotion's
-        # last stage, or the settle when nothing follows the merge (ADR-0049 slice 5)
-        return (Column("merged"), *_said(facts), Forget())
+        # last stage, or the settle when nothing follows the merge (ADR-0049 slice 5). AND ITS
+        # REQUESTER HEARS IT WENT IN (#448 slice 6) when the job's telling hands it in — the one
+        # hand that knows whether stages follow (`stages_follow`), keyed by the pull request
+        # (`handed_back.merged_event`); the box's hand-back and the settle tell nobody
+        tell = ((Tell(MERGED_FOR_YOU),) if "stages_follow" in facts and facts.get("pr_url")
+                else ())
+        return (Column("merged"), *_said(facts), *tell, Forget())
+    if event is CardEvent.RESUMED:
+        # A PERSON SENT IT BACK FOR ANOTHER PASS (#448 slice 6) — from the merge gate, on the same
+        # pull request, or from the last gate, as a new change. The bar was corrected and the pass
+        # sent by the transition's act; the pass's progress marks are its column, and `adjusted`
+        # ends it, so nothing else is written here
+        return (*_said(facts), Forget())
+    if event is CardEvent.ACCEPTED:
+        if facts.get("gate") == "last":
+            # THE REQUESTER TRIED IT AT THE LAST GATE AND SAYS IT IS RIGHT, AND THEIR WORD DOES
+            # NOT RELEASE IT (#448 slice 4, `release_by_requester` off): their copy of the question
+            # closes as worked, the room's stays for whoever releases, and the room hears it
+            return (Loops(RELEASE_THEIRS_WORKED), Tell(TRIED), *_said(facts), Forget())
+        # "THAT'S IT", RECORDED AGAINST THE HEAD THEY TRIED (#448 slice 3) by the transition's act;
+        # the card says who, on which head, and whether it is going in
+        return (*_said(facts), Forget())
+    if event is CardEvent.STAGED:
+        if facts.get("asked_at"):
+            # THE ROUND ASKED THE ROOM, AND THE QUESTION LANDED (#448 slice 4): the room's copy
+            # opens, the requester is told where they asked — once per run of the job — and their
+            # own copy opens only when they were (`ports.loops`). The card does not move
+            return (Loops(RELEASE_ASK), Tell(STAGED_FOR_YOU), Loops(RELEASE_ASK_THEIRS))
+        # THE BOX REACHED A PRODUCTION GATE (#448 slice 6) — a park until now. It waits on a person
+        # there; nobody is told yet: the requester hears it after the room's question landed
+        return (Column("awaiting_prod_approval"), *_said(facts), Forget())
+    if event is CardEvent.STAGE_REJECTED:
+        # "NOT YET" AT THE LAST GATE, FROM SOMEBODY WHOSE VERDICT COUNTS (#448 slice 4): every copy
+        # of the question closes as not worked; the words become the next pass (`resumed`)
+        return (*_said(facts), Loops(RELEASE_DID_NOT_WORK), Forget())
+    if event is CardEvent.RELEASED:
+        # THE YES THAT PUTS IT IN FRONT OF EVERYONE, delivered to the parked job by the
+        # transition's act (the sealed `approve_prod`): every copy of the question closes as
+        # worked. The box says the approval on the card as it tags
+        return (*_said(facts), Loops(RELEASE_WORKED), Forget())
     if event is CardEvent.QUESTION_ANSWERED:
         before = str(facts.get("before") or "")
         if before in _GONE_STATES:
@@ -514,6 +603,17 @@ def after(event: CardEvent, facts: Mapping[str, object] | None = None) -> State 
         return State.MERGED
     if event is CardEvent.DELIVERED:
         return State.DELIVERED
+    if event in (CardEvent.RESUMED, CardEvent.RELEASED):
+        # ADJUSTING IS NOT A STATE (D2): a card under a pass is running; so is one being released
+        return State.RUNNING
+    if event in (CardEvent.STAGED, CardEvent.STAGE_REJECTED):
+        # a "not yet" leaves the job waiting at the stage it was said at
+        return State.STAGED
+    if event is CardEvent.ACCEPTED:
+        # a yes moves no card: it is where it was — at the merge gate, or at a stage
+        before = str(facts.get("before") or "")
+        return State(before) if before else (State.STAGED if facts.get("gate") == "last"
+                                             else State.WAITING_ON_A_PERSON)
     if event is CardEvent.FILED:
         return BY_COLUMN.get(_filed_in(facts) or "backlog", State.BACKLOG)
     if event is CardEvent.PROMOTED:
