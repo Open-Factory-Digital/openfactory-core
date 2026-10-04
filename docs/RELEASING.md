@@ -11,7 +11,7 @@ stops before every step that cannot be undone.
 |---|---|---|
 | release manager | @robertocsp | the cut date, what goes in, every tag, the go/no-go for each release |
 | reviewer | @hermesfelipe | reviews every pull request, the version and backport pull requests included |
-| deputy release manager | to be named by the release manager | takes the role when the release manager cannot: the `v*` ruleset lists both, so a release never waits on one person |
+| deputy release manager | @hermesfelipe | takes the role when the release manager cannot: the `v*` ruleset lists both, so a release never waits on one person |
 | release agent | `release-manager` | audits, prepares the pull requests, runs the rehearsals, drafts the notes. It never tags, publishes, merges or changes a setting without the release manager's explicit go |
 
 ## Running it with the agent
