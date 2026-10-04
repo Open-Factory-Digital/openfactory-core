@@ -165,6 +165,8 @@ def _this_outcomes_id(project, card: str, facts, own: str) -> str:
         held = record.read(record.keyed_sink(), getattr(project, "name", "") or "",
                            canonical_ref(card)).by_event_id(gate)
     except Exception:  # noqa: BLE001 — the door reads the record too, and says so if it cannot
+        log.info("could not read #%s's record to tell a later pass from the first — the pull "
+                 "request's own event is used", card, exc_info=True)
         held = None
     if held is None or (own and str((held.facts or {}).get("handed_back") or "") == own):
         return gate
