@@ -65,7 +65,8 @@ def test_the_probe_target_is_never_offered_to_a_PERSON():
     `/api/v1/health` to confirm a feature is sending them to the wrong page — and both exist on
     the pilot's own staging deploy, as different strings."""
     only_health = _manifest(
-        environments={"qa": Environment(health_url="https://qa/health"), "prod": Environment()},
+        environments={"qa": Environment(health_url="https://qa/health"),
+                      "prod": Environment(deploy_ref="prod")},
         promote=["qa", "prod"])
     assert only_health.where_a_person_looks("qa") == ""
 
@@ -90,9 +91,10 @@ def test_the_stage_a_person_confirms_is_DERIVED_when_nobody_declared_one():
 
 def test_a_stage_can_CLAIM_the_confirmation():
     declared = _manifest(
-        environments={"dev": Environment(url="https://dev", validate_with="product"),
-                      "qa": Environment(url="https://qa"),
-                      "prod": Environment()},
+        environments={"dev": Environment(deploy_ref="dev", url="https://dev",
+                                         validate_with="product"),
+                      "qa": Environment(deploy_ref="qa", url="https://qa"),
+                      "prod": Environment(deploy_ref="prod")},
         promote=["dev", "qa", "prod"])
     assert declared.stage_a_person_confirms() == "dev"
 
@@ -103,10 +105,11 @@ def test_the_CHAIN_wins_over_the_order_things_were_declared_in():
     out of `promote:` — a spare, a sandbox, somebody's branch deploy. The chain is what the
     platform walks, so the chain is what somebody is asked about."""
     with_a_spare = _manifest(
-        environments={"dev": Environment(url="https://dev"),
-                      "qa": Environment(url="https://qa"),
+        environments={"dev": Environment(deploy_ref="dev", url="https://dev"),
+                      "qa": Environment(deploy_ref="qa", url="https://qa"),
+                      # off the chain, so a `url:` alone is enough: nothing is announced for it
                       "sandbox": Environment(url="https://sandbox"),
-                      "producao": Environment()},
+                      "producao": Environment(deploy_ref="producao")},
         promote=["dev", "qa", "producao"])
     assert with_a_spare.stage_a_person_confirms() == "qa", (
         "somebody is being sent to an environment that is not even in the promotion chain")
@@ -117,7 +120,8 @@ def test_PRODUCTION_is_never_the_place_somebody_is_asked_to_validate():
     derived path — with no `promote:` the chain observes nothing it recognises, so the fallback
     runs and must still exclude production."""
     derived = _manifest(environments={"qa": Environment(url="https://qa"),
-                                      "prod": Environment(url="https://prod")})
+                                      "prod": Environment(deploy_ref="prod",
+                                                          url="https://prod")})
     assert derived.stage_a_person_confirms() == "qa"
 
 
@@ -169,18 +173,20 @@ def _run(manifest):
 def test_a_flow_that_ENDS_AT_STAGING_is_asked_to_validate_it():
     """THE CARD. No production stage means no gate, so a person confirming the change is right is
     the whole of what is left — and it was the one flow that was never asked."""
-    # NO `promote:` AND A NAME OF THEIR OWN. The derived chain knows `staging` and `prod`, so
-    # this shop yields no observed stages at all — and asking off the chain alone would leave them
-    # exactly where the card found them: a real test environment nobody is ever sent to.
-    ends_at_qa = _manifest(
-        environments={"qa": Environment(deploy_ref="qa", url="https://qa.acme.com")})
+    # NO `promote:`, SO THE STAGE IS `staging` — the name the derived chain walks. This used to
+    # be a `qa` of the shop's own naming, which the derived chain does not walk at all: it was
+    # asked about and never observed, and the delivery announced at the merge. That shape is
+    # refused when the manifest loads since #501 (`test_a_manifest_that_would_announce_early_is_
+    # refused.py`); a name of their own is declared with `promote:`.
+    ends_at_staging = _manifest(
+        environments={"staging": Environment(deploy_ref="staging", url="https://stg.acme.com")})
 
-    result, tracker, notifier = _run(ends_at_qa)
+    result, tracker, notifier = _run(ends_at_staging)
 
     assert result.state == JobState.DONE
-    assert result.look_stage == "qa" and result.look_at == "https://qa.acme.com"
+    assert result.look_stage == "staging" and result.look_at == "https://stg.acme.com"
     said = " ".join(tracker.comments)
-    assert "https://qa.acme.com" in said, "the ticket does not say where to look"
+    assert "https://stg.acme.com" in said, "the ticket does not say where to look"
     assert "confirm" in said.lower()
     assert any(level == "action_required" for level, _m in notifier.sent), (
         "a stage nobody is gating is reported as news rather than as something to do")
@@ -205,11 +211,11 @@ def test_a_project_with_NO_product_channel_still_gets_the_address():
 def test_an_EMPTY_address_never_produces_a_message_that_implies_one():
     """AC4, and the failure mode is specific: a person opens the message, looks for a link, finds
     none, and concludes the platform is broken rather than that their project never said where."""
-    nowhere = _manifest(environments={"qa": Environment(deploy_ref="qa")})
+    nowhere = _manifest(environments={"staging": Environment(deploy_ref="staging")})
 
     result, tracker, notifier = _run(nowhere)
 
-    assert result.look_stage == "qa" and result.look_at == ""
+    assert result.look_stage == "staging" and result.look_at == ""
     said = " ".join(tracker.comments) + " ".join(m for _l, m in notifier.sent)
     assert "url:" in said, "it does not name the field that would fix this"
     assert "http" not in said.replace("https://", "").replace("http://", ""), (
