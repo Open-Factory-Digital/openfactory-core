@@ -17,6 +17,12 @@ anywhere else:
 sense: a red check, a live preview and a reminder of a waiting gate say how far a job is, and no
 card changes state with them.
 
+THE BOX'S PROGRESS MARKS ARE ADMITTED BY RULE, not named on the list (D7, #414): the box's one
+writer of each runner (`BOX_WRITERS`) may call `set_state` only inside `if <state> in
+PROGRESS_MARKS:`, writing that same state — and `PROGRESS_MARKS` is held here to exactly its
+members. Every other state the box reaches is an outcome, handed back in its result and applied
+by the worker through the door; one written from the box fails this walk like any other write.
+
 THE WRITERS NOT MOVED YET are in `card_writers_outside_the_door.py`, each with why and the slice
 that moves it, under a ceiling and a baseline held HERE — so a new exemption is a visible change of
 this file, never a quiet line in that one.
@@ -54,13 +60,20 @@ NOT_CALLERS = {
                                      "record together — data removal, not a card's transition",
 }
 
+#: THE BOX'S ONE WRITER OF EACH RUNNER, whose `set_state` is admitted by rule for a progress mark.
+BOX_WRITERS = frozenset({("openfactory/orchestrator/machine.py", "_set_state"),
+                         ("openfactory/orchestrator/promotion.py", "_state")})
+
 #: THE CEILING AND THE BASELINE, committed. Slice 1 ended at 27: the writers slices 2 and 3 own;
 #: 25 since #413's first part moved the card-question sweep through the door; 23 since its
 #: second moved the job's park and settle; 16 since #414's first part moved filing, the moves
-#: between the operator's columns and the stale-pickup healer (an observed change, D8).
+#: between the operator's columns and the stale-pickup healer (an observed change, D8); 14 since
+#: the box hands its outcomes back and the worker applies them (#414, D7) — its progress marks
+#: stay, by rule (`BOX_WRITERS`); 13 since one card's filing opens the promise it makes through
+#: the door (`Loops("open")`).
 #: Each slice lowers the ceiling and drops what it moved in from both; slice 3 ends at zero, and
-#: the sixteen left are its second part's (`card_writers_outside_the_door.py`).
-CEILING = 16
+#: what is left is its second part's (`card_writers_outside_the_door.py`).
+CEILING = 13
 BASELINE = frozenset({
     ("openfactory/runtime/temporal/activities.py", "_child_to_todo", "set_state"),
     ("openfactory/runtime/temporal/activities.py", "_child_to_todo", "set_status"),
@@ -74,9 +87,6 @@ BASELINE = frozenset({
     ("openfactory/runtime/temporal/activities.py", "_pull_requests_waiting", "ready_at_the_gate"),
     ("openfactory/product/events.py", "deliver", "close_by_observation"),
     ("openfactory/ops/impediment.py", "resolved", "close_ticket"),
-    ("openfactory/orchestrator/machine.py", "_set_state", "set_state"),
-    ("openfactory/orchestrator/promotion.py", "_state", "set_state"),
-    ("openfactory/product/module.py", "_follow_card", "open_loop"),
     ("openfactory/product/followup.py", "deliveries_to_open", "open_loop"),
 })
 
@@ -84,6 +94,29 @@ BASELINE = frozenset({
 def _named(node: ast.AST) -> set[str]:
     return ({x.id for x in ast.walk(node) if isinstance(x, ast.Name)}
             | {x.attr for x in ast.walk(node) if isinstance(x, ast.Attribute)})
+
+
+def _name_of(node: ast.AST) -> str:
+    return node.id if isinstance(node, ast.Name) else node.attr if isinstance(
+        node, ast.Attribute) else ""
+
+
+def _a_progress_mark(fn: ast.AST, call: ast.Call) -> bool:
+    """Whether `call` — a `set_state` inside `fn` — sits in the body of an `if <state> in
+    PROGRESS_MARKS:` of `fn`, and writes that same `<state>`. The else branch is not the body: an
+    outcome handed back there writes nothing, and one written there is a write like any other."""
+    for node in ast.walk(fn):
+        test = getattr(node, "test", None) if isinstance(node, ast.If) else None
+        if not (isinstance(test, ast.Compare) and len(test.ops) == 1
+                and isinstance(test.ops[0], ast.In) and isinstance(test.left, ast.Name)
+                and len(test.comparators) == 1
+                and _name_of(test.comparators[0]) == "PROGRESS_MARKS"):
+            continue
+        inside = any(sub is call for stmt in node.body for sub in ast.walk(stmt))
+        state = call.args[1] if len(call.args) > 1 else None
+        if inside and isinstance(state, ast.Name) and state.id == test.left.id:
+            return True
+    return False
 
 
 def card_writes(root: pathlib.Path, *, rel_to: pathlib.Path) -> tuple[set[tuple], int]:
@@ -113,6 +146,9 @@ def card_writes(root: pathlib.Path, *, rel_to: pathlib.Path) -> tuple[set[tuple]
             fn = where(node.lineno)
             here = fn.name if fn is not None else "<module>"
             if name in WRITES:
+                if (name == "set_state" and (rel, here) in BOX_WRITERS
+                        and _a_progress_mark(fn, node)):
+                    continue      # the box's progress mark, by rule (D7)
                 found.add((rel, here, name))
             elif name in LOOP_WRITES and fn is not None and _named(fn) & CARD_LOOPS:
                 found.add((rel, here, name))
@@ -184,3 +220,63 @@ def test_the_walk_reads_the_package_and_sees_a_writer_planted_in_it(tmp_path):
     assert found == {("openfactory/product/rogue.py", "drop", "close_ticket"),
                      ("openfactory/product/rogue.py", "promise", "open_loop"),
                      ("openfactory/product/rogue.py", "say", "card_moved")}, found
+
+
+# ── the box writes its progress marks, and hands every outcome back (D7, #414) ────────────────
+
+def test_the_progress_marks_are_exactly_the_box_s_own(tmp_path):
+    """The rule admits the box's `set_state` for the states in `PROGRESS_MARKS` — so the set IS the
+    rule, and widening it is a change of this test. Each member says how far a job is and has no
+    consequence; an outcome (a pull request, a merge, a delivery, a refusal, a park) is not one."""
+    from openfactory.contracts.state import PROGRESS_MARKS, JobState
+
+    assert PROGRESS_MARKS == frozenset({
+        JobState.SPEC_VALIDATION, JobState.PREPARING, JobState.PLANNING, JobState.IMPLEMENTING,
+        JobState.VALIDATING, JobState.REPAIRING, JobState.REVIEWING, JobState.PAUSED,
+        JobState.STAGING_VERIFYING, JobState.PROD_RELEASING, JobState.PROD_VERIFYING,
+        JobState.ROLLING_BACK})
+    for outcome in (JobState.PR_OPEN, JobState.MERGED, JobState.DONE, JobState.ON_HOLD,
+                    JobState.NEEDS_REFINEMENT, JobState.BLOCKED, JobState.FAILED,
+                    JobState.AWAITING_PROD_APPROVAL):
+        assert outcome not in PROGRESS_MARKS, f"{outcome} is an outcome, and handed back"
+
+
+def _a_box(tmp_path, body: str, *, function: str = "_set_state") -> set:
+    box = tmp_path / "openfactory" / "orchestrator" / "machine.py"
+    box.parent.mkdir(parents=True, exist_ok=True)
+    box.write_text("from openfactory.contracts.state import PROGRESS_MARKS\n"
+                   f"def {function}(self, ticket, state, reason=None):\n{body}", encoding="utf-8")
+    found, _ = card_writes(tmp_path / "openfactory", rel_to=tmp_path)
+    return found
+
+
+def test_a_progress_mark_from_the_box_is_admitted_and_an_outcome_from_it_fails(tmp_path):
+    """The rule, both ways, on a box planted in a tree the walk reads: the box's writer admitted
+    under `if state in PROGRESS_MARKS:` writing that state, and every other shape of it found."""
+    written = {("openfactory/orchestrator/machine.py", "_set_state", "set_state")}
+    assert _a_box(tmp_path, "    if state in PROGRESS_MARKS:\n"
+                            "        try:\n"
+                            "            self.tracker.set_state(ticket.id, state)\n"
+                            "        except Exception:\n"
+                            "            pass\n"
+                            "    else:\n"
+                            "        self._handed_back.append(state)\n") == set()
+    # an outcome written from the box — the write the hand-back replaced
+    assert _a_box(tmp_path, "    self.tracker.set_state(ticket.id, state, reason=reason)\n") \
+        == written
+    # written from the else branch: the outcome side of the rule
+    assert _a_box(tmp_path, "    if state in PROGRESS_MARKS:\n"
+                            "        pass\n"
+                            "    else:\n"
+                            "        self.tracker.set_state(ticket.id, state)\n") == written
+    # a set that is not the closed one
+    assert _a_box(tmp_path, "    if state in WORKING:\n"
+                            "        self.tracker.set_state(ticket.id, state)\n") == written
+    # a state other than the one the test admitted
+    assert _a_box(tmp_path, "    if state in PROGRESS_MARKS:\n"
+                            "        self.tracker.set_state(ticket.id, 'done')\n") == written
+    # the shape, from a function that is not the box's writer
+    assert _a_box(tmp_path, "    if state in PROGRESS_MARKS:\n"
+                            "        self.tracker.set_state(ticket.id, state)\n",
+                  function="_finish") == {("openfactory/orchestrator/machine.py", "_finish",
+                                           "set_state")}

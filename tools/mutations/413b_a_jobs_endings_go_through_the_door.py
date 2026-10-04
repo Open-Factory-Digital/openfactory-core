@@ -28,8 +28,9 @@ MUTATIONS = [
      "            if False:\n"),
 
     ("a delivered card is not moved to Done, so nothing closes it", TABLE,
-     '        return (Column("done"), Comment(), Forget())\n',
-     '        return (Comment(), Forget())\n'),
+     # re-pinned 2026-10-04: the comment is the caller's note when it has one (#414)
+     '        return (Column("done"), *_said(facts), Forget())\n',
+     '        return (*_said(facts), Forget())\n'),
 
     ("the settle of a DONE job no longer goes through the door", ACTIVITIES,
      "    event = {JobState.SKIPPED: CardEvent.SKIPPED, JobState.DONE: CardEvent.DELIVERED}"
@@ -56,7 +57,8 @@ MUTATIONS = [
 
     ("the ceiling is raised quietly, so the list can grow", GUARD_TEST,
      # RE-PINNED 2026-10-02 (#414): the ceiling is 16 since #414's first part
-     "CEILING = 16\n",
-     "CEILING = 17\n",
+     # re-pinned 2026-10-04: 13 since its second part moved the box's outcomes and one card's promise (#414)
+     "CEILING = 13\n",
+     "CEILING = 14\n",
      GUARD_TEST),
 ]

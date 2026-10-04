@@ -10,8 +10,9 @@ default is refusal, so an event becomes possible only when somebody writes where
 what follows it — in the same change, here. Slice 1 (#412) decides the endings a person causes:
 `discarded`, `skipped`, `stopped`, `closed`, `withdrawn`, `removed`, `reopened`; slice 2 (#413)
 the job's endings; slice 3 (#414) a card's filing, its moves between the operator's columns and
-its edits — `filed`, `promoted`, `reordered`, `edited` — and what follows a change somebody made
-in the vendor's own interface (`OBSERVED`, D8).
+its edits — `filed`, `promoted`, `reordered`, `edited` — what follows a change somebody made
+in the vendor's own interface (`OBSERVED`, D8), and the outcomes the box hands back for the worker
+to apply (D7): `refused`, `pr_opened`, `merged`, beside the `parked` and `delivered` of slice 2.
 """
 
 from __future__ import annotations
@@ -144,6 +145,15 @@ ALLOWED: dict[CardEvent, frozenset[State]] = {
     # read at pickup, so after it the card is the factory's and a correction is a comment. A card
     # corrected at the merge gate, judged again with its review marked out of date, is #448 slice 1
     CardEvent.EDITED: frozenset({State.BACKLOG, State.TODO}),
+    # THE BOX'S OUTCOMES, HANDED BACK AND APPLIED BY THE WORKER (#414, D7) — where the box used to
+    # write them unconditionally. A job holds the card from the queue onwards: a card in TO-DO is
+    # one it was handed (a refusal or a pull request found already open happen before the first
+    # progress mark), `running` is what its progress marks show, and a person's gate is where a
+    # resumed job, a repair pass or a re-review starts from. Never a card that is gone: a job
+    # whose card was closed under it does not move it back onto the board.
+    CardEvent.REFUSED: frozenset({State.TODO, State.RUNNING, State.WAITING_ON_A_PERSON}),
+    CardEvent.PR_OPENED: frozenset({State.TODO, State.RUNNING, State.WAITING_ON_A_PERSON}),
+    CardEvent.MERGED: frozenset({State.RUNNING, State.WAITING_ON_A_PERSON}),
 }
 
 #: The events that need the card CLOSED on its tracker, whatever its state says. `delivered` is a
@@ -160,7 +170,8 @@ WHERE_NO_BOARD_PLACES_IT: frozenset[CardEvent] = frozenset({
     CardEvent.DISCARDED, CardEvent.SKIPPED, CardEvent.STOPPED, CardEvent.CLOSED,
     CardEvent.WITHDRAWN, CardEvent.REMOVED, CardEvent.QUESTION_ANSWERED, CardEvent.PARKED,
     CardEvent.DELIVERED, CardEvent.ADJUSTED, CardEvent.FILED, CardEvent.PROMOTED,
-    CardEvent.REORDERED, CardEvent.EDITED})
+    CardEvent.REORDERED, CardEvent.EDITED, CardEvent.REFUSED, CardEvent.PR_OPENED,
+    CardEvent.MERGED})
 
 #: Who `by` is when nobody of ours made the change: the board sweep found it on the tracker, made
 #: in the vendor's own interface, and the record did not hold it (D8). The door judges such an
@@ -193,9 +204,12 @@ def allowed(state: State | None, event: CardEvent, *, open_card: bool = True) ->
 
 @dataclass(frozen=True)
 class Column:
-    """The card moves to the column with this neutral key."""
+    """The card moves to the column with this neutral key — or of this job state, through the
+    tracker's one writer of it. `needs_person` is what a state cannot say on its own (#166): a
+    pull request waiting on a person and one an armed merge is watching are both `pr_open`."""
 
     key: str
+    needs_person: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -239,7 +253,9 @@ class Loops:
     """The card's share of the product role's promises (D10). `cancel`: the card is gone, so its
     questions and its part of a delivery close as `cancelled`. `restore`: a cancelled card is
     back, so is its part of the delivery it was cancelled from. `answer`: the question the card
-    waited on closes as answered; `moot`: it closes as cancelled — the card is gone (#413)."""
+    waited on closes as answered; `moot`: it closes as cancelled — the card is gone (#413).
+    `open`: the promise a filing makes — the delivery a reported defect, or a card somebody asked
+    for in a conversation, is owed — opens, as the filing carried it (`facts["owed"]`, #414)."""
 
     action: str
 
@@ -334,8 +350,26 @@ def _row(event: CardEvent, facts: Mapping[str, object]) -> tuple[Effect, ...]:
     if event is CardEvent.DELIVERED:
         # the card closes as delivered (`Column("done")` is DONE, which every row now closes on);
         # the announcement stays the job's one exit's (`record_outcome`), which runs after the
-        # settle and reads the board fresh — what it lacked on the local row was the closed card
-        return (Column("done"), Comment(), Forget())
+        # settle and reads the board fresh — what it lacked on the local row was the closed card.
+        # The comment is the caller's note when it has one: a delivery the box handed back was
+        # said on the card by the box as it reached it (#414), and an empty note is no comment
+        return (Column("done"), *_said(facts), Forget())
+    if event is CardEvent.REFUSED:
+        # THE FACTORY WILL NOT BUILD THE CARD AS WRITTEN (#414) — its spec or its plan gate said
+        # so, and the card goes back to a person to refine. The box said why on the card as it
+        # refused it; what follows here is the column and the snapshot
+        return (Column("needs_refinement"), *_said(facts), Forget())
+    if event is CardEvent.PR_OPENED:
+        # THE CHANGE IS IN A PULL REQUEST (#414): on the merge gate's column when a person is the
+        # blocker, in review when the factory is the one watching it. The telling and the preview
+        # are not here yet — `tell_the_requester` and the start that follows the job say them,
+        # and moving them is the requester's loop's (`_tell`, #414's other half)
+        return (Column("pr_open", needs_person=facts.get("needs_person")), *_said(facts),
+                Forget())
+    if event is CardEvent.MERGED:
+        # MERGED, AND OVERSEEN WHILE IT DEPLOYS: `in_review` until the delivery — the promotion's
+        # last stage, or the settle when nothing follows the merge (ADR-0049 slice 5)
+        return (Column("merged"), *_said(facts), Forget())
     if event is CardEvent.QUESTION_ANSWERED:
         before = str(facts.get("before") or "")
         if before in _GONE_STATES:
@@ -347,9 +381,16 @@ def _row(event: CardEvent, facts: Mapping[str, object]) -> tuple[Effect, ...]:
     if event is CardEvent.FILED:
         # PLACED WHERE IT IS FILED, and nothing said: the card's own body says who asked for it,
         # and the conversation that asked was answered there. `""` is a caller with no board — a
-        # card is still filed on a tracker alone, and there is nowhere to place it
+        # card is still filed on a tracker alone, and there is nowhere to place it.
+        #
+        # AND THE PROMISE THE FILING MAKES OPENS WITH IT (#414): a reported defect, or a card
+        # somebody asked for in a conversation, is owed its delivery, and the events about the card
+        # find their requester through it. A requirement's delivery spans several cards — some
+        # the breakdown reused rather than filed — so no one card's filing carries it
+        # (`followup.deliveries_to_open`, still outside the door)
         key = _filed_in(facts)
-        return (*((Place(key),) if key else ()), Forget())
+        owed = (Loops("open"),) if facts.get("owed") else ()
+        return (*((Place(key),) if key else ()), *owed, Forget())
     if event is CardEvent.PROMOTED:
         # NO COMMENT AND NOBODY TOLD (#414): the vendor's own history records a move, and a queue
         # position is not a promise — what the requester hears next is the work's own news
@@ -361,6 +402,12 @@ def _row(event: CardEvent, facts: Mapping[str, object]) -> tuple[Effect, ...]:
         return (Comment(), Forget())
     raise KeyError(f"no slice has decided what follows {event.value!r} — it is refused in every "
                    f"state until one does (ADR-0055 D2)")
+
+
+def _said(facts: Mapping[str, object]) -> tuple[Effect, ...]:
+    """The door's comment when the transition carries a note — none when the caller says the card
+    was told already (`note=""`), so nothing is said twice (D6)."""
+    return (Comment(),) if facts.get("note") else ()
 
 
 def after(event: CardEvent, facts: Mapping[str, object] | None = None) -> State:
@@ -377,8 +424,12 @@ def after(event: CardEvent, facts: Mapping[str, object] | None = None) -> State:
     if event is CardEvent.QUESTION_ANSWERED:
         before = str(facts.get("before") or "")
         return State.TODO if before in _STILL_PARKED else State(before)
-    if event in (CardEvent.PARKED, CardEvent.ADJUSTED):
+    if event in (CardEvent.PARKED, CardEvent.ADJUSTED, CardEvent.REFUSED):
         return State.WAITING_ON_A_PERSON
+    if event is CardEvent.PR_OPENED:
+        return State.WAITING_ON_A_PERSON if facts.get("needs_person") else State.RUNNING
+    if event is CardEvent.MERGED:
+        return State.MERGED
     if event is CardEvent.DELIVERED:
         return State.DELIVERED
     if event is CardEvent.FILED:

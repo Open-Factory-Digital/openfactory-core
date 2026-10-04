@@ -39,8 +39,9 @@ LOCAL = "openfactory/adapters/tracker/local.py"
 MUTATIONS = [
     # ── 1. the table: filing, the operator's two columns, edits ────────────────────────────────
     ("a filed card is placed nowhere, so the queue can never see it", TABLE,
-     "        return (*((Place(key),) if key else ()), Forget())\n",
-     "        return (Forget(),)\n",
+     # re-pinned 2026-10-04: the promise a filing makes opens with it (#414)
+     "        return (*((Place(key),) if key else ()), *owed, Forget())\n",
+     "        return (*owed, Forget())\n",
      TABLE_TEST),
 
     ("a card is filed into a column the factory writes, shown as started", TABLE,
@@ -68,8 +69,9 @@ MUTATIONS = [
      TABLE_TEST),
 
     ("the role's snapshot is not forgotten when a card is filed, the defect of #393", TABLE,
-     "        return (*((Place(key),) if key else ()), Forget())\n",
-     "        return (*((Place(key),) if key else ()),)\n",
+     # re-pinned 2026-10-04: the promise a filing makes opens with it (#414)
+     "        return (*((Place(key),) if key else ()), *owed, Forget())\n",
+     "        return (*((Place(key),) if key else ()), *owed)\n",
      TABLE_TEST),
 
     ("the edit's note no longer says which parts moved", CATALOG,
@@ -87,9 +89,10 @@ MUTATIONS = [
 
     ("the product role files a card by writing its column itself again, beside the door",
      MODULE,
+     # re-pinned 2026-10-04: the filing carries the promise it makes to the door (#414)
      "            placed = self._filed_through_the_door(str(ref), by=reported_by, "
      "tracker=tracker,\n"
-     "                                                  board=board)\n"
+     "                                                  board=board, owed=owed)\n"
      "            if not placed:\n"
      "                log.warning(\"OPENFACTORY_PRODUCT_TICKET_NOT_PLACED",
      "            placed = bool(board.set_column(issue=str(number), issue_url=url,\n"

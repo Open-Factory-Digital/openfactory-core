@@ -37,6 +37,7 @@ with workflow.unsafe.imports_passed_through():
         nothing_ran_note,
     )
     from openfactory.contracts.project import ADJUST_PASSES
+    from openfactory.lifecycle.handed_back import recorded_park
     from openfactory.runtime.temporal.activities import (
         adjust_pr,
         card_adjusted,
@@ -2876,12 +2877,17 @@ class JobWorkflow:
                 # it). patched(): an in-flight job replaying its pre-fix history must skip this new
                 # command to stay deterministic; new runs and their live tail set it.
                 author = ""
+                #
+                # A PARK THE BOX REACHED WAS APPLIED BY THE WORKER ALREADY (#414): its id goes with
+                # the reconcile, which the door answers from the card's record. Only the input
+                # changes, which replay records rather than compares — no new command.
                 if workflow.patched("park-marks-needs-action"):
                     try:
                         author = await workflow.execute_activity(
                             mark_needs_action,
                             HoldSyncInput(project=params.project, issue=params.issue,
-                                          state=parked.state.value, note=parked.note or ""),
+                                          state=parked.state.value, note=parked.note or "",
+                                          event_id=recorded_park(parked)),
                             start_to_close_timeout=timedelta(minutes=1), retry_policy=_ONCE)
                     except Exception:  # noqa: BLE001 — reconciliation must never block the park
                         # The board now LIES: the card still reads "In progress" while the ticket

@@ -198,7 +198,8 @@ MUTATIONS = [
 
     ("the ceiling is raised quietly, so the list can grow", GUARD_TEST,
      # RE-PINNED 2026-10-02 (#414): the ceiling is 16 since #414's first part
-     "CEILING = 16\n",
-     "CEILING = 17\n",
+     # re-pinned 2026-10-04: 13 since its second part moved the box's outcomes and one card's promise (#414)
+     "CEILING = 13\n",
+     "CEILING = 14\n",
      GUARD_TEST),
 ]

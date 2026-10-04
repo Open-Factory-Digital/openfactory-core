@@ -10,15 +10,16 @@ Keyed by `(file, function, call)`. Slice 1 (#412) moved the endings a person cau
 moved the job's park, settle, sweeps and adjust passes, and LEFT the twelve writers below that it
 did not reach: a split's children and parent, the gather's question, the delivery announcements
 and the ready-for-you tellings. Slice 3's first part (#414) moved filing, promotion, edits and the
-stale-pickup healer. What remains is slice 3's to finish (#414's second part): those twelve, the
-box's outcomes, and the promise a filing opens. #414 is done when this list is empty (D9), and
-not before.
+stale-pickup healer; its second moved the box's outcomes, which the box hands back in its result
+and the worker applies through the door (D7) — the box's progress marks are admitted by rule, not
+named here (`BOX_WRITERS`) — and the promise one card's filing opens, which the door's `filed`
+opens with it (`Loops("open")`). What remains is slice 3's to finish (#414's second part): those
+twelve, and a requirement's delivery. #414 is done when this list is empty (D9), and not before.
 """
 
 from __future__ import annotations
 
 ACTIVITIES = "openfactory/runtime/temporal/activities.py"
-MODULE = "openfactory/product/module.py"
 
 OUTSIDE_THE_DOOR: dict[tuple[str, str, str], tuple[str, str]] = {
     # ── left by slice 2 (#413), moved by slice 3's second part (#414): the job's endings ──────
@@ -47,17 +48,11 @@ OUTSIDE_THE_DOOR: dict[tuple[str, str, str], tuple[str, str]] = {
     ("openfactory/ops/impediment.py", "resolved", "close_ticket"):
         ("the factory closes its own impediment card when the impediment is gone — a platform "
          "ending", "3"),
-    # ── slice 3 (#414): the box's outcomes (its second part), and the promise a filing opens ────
-    ("openfactory/orchestrator/machine.py", "_set_state", "set_state"):
-        ("the box: its outcomes are handed back to the worker; its progress marks stay, by rule",
-         "3"),
-    ("openfactory/orchestrator/promotion.py", "_state", "set_state"):
-        ("the box's promotion: merged, staged, released — outcomes handed back", "3"),
-    # one helper since #481 opens the delivery a defect and a card somebody asked for are owed
-    (MODULE, "_follow_card", "open_loop"):
-        ("the delivery a reported defect, or a card somebody asked for, is owed (`filed`): "
-         "opened beside the door until the promise a filing opens is the door's `Loops` effect",
-         "3"),
+    # ── slice 3 (#414): the promise a requirement's filing opens ─────────────────────────────────
+    # One card's promise opens with its `filed` since the door's `Loops("open")`; a requirement's
+    # spans several cards — the breakdown files some and REUSES others, which no transition of
+    # theirs marks — so no one card's filing can carry it, and the closed event set has no event
+    # for "a card joins a requirement's promise"
     ("openfactory/product/followup.py", "deliveries_to_open", "open_loop"):
         ("the delivery a requirement's cards are owed (`filed`) — one promise over several cards, "
          "the reused ones among them, which no single card's filing can open alone", "3"),

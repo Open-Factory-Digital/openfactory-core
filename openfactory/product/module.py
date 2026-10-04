@@ -2915,15 +2915,18 @@ class ProductModule:
         board = self._board_or_default(board)
         detail = ""
         if key:
+            # THE PROMISE GOES THROUGH THE DOOR WITH THE FILING (#414): a card asked for in a
+            # conversation is owed its delivery there; one filed with none is owed nothing
+            owed = (self._track_ticket(ref, title=name, conversation=conversation,
+                                       requester=requester)
+                    if str(conversation or "").strip() else None)
             placed = self._filed_through_the_door(str(ref), by=reported_by, tracker=tracker,
-                                                  board=board)
+                                                  board=board, owed=owed)
             if not placed:
                 log.warning("OPENFACTORY_PRODUCT_TICKET_NOT_PLACED ref=%s column=%s — the card "
                             "exists but has no column, so the queue cannot see it until a person "
                             "places it", ref, self.FILING_COLUMN)
                 detail = said["ticket_unplaced"]
-        if str(conversation or "").strip():
-            self._track_ticket(ref, title=name, conversation=conversation, requester=requester)
         return WriteResult(ok=True, ref=str(ref), url=url, detail=detail)
 
     def file_defect(self, *, restated: str, reported_by: str, violates: int | None,
@@ -3002,8 +3005,10 @@ class ProductModule:
         board = self._board_or_default(board)
         detail = ""
         if key:
-            placed = self._filed_through_the_door(str(ref), by=reported_by, tracker=tracker,
-                                                  board=board)
+            # THE DEFECT'S PROMISE GOES THROUGH THE DOOR WITH ITS FILING (#414)
+            placed = self._filed_through_the_door(
+                str(ref), by=reported_by, tracker=tracker, board=board,
+                owed=self._track_defect(key, conversation=conversation, requester=requester))
             if not placed:
                 # A `False` FROM THE BOARD IS THE INVISIBLE-CARD STATE, NOT A QUIETER SUCCESS.
                 # `promote` checks this same bool; discarding it here meant a column-less card
@@ -3014,26 +3019,26 @@ class ProductModule:
                             "but has no column, so the queue cannot see it until a person places "
                             "it", ref, self.FILING_COLUMN)
                 detail = said["defect_unplaced"]
-        if key:
-            self._track_defect(key, conversation=conversation, requester=requester)
         return WriteResult(ok=True, ref=str(ref), detail=detail)
 
     def _track_defect(self, number: str, *, conversation: str = "",
-                      requester: str = "") -> None:
+                      requester: str = "") -> dict:
         """A delivery loop on the fix, so 'consertamos o que você reportou' gets said unprompted —
-        in the conversation it was reported in, when there is one (#267 slice 3).
+        in the conversation it was reported in, when there is one (#267 slice 3). RETURNED, NOT
+        WRITTEN: it is the promise the defect's filing opens through the card's door (#414).
 
         Subject `defeito-<ref>` rather than a requirement number: the loop closes when THIS issue
         closes, and the sweep's delivered() pass already knows how to watch a set of issues. The
         ref is the tracker's own — `defeito-88` on GitHub, `defeito-CONT-412` on Jira (#479)."""
-        _follow_card(self.project, f"defeito-{number}", number, {"defect": "1"},
-                     conversation=conversation, requester=requester)
+        return _owed(f"defeito-{number}", {"defect": "1"}, conversation=conversation,
+                     requester=requester)
 
     def _track_ticket(self, ref: str, *, title: str = "", conversation: str = "",
-                      requester: str = "") -> None:
+                      requester: str = "") -> dict:
         """A delivery loop on a card a person asked for (#481), so the events about it — the
         change is theirs to try, it is in the product, it was withdrawn — are said to them, in the
-        conversation they asked in.
+        conversation they asked in. RETURNED, NOT WRITTEN: the card's filing opens it through the
+        card's door (#414).
 
         `ticket` BESIDE A DEFECT'S `defect`: the staged kind that filed it, which is what every
         sentence the loop leads to reads, so none of them calls the card a requirement. The title
@@ -3042,8 +3047,7 @@ class ProductModule:
         KEYED ON THE TRACKER'S OWN REF, never on a number only some trackers mint: the ledger
         compares refs as the provider wrote them (`events.issues_of`, C-05)."""
         ref = canonical_ref(ref)
-        _follow_card(self.project, f"cartao-{ref}", ref,
-                     {"ticket": "1", "title": str(title or "")[:120]},
+        return _owed(f"cartao-{ref}", {"ticket": "1", "title": str(title or "")[:120]},
                      conversation=conversation, requester=requester)
 
     def note_fact(self, *, term: str, body: str, said_by: str, where: str = "",
@@ -3462,7 +3466,8 @@ class ProductModule:
                                       "está sem coluna e o time foi avisado.")
         return WriteResult(ok=True, ref=str(ref), detail=elsewhere)
 
-    def _filed_through_the_door(self, ref: str, *, by: str, tracker, board) -> bool:
+    def _filed_through_the_door(self, ref: str, *, by: str, tracker, board,
+                                owed: dict | None = None) -> bool:
         """THE CARD JUST WRITTEN GOES THROUGH ITS DOOR (ADR-0055, #414): `filed` puts it in the
         filing column — by the column's name, the board's own write it always was — and forgets
         the role's snapshot, recorded like every other change of a card. Returns whether it was
@@ -3473,14 +3478,20 @@ class ProductModule:
         `columns={}`: a card its caller wrote a moment ago is on no column the caller put it in,
         so the door does not read a hosted board for an answer this already has. `board=None` is
         "deliberately do not place" (`_board_or_default`): the card is still filed, on its
-        tracker alone."""
+        tracker alone.
+
+        `owed` IS THE PROMISE THE FILING MAKES (#414) — the delivery a reported defect, or a card
+        asked for in a conversation, is owed (`_track_defect`, `_track_ticket`) — and the door
+        opens it with the filing, recorded with it: a promise the ledger did not take is the
+        hourly round's to open again, where it used to be a line in the log."""
         from openfactory.lifecycle import CardEvent, transition
 
         try:
             moved = transition(getattr(self, "project", None), ref, CardEvent.FILED,
                                by=str(by or "") or "the product role",
                                facts={"column": "backlog" if board is not None else "",
-                                      "column_name": self.FILING_COLUMN},
+                                      "column_name": self.FILING_COLUMN,
+                                      **({"owed": owed} if owed else {})},
                                tracker=tracker, board=board, columns={})
         except Exception as exc:  # noqa: BLE001 — the card exists; its placement is repairable
             log.info("card %s filed, and its door could not be gone through (%s)", ref, exc)
@@ -5281,28 +5292,14 @@ def _refine_note(answer: dict, *, agent: str = "") -> str:
 _CARD_KINDS = ("ticket", "defect")
 
 
-def _follow_card(project, subject: str, ref: str, marks: dict[str, str], *,
-                 conversation: str, requester: str) -> None:
-    """ONE DELIVERY LOOP PER CARD, DEDUPLICATED BY ITS SUBJECT — a reported defect's and a card
-    somebody asked for (#481), opened one way so the two cannot drift. Never raises: the card was
-    filed, and only the courtesy is lost — said in the log."""
-    try:
-        from datetime import UTC, datetime
+def _owed(subject: str, marks: dict[str, str], *, conversation: str, requester: str) -> dict:
+    """THE PROMISE ONE CARD'S FILING MAKES — a reported defect's and a card somebody asked for
+    (#481), built one way so the two cannot drift — as the card's door opens it (`Loops("open")`,
+    #414): one delivery loop per card, deduplicated by its subject. Who asked travels as the
+    ledger keeps it, a digest (`delivered_to`), so the card's record never holds a name."""
+    from openfactory.product.followup import delivered_to
 
-        from openfactory.memory import store as loop_store
-        from openfactory.memory.ledger import DELIVERY, open_loop, waiting
-        from openfactory.product.followup import delivered_to
-
-        ledger = loop_store.read(project.name)
-        already = {x.subject for x in waiting(ledger) if x.kind == DELIVERY}
-        if subject in already:
-            return
-        loop_store.write(project.name, [open_loop(
-            DELIVERY, subject, owner="product", ts=datetime.now(UTC).isoformat(),
-            context={"issues": str(ref), **marks, **delivered_to(conversation, requester)})])
-    except Exception as exc:  # noqa: BLE001 — the card was filed; only the courtesy is lost
-        log.warning("could not start tracking %s (%s) — it will ship without anyone announcing it "
-                    "to whoever asked for it", subject, exc)
+    return {"subject": subject, "context": {**marks, **delivered_to(conversation, requester)}}
 
 
 def _saved_in_the_repository(result: WriteResult) -> tuple[str, str] | None:

@@ -127,6 +127,25 @@ class KnowledgeVerdict(BaseModel):
     reason: str = ""
 
 
+class HandedBack(BaseModel):
+    """An OUTCOME the box reached on the card and did not write: the worker applies it through
+    the card's door (ADR-0055 D7, #414).
+
+    THE BOX'S OWN VOCABULARY, NOT THE DOOR'S. It says which state it reached and what only it
+    knew about it — whether a person is the blocker (#166), and why — and the worker reads that as
+    the card's event (`lifecycle/handed_back.py`). So the box needs no lifecycle of its own, and
+    the contract layer names no card event.
+
+    `event_id` IS THE WORKER'S, written once the door recorded the transition: a later activity
+    applying the same outcome — the workflow reconciling a park (`mark_needs_action`) — hands it
+    to the door and is answered from the card's record, never parked a second time (D5)."""
+
+    state: JobState
+    needs_person: bool | None = None
+    reason: str = ""
+    event_id: str = ""
+
+
 class RunResult(BaseModel):
     """The full outcome of one job attempt, assembled by the orchestrator."""
 
@@ -332,6 +351,17 @@ class RunResult(BaseModel):
     # inject the picked option back on resume. None on a normal outcome. "No park without
     # options" (owner) — a bare state is never enough. See openfactory/contracts/decision.py.
     decision: DecisionRequest | None = None
+    #: THE OUTCOMES THE BOX REACHED ON THE CARD, IN ORDER, AND DID NOT WRITE (ADR-0055 D7, #414):
+    #: a pull request opened, a merge, a delivery, a refusal, a park. The worker that receives this
+    #: result applies each through the card's door, so the board, the record, the promise and the
+    #: requester hear an outcome however far from them the box ran. What the box still writes
+    #: itself is only its progress marks (`contracts/state.py::PROGRESS_MARKS`).
+    #:
+    #: `None` IS A BOX FROM BEFORE THIS FIELD, and it means something: that box wrote its outcomes
+    #: on the card itself, so the worker applies NOTHING and does what it did — a result in a job's
+    #: history, or from a box image older than the worker, parses and is answered as it always
+    #: was. `[]` is a box that reached no outcome (a re-review with no reviewer to run).
+    handed_back: list[HandedBack] | None = None
 
     @property
     def all_passed(self) -> bool:

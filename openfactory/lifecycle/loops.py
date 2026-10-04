@@ -12,6 +12,12 @@ cancellation had closed is opened anew from its context — the ledger never rev
 
 The work stopped but the card stays (`discarded`, `skipped`, `stopped`) touches nothing here: the
 promise is still possible and stays open, and the card line says the card is in the backlog.
+
+THE CARD IS FILED, AND SOMEBODY IS OWED IT (`filed` carrying `owed`, #414): the delivery a reported
+defect or a card asked for in a conversation is owed opens with the filing, through the card's
+door — so it is recorded with the transition that made it, and a filing whose promise could not be
+written is the hourly sweep's to open again. A requirement's delivery is not opened here: it
+spans several cards, some the breakdown reused rather than filed, and no one card's filing is it.
 """
 
 from __future__ import annotations
@@ -75,6 +81,30 @@ def cancel(project, card: str) -> tuple[str, bool]:
     if loop_store.write(name, rows) < len(rows):
         raise RuntimeError("the ledger did not take every row")
     return f"{closed} closed as cancelled, {narrowed} {STILL_WAITING}", bool(narrowed)
+
+
+def owe(project, card: str, owed) -> str:
+    """Open the delivery `card` is owed — `owed` is what its filing carried: the loop's subject
+    and its context (who asked, and where, as `followup.delivered_to` keeps them). ONE LOOP PER
+    SUBJECT, as it always was: a promise already waiting is not opened again, so a retried filing
+    or the sweep applying it again opens nothing twice. Raises when the ledger cannot be written,
+    so the sweep applies it again."""
+    from openfactory.adapters.board_db import now_iso
+    from openfactory.memory import store as loop_store
+    from openfactory.memory.ledger import DELIVERY, open_loop, waiting
+
+    name = getattr(project, "name", "") or ""
+    subject = str((owed or {}).get("subject") or "")
+    if not subject:
+        return "nothing owed: the filing named no promise"
+    if subject in {x.subject for x in waiting(loop_store.read(name)) if x.kind == DELIVERY}:
+        return f"{subject} was owed already"
+    context = {"issues": card, **{str(k): str(v) for k, v in
+                                  dict((owed or {}).get("context") or {}).items()}}
+    if loop_store.write(name, [open_loop(DELIVERY, subject, owner="product", ts=now_iso(),
+                                         context=context)]) < 1:
+        raise RuntimeError("the ledger did not take the promise")
+    return f"{subject} owed"
 
 
 def question(project, card: str, *, about: str, answered: bool) -> str:

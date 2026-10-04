@@ -761,6 +761,11 @@ class HoldSyncInput(BaseModel):
     issue: str
     state: str = "on_hold"
     note: str = ""
+    #: THE PARK THE WORKER ALREADY APPLIED, when the box handed it back (ADR-0055 D7, #414): the
+    #: id of its transition in the card's record, so this reconcile is answered from that row and
+    #: the card is not parked a second time. `""` — a park the workflow made itself (a crash, a
+    #: timeout, the merge watch), or an input recorded before this field — decides afresh.
+    event_id: str = ""
 
 
 class ReadyForYouInput(BaseModel):

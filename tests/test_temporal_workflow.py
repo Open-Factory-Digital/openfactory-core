@@ -651,7 +651,8 @@ _MARK_CALLS: list[dict] = []
 
 @activity.defn(name="mark_needs_action")
 async def spy_mark_needs_action(inp: HoldSyncInput) -> str:
-    _MARK_CALLS.append({"issue": inp.issue, "state": inp.state, "note": inp.note})
+    _MARK_CALLS.append({"issue": inp.issue, "state": inp.state, "note": inp.note,
+                        "event_id": inp.event_id})
     return "creator-bob"  # the ticket's author, so the coordinator can route the escalation
 
 
@@ -673,7 +674,44 @@ async def test_park_reconciles_board_to_needs_action(env: WorkflowEnvironment):
         assert _MARK_CALLS, "parking must reconcile the board (→ Needs Action)"
         assert _MARK_CALLS[0]["state"] == JobState.FAILED.value  # the parked state, mapped by tracker
         assert _MARK_CALLS[0]["issue"] == "9"
+        assert _MARK_CALLS[0]["event_id"] == "", "a park the workflow made was taken for one applied"
         await h.signal(JobWorkflow.act_on_impediment, args=["resume"])
+        await h.result()
+
+
+#: The id the worker's door recorded for the park the box handed back (ADR-0055 D7, #414).
+_APPLIED = "handed-back-run-act-0"
+
+
+@activity.defn(name="run_job")
+async def a_park_the_box_handed_back(inp: RunJobInput) -> RunResult:
+    from openfactory.contracts.run import HandedBack
+
+    return RunResult(ticket_id=inp.issue, state=JobState.NEEDS_REFINEMENT,
+                     note="ticket has no acceptance criteria",
+                     handed_back=[HandedBack(state=JobState.NEEDS_REFINEMENT,
+                                             reason="ticket has no acceptance criteria",
+                                             event_id=_APPLIED)])
+
+
+@pytest.mark.asyncio
+async def test_a_park_the_worker_applied_is_reconciled_from_the_card_s_record(
+        env: WorkflowEnvironment):
+    """#414: the park the box handed back was applied by the worker through the card's door; the
+    reconcile carries its id, so the door answers it from that row instead of parking the card a
+    second time — and a park the workflow made itself carries none (the test above)."""
+    _MARK_CALLS.clear()
+    worker = Worker(
+        env.client, task_queue=TQ, workflows=[JobWorkflow],
+        activities=[a_park_the_box_handed_back, mock_status_merged, mock_stop_job,
+                    mock_refresh_knowledge, mock_promote_staging, mock_release_prod,
+                    spy_mark_needs_action],
+    )
+    async with worker:
+        h = await _start(env.client, JobParams(project="p", issue="9", sandbox="fargate"))
+        await _wait_parked(h)
+        assert [c["event_id"] for c in _MARK_CALLS] == [_APPLIED], _MARK_CALLS
+        await h.signal(JobWorkflow.act_on_impediment, args=["skip"])
         await h.result()
 
 

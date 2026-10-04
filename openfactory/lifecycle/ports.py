@@ -203,14 +203,18 @@ class Ports:
 
     # ── the card ────────────────────────────────────────────────────────────────────────────────
 
-    def column(self, card: str, key: str) -> str:
+    def column(self, card: str, key: str, *, needs_person: bool | None = None) -> str:
         from openfactory.contracts import JobState
 
         # THE ONE COLUMN A PERSON'S ENDING WRITES, through the port's one writer of a card's state.
         # No `reason`: the door's comment is its own effect, and `set_state` writing it too is the
-        # double comment D6 ends (two rows write `reason`, the local board drops it).
+        # double comment D6 ends (two rows write `reason`, the local board drops it). A job state
+        # (`pr_open`, `merged`, a park's) is written as itself, with who the blocker is (#166).
         states = {"backlog": JobState.SKIPPED, "todo": JobState.TODO, "done": JobState.DONE}
-        if self.tracker.set_state(card, states.get(key) or JobState(key)) is False:
+        state = states.get(key) or JobState(key)
+        moved = (self.tracker.set_state(card, state) if needs_person is None else
+                 self.tracker.set_state(card, state, needs_person=needs_person))
+        if moved is False:
             raise RuntimeError(f"the tracker did not move the card to {key}")
         return "moved"
 
@@ -268,9 +272,11 @@ class Ports:
 
     # ── the promise, the conversation, the preview, the snapshot ───────────────────────────────
 
-    def loops(self, card: str, action: str, *, about: str = "") -> str:
+    def loops(self, card: str, action: str, *, about: str = "", owed: dict | None = None) -> str:
         from openfactory.lifecycle import loops
 
+        if action == "open":
+            return loops.owe(self.project, card, owed or {})
         if action in ("answer", "moot"):
             return loops.question(self.project, card, about=about, answered=action == "answer")
         if action != "cancel":

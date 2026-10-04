@@ -223,7 +223,10 @@ def test_full_spine_opens_pr(repo: Path, tmp_path: Path):
     assert JobState.SPEC_VALIDATION in tracker.states
     assert JobState.IMPLEMENTING in tracker.states
     assert JobState.VALIDATING in tracker.states
-    assert tracker.states[-1] is JobState.PR_OPEN
+    # THE PULL REQUEST IS AN OUTCOME, HANDED BACK for the worker to apply through the card's door
+    # (ADR-0055 D7, #414): the box writes its progress marks, and a person is the blocker here
+    assert JobState.PR_OPEN not in tracker.states
+    assert [(b.state, b.needs_person) for b in result.handed_back] == [(JobState.PR_OPEN, True)]
 
 
 def test_reviewer_verdict_is_attached_and_state_walked(repo: Path, tmp_path: Path):
@@ -303,7 +306,8 @@ def test_auto_policy_merges_when_safe(repo: Path, tmp_path: Path):
     # is still asserted on the forge.
     assert result.state is JobState.DONE
     assert runner.forge.merged is True
-    assert tracker.states[-1] is JobState.DONE
+    # the merge and the delivery, handed back in the order the box reached them (#414)
+    assert [b.state for b in result.handed_back] == [JobState.MERGED, JobState.DONE]
 
 
 # --- suppression-repair loop (ADR-0011): the sandbox resolves pragmas, not the human ---
@@ -853,7 +857,7 @@ def test_spec_validation_sends_bad_ticket_to_refinement(repo: Path, tmp_path: Pa
 
     assert result.state is JobState.NEEDS_REFINEMENT
     assert "acceptance criteria" in (result.note or "")
-    assert tracker.states[-1] is JobState.NEEDS_REFINEMENT
+    assert [b.state for b in result.handed_back] == [JobState.NEEDS_REFINEMENT]   # #414
 
 
 def test_ticket_parser():
@@ -1068,7 +1072,7 @@ def test_touching_more_components_than_the_manifest_allows_refines_not_repairs(
     assert "2 components" in (result.note or "")
     assert reviewer.calls == 0, "the diff was reviewed before the scope catch had a chance to run"
     assert not runner.forge.opened, "a diff refused for scope must never reach a PR"
-    assert tracker.states[-1] is JobState.NEEDS_REFINEMENT
+    assert [b.state for b in result.handed_back] == [JobState.NEEDS_REFINEMENT]   # #414
 
 
 class _BigDiffAgent:

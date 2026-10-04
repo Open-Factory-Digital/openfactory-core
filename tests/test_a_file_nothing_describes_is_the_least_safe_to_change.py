@@ -441,7 +441,8 @@ def test_under_enforce_a_dark_change_is_parked_with_the_question_and_the_pr_open
         result.note or "")
     assert any("`app.py`" in c and "merge by hand" in c for c in tracker.comments), (
         tracker.comments)
-    assert tracker.states[-1] is JobState.ON_HOLD
+    # the park is handed back for the worker to apply through the card's door (#414)
+    assert result.handed_back[-1].state is JobState.ON_HOLD
     assert result.knowledge_verdicts and result.knowledge_verdicts[0].path == "app.py"
 
 
