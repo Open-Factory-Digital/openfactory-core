@@ -35,10 +35,11 @@ MUTATIONS = [
      '        return (Column("done"), *_said(facts), Loops("deliver"), Forget())\n',
      '        return (*_said(facts), Loops("deliver"), Forget())\n'),
 
+    # re-pinned 2026-10-05: integration of slices 4/5 with the door stack — the settle maps the
+    # two ends of a watched last stage too (#448 slice 5)
     ("the settle of a DONE job no longer goes through the door", ACTIVITIES,
-     "    event = {JobState.SKIPPED: CardEvent.SKIPPED, JobState.DONE: CardEvent.DELIVERED}"
-     ".get(state)\n",
-     "    event = {JobState.SKIPPED: CardEvent.SKIPPED}.get(state)\n"),
+     "    event = {JobState.SKIPPED: CardEvent.SKIPPED, JobState.DONE: CardEvent.DELIVERED,\n",
+     "    event = {JobState.SKIPPED: CardEvent.SKIPPED,\n"),
 
     ("a park drops its reason", TABLE,
      '        said = (Comment(),) if facts.get("note") else ()\n',

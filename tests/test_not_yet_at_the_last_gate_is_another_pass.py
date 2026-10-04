@@ -811,12 +811,18 @@ _PROBED: list[str] = []
 @activity.defn(name="run_job")
 async def _run_job_that_merges(inp: RunJobInput) -> RunResult:
     """A run on a project that declares `post_merge_deploy:` and lets the factory merge: each
-    change merges, and each merge starts a watch on its deploy."""
+    change merges, and each merge starts a watch on its deploy.
+
+    AND A CHAIN BESIDE IT, which is what has a last gate to say "not yet" at: `--promote` on a
+    manifest that declares a deploy and NO chain promotes into nothing, so such a job watches its
+    deploy as the card's last stage and never reaches a gate (#501 (c), #522). With a chain the
+    flag still walks it, and the deploy is watched beside it, informing."""
     from openfactory.contracts.manifest import PostMergeDeploy
 
     _RUNS.append((inp.another_pass, inp.change))
     return RunResult(ticket_id=inp.issue, state=JobState.PR_OPEN, auto_merge=True,
                      pr_url=f"https://x/pr/{inp.change + 1}",
+                     environments=["staging", "production"],
                      post_merge_deploy=PostMergeDeploy(workflow="deploy.yml", env="staging"))
 
 

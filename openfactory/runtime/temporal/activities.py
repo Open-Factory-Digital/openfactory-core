@@ -2672,7 +2672,8 @@ async def record_outcome(inp: HoldSyncInput) -> str:
     AND ONE MORE, WHERE A CARD OUTLIVES ITS JOB (#448 slice 5): when the project's watched deploy
     is the card's last stage, the job ends at the merge with the card In review, and the deploy
     watch is what ends the card — so it records that ending here too (`DeployWatchWorkflow.
-    _the_last_stage`), through the same delivery check. The job's own line still says `merged`.
+    _the_last_stage`), after its settle went through the card's door, which announced the
+    delivery when the deploy was green. The job's own line still says `merged`.
 
     APPENDS, NEVER REWRITES. The journal is append-only like every other record here: the run's
     own `reviewing` stays true (it WAS reviewing), and this adds what it became.
@@ -2903,9 +2904,18 @@ async def settle_ticket(inp: HoldSyncInput) -> str:
     # this settles nothing twice: no second comment on the rows that wrote `set_state`'s reason. A
     # job settled DONE is `delivered`: the card closes as delivered on every row, and the delivery
     # it completes is announced (on the local board it never was, the card staying open in Done).
+    #
+    # AND THE TWO ENDS OF A WATCHED DEPLOY THAT IS THE CARD'S LAST STAGE (#448 slice 5), each the
+    # event the box's own outcome is (`handed_back.OUTCOMES`), so a card is one kind of card
+    # whoever moved it: the job's settle at the merge is `merged` — In review, with the job's word
+    # on why it waits — and the watch's deploy that failed or was never seen to finish is `parked`
+    # (`on_hold`, Needs Action), nothing delivered and nobody told it is ready. The green deploy is
+    # the watch's `delivered`, above: the door's `Loops("deliver")` announces it, at the last
+    # stage and nowhere else (`record_outcome`, after it, only writes the journal).
     from openfactory.lifecycle import CardEvent, transition
 
-    event = {JobState.SKIPPED: CardEvent.SKIPPED, JobState.DONE: CardEvent.DELIVERED}.get(state)
+    event = {JobState.SKIPPED: CardEvent.SKIPPED, JobState.DONE: CardEvent.DELIVERED,
+             JobState.MERGED: CardEvent.MERGED, JobState.ON_HOLD: CardEvent.PARKED}.get(state)
     if event is None:
         activity.logger.warning("settle_ticket: %s is no ending the door knows — #%s left as it is",
                                 state.value, inp.issue)

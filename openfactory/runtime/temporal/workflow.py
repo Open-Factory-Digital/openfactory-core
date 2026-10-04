@@ -516,14 +516,16 @@ class DeployWatchWorkflow:
         and could still fail. The job now leaves the card In review (`deploy_is_last`), and this is
         where it ends:
 
-          green     Done, through the job's own settle; then the job's one record of an ending
-                    (`record_outcome`), which asks whether a delivery completed and announces it
-                    to whoever asked — the same path a merge with nothing after it takes;
-          failed    held for a person (`on_hold`, Needs Action) with what happened on the card,
-          or never  like a red stage of a promotion chain: nothing is delivered and nobody is
-          seen      told it is ready. `_notify` above has already said it where the watch speaks.
+          green     Done, through the job's own settle — the card's door's `delivered`, whose
+                    `Loops("deliver")` announces what the card completes to whoever asked (#414),
+                    the same path a merge with nothing after it takes; then the job's one record
+                    of an ending (`record_outcome`), which writes the journal and announces nothing;
+          failed    held for a person (`on_hold`, Needs Action: the door's `parked`) with what
+          or never  happened on the card, like a red stage of a promotion chain: nothing is
+          seen      delivered and nobody is told it is ready. `_notify` above has already said it
+                    where the watch speaks.
 
-        SETTLED, THEN RECORDED: the announcement reads the board, so the card is Done first.
+        SETTLED, THEN RECORDED: the journal says what the card became, so the card is moved first.
 
         Only for a watch the job said `delivers` — a watch that merely informs settles nothing —
         and PATCHED, because these are new commands on a path watches are already sitting in
@@ -2617,10 +2619,10 @@ class JobWorkflow:
         replays the id it had.
 
         AND A REFUSAL SAYS WHICH IT IS. "Already started" is the engine saying this very watch is
-        running — a re-run of the same change, whose watch settles the card as the first run's
-        would; anything else is the engine refusing to start it at all, and the log says so rather
-        than passing it off as the harmless case — and the card is not left for a watch that is
-        not coming."""
+        running — a re-run of the same change; anything else is the engine refusing to start it at
+        all, and the log says so rather than passing it off as the harmless case. Either way this
+        job started no watch, and one it did not start was not told what this card's last stage is
+        (`delivers`): the card is settled at the merge rather than left In review for it."""
         cfg = result.post_merge_deploy
         if not (cfg and result.pr_url):
             return False
@@ -2643,10 +2645,10 @@ class JobWorkflow:
             )
         except WorkflowAlreadyStartedError:
             # ALREADY WATCHING THIS CHANGE — a re-run of it. The merge stands and the floor must
-            # free regardless. Never let the watch's start block the job (A3). The watch that is
-            # running is this change's, and it is what ends the card
+            # free regardless. Never let the watch's start block the job (A3).
             workflow.logger.warning("deploy-watch %s is already running — a re-run of %s#%s; it "
                                     "goes on watching", watch_id, params.project, params.issue)
+            return False
         except Exception as exc:  # noqa: BLE001 — the merge stands whatever the engine says
             # THE ENGINE REFUSED TO START IT — not a re-run, and nothing is watching this deploy.
             workflow.logger.warning("the engine refused to start deploy-watch %s for %s#%s (%s) — "

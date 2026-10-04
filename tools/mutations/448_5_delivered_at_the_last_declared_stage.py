@@ -14,6 +14,10 @@
     the deploy is the last stage, and no empty promotion ends the card Done first — while a
     declared chain is still walked with the flag (#501);
   · the forge is not asked to close at the merge a card a stage still waits on;
+  · THROUGH THE CARD'S DOOR (ADR-0055, #414; the integration of this slice with the door stack,
+    2026-10-05): the settle at the merge is the door's `merged`, the watch's red or unseen deploy
+    its `parked`, and the green one its `delivered`, whose `Loops("deliver")` is what announces the
+    delivery at the last stage — the job's record of its ending announces nothing;
   · a "did not work" about a delivery stages a defect linked to the cards it was about, with the
     person's words, titled from the card, citing the requirement it was owed against; the yes of
     the person it was delivered to files it, anybody else's waits for an approver as any report
@@ -31,6 +35,8 @@ MODULE = "openfactory/product/module.py"
 AUTHORING = "openfactory/product/authoring.py"
 STAGING = "openfactory/product/staging.py"
 VOICE = "openfactory/product/voice.py"
+ACTIVITIES = "openfactory/runtime/temporal/activities.py"
+TABLE = "openfactory/lifecycle/table.py"
 #: the job's settle In review at the merge and its watch's start — the two statements whose ORDER
 #: is a claim (the review of #503)
 _SETTLE_IN_REVIEW = ("                await self._settle(params, JobState.MERGED,\n"
@@ -98,6 +104,22 @@ MUTATIONS = [
     ("every watch settles the card, one that only informs too", IO,
      "    delivers: bool = False\n",
      "    delivers: bool = True\n"),
+
+    # ── through the card's door (the integration with the door stack, 2026-10-05) ────────────
+    ("the settle at the merge is no ending the door knows: the card is never told why it waits",
+     ACTIVITIES,
+     "             JobState.MERGED: CardEvent.MERGED, JobState.ON_HOLD: CardEvent.PARKED}"
+     ".get(state)\n",
+     "             JobState.ON_HOLD: CardEvent.PARKED}.get(state)\n"),
+    ("a red deploy is no ending the door knows: the card stays In review, held by nobody",
+     ACTIVITIES,
+     "             JobState.MERGED: CardEvent.MERGED, JobState.ON_HOLD: CardEvent.PARKED}"
+     ".get(state)\n",
+     "             JobState.MERGED: CardEvent.MERGED}.get(state)\n"),
+    ("the watch's green Done announces nothing: the delivery at the last stage is never said",
+     TABLE,
+     '        return (Column("done"), *_said(facts), Loops("deliver"), Forget())\n',
+     '        return (Column("done"), *_said(facts), Forget())\n'),
 
     # ── the forge's closing word ─────────────────────────────────────────────────────────────
     ("the forge closes at the merge a card a stage still waits on", MACHINE,

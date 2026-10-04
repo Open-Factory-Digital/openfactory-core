@@ -26,10 +26,13 @@ merge; a chain with production is delivered once production is released.
 
 HOW. The real `JobWorkflow` and `DeployWatchWorkflow` on this file's own time-skipping engine, with
 the real job-ending activities (`settle_ticket`, `record_outcome`, `tell_the_requester_it_merged`)
-over the real local board, the real ledger on the SQLite store and the real events module; the real
+over the real local board, the real ledger on the SQLite store and the real events module — and the
+card's door behind them (ADR-0055, #414): a settle is a transition, and the delivery is announced
+by the door's `delivered` (`Loops("deliver")`), never by the job's record of its ending. The real
 chat turn, staging, confirmation and pen (`ProductModule.file_defect`) for the "did not work".
 Doubled: what leaves the machine (the forge's answers, the deploy's status, the notifier, the box's
-promotion), the door (`events._tell`, recorded), and ONE reading of the board — `done_reads_
+promotion — whose outcomes the worker still applies through the door, as the real activity does),
+the conversation's door (`events._tell`, recorded), and ONE reading of the board — `done_reads_
 delivered` says which, and why.
 """
 
@@ -169,12 +172,16 @@ def _pen(project, tmp_path, monkeypatch):
 
 def _asked_for(project, tracker, board, tmp_path, monkeypatch, *, where: str = KEY,
                who: str = ASKER) -> str:
-    """A card somebody asked for in `where`, at its merge — its delivery owed to them there."""
+    """A card somebody asked for in `where`, at its merge — its delivery owed to them there: the
+    promise its filing carries (`_track_ticket`), opened by the card's door's own effect
+    (`loops.owe`, #414)."""
+    from openfactory.lifecycle import loops
+
     ref = tracker.create_ticket(title=TITLE, body="an export button on the list",
                                 requester=who).lstrip("#")
     board.set_column(issue=ref, issue_url="", name="In review")
-    _pen(project, tmp_path, monkeypatch)._track_ticket(ref, title=TITLE, conversation=where,
-                                                       requester=who)
+    loops.owe(project, ref, _pen(project, tmp_path, monkeypatch)._track_ticket(
+        ref, title=TITLE, conversation=where, requester=who))
     return ref
 
 
@@ -205,7 +212,8 @@ def _went_in(ref: str, *, stages: bool) -> str:
 
 
 def _announced(project, ref: str) -> str:
-    """The delivery's own sentence and its "did it work?", as `deliver` composes them."""
+    """The delivery's own sentence and its "did it work?", as the door's announcement composes
+    them (`loops.announce`)."""
     loop = open_loop(DELIVERY, f"cartao-{ref}", owner="product", ts="t",
                      context={"issues": ref, "ticket": "1", "title": TITLE})
     return (followup.delivered_text(loop, agent_name=AGENT, language=LANG)
@@ -305,17 +313,22 @@ async def _watch_running(ref: str) -> bool:
 
 @activity.defn(name="record_outcome")
 async def _journal(inp: HoldSyncInput) -> str:
-    """The REAL record of an ending — the journal, and the delivery check behind it."""
+    """The REAL record of an ending — the journal, which announces nothing since #414: the
+    delivery is the card door's, at the settle that reaches Done."""
     _LOG.append(("journal", inp.state))
     return await acts.record_outcome(inp)
 
 
 def _the_box_writes(issue: str, state: JobState) -> None:
-    """What the box's `PromotionRunner` writes onto the card as it promotes (`_state`)."""
-    from openfactory.adapters.tracker.registry import build_tracker
-    from openfactory.registry import ProjectRegistry
+    """What the box's `PromotionRunner` reaches on the card as it promotes (`_state`): handed back,
+    and applied by the worker through the card's door (`_the_worker_applies`, ADR-0055 D7, #414),
+    as the real `promote_staging` and `release_prod` do — a production gate is a park, and a
+    release that lands is a delivery, announced there."""
+    from openfactory.contracts.run import HandedBack
 
-    build_tracker(ProjectRegistry().get(ROOM)).set_state(issue, state)
+    acts._the_worker_applies(ROOM, issue, f"handed-back-{issue}-{state.value}",
+                             RunResult(ticket_id=issue, state=state,
+                                       handed_back=[HandedBack(state=state)]))
 
 
 @activity.defn(name="promote_staging")
@@ -429,6 +442,9 @@ async def test_a_watched_deploy_is_the_last_stage_and_the_delivery_waits_for_it_
     assert "deploy.yml" in at_merge[2] and "staging" in at_merge[2] and "45" in at_merge[2]
     assert "when it is green, not before" in at_merge[2]
     assert _LOG.index(at_merge) < _LOG.index(("probe", "pending"))
+    # …ON THE CARD, through its door: the settle at the merge is its `merged` (#414)
+    assert at_merge[2] in [c.body for c in tracker.comments(f"#{ref}")], (
+        "the card was never told why it waits In review")
     # the job's own end found nothing delivered; the watch's end did
     assert _journalled() == [JobState.MERGED.value, JobState.DONE.value]
     assert _told() == [(KEY, _went_in(ref, stages=True)),
@@ -463,6 +479,13 @@ async def test_a_deploy_green_at_the_watchs_first_look_leaves_the_card_done(
     assert _column(board, ref) == "Done", (
         "the card went back to In review after its deploy was green — settled after its watch")
     assert _told().count((KEY, _announced(deployment, ref))) == 1, _told()
+    # …AND THE MERGE'S WORD REACHED THE CARD FIRST. Through the card's door a settle In review after
+    # the watch's Done no longer moves the card back — a delivered card is not `merged` again
+    # (#414) — so what a wrong order costs now is the card's own account of why it waited: the
+    # door refuses that settle, and its note is never written
+    [at_merge] = [e[2] for e in _LOG if e[0] == "settle" and e[1] == JobState.MERGED.value]
+    assert at_merge in [c.body for c in tracker.comments(f"#{ref}")], (
+        "the card was settled In review after its watch had settled it Done")
 
 
 @pytest.mark.parametrize("probes,status,said", [
@@ -484,6 +507,8 @@ async def test_a_deploy_that_fails_or_is_never_seen_delivers_nothing(
     assert _settled() == [JobState.MERGED.value, JobState.ON_HOLD.value], _LOG
     [held] = [e for e in _LOG if e[0] == "settle" and e[1] == JobState.ON_HOLD.value]
     assert held[2].startswith(said) and "nothing is delivered" in held[2], held[2]
+    # held through the card's door — its `parked`, as the box's own park is (#414) — and said there
+    assert held[2] in [c.body for c in tracker.comments(f"#{ref}")]
     assert _journalled() == [JobState.MERGED.value, JobState.ON_HOLD.value]
     assert _told() == [(KEY, _went_in(ref, stages=True))], "something was announced as delivered"
     assert _column(board, ref) == "Needs Action"
@@ -710,11 +735,15 @@ def test_the_forge_closes_the_card_at_the_merge_only_when_nothing_follows(declar
 # ── 4. "it did not work": a defect linked to the card, for the requester's yes ──────────────────
 
 def _delivered(project, tracker, board, tmp_path, monkeypatch, **kw) -> str:
-    """A card asked for, delivered and announced — its "did it work?" asked where it was asked."""
+    """A card asked for, delivered and announced — its "did it work?" asked where it was asked: the
+    job's settle through the card's door, whose `delivered` announces it (#414)."""
+    from openfactory.lifecycle import CardEvent, transition
+
     ref = _asked_for(project, tracker, board, tmp_path, monkeypatch, **kw)
-    tracker.set_state(ref, JobState.DONE)
-    written = events.card_finished(project, card=ref)
-    assert [x.kind for x in written] == [DELIVERY, ACCEPTANCE], written
+    moved = transition(project, ref, CardEvent.DELIVERED, by="the workflow",
+                       facts={"note": ""}, tracker=tracker)
+    assert moved.ok and moved.outcome("loops") == "1 announced", moved
+    assert [x.kind for x in waiting(loop_store.read(project.name))] == [ACCEPTANCE]
     return ref
 
 
