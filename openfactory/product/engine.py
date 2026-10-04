@@ -424,11 +424,25 @@ def _answered(project, message: Message, reply: Reply | str, *, again: bool) -> 
     if again:
         transcript.supersede(project, thread=message.conversation, answering=message.id)
     transcript.record(project, thread=message.conversation, role="agent",
-                      text=_text_of(reply), channel=message.room, in_reply_to=message.id)
+                      text=_text_of(reply), channel=message.room, in_reply_to=message.id,
+                      kind=_reply_kind(reply))
 
 
 def _text_of(reply: Reply | str) -> str:
     return reply.text if isinstance(reply, Reply) else str(reply)
+
+
+def _reply_kind(reply: Reply | str) -> str:
+    """WHAT KIND OF REPLY the role's line was, for the transcript (#457): a `Reply` that already
+    names a kind other than the model's answer carries it (a hand-off); otherwise the platform's
+    own sentences are recognised by their text (`voice.own_voice_kind`) — a crash reply, an
+    unavailable — and everything else is the role's answer (`""`, which `transcript.record` leaves
+    unmarked, so it reads as an answer like every row written before this)."""
+    from openfactory.product import voice
+
+    if isinstance(reply, Reply) and reply.kind not in ("", "answer", "receipt"):
+        return reply.kind
+    return voice.own_voice_kind(_text_of(reply))
 
 
 def _files_of(message) -> dict:

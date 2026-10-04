@@ -179,7 +179,15 @@ class LocalBoard:
 
     def set_column(self, *, issue: str, issue_url: str, name: str) -> bool:
         """Move a card to a column BY NAME. `False` when the board has no such column — never a
-        raise, and a `False` always leaves a reason in the log behind it."""
+        raise, and a `False` always leaves a reason in the log behind it.
+
+        BY THE TRACKER'S RULE, NOT A SECOND ONE (#500): `tracker/local.py::move_card`, which the
+        tracker's `set_state` writes through too. So a card closed as delivered — which the panel
+        draws in Done — that a person drags out of Done is open work again in the column they put
+        it in, as it is on Jira and Azure DevOps, where the status is the state. A card dragged
+        INTO Done stays as open as it was: recording a delivery is the close's, not the drag's."""
+        from openfactory.adapters.tracker.local import move_card
+
         wanted = (name or "").strip()
         bare = canonical_ref(issue)
         if not wanted or not bare.isdigit():
@@ -191,9 +199,7 @@ class LocalBoard:
                 log.warning("%s's board has no column named %r — the card stays where it is",
                             self.project, wanted)
                 return False
-            moved = conn.execute(
-                "UPDATE cards SET column_key = ?, updated_at = ? WHERE project = ? AND ref = ?",
-                (col["key"], now_iso(), self.project, int(bare))).rowcount
+            moved = move_card(conn, self.project, int(bare), col["key"], closes_at_done=False)
         if not moved:
             log.warning("%s has no card %s to move", self.project, bare)
         return bool(moved)

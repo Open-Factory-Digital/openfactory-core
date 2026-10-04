@@ -301,9 +301,14 @@ class TrackerAdapter(Protocol):
           - where an item has an open/closed state of its own beside its column (GitHub issues),
             the row closes it as completed here. It did not, and a delivered issue stayed open in
             Done on every pairing whose forge does not own the card;
-          - the local board keeps a delivered card OPEN in Done, deliberately: its board lists open
-            cards, so closing would take delivered work off the column that shows it. Taking it
-            off is a person's act (`card_close`, which records such a card as delivered).
+          - the local board closes it as completed in Done too (#500). It kept a delivered card
+            OPEN there, deliberately (#195), so the panel's board would go on showing delivered
+            work in Done; but delivery is read from the closed state (`triage.Ticket.delivered`),
+            and no card the factory finished on that row was ever announced to whoever asked for
+            it. The intent stands, kept where it belongs: the panel shows delivered work in Done
+            because `/api/board` reads the recent cards closed as delivered back
+            (`api/app.py::_delivered_cards`), on every row, not because a card stays open. A move
+            out of Done opens it again (`tracker/local.py::move_card`).
 
         A close that fails must not fail the delivery: the change is merged, and the answer this
         returns is about the MOVE."""

@@ -257,6 +257,34 @@ def test_a_crash_in_a_branch_still_answers_the_person(monkeypatch, caplog):
         "the mute is invisible in the logs, so nobody would ever find it")
 
 
+def test_a_crash_reply_is_recorded_as_the_platforms_own_voice(monkeypatch):
+    """THE CRASH REPLY IS NOT THE ROLE'S ANSWER (#457). When the branch breaks and the person is
+    answered with `broke()`, that line is recorded with `kind="broke"`, so the distillation never
+    reads it as something the role said; a normal answer carries the default `answer` kind."""
+    from openfactory.memory import transcript
+
+    recorded: list[tuple[str, str]] = []
+    real = transcript.record
+    monkeypatch.setattr(transcript, "record",
+                        lambda name, **kw: recorded.append((kw.get("role"), kw.get("kind")))
+                        or real(name, **kw))
+
+    class _Broken(_Module):
+        def note_fact(self, **_kw):
+            raise RuntimeError("the corpus checkout died")
+
+    token, _ = _stage()
+    executor.answer_staged(_project(), token=token, approved=True, user=ADMIN, module=_Broken())
+    assert ("agent", "broke") in recorded, f"the crash reply was not recorded as its own voice: {recorded}"
+
+    recorded.clear()
+    token, _ = _stage()
+    executor.answer_staged(_project(), token=token, approved=True, user=ADMIN, module=_Module())
+    agent_kinds = [kind for role, kind in recorded if role == "agent"]
+    assert agent_kinds and all(kind == transcript.ANSWER for kind in agent_kinds), (
+        f"a normal confirmation answer is the role's answer, not a platform sentence: {recorded}")
+
+
 # ── 4. the third caller: the `product_answer` row ───────────────────────────────────────────────
 
 def _actor(**kw):
