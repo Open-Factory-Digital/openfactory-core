@@ -825,7 +825,7 @@ def test_the_product_view_is_DRIVEN_open_the_card_send_it_back_see_the_answer_th
               "_pv.adjusting.criteria='It sits on the toolbar';await pvAdjustSend();"
               "return {opened,asking,after:nodes['#pvBoard'].innerHTML,acts}",
               "pvCardOpen", "pvCardRead", "paintPvBoard", "_bcontrols", "pvAdjustBlock",
-              "pvAdjustAsk", "pvAdjustSend", stubs=stubs)
+              "pvAdjustAsk", "pvAdjustSend", "pvAcceptBlock", stubs=stubs)
 
     assert "Send back for another pass" in got["opened"] and "This change is waiting on you." in (
         got["opened"]), got["opened"]

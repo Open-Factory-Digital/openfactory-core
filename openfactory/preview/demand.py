@@ -343,14 +343,18 @@ _CACHE: BoundedDict[tuple, tuple[float, ForgeState]] = BoundedDict(512)
 
 def forge_state(project, token: str, was: preview.Preview | None, *,
                 forge_of: Callable | None = None, heads_of: Callable | None = None,
-                now: float | None = None) -> ForgeState:
+                now: float | None = None, fresh: bool = False) -> ForgeState:
     """What the forge says about one unit now: which of its pull requests are open, and the head
-    each points at. Reused for `FORGE_TTL_SECONDS` — the panel asks on every open of a card."""
+    each points at. Reused for `FORGE_TTL_SECONDS` — the panel asks on every open of a card.
+
+    `fresh` ASKS THE FORGE WHATEVER THE CACHE HOLDS, and keeps the answer for the next reader: a
+    requester's acceptance is recorded against the head they tried only while the pull request
+    still points at it (#448 slice 3), and a minute-old answer could miss the push that moved it."""
     now = time.time() if now is None else now
     key = (project.name, token, tuple(was.pr_urls) if was else (),
            tuple(sorted((was.heads or {}).items())) if was else ())
     hit = _CACHE.get(key)
-    if hit and now - hit[0] < FORGE_TTL_SECONDS:
+    if hit and not fresh and now - hit[0] < FORGE_TTL_SECONDS:
         return hit[1]
     state = _forge_state(project, token, was, forge_of=forge_of, heads_of=heads_of)
     _CACHE[key] = (now, state)
