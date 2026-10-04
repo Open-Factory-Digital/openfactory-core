@@ -321,20 +321,48 @@ class LocalTracker:
                   needs_person: bool | None = None) -> bool | None:
         """Move the card to the column this state belongs in. `False` when this board declares no
         such column — never a raise, which is what every other row on this axis promises and what
-        the gather's park path reads to decide whether to say the park did not land."""
+        the gather's park path reads to decide whether to say the park did not land.
+
+        DONE CLOSES THE CARD AS DELIVERED, AND LEAVING DONE OPENS IT AGAIN (#500). The column and
+        the card's state are two fields of one row here, and only the column moved: a card the
+        factory finished sat OPEN in Done, `triage.Ticket.delivered` (closed, and not as
+        `not_planned`) never counted it, and both readers of that — the job's own exit
+        (`events.card_finished`) and the sweep's catch-all (`_closed_issue_numbers`) — announced
+        nothing. Every requester of a card finished on this row heard nothing from either; triage's
+        own rule reads each such card as `done-but-open`; and the door refused to reopen it,
+        because a reopen is of a closed card only. Every hosted row closes there: GitHub closes the
+        issue as completed on DONE (#180), and Jira and Azure DevOps close by moving the card,
+        because a status in the done category IS closed.
+
+        IN BOTH DIRECTIONS, AS ON JIRA AND AZURE DEVOPS, NOT ONLY GITHUB'S HALF. GitHub's issue and
+        its project item are two objects, and its `set_state` leaves a closed issue closed whatever
+        column the item is moved to. This board is Jira's shape (`board/local.py` says why it wraps
+        this row): the column IS the status, and there is no second object to leave behind. A card
+        closed as delivered and moved to TO-DO would sit in a column it claims while `LocalBoard.
+        columns` and the pickup queue read open cards only, and the panel draws a delivered card in
+        Done: work the factory queued that nothing picks up. So a delivered card the factory moves
+        out of Done is open work again, in that column — the rule `move_card` keeps for this and
+        for a person's move on the board alike.
+
+        WHAT IS WRITTEN IS WHAT `close_ticket(delivered=True)` WRITES — `closed`, `completed`, in
+        Done — so a card finished by its job and one a person closed from Done are one kind of card
+        downstream, and `reopen_ticket` undoes either. NO COMMENT: `reason` is not written on this
+        row (ADR-0055 D6 — the door's comment is its own), so the close adds none, and the door's
+        close, which goes through `close_ticket`, is never followed by a second one from here.
+
+        A CARD CLOSED AS NOT DELIVERED STAYS THAT. Done never turns it into shipped work — the
+        eleven duplicates that came back downstream as completed are why the word exists — and no
+        move reopens it: only a person does, through the door. A card already closed as delivered
+        is not closed again (one writer per close, GitHub's `_close_as_delivered`). Its column
+        moves as it always did; a card closed as not delivered is on nobody's board."""
         key = column_key(state, needs_person=needs_person)
         if not key:
             return False
-        bare = _number(ref)
-        when = now_iso()
         with connect(self._db, write=True) as conn:
             if conn.execute("SELECT 1 FROM columns WHERE project = ? AND key = ?",
                             (self.project, key)).fetchone() is None:
                 return False
-            changed = conn.execute(
-                "UPDATE cards SET column_key = ?, updated_at = ? WHERE project = ? AND ref = ?",
-                (key, when, self.project, bare)).rowcount
-        return bool(changed)
+            return move_card(conn, self.project, _number(ref), key, closes_at_done=True)
 
     def set_assignees(self, ref: str, logins: list[str]) -> None:
         """A no-op with a record in the log rather than a silent one: a caller that assigned
@@ -488,6 +516,44 @@ class LocalTracker:
             conn.execute(
                 f"UPDATE cards SET {field} = ?, updated_at = ? WHERE project = ? AND ref = ?",
                 (value, now_iso(), self.project, _number(ref)))
+
+
+def move_card(conn, project: str, bare: int, key: str, *, closes_at_done: bool) -> bool:
+    """Put card `bare` in the column `key`, with the state that column means on this board —
+    inside the caller's write transaction. `False` when the board holds no such card.
+
+    ONE RULE FOR BOTH WRITERS OF A COLUMN ON THIS BOARD (#500): the tracker's `set_state`, which is
+    the factory's move, and the board's `set_column`, which is a person's. The board row holds its
+    tracker for exactly this reason — a second source for one fact is a board moving cards by rules
+    the tracker has abandoned — and a delivered card a person drags out of Done on the panel is the
+    same card the factory moves out of it.
+
+    LEAVING DONE OPENS A CARD CLOSED AS DELIVERED, for either writer: it is work again, in the
+    column it was moved to. A card closed as NOT delivered is never opened by a move.
+
+    ARRIVING IN DONE CLOSES ONLY FOR THE FACTORY (`closes_at_done`). The job that settles Done has
+    finished the work, and that is the close `set_state` documents. A person dragging an open card
+    into Done is saying where the card is, not recording a delivery: that is the close from Done,
+    `card_close`, which the door records as delivered and comments on — and a card dragged there
+    and left open is triage's `done-but-open`, which asks exactly that person to decide."""
+    card = conn.execute("SELECT state, closed_reason FROM cards WHERE project = ? AND ref = ?",
+                        (project, bare)).fetchone()
+    if card is None:
+        return False
+    done = STATE_KEYS.get(JobState.DONE, "done")
+    is_open = (card["state"] or "open") == "open"
+    # THE SAME WORD `triage.Ticket.delivered` EXCLUDES, BY NAME — a closed card that says nothing
+    # else is delivered work there, so it is delivered work here too
+    withdrawn = not is_open and card["closed_reason"] == "not_planned"
+    if key == done and is_open and closes_at_done:
+        now, word = "closed", "completed"
+    elif key != done and not is_open and not withdrawn:
+        now, word = "open", ""
+    else:
+        now, word = card["state"], card["closed_reason"]
+    conn.execute("UPDATE cards SET column_key = ?, state = ?, closed_reason = ?, updated_at = ? "
+                 "WHERE project = ? AND ref = ?", (key, now, word, now_iso(), project, bare))
+    return True
 
 
 def _number(ref: object) -> int:

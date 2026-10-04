@@ -104,12 +104,13 @@ MUTATIONS = [
      "            told = door.tell(project, conversation=where, text=text, room=room,\n"
      "                             in_reply_to=asked, addressed_to=user)\n",
      "            told = False\n"),
-    # RE-PINNED 2026-09-29 (#402): the record names what the reply answers, on a second line
+    # RE-PINNED 2026-10-04 (#457): the record now carries a `kind` too — an announcement is the
+    # platform speaking, not the role's answer (was re-pinned 2026-09-29 for #402's in_reply_to)
     ("an internal event is published without being recorded — memory misses what the role said",
      DOOR,
      "        transcript.record(project, thread=conversation, role=\"agent\", text=said, "
      "channel=room,\n"
-     "                          in_reply_to=in_reply_to)\n",
+     "                          in_reply_to=in_reply_to, kind=ANNOUNCEMENT)\n",
      "        pass\n"),
 
     # ── a worker restart, and continue-as-new ────────────────────────────────────────────────────

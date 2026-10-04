@@ -65,7 +65,11 @@ RECORD_KINDS = {"card_verdict": "card verdicts", "preview": "preview records",
                 # THE CARD'S DOOR KEEPS A RECORD OF EVERY TRANSITION (ADR-0055): who closed which
                 # card and why. A forgotten project's cards are removed (`closed cards`), and the
                 # record of their lives goes with them.
-                "card_transition": "card transitions"}
+                "card_transition": "card transitions",
+                # WHO LET A CHANGE PREVIEW WITH ITS OWN SHAPE (#348, `preview/own.py`): a person's
+                # name against a card of this project. It goes with the preview records it
+                # belongs beside — kept, it would outlive the project it was given in.
+                "preview_shape": "preview allowances"}
 
 #: What is kept, said before anything is deleted.
 KEPT = (
