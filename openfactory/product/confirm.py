@@ -286,13 +286,14 @@ def _confirm_queue(project, entry, *, module, user, lang) -> str:
     """the action that spends money."""
     numbers = entry["numbers"]
     results = module.promote(numbers, actor=user)
-    from openfactory.contracts.refs import canonical_refs
+    from openfactory.contracts.refs import canonical_ref
 
-    # EVERY CARD THAT MOVED, AS THE TRACKER SPELLS IT (#491). `ref_numbers` kept only the refs that
-    # are numbers, and `promote` answers `#CONT-412` on Jira: every card went into the queue and
-    # the person was told nothing had. `canonical_refs` keeps them all, in the order `ref_numbers`
-    # gave a numbered board, so what a GitHub project reads does not change by a byte.
-    landed = canonical_refs(r.ref for r in results if r.ok and r.ref)
+    # EVERY CARD THAT MOVED, AS THE TRACKER SPELLS IT (#491), IN THE ORDER IT WAS APPROVED, NEVER
+    # SORTED (#497). `ref_numbers` kept only the refs that are numbers, and `promote` answers
+    # `#CONT-412` on Jira: every card went into the queue and the person was told nothing had. And
+    # `promote` moves the cards in the sequence the person approved, while `queued` says "nesta
+    # ordem" over what it is handed: a sorted list read "3, 1, 2" back as "#1, #2, #3".
+    landed = list(dict.fromkeys(canonical_ref(r.ref) for r in results if r.ok and r.ref))
     failed = [r for r in results if not r.ok]
     if not landed:
         return (_client_detail(failed[0].detail, lang, project=project) if failed

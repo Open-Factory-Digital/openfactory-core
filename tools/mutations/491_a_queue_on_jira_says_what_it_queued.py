@@ -17,11 +17,11 @@ CONFIRM = "openfactory/product/confirm.py"
 VOICE = "openfactory/product/voice.py"
 
 MUTATIONS = [
+    # re-pinned 2026-10-04: one line keeps the tracker's refs in the approved order (#491 + #497)
     ("TODAY'S DEFECT: the refs that landed are only the ones that are numbers", CONFIRM,
-     "    from openfactory.contracts.refs import canonical_refs\n\n"
-     "    # EVERY CARD THAT MOVED, AS THE TRACKER SPELLS IT (#491).",
-     "    from openfactory.contracts.refs import ref_numbers as canonical_refs\n\n"
-     "    # EVERY CARD THAT MOVED, AS THE TRACKER SPELLS IT (#491)."),
+     "    landed = list(dict.fromkeys(canonical_ref(r.ref) for r in results if r.ok and r.ref))\n",
+     "    from openfactory.contracts.refs import ref_numbers\n"
+     "    landed = ref_numbers(r.ref for r in results if r.ok and r.ref)\n"),
 
     ("the sentence decorates every ref as GitHub does: #DAR-9", VOICE,
      '        items=", ".join(ref_label(n) for n in numbers))',
@@ -31,13 +31,14 @@ MUTATIONS = [
      '        items=", ".join(ref_label(n) for n in numbers))',
      '        items=", ".join(str(n) for n in numbers))'),
 
-    ("the refs are kept as promote decorated them, never in their one spelling", CONFIRM,
-     "    landed = canonical_refs(r.ref for r in results if r.ok and r.ref)\n",
-     "    landed = [str(r.ref) for r in results if r.ok and r.ref]\n"),
+    # retired 2026-10-04: "the refs are kept as promote decorated them" is an equivalent mutation
+    # since #497 — `ref_label` strips a typed `#` from a key too, so `queued` names `#DAR-9` as
+    # `DAR-9` whether or not `_confirm_queue` normalised it first
 
+    # re-pinned 2026-10-04: one line keeps the tracker's refs in the approved order (#491 + #497)
     ("a card the board refused is named among the ones queued", CONFIRM,
-     "    landed = canonical_refs(r.ref for r in results if r.ok and r.ref)\n",
-     "    landed = canonical_refs(r.ref for r in results if r.ref)\n"),
+     "    landed = list(dict.fromkeys(canonical_ref(r.ref) for r in results if r.ok and r.ref))\n",
+     "    landed = list(dict.fromkeys(canonical_ref(r.ref) for r in results if r.ref))\n"),
 
     ("a half-refused queue answers with the refusal alone, the card that went in unnamed", CONFIRM,
      "    if not landed:\n"

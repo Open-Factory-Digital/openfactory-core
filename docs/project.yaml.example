@@ -202,12 +202,22 @@ components: {}
 # so your manifest can agree with your change-management document (dev/qa/prod,
 # dev/homologacao/producao...) instead of renaming a stage to satisfy ours.
 # Omit `promote:` and the two fixed names apply: `staging` observed if declared, `prod` gated if
-# declared. An environment declared but absent from the chain is NAMED as unwatched in the log.
+# declared — and environments that include NEITHER name are refused when the manifest loads:
+# that chain walks nothing, and the delivery would be announced at the merge (#501). Name yours
+# in `promote:`, or call them staging/prod. An environment declared but absent from the chain is
+# NAMED as unwatched in the log.
 # `deploy_ref` is the DEPLOYMENT ENVIRONMENT's own name at your provider — the GitHub environment
 # a Deployment is recorded against, the Azure Pipelines environment a stage deploys to. It is NOT
 # a workflow file (this example said `deploy-qa.yml` for months, and that read is a 404 dressed
-# as "nothing has deployed there"). `health_url` is a probe the platform GETs; a stage with
-# neither is passed through unchecked and the ticket says so.
+# as "nothing has deployed there"). `health_url` is a probe the platform GETs. Every stage of the
+# chain, production included, declares one or both: a stage with neither would count as reached
+# with nothing seen, so it is refused when the manifest loads (#501). A deploy still pending is
+# waited for (up to 20 min for the whole walk) and is never a reached stage.
+# A stage counts as reached ONLY on what was observed (#518): a green deploy of this change, or a
+# `health_url` that answered healthy. A `deploy_ref` nothing recorded this change against goes to
+# the `health_url`; with none, the stage is held as not reached. On a project with no CI
+# (`ci: none`, which a `forge: local` one gets by default) nothing reads a deploy, so every stage
+# of the chain needs a `health_url` there — the manifest is refused when it loads until it has one.
 # environments:
 #   dev:      {health_url: "https://dev.example.com/health", url: "https://dev.example.com"}
 #   qa:       {deploy_ref: qa, health_url: "https://qa.example.com/health", url: "https://qa.example.com"}

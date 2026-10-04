@@ -205,6 +205,10 @@ second URL reads as more modular.
 Small and focused beats large and mixed. State what you measured, not just what you changed.
 CI runs the same ruff + pytest you ran locally.
 
+**Every pull request targets `main`**, even a fix a released version needs: the release manager
+copies it to the release branch afterwards (`backport-X.Y`). The milestone on a pull request says
+which version it may ship in. [docs/RELEASING.md](docs/RELEASING.md) is the whole process.
+
 **Your machine is not the reference.** Anything optional that lives outside the clone — a
 directory of sample projects, a credential, a running daemon — must make a test SKIP at run
 time, never change what is collected. A module that resolves such a thing at import can raise
