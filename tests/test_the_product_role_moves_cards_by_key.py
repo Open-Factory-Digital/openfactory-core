@@ -23,8 +23,10 @@ is the money gate, and it stays closed — and each board names the key from the
     option each move wrote;
   · the REAL `AzureBoardsBoard` with nothing renamed, whose own default says `To Do`;
   · the REAL local board, default and renamed, which must keep landing where it did;
-  · and the gate itself: the product role names a column only through its two keys, and only
-    `promote` names the queue.
+  · the gate itself: the product role names a column only through its two keys, and only
+    `promote` names the queue;
+  · and the seam, which is the ONE inverse of `stage_key`: the row's map, then a real column of the
+    board, then the platform's word (review of #505/#506).
 """
 
 from __future__ import annotations
@@ -444,6 +446,83 @@ def test_a_board_that_says_nothing_is_asked_by_the_platforms_own_names(caplog):
         assert stage_column(_Broken(), "todo") == "TO-DO"
         assert stage_column(MagicMock(), "backlog") == "Backlog"
     assert caplog.text.count("OPENFACTORY_BOARD_STAGE_UNANSWERED") == 2, caplog.text
+
+
+class _Columns:
+    """A board with no map of its own that still knows which stage each of its columns is."""
+
+    def __init__(self) -> None:
+        self.listed = 0
+
+    def column_names(self):
+        self.listed += 1
+        return [PENDING, TODO, DOING]
+
+    def stage_key(self, column):
+        return {PENDING: "backlog", TODO: "todo", DOING: "in_progress"}.get(column, "")
+
+
+def test_a_board_whose_map_is_silent_is_named_by_its_own_columns():
+    """THE MIDDLE LAYER (review of #505/#506): a row that declares no map — or answers `""` — still
+    knows which stage each of its own columns is, and the column it reads as `todo` is the one
+    asked for, before the platform's `TO-DO`, which this board does not have. The literal answers
+    only a key no column of the board is."""
+    from openfactory.adapters.board.base import stage_column
+
+    class _Unmapped(_Columns):
+        def stage_column(self, key):
+            return ""
+
+    for board in (_Columns(), _Unmapped()):
+        assert stage_column(board, "todo") == TODO, type(board).__name__
+        assert stage_column(board, "backlog") == PENDING, type(board).__name__
+        assert stage_column(board, "done") == "Done", type(board).__name__
+
+
+def test_a_caller_that_draws_is_named_only_a_column_the_board_has():
+    """`existing=True` is `/api/board`'s: the map's name when the board HAS that column, else the
+    first real column that is the stage, else nothing — never the literal. A move believes the map
+    without asking (`set_column` says the rest), and `names` handed in is not asked again."""
+    from openfactory.adapters.board.base import stage_column
+
+    class _Declared(_Columns):
+        def stage_column(self, key):
+            return {"todo": "Fila", "backlog": PENDING}.get(key, "")
+
+    board = _Declared()
+    assert stage_column(board, "todo") == "Fila" and board.listed == 0
+    assert stage_column(board, "todo", existing=True) == TODO, "a map name that is no column"
+    assert stage_column(board, "backlog", existing=True) == PENDING
+    assert stage_column(board, "done", existing=True) == "", "no column is `done`: none invented"
+    assert stage_column(None, "done", existing=True) == ""
+    asked = board.listed
+    assert stage_column(board, "todo", existing=True, names=[PENDING, "Fila"]) == "Fila"
+    assert board.listed == asked, "the caller's names were read again"
+
+
+def test_there_is_one_inverse_of_stage_key():
+    """TWO ANSWERS TO ONE QUESTION IN ONE FILE (review of #505/#506). #500 grew `column_for` beside
+    this seam, walking the board's columns while this one read the row's map — free to come apart
+    on the first board that disagreed with itself. They are one function, and both callers ask it:
+    nothing else public in `board/base.py` takes a board and a key, and the panel's Done asks it
+    for a column that exists."""
+    import openfactory.adapters.board.base as base
+
+    tree = ast.parse(Path(base.__file__).read_text(encoding="utf-8"))
+    inverses = [fn.name for fn in tree.body if isinstance(fn, ast.FunctionDef)
+                and not fn.name.startswith("_")
+                and [a.arg for a in fn.args.args[:2]] == ["board", "key"]]
+    assert inverses == ["stage_column"], inverses
+    assert not hasattr(base, "column_for")
+
+    app = ast.parse((ROOT / "openfactory" / "api" / "app.py").read_text(encoding="utf-8"))
+    asked = [c for c in ast.walk(app) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+             and c.func.id in ("stage_column", "column_for")]
+    assert asked, "the panel's Done no longer asks the board what it calls the stage"
+    for call in asked:
+        assert call.func.id == "stage_column"
+        assert any(k.arg == "existing" and isinstance(k.value, ast.Constant) and k.value.value is True
+                   for k in call.keywords), "the panel draws, so it asks for a column that exists"
 
 
 def test_the_name_for_a_key_takes_the_deployments_map_as_its_inverse_does():
