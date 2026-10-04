@@ -413,25 +413,28 @@ NARRATION: dict[str, dict[str, str]] = {
     #: list of three — measured on the pilot, where the reader could not tell from the sentence
     #: whether one card or all three needed moving. Portuguese hid it (`arrasta` is impersonal),
     #: which is exactly why a per-language table needs both rows rather than one clever one.
+    #: `{queue}` and `{backlog}` are the columns AS THIS PROJECT'S BOARD CALLS THEM (#502): the
+    #: people who queued the work look for them on their own board, which may say `A Fazer`. In
+    #: Portuguese a name is introduced as "coluna …", which agrees with any name (review of #507).
     "split.straggler-one": {
-        "en": " I created all {n}, but could not move {stuck} to TO-DO — drag that one onto the "
+        "en": " I created all {n}, but could not move {stuck} to {queue} — drag that one onto the "
               "board, after the others, or it will never run:\n{children}",
-        "pt-BR": " Criei os {n}, mas não consegui mover {stuck} pra TO-DO — arrasta esse no "
-                 "quadro, depois dos outros, senão ele fica sem rodar:\n{children}"},
+        "pt-BR": " Criei os {n}, mas não consegui mover {stuck} pra coluna {queue} — arrasta esse "
+                 "no quadro, depois dos outros, senão ele fica sem rodar:\n{children}"},
     "split.stragglers": {
-        "en": " I created all {n}, but could not move {stuck} to TO-DO — drag those onto the "
+        "en": " I created all {n}, but could not move {stuck} to {queue} — drag those onto the "
               "board, in order, or they will never run:\n{children}",
-        "pt-BR": " Criei os {n}, mas não consegui mover {stuck} pra TO-DO — arrasta esses no "
-                 "quadro, na ordem, senão ficam sem rodar:\n{children}"},
+        "pt-BR": " Criei os {n}, mas não consegui mover {stuck} pra coluna {queue} — arrasta esses "
+                 "no quadro, na ordem, senão ficam sem rodar:\n{children}"},
     #: WHICH CHILD IS THE STUCK ONE, on its own line. The sentence names the ref and the list
     #: repeated three near-identical titles under it, so a reader had to cross-reference a number
     #: against them. A list that shows a problem must show it where the problem is.
     "split.not-queued": {"en": "NOT QUEUED — drag this one",
                          "pt-BR": "FORA DA FILA — arrasta este"},
     "split.to-todo": {
-        "en": "TO-DO (they run one at a time, in order)",
-        "pt-BR": "TO-DO (rodam um por vez, em ordem)"},
-    "split.to-backlog": {"en": "Backlog", "pt-BR": "Backlog"},
+        "en": "{queue} (they run one at a time, in order)",
+        "pt-BR": "coluna {queue} (rodam um por vez, em ordem)"},
+    "split.to-backlog": {"en": "{backlog}", "pt-BR": "coluna {backlog}"},
     #: WHAT IS LEFT ON THE PARENT'S OWN CARD, which outlives the channel message above and is
     #: where somebody reads the history six months later. `SPLIT INTO` COMES FIRST AND "NOT
     #: REJECTED" IS SAID OUT LOUD: the card is closed as not delivered — it shipped nothing, its

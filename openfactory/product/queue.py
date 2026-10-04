@@ -25,7 +25,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field, field_validator
 
 from openfactory.contracts.refs import canonical_ref
-from openfactory.product.triage import Ticket, has_criteria
+from openfactory.product.triage import Ticket, has_criteria, stage_of
 
 
 class Readiness(BaseModel):
@@ -68,25 +68,36 @@ class Readiness(BaseModel):
 
         return [canonical_ref(x) for x in v] if isinstance(v, list) else v
 
-def readiness(tickets: list[Ticket], *, todo_column: str = "TO-DO",
-              active_columns: tuple[str, ...] = ("In progress",),
-              backlog_column: str = "Backlog") -> Readiness:
+def readiness(tickets: list[Ticket], *, todo_key: str = "todo",
+              active_keys: tuple[str, ...] = ("in_progress",),
+              backlog_key: str = "backlog",
+              stages: dict[str, str] | None = None) -> Readiness:
     """Read the board's state. Pure, so the claim "the factory is idle and could be working" is
-    arithmetic a human can check rather than something a model asserted."""
+    arithmetic a human can check rather than something a model asserted.
+
+    BY KEY, THROUGH THE BOARD'S OWN MAP (#502). The three arguments were the platform's names —
+    `TO-DO`, `In progress`, `Backlog` — compared with each card's column as its board spells it.
+    On a Jira project whose `status_map` says `A Fazer` and `Pendências`, no queued card and no
+    filed card was counted: the floor read idle beside a full queue, and `propose_queue` proposed
+    from a backlog it could not see — while the product role itself had just filed the cards into
+    the board's own `Pendências` (#496). `stages` is that board's answer for each of its columns
+    (`triage.stage_of`); a caller with no board to ask passes none and is read by the platform's
+    own six names, as before."""
     out = Readiness()
     for t in tickets:
         if t.state != "open":
             continue
-        if t.column in active_columns:
+        stage = stage_of(t.column, stages)
+        if stage in active_keys:
             # a human-owned ticket is not the factory working — counting it as busy would hide an
             # idle floor behind a spike somebody parked there months ago
             if t.human_owned or t.is_container:
                 out.parked.append(t.number)
             else:
                 out.in_progress += 1
-        elif t.column == todo_column:
+        elif stage == todo_key:
             out.todo.append(t.number)
-        elif t.column == backlog_column:
+        elif stage == backlog_key:
             if t.human_owned or t.is_container:
                 out.parked.append(t.number)
             elif has_criteria(t):
