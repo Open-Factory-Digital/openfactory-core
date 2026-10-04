@@ -2577,6 +2577,11 @@ async def record_outcome(inp: HoldSyncInput) -> str:
     of them is a rule most of them will eventually forget. That is the defect this platform has
     shipped seventeen times; the fix is a seam, not a reminder.
 
+    AND ONE MORE, WHERE A CARD OUTLIVES ITS JOB (#448 slice 5): when the project's watched deploy
+    is the card's last stage, the job ends at the merge with the card In review, and the deploy
+    watch is what ends the card — so it records that ending here too (`DeployWatchWorkflow.
+    _the_last_stage`), through the same delivery check. The job's own line still says `merged`.
+
     APPENDS, NEVER REWRITES. The journal is append-only like every other record here: the run's
     own `reviewing` stays true (it WAS reviewing), and this adds what it became.
 
@@ -2619,6 +2624,9 @@ async def record_outcome(inp: HoldSyncInput) -> str:
 
 #: The terminal states a job ends in with its card in Done: `done`, and `merged` when nothing
 #: follows the merge (`JobWorkflow._finish_at_the_merge` settles the card Done and returns merged).
+#: A merge whose watched deploy is the card's last stage also ends `merged`, with the card In
+#: review (#448 slice 5): the check asks the BOARD, which finds nothing delivered there, and the
+#: watch asks again once the deploy is green.
 _THE_CARD_IS_DONE = frozenset({JobState.DONE.value, JobState.MERGED.value})
 #: How long the journal's activity waits for the delivery check — well inside its two minutes.
 _ANNOUNCE_WITHIN = 75.0

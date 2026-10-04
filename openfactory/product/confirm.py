@@ -306,15 +306,21 @@ def _confirm_queue(project, entry, *, module, user, lang) -> str:
 
 
 def _confirm_defect(project, entry, *, module, user, lang) -> str:
-    """files it, classified, against the promise it breaks."""
+    """files it, classified, against the promise it breaks — and, after a delivery that did not
+    work, linked to the cards it was about (#448 slice 5)."""
+    shown: dict = {}
+    # THE DEFECT CARD THE PERSON READ (#392), written as shown — like a requested card's
+    if entry.get("card") and _takes_card(module, "file_defect"):
+        shown.update(card=entry["card"], title=entry.get("title", ""))
+    # THE CARDS A DELIVERY THAT DID NOT WORK WAS ABOUT, and the title it was staged under: a
+    # three-word "it still does not work" would otherwise title the card (#448 slice 5)
+    if entry.get("linked") and _takes_card(module, "file_defect", "linked"):
+        shown.update(linked=entry["linked"], title=entry.get("title", "") or shown.get("title", ""))
     result = module.file_defect(
         restated=entry["restated"], reported_by=entry.get("reported_by", ""),
         violates=entry.get("violates"), severity=entry.get("severity", ""),
         source=entry.get("source", ""), **_checked(module.file_defect, entry),
-        **_whose(module.file_defect, entry),
-        # THE DEFECT CARD THE PERSON READ (#392), written as shown — like a requested card's
-        **({"card": entry["card"], "title": entry.get("title", "")}
-           if entry.get("card") and _takes_card(module, "file_defect") else {}))
+        **_whose(module.file_defect, entry), **shown)
     if not result.ok:
         return _client_detail(result.detail, lang, project=project)
     from openfactory.product.voice import defect_filed
@@ -332,11 +338,11 @@ def _confirm_defect(project, entry, *, module, user, lang) -> str:
         result, lang, project=project)
 
 
-def _takes_card(module, verb: str = "file_ticket") -> bool:
+def _takes_card(module, verb: str = "file_ticket", param: str = "card") -> bool:
     import inspect
 
     try:
-        return "card" in inspect.signature(getattr(module, verb)).parameters
+        return param in inspect.signature(getattr(module, verb)).parameters
     except (TypeError, ValueError):
         return False
 
@@ -675,12 +681,29 @@ _EXECUTORS = {
 _THE_REQUESTERS_OWN = frozenset({"adjust", "accept_change"})
 
 
+def _their_delivery_did_not_work(entry: dict, user: str) -> bool:
+    """Whether this is a defect a delivery's OWN REQUESTER staged by saying it did not work, and
+    this yes is theirs (#448 slice 5) — the other proposal, beside `_THE_REQUESTERS_OWN`, that no
+    allowlist needs to name.
+
+    THE SAME RULE AS ANOTHER PASS, AND A SMALLER ACT. The requester may send their own change back
+    for a pass, which spends; a defect linked to what was delivered to them lands in Backlog and
+    spends nothing until a person promotes it (ADR-0019 §5). Whose delivery it was is settled when
+    it is staged — the acceptance they answered names its requester (`engine._a_defect_for_what_
+    did_not_work`) — and the yes must be the person it was staged for. Anybody else's "it did not
+    work" is staged like any other report, for an approver's yes."""
+    return (str(entry.get("kind") or "") == "defect" and bool(entry.get("linked"))
+            and bool(entry.get("their_delivery")) and _is_requester(entry, user))
+
+
 def _may_say_yes(project, entry: dict, user: str, *, via: str, module=None) -> str:
     """The refusal of this person's yes before anything is consumed — "" when it may go ahead.
     AUTHZ BEFORE POP, as `confirm` says: asked of the entry the caller read."""
     from openfactory.product.module import may_act, unauthorized_message
 
     if may_act(project, user, via=via):
+        return ""
+    if _their_delivery_did_not_work(entry, user):
         return ""
     if str(entry.get("kind") or "") in _THE_REQUESTERS_OWN and user:
         if module is None:

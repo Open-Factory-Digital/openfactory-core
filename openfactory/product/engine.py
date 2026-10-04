@@ -539,7 +539,9 @@ class Settled:
 
     `reply` is the sentence to say when the message answered something the role had asked — a
     staged proposal (a yes, or a no), an open delivery ("did it work?"), or a proposal that
-    expired while the person was away. `None` means the message settled nothing and the turn goes
+    expired while the person was away — or the proposal its answer staged, with its options: a
+    delivery that did not work is a defect for their yes (#448 slice 5). `None` means the message
+    settled nothing and the turn goes
     on to intents and conversation, carrying `waiting`: the proposal still staged, or None once a
     rejection destroyed it. ONE fact per value: `reply=None` never means "stay quiet" — a branch
     with nothing to say answers "" and the caller stays quiet on that, exactly as it always did.
@@ -549,7 +551,7 @@ class Settled:
     reads is a promise the next reader keeps for it.
     """
 
-    reply: str | None
+    reply: Reply | str | None
     waiting: dict | None
 
 
@@ -693,6 +695,14 @@ def settle(project, *, text: str, user: str, thread: str, module, channel: str =
                                       ambiguous=ambiguous, via=via)
             if released is not None:
                 return Settled(released, waiting)
+            if verdict == "did-not-work":
+                # WHAT THEY SAID IS THE REPORT (#448 slice 5): a defect linked to what was
+                # delivered, staged for their yes — never a request to say it all again
+                staged = _a_defect_for_what_did_not_work(
+                    project, loop, text=text, user=user, thread=thread, channel=channel,
+                    agent=agent, lang=lang)
+                if staged is not None:
+                    return Settled(staged, waiting)
             say = accepted_text if verdict == "worked" else rejected_text
             # `ambiguous` NAMES what was settled when more than one delivery was waiting. The
             # comment here used to promise exactly that and the code never did it — a silent
@@ -713,6 +723,60 @@ def settle(project, *, text: str, user: str, thread: str, module, channel: str =
         return Settled(proposal_expired(language=lang), waiting)
 
     return Settled(None, waiting)
+
+
+def _a_defect_for_what_did_not_work(project, loop, *, text: str, user: str, thread: str,
+                                    channel: str, agent: str, lang) -> Reply | str | None:
+    """A "did not work" about a delivery, staged as the defect it is — linked to the cards the
+    delivery was about, with what the person said, for their yes (#448 slice 5). None when the
+    acceptance names no card — one asked before it carried them — and the reply is as it was.
+
+    MEASURED BEFORE IT WAS ADDED. The acceptance closed as `did-not-work` — the record that
+    matters — and the reply (`followup.rejected_text`, Portuguese whatever the project spoke) asked
+    the person to describe it all again "so I register it as a defect". Nothing was staged: the
+    next message went to the conversation like any other, a defect was filed only if the model
+    happened to read one there, it named no card, and its yes needed an approver even when the
+    person was the one the delivery was for.
+
+    THE CARD AND THE WORDS ARE ALREADY KNOWN. The acceptance carries the cards it delivered
+    (`followup.acceptance_of`), and the message that said it did not work is the report. The
+    defect is titled from the card, so two cards' reports never share a title; it cites the
+    requirement a requirement's delivery was owed against; and the yes files it through
+    `file_defect`, which writes the link both ways.
+
+    WHOSE YES. The acceptance names its requester when the delivery knew one; when that is the
+    person speaking, it is THEIR delivery, and their yes files it (`confirm._their_delivery_did_
+    not_work`). Anybody else's is staged like any other report, and the approvers are named."""
+    from openfactory.product.module import may_act
+    from openfactory.product.speaker import sealed
+    from openfactory.product.voice import defect_after_delivery_title, delivery_did_not_work
+
+    ctx = loop.context or {}
+    cards = [canonical_ref(n) for n in str(ctx.get("issues") or "").split(",") if n.strip()]
+    said = str(text or "").strip()
+    if not cards or not said:
+        return None
+    title = str(ctx.get("title") or "") if ctx.get("ticket") else ""
+    owed = str(loop.subject or "")
+    violates = (int(owed) if owed.isdigit() and not ctx.get("defect") and not ctx.get("ticket")
+                else None)
+    theirs = bool(ctx.get("requester")) and sealed(user) == str(ctx.get("requester"))
+    key = key_for(thread, user)
+    replaced = remember(key, {"kind": "defect",
+                              "title": defect_after_delivery_title(ref=cards[0], title=title,
+                                                                   language=lang),
+                              "restated": said[:400], "reported": said[:1500],
+                              "reported_by": user or "", "violates": violates,
+                              "linked": ",".join(cards),
+                              **({"their_delivery": "1"} if theirs else {}),
+                              "source": "", "channel": channel},
+                        lang=lang, project=project, person=user)
+    ask = delivery_did_not_work(cards=cards, title=title, language=lang, agent_name=agent)
+    if not theirs and not may_act(project, user):
+        admins = _admin_mentions(project)
+        if admins:
+            ask += admins_must_confirm(admins, "record", language=lang)
+    return offer(project, key, replaced + ask)
 
 
 # ── stage 2: intents — an explicit ASK for one of the things this role does on its own ──────────

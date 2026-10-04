@@ -873,7 +873,7 @@ _SUMMARY_LABELS = {
         "in_favour_of": "em favor de", "requirement": "requisito", "reason": "motivo",
         "term": "termo", "decision": "decisão", "text": "texto", "new_title": "novo título",
         "items": "itens", "content": "conteúdo", "criteria": "critérios",
-        "instruction": "instrução", "head": "versão experimentada",
+        "instruction": "instrução", "head": "versão experimentada", "linked": "ligado a",
         "waiting": "proposta aguardando confirmação",
     },
     "en": {
@@ -881,7 +881,7 @@ _SUMMARY_LABELS = {
         "in_favour_of": "in favour of", "requirement": "requirement", "reason": "reason",
         "term": "term", "decision": "decision", "text": "text", "new_title": "new title",
         "items": "items", "content": "content", "criteria": "criteria",
-        "instruction": "instruction", "head": "version tried",
+        "instruction": "instruction", "head": "version tried", "linked": "linked to",
         "waiting": "proposal waiting for confirmation",
     },
 }
@@ -959,6 +959,11 @@ def _proposal_summary(entry: dict, *, language: str = "pt-BR") -> str:
     # record the second
     if entry.get("head"):
         parts.append(f"{said['head']}: {entry['head']}")
+    # A DEFECT IS LINKED TO THE CARDS IT WAS REPORTED AGAINST (#448 slice 5): "it did not work"
+    # said of two deliveries is two reports with the same words — the button posted for one must
+    # not file the other
+    if entry.get("linked"):
+        parts.append(f"{said['linked']}: {entry['linked']}")
     return "\n".join(parts)
 
 

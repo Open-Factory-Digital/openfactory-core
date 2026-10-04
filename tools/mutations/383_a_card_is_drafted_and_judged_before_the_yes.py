@@ -155,9 +155,11 @@ MUTATIONS = [
      "    if kind == \"defect\":\n        return _offer_defect(",
      "    if False:\n        return _offer_defect("),
 
+    # re-pinned 2026-10-04: the card and its title are gathered before the call, beside the
+    # cards a delivery that did not work links to (#448)
     ("the yes writes a defect other than the one shown", CONFIRM,
-     '        **({"card": entry["card"], "title": entry.get("title", "")}',
-     '        **({}'),
+     '        shown.update(card=entry["card"], title=entry.get("title", ""))\n',
+     '        pass\n'),
 
     ("a defect's held question comes back as a requested card", ENGINE,
      "    return _offer_card(ex, composed, request=held.request, kind=held.kind,",

@@ -409,10 +409,18 @@ def acceptance_of(loop: Loop, *, ts: str) -> Loop:
     thing whether they got it, and it is the difference between a product owner and a status feed.
     """
     ctx = loop.context or {}
+    gone = cancelled_cards(loop)
+    cards = ",".join(n.strip() for n in str(ctx.get("issues") or "").split(",")
+                     if n.strip() and canonical_ref(n) not in gone)
     return open_loop(ACCEPTANCE, loop.subject, owner=OWNER, ts=ts,
                      about=ctx.get("channel", ""),
                      context={"defect": ctx.get("defect", ""),
                               "asked_by": ctx.get("person", ""),
+                              # THE CARDS IT DELIVERED (#448 slice 5) — never one cancelled out of
+                              # it: a "did not work" files a defect linked to them, and the agenda's
+                              # item names the first (`agenda._answered_at`). Both read it here,
+                              # and it was never copied.
+                              **({"issues": cards} if cards else {}),
                               # a card somebody asked for stays one when it is asked about (#481)
                               **({"ticket": "1", "title": ctx.get("title", "")}
                                  if ctx.get("ticket") else {})})

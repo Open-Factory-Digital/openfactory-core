@@ -787,6 +787,11 @@ class DeployWatchInput(BaseModel):
     #: Where a person looks once it is green (`post_merge_deploy.url`). Defaulted so an in-flight
     #: watch started before #122 keeps deserialising.
     url: str = ""
+    #: WHETHER THIS DEPLOY IS THE CARD'S LAST STAGE (#448 slice 5): the project declares the watch
+    #: and no `environments:`, so the job left the card In review at the merge and the watch is
+    #: what settles it — Done and announced when green, held for a person when not. False for a
+    #: watch that only informs, and for every watch started before this field.
+    delivers: bool = False
 
 
 class DeployStatusInput(BaseModel):

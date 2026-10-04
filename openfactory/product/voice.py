@@ -1283,6 +1283,64 @@ def defect_filed(*, ref: str, violates: int | None, language: str | None = None,
     return text
 
 
+# ── a delivery that did not work (#448 slice 5) ─────────────────────────────────────────────────
+#
+# "DID IT WORK?" ANSWERED "NO" WAS A DEAD END. The acceptance closed as `did-not-work` and the
+# reply asked the person to say it all again so it could be registered "against the promise" — in
+# Portuguese whatever the project spoke, and against nothing: whatever was filed next named no
+# card. What they said IS the report, and the cards the delivery was about are known, so the
+# defect is staged for their yes with both.
+
+_DELIVERY_DID_NOT_WORK = {
+    "pt-BR": {
+        "one": ("{sig}Entendido — então NÃO está resolvido, e eu não vou dar como entregue. Vou "
+                "registrar um defeito para {cards} com o que você disse, ligado a ele. Confirma?"),
+        "many": ("{sig}Entendido — então NÃO está resolvido, e eu não vou dar como entregue. Vou "
+                 "registrar um defeito para {cards} com o que você disse, ligado a eles. "
+                 "Confirma?"),
+        "and": " e ",
+    },
+    "en": {
+        "one": ("{sig}Understood — so it is NOT solved, and I will not count it as delivered. "
+                "I'll file a defect for {cards} with what you said, linked to it. Confirm?"),
+        "many": ("{sig}Understood — so it is NOT solved, and I will not count it as delivered. "
+                 "I'll file a defect for {cards} with what you said, linked to them. Confirm?"),
+        "and": " and ",
+    },
+}
+
+#: The defect's title on the board: what it is about, and the card — so two cards' reports never
+#: share one title, which is how a filing finds an existing card (`file_defect`'s `find_ticket`).
+_DEFECT_AFTER_DELIVERY_TITLE = {
+    "pt-BR": "Não funcionou depois da entrega: {what}",
+    "en": "Did not work after delivery: {what}",
+}
+
+
+def delivery_did_not_work(*, cards, title: str = "", language: str | None = None,
+                          agent_name: str = "") -> str:
+    """The reply to a "did not work" about a delivery: not counted as delivered, and the defect
+    that will be filed with what they said, linked to the cards it was about — asked, never done."""
+    said = _pick(_DELIVERY_DID_NOT_WORK, language)
+    refs = [str(c).strip().lstrip("#") for c in cards if str(c).strip()]
+    named = said["and"].join(_card(r, title if len(refs) == 1 else "", language) for r in refs)
+    return said["one" if len(refs) == 1 else "many"].format(sig=_sig(agent_name), cards=named)
+
+
+def defect_after_delivery_title(*, ref: str, title: str = "", language: str | None = None,
+                                limit: int = 80) -> str:
+    """The title a defect filed after a delivery is opened under — within the board's `limit`
+    (`cards.TITLE_LIMIT`), its card's ref always whole at the end."""
+    ref = str(ref).strip().lstrip("#")
+    title = (title or "").strip()
+    suffix = f" (#{ref})" if title else ""
+    text = _pick(_DEFECT_AFTER_DELIVERY_TITLE, language).format(what=title or f"#{ref}")
+    room = limit - len(suffix)
+    if len(text) > room:
+        text = text[:room - 1].rstrip() + "…"
+    return text + suffix
+
+
 def ticket_confirmation(*, title: str, language: str | None = None, card: str = "",
                         unjudged: bool = False, disputed: tuple[str, ...] | list[str] = ()) -> str:
     if not card:

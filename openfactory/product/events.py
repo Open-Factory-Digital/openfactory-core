@@ -15,8 +15,10 @@ line on that conversation — behind the turn in progress, never inside one.
     kind                producer on this branch
     ─────────────────   ──────────────────────────────────────────────────────────────────────
     delivered           `activities.record_outcome` — every job ends there; one that ended with
-                        its card done asks whether that completed a delivery (`card_finished`)
-                        — and the weekly sweep, which is now only the catch-all (`deliver`)
+                        its card done asks whether that completed a delivery (`card_finished`),
+                        and so does the deploy watch when the deploy was the card's last stage
+                        and went green (#448 slice 5) — never at a merge a stage follows — and
+                        the weekly sweep, which is now only the catch-all (`deliver`)
     ci_red              `activities.repair_ci` — the merge watch sends a pull request there
                         because a check that blocks it failed on the code, and the factory is
                         repairing it; said once per pull request, however many passes it takes

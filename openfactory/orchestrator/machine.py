@@ -344,7 +344,18 @@ def card_reference_for(runner: object, ticket: Ticket) -> CardReference:
             log.info("no URL for %s (%s) — the pull request names it without one",
                      ticket.id, str(exc)[:120])
     board = str(getattr(getattr(runner, "project", None), "name", "") or "").strip()
-    keyword = closing_keyword(getattr(runner, "forge", None)) if owned else ""
+    # NO CLOSING WORD WHEN A STAGE FOLLOWS THE MERGE (#448 slice 5). `Closes #12` has the forge
+    # close the card AT THE MERGE, and a closed card is what reads as delivered
+    # (`triage.Ticket.delivered`): on the one pairing that writes it, a project whose deploy or
+    # chain had not happened yet was announced "ready, did it work?" by the next look at the board.
+    # The tracker row closes a delivered card at Done on every pairing (#180), so the word only ever
+    # bought the close one step early — exactly the step a declared stage is. The mention stays,
+    # and links the change to the card natively.
+    manifest = getattr(runner, "manifest", None)
+    staged = isinstance(manifest, Manifest) and not after_merge.nothing_follows(
+        deploy=getattr(manifest, "post_merge_deploy", None),
+        environments=getattr(manifest, "environments", None) or ())
+    keyword = closing_keyword(getattr(runner, "forge", None)) if owned and not staged else ""
     return card_reference(ticket, owned=owned, url=url, board=board, keyword=keyword)
 
 

@@ -499,7 +499,9 @@ def test_the_job_says_whether_stages_follow_with_the_promotions_own_condition():
 
     src = inspect.getsource(JobWorkflow._lifecycle)
     assert "should_promote = params.promote or bool(result.environments)" in src
-    assert "self._tell_the_requester_it_merged(params, result, stages_follow=should_promote)" in src
+    # …OR A WATCHED DEPLOY THAT IS THE CARD'S LAST STAGE (#448 slice 5): the delivery waits for it
+    # too, so the requester is told a stage follows (`test_delivered_means_the_last_declared_stage`)
+    assert "stages_follow=should_promote or deploy_is_last)" in src
     assert src.index("should_promote = params.promote") < src.index(
         "self._tell_the_requester_it_merged(")
 
