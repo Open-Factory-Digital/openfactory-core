@@ -830,14 +830,29 @@ class _WatchedWrites:
     body edits, so a failed close read as a clean write here, the client was told the card was
     closed, and the impediment a real failure had opened was closed by the write that never
     happened. A guard sharing the failure mode of the thing it guards is worth less than none.
+
+    IT HAS WHAT IT WRAPS, AS FAR AS `isinstance` CAN SEE (#511). A capability is a
+    `runtime_checkable` protocol beside the port (`Rankable`, `Watchable`, `Staged`), and since
+    Python 3.12 `isinstance` asks for a protocol's members STATICALLY (`inspect.getattr_static`),
+    which never reaches `__getattr__`. Forwarding alone therefore made every watched board a board
+    that cannot rank: `reorder` asked the wrapper, heard no, and every backlog order a person
+    confirmed in the conversation was answered "este quadro ainda não aceita reordenação" — on the
+    three boards that rank. Asking the inner adapter at the call site would fix that one question
+    and leave the next `isinstance` somebody writes against a watched adapter to fail the same
+    quiet way, so `__new__` gives each wrapper a class that carries every public name its adapter
+    statically has, and nothing else. Reading one is `__getattr__` — the same forward, the same
+    watch — so a capability is visible AND its write still reported, and an adapter that lacks a
+    member is, wrapped, still an adapter that lacks it.
     """
 
     #: What actually changes something — and the only evidence that CLOSES the impediment. A read
     #: coming back is the forge answering; a write landing is the capability the ticket names.
+    #: `place_after` is the backlog order a person confirmed (#511): a rank the board refused is
+    #: the platform not doing what it said, exactly like a column it refused.
     _WRITES = frozenset({"create_ticket", "comment", "close_ticket", "update_body", "update_title",
                          "add_label", "remove_ticket",
                          "remove_label", "set_assignees", "set_state", "link_child",
-                         "add_item", "set_column"})
+                         "add_item", "set_column", "place_after"})
 
     #: What can FAIL a write. The lookup that gates one belongs here even though it changes
     #: nothing: `_file_one` and `file_defect` both ask "does this already exist?" first, so a
@@ -845,6 +860,11 @@ class _WatchedWrites:
     #: machine reason, which is exactly what the ticket is for. The client is told the same thing
     #: either way, and an operator who only hears about half of them triages a board that lies.
     _WATCHED = _WRITES | frozenset({"find_ticket", "get_ticket"})
+
+    def __new__(cls, inner, tell):
+        # ONE CLASS PER SHAPE OF ADAPTER, cached: a wrapper is built on every `_board()` and
+        # `_tracker()`, and the shape of a given row does not change between them.
+        return super().__new__(_watched_kind(type(inner), _static_shape(inner)))
 
     def __init__(self, inner, tell) -> None:
         self._inner = inner
@@ -875,6 +895,50 @@ class _WatchedWrites:
         # `inspect.signature` follows `__wrapped__`, so the question reaches the row through this.
         watched.__wrapped__ = attr
         return watched
+
+
+class _Forwarded:
+    """One name a watched adapter has, put ON THE CLASS so a static lookup finds it (#511).
+
+    Reading it is reading `_WatchedWrites.__getattr__`: the same forward and, for a write, the same
+    watch. All it adds is that the name is THERE before anything runs."""
+
+    __slots__ = ("name",)
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __get__(self, watched, owner=None):
+        return self if watched is None else watched.__getattr__(self.name)
+
+
+def _static_shape(inner) -> tuple[tuple[str, bool], ...]:
+    """Every public name `inner` has without running any of its code, and whether it is `None` —
+    what `isinstance` against a `runtime_checkable` protocol reads of it (`getattr_static`).
+
+    `None` IS KEPT AS `None`, because the protocol reads it that way: a method set to `None` is a
+    row saying it does not do that, and a forward standing in its place would claim it does."""
+    import inspect
+
+    names = {name for klass in type(inner).__mro__ for name in vars(klass)}
+    try:
+        names |= set(object.__getattribute__(inner, "__dict__"))
+    except AttributeError:  # a row with `__slots__` keeps its names on the class
+        pass
+    shape = []
+    for name in sorted(n for n in names if not n.startswith("_")):
+        try:
+            shape.append((name, inspect.getattr_static(inner, name) is None))
+        except AttributeError:
+            continue
+    return tuple(shape)
+
+
+@functools.lru_cache(maxsize=256)
+def _watched_kind(row: type, shape: tuple[tuple[str, bool], ...]) -> type:
+    """The `_WatchedWrites` class for one shape of adapter — see the class's #511 paragraph."""
+    return type(f"_WatchedWrites[{row.__name__}]", (_WatchedWrites,),
+                {name: None if absent else _Forwarded(name) for name, absent in shape})
 
 
 def _bound_answer(module, answer: ProductAnswer) -> ProductAnswer:
