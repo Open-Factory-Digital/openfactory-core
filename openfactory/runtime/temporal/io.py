@@ -761,6 +761,18 @@ class ReadyForYouInput(BaseModel):
     verdict: dict | None = None
 
 
+class MergedInput(BaseModel):
+    """A card's pull request merged, whoever merged it (#448 slice 3): the product role tells the
+    card's requester, once per card and pull request. `stages_follow` is whether the job promotes
+    the change through declared stages next — the delivery is then announced only after them, so
+    the requester hears this now; with none, the delivery says it at the job's end instead."""
+
+    project: str
+    issue: str
+    pr_url: str
+    stages_follow: bool = False
+
+
 class DeployWatchInput(BaseModel):
     """The abandoned post-merge deploy-watch child workflow's input (ADR-0005). Carries the
     merged PR so the watcher resolves the merge commit SHA itself, plus the deploy workflow to

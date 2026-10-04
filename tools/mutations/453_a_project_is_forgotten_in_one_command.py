@@ -56,6 +56,10 @@ MUTATIONS = [
      'RECORD_KINDS = {"card_verdict": "card verdicts", "preview": "preview records",',
      'RECORD_KINDS = {"card_verdict": "card verdicts",'),
 
+    ("the acceptances leave the list of what is forgotten (#483)", FORGET,
+     '                "card_accepted": "acceptances",\n',
+     ''),
+
     ("the preview allowances leave the list of what is forgotten (#477)", FORGET,
      '                "preview_shape": "preview allowances"}',
      '                }'),

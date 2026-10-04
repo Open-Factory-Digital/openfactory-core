@@ -1087,6 +1087,12 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
         offered = _offer_adjust(ex, answer)
         if offered is not None:
             return offered
+    if getattr(answer, "gesture", "") == "accept" and getattr(answer, "gesture_card", ""):
+        # …AND "THAT'S IT" IS ITS OTHER HALF (#448 slice 3): a yes to what they tried, recorded
+        # against the head the preview was built from — never a request, never a requirement
+        offered = _offer_accept(ex, answer)
+        if offered is not None:
+            return offered
     if getattr(answer, "is_defect", False):
         # Who can actually unlock the pen. Asking the REPORTER to confirm and then refusing their
         # confirmation — with a refusal written for the requirement flow ("registrar como
@@ -1234,6 +1240,38 @@ def _offer_adjust(ex: Exchange, answer) -> Reply | str | None:
                               criteria=prepared.criteria, keeps=prepared.keeps,
                               pass_number=this, passes=getattr(gate, "passes", None),
                               language=ex.lang)
+    return offer(ex.project, ex.key, replaced + preamble + ask)
+
+
+def _offer_accept(ex: Exchange, answer) -> Reply | str | None:
+    """The requester's yes to the change that waits on them, staged for their confirmation — or
+    why nothing can be recorded, said in the conversation (#448 slice 3). None for a module that
+    cannot prepare one (an add-on's, a double), and the turn goes on as before.
+
+    THE HEAD IS FIXED HERE, when it is staged: the one the preview was built from, which is what
+    the person tried. The yes records THAT head, and is refused if the preview was rebuilt from
+    another in between (`ProductModule.accept_change`) — a yes never stands for a later push.
+    Nothing is staged when there is nothing to accept (not theirs, nothing waiting, a pass
+    running, nothing tried, the change moved since): NEVER A BARE REFUSAL."""
+    from openfactory.product.voice import accept_change_confirmation
+
+    prepare = getattr(ex.module, "prepare_acceptance", None)
+    if not callable(prepare):
+        return None
+    number = canonical_ref(getattr(answer, "gesture_card", "") or "")
+    preamble = (answer.text + "\n\n") if answer.text else ""
+    ex.on_it()
+    prepared = prepare(number, actor=ex.user, language=ex.lang)
+    if not prepared.ok:
+        return preamble + prepared.said
+    # WHERE IT WAS SAID travels as every staged entry's `conversation` (`staging.remember`): it
+    # is where "it went in" is told when no delivery of the card names one (`merged_for_you`)
+    replaced = remember(ex.key, {"kind": "accept_change", "number": number,
+                                 "head": prepared.head, "pr_url": prepared.pr_url,
+                                 "seq": ex.seen, "source": ex.source or "",
+                                 "channel": ex.channel},
+                        lang=ex.lang, project=ex.project, person=ex.user)
+    ask = accept_change_confirmation(number=number, merges=prepared.merges, language=ex.lang)
     return offer(ex.project, ex.key, replaced + preamble + ask)
 
 

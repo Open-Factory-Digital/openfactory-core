@@ -391,6 +391,44 @@ def _ticket(summary, columns: dict[str, str]) -> Ticket:
     )
 
 
+def read_cards(project, refs, *, token: str | None = None,
+               tracker=None) -> tuple[list[Ticket], list[str]]:
+    """`(read, unread)` — the cards `refs` name, EACH READ BY ITS OWN REF from the project's
+    tracker, never from the board's list; and the refs that could not be read (#492).
+
+    THE BOARD IS ONE REPOSITORY'S LIST. `read_board` sweeps `list_tickets`, which answers for the
+    tracker's own repository, so a card the product filed in another of its repositories
+    (`acme/web#1`, C-18) is on no board this module reads. This is the read for exactly those: the
+    tracker addresses the repository the ref names (`GitHubIssuesTracker._locate`), on the same
+    credential the board travels on and the card was filed with (`_credential`).
+
+    NOT REMEMBERED, and never merged into the snapshot: these cards are not on this board, and a
+    snapshot that held them would be a board with cards its next sweep silently drops.
+
+    UNREAD IS NEVER OPEN OR CLOSED. A ref the row cannot read by itself (`tracker.base.summary_of`),
+    could not read just now, or a deployment with no tracker at all, comes back in `unread`, and
+    the caller says what that means for it. Never raises."""
+    wanted = [canonical_ref(r) for r in refs if canonical_ref(r)]
+    if not wanted:
+        return [], []
+    if tracker is None:
+        tracker = _tracker(project, _credential(project, token))
+        if tracker is None:
+            return [], wanted
+    from openfactory.adapters.tracker.base import summary_of
+
+    read: list[Ticket] = []
+    unread: list[str] = []
+    for ref in wanted:
+        summary = summary_of(tracker, ref)
+        if summary is None:
+            unread.append(ref)
+        else:
+            # THE REF ASKED, NOT THE ONE ANSWERED: the caller compares it with what named it
+            read.append(_ticket(summary, {}).model_copy(update={"number": ref}))
+    return read, unread
+
+
 def _remember(name: str, tickets: list[Ticket], *, swept_at: float | None = None) -> None:
     """Store the board and the watermark: the newest `updated_at` we have actually seen.
 

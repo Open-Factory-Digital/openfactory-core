@@ -154,6 +154,26 @@ class LocalBoard:
             named["todo"] = self._queue
         return named
 
+    def stage_column(self, key: str) -> str:
+        """What this board calls the stage `key`. See `Staged.stage_column`.
+
+        Off the board's own rows, for the reason `stage_key` gives: a column renamed with
+        `columns:` at `project init`, or on the board afterwards, is the name `set_column` matches,
+        and the product role asking for the platform's word would find no such column (#496)."""
+        from openfactory.adapters.board.columns import CANONICAL_COLUMNS, name_for
+
+        try:
+            with connect(self._db()) as conn:
+                rows = conn.execute("SELECT key, name FROM columns WHERE project = ?",
+                                    (self.project,)).fetchall()
+        except Exception:  # noqa: BLE001 — a board that cannot be read is not a traceback here
+            log.warning("could not ask %s's board what its columns are called — naming them by "
+                        "the platform's own words, which is right until somebody renames one",
+                        self.project, exc_info=True)
+            rows = []
+        return name_for(key, renamed={r["key"]: r["name"] for r in rows
+                                      if r["name"] and r["key"] in CANONICAL_COLUMNS})
+
     def pickup_column(self) -> str:
         """What THIS board calls the column the poller picks up from.
 

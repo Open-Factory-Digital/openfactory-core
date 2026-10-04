@@ -3942,6 +3942,11 @@ async def _product_board(*, project: str, by: Actor, card: str = "") -> Outcome:
         vouched = bool(by.admin) and by.may_enter(FLOOR)
         shown["adjust"] = await asyncio.to_thread(
             lambda: module.adjust_view(shown["ref"], actor=by.id, vouched=vouched))
+        # …AND ITS OTHER HALF, "THIS IS IT" (#448 slice 3): drawn only where the module says this
+        # viewer may accept and there is a head they tried
+        if callable(getattr(module, "accept_view", None)):
+            shown["accept"] = await asyncio.to_thread(
+                lambda: module.accept_view(shown["ref"], actor=by.id, vouched=vouched))
     count = "could not be read" if read["cards"] is None else f"{len(read['cards'])} open"
     return done(f"{proj.name}'s board — {count}", project=proj.name, **read)
 
@@ -4068,6 +4073,46 @@ async def _product_adjust(*, project: str, number: str, instruction: str, by: Ac
     return done("\n\n".join(filter(None, [said, str(result.detail or "")])), project=project,
                 issue=ref, through="product", pass_number=result.pass_number,
                 passes=result.passes, corrected=result.corrected)
+
+
+async def _product_accept_change(*, project: str, number: str, by: Actor,
+                                 head: str = "") -> Outcome:
+    """Record that the change on a card, as its requester tried it, is what they asked for — from
+    the card on the product view (#448 slice 3).
+
+    `product_adjust`'s OTHER HALF, and #384's pattern again: the card's own control, the
+    confirmation the one they just gave on the card, and WHO MAY the module's answer
+    (`accept_change`) — a product admin, the card's own requester, or an operator this row vouches
+    for. So no `needs_admin`.
+
+    `head` IS THE ONE THE CARD SHOWED, when the page sent it: a preview rebuilt between the look and
+    the click is refused by name, never accepted in the person's name. When the look is all that
+    holds the merge, the module gives the gate its `merge` — the same act as the conversation's
+    yes (`confirm._confirm_accept_change`)."""
+    import asyncio
+
+    module, _proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    ref = str(number or "").strip().lstrip("#")
+    if not ref:
+        return refused(INVALID, "say which card.")
+    vouched = bool(by.admin) and by.may_enter(FLOOR)
+    # WHERE "IT WENT IN" IS TOLD when no delivery of the card names a conversation: this person's
+    # own (`Actor.conversation`, #33 slice 3), or nowhere
+    where = str(getattr(by, "conversation", "") or "")
+    result = await asyncio.to_thread(
+        lambda: module.accept_change(ref, actor=by.id, head=str(head or "").strip(),
+                                     where=where, vouched=vouched))
+    if not result.ok:
+        return _write_outcome(result, did=f"accept #{ref}'s change", project=project, issue=ref,
+                              through="product")
+    from openfactory.product.accept import headline
+
+    said = headline(result, language=getattr(_proj, "language", None))
+    return done("\n\n".join(filter(None, [said, str(result.detail or "")])), project=project,
+                issue=ref, through="product", head=getattr(result, "head", ""),
+                merging=bool(getattr(result, "merging", False)))
 
 
 async def _product_record_decision(*, project: str, number: str, decision: str, by: Actor,
@@ -6838,6 +6883,23 @@ CATALOG: dict[str, ActionSpec] = {
                         "is still wrong, from the card on the product view — the conversation "
                         "stages the same act for its yes, and the floor's `adjust` is the "
                         "operator's",
+        ),
+        ActionSpec(
+            name="product_accept_change",
+            scope=PRODUCT,
+            summary="record that the change waiting on a card, as its requester tried it in its "
+                    "preview, is what they asked for — and put it in when that look is all that "
+                    "holds it",
+            run=_product_accept_change,
+            required=("project", "number"),
+            optional=("head",),
+            # THE MODULE DECIDES WHO (#448, #384's rule): a product admin, or the person who asked
+            # for the card — and the second is on no allowlist, so `needs_admin` would refuse them
+            needs_admin=False,
+            choose_when="when the person who asked for a card has tried its change in the preview "
+                        "and says it is right, from the card on the product view — the "
+                        "conversation stages the same act for its yes, and the floor's `merge` is "
+                        "the operator's",
         ),
         ActionSpec(
             name="product_correct_card",

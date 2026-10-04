@@ -1796,7 +1796,9 @@ async function loadInbox(){
 // one line per kind — what to ask, in plain language
 function inboxQuestion(it){
   if(it.kind=="decision")return(it.decision&&it.decision.question)||"decision needed";
-  if(it.kind=="merge")return"PR ready — waiting on your review"+(it.note?` — ${it.note}`:"");
+  // …and the requester's "that's it", when they said it (#448 slice 3): the server's sentence
+  if(it.kind=="merge")return"PR ready — waiting on your review"+(it.note?` — ${it.note}`:"")+
+    (it.accepted&&it.accepted.said?` — ${it.accepted.said}`:"");
   if(it.kind=="approval")return"awaiting your production approval";
   if(it.kind=="rate_limit")return"paused — rate limited"+(it.note?` — ${it.note}`:"");
   return it.note||it.state||"needs your attention";
@@ -2352,6 +2354,26 @@ async function pvAdjustSend(){
   const ok=!!(out&&out.ok);
   _pv.adjusting=ok?null:ask;
   _pv.said={ok,how:"adjust",message:(out&&out.message)||"I could not do that just now."};
+  await pvCardRead(c.ref);
+}
+// "THIS IS IT", FROM THE CARD (#448 slice 3). The person who asked for the card tried its change in
+// the preview and says it is right, where they are looking. Drawn only when the SERVER says this
+// viewer may accept and there is a head they tried (`c.accept.offered`, `ProductModule.accept_view`).
+// The head the card showed travels with the click, so a preview rebuilt in between is refused by
+// name, never accepted in their name. Nothing tried yet, or the change moved since: the server's
+// sentence, and no button.
+function pvAcceptBlock(c){
+  const a=c.accept||{};
+  if(!a.offered)return a.note?`<p class="pv-note" data-accept>${esc(a.note)}</p>`:"";
+  const w=a.words||{};
+  return `<div data-accept style="margin-top:9px"><p class="pv-note">${esc(w.note||"")}</p>
+      <button class="btn" onclick="pvAcceptSend()">${esc(w.accept||"This is it — accept")}</button></div>`;
+}
+async function pvAcceptSend(){
+  const c=_pv.card;if(!c)return;
+  const out=await act("product_accept_change",
+    {project:_prod.project,number:c.ref,head:(c.accept||{}).head||""}).catch(()=>null);
+  _pv.said={ok:!!(out&&out.ok),how:"accept",message:(out&&out.message)||"I could not do that just now."};
   await pvCardRead(c.ref);
 }
 function pvCardAsk(how){_pv.ask={how,reason:""};_pv.said=null;paintPvBoard();const b=$("#pv_reason");if(b)b.focus()}
@@ -3901,6 +3923,9 @@ function refreshProject(){
         :a.auto
         ?`<span class="badge b-run" style="margin-right:8px">⏳ #${esc(parked.issue)} waiting to merge${on}</span>`
         :`<span class="badge b-err" style="margin-right:8px">#${esc(parked.issue)} PR ready — needs YOUR answer${on}</span>`)+
+        // THE REQUESTER'S "THAT'S IT", where the person merging decides (#448 slice 3): who, on
+        // which head — the server's sentence (`accept.line`), amber when the preview shows another
+        gateAcceptedLine(parked)+
         `<a class="btn sm" href="${pr}" target="_blank">View PR${prn?" #"+esc(prn):""} ↗</a>`+
         // THE THREE ANSWERS (#68). Only on the HUMAN path: when auto=true the machine is merging
         // it and there is nothing to ask. Before this the operator's only option was the link —
@@ -5467,7 +5492,7 @@ function _bcontrols(c, where){
   return `<div style="margin-top:9px;display:flex;gap:8px;flex-wrap:wrap">${edit}
       <button class="btn" onclick="${on.ask}('close')">${esc(w.close||"Close card")}</button>
       ${c.started ? "" : `<button class="btn" onclick="${on.ask}('remove')">${esc(w.remove||"Remove from the board")}</button>`}
-    </div>${note}${confirm}${where === "product" ? pvAdjustBlock(c) : ""}`;
+    </div>${note}${confirm}${where === "product" ? pvAcceptBlock(c) + pvAdjustBlock(c) : ""}`;
 }
 
 function _bthread(c){
@@ -5689,6 +5714,11 @@ function renderPreview(project, unit, card, id, r){
 // whether what they looked at is still the pull request's head. The floor redraws every engine
 // frame, so this asks at most once a minute per card and draws what it last heard in between.
 const _pvGate = {};
+function gateAcceptedLine(job){
+  const a=job&&job.accepted;
+  if(!a||!a.said)return"";
+  return `<span class="badge ${a.current===false?"b-warn":"b-ok"}" style="margin-right:8px" data-accepted title="the person who asked for this card tried the change in its preview and said it is what they asked for">✓ ${esc(a.said)}</span>`;
+}
 function gatePreviewLine(project, issue){
   const k = project + "/" + issue, hit = _pvGate[k];
   if(!hit || Date.now() - hit.at > 60000){
