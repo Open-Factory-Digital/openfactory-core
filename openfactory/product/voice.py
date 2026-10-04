@@ -3297,6 +3297,7 @@ _CARD_NOTE = {
         "refused": "_Devolvido para refinamento: a fábrica não o constrói como está escrito._{why}",
         "pr_opened": "_A mudança está num pull request._{why}",
         "merged": "_Mergeado._{why}",
+        "promised": "_Faz parte da entrega de um requisito, por {who}._{why}",
     },
     "en": {
         "discarded": ("_Pull request closed without merging by {who}._{why} Nothing was "
@@ -3319,6 +3320,7 @@ _CARD_NOTE = {
         "refused": "_Sent back to be refined: the factory does not build it as written._{why}",
         "pr_opened": "_The change is in a pull request._{why}",
         "merged": "_Merged._{why}",
+        "promised": "_Part of what a requirement delivers, by {who}._{why}",
     },
 }
 _CARD_NOTE_WHY = {"pt-BR": " Motivo: {why}", "en": " Reason: {why}"}
@@ -3390,14 +3392,14 @@ _CARD_DONE_TO = {
               "reordered": "tirado da fila", "edited": "editado",
               "question_asked": "parado à espera de uma resposta",
               "refused": "devolvido para refinamento", "pr_opened": "posto num pull request",
-              "merged": "mergeado"},
+              "merged": "mergeado", "promised": "prometido na entrega de um requisito"},
     "en": {"discarded": "discarded", "skipped": "skipped", "stopped": "stopped",
            "closed": "closed", "withdrawn": "withdrawn", "removed": "removed",
            "reopened": "reopened", "filed": "filed", "promoted": "queued",
            "reordered": "taken out of the queue", "edited": "edited",
            "question_asked": "parked on a question",
            "refused": "sent back to be refined", "pr_opened": "put in a pull request",
-           "merged": "merged"},
+           "merged": "merged", "promised": "promised in a requirement's delivery"},
 }
 _CARD_REFUSED = {
     "pt-BR": "O #{ref} está {where} — não pode ser {done} a partir daí. Nada foi alterado.",

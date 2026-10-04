@@ -930,16 +930,15 @@ def test_every_WIRED_producer_calls_its_event_and_the_unwired_ones_say_so():
 # ── where a delivery's conversation comes from: the staged record ──────────────────────────────
 
 def test_filing_the_work_records_WHERE_it_was_asked_and_a_digest_of_WHO(ledger):
-    from openfactory.product.authoring import WriteResult
     from openfactory.product.module import ProductModule
 
     fake = SimpleNamespace(project=SimpleNamespace(name=ROOM))
-    ProductModule._open_delivery(fake, SimpleNamespace(number=7),
-                                 [WriteResult(ok=True, ref="#500")], conversation=ANAS,
-                                 requester=ANA)
-    # a defect's promise opens with its filing, through the card's door (#414)
+    # a requirement's promise is carried through each of its cards' doors as `promised`, and a
+    # defect's with its filing — both opened by the door's one effect, `loops.owe` (#414)
     from openfactory.lifecycle import loops
 
+    loops.owe(fake.project, "500", ProductModule._track_requirement(
+        fake, 7, [500], conversation=ANAS, requester=ANA))
     loops.owe(fake.project, "88",
               ProductModule._track_defect(fake, "88", conversation=ANAS, requester=ANA))
 
@@ -995,7 +994,11 @@ def _filing(registry, **overrides) -> SimpleNamespace:
         _file_one=lambda *a, **k: WriteResult(ok=True, ref="#500"),
         # the check each card of a requirement passes (#392), stood in like every other seam
         _vetter=lambda requirement, tracker: None,
-        _open_delivery=lambda req, results, **kw: handed.setdefault("_open_delivery", kw),
+        # where it was asked — what this case is about; who confirmed it and the tracker travel
+        # beside it to the card's door (#414)
+        _open_delivery=lambda req, results, *, conversation="", requester="", **_kw:
+            handed.setdefault("_open_delivery", {"conversation": conversation,
+                                                 "requester": requester}),
         _track_defect=lambda number, **kw: handed.setdefault("_track_defect", kw),
         # the card's door, which files it (#414) — not this case's subject
         _filed_through_the_door=lambda ref, **kw: True,

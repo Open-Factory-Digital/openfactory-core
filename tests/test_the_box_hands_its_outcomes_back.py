@@ -25,7 +25,8 @@ The guard's half — a progress mark admitted by rule, an outcome written from t
 AND THE PROMISE A FILING OPENS (the other half of #414's second part): a reported defect, or a card
 somebody asked for in a conversation, is owed its delivery, and the door's `filed` opens it —
 once per card, recorded with the filing. A requirement's delivery, which spans several cards and
-some the breakdown reused, is still opened beside the door (`followup.deliveries_to_open`).
+some the breakdown reused, goes through each of its cards' doors as `promised` (ADR-0055 amended
+2026-10-04) — `test_the_life_of_a_card.py` drives it.
 """
 
 from __future__ import annotations

@@ -2798,8 +2798,8 @@ class ProductModule:
                 continue
             results.append(self._file_one(draft, requirement, tracker, board, vet=vet,
                                           known_open=known_open, by=actor))
-        self._open_delivery(requirement, results, conversation=conversation,
-                            requester=requester)
+        self._open_delivery(requirement, results, by=actor, tracker=tracker,
+                            conversation=conversation, requester=requester)
         return results
 
     def compose_card(self, *, request: str, conversation: str = "", reply: str = "",
@@ -3034,6 +3034,20 @@ class ProductModule:
         return _owed(f"defeito-{number}", {"defect": "1"}, conversation=conversation,
                      requester=requester)
 
+    def _track_requirement(self, number, cards, *, conversation: str = "",
+                           requester: str = "") -> dict:
+        """A delivery loop on a requirement's work, so "está pronto" is said when ALL of it is
+        delivered — in the conversation it was asked in, when there is one (#267 slice 3).
+        RETURNED, NOT WRITTEN: every card of the breakdown carries it through its door as
+        `promised`, and the first card the door admits opens it (ADR-0055, amended 2026-10-04,
+        #414).
+
+        Subject: the requirement's number, as it always was — the sweep, the agenda and the
+        announcement read it so. `issues`: EVERY card of the breakdown, filed or reused, so the
+        promise is the same whichever card opens it."""
+        return _owed(str(number), {"issues": ",".join(str(c) for c in cards)},
+                     conversation=conversation, requester=requester)
+
     def _track_ticket(self, ref: str, *, title: str = "", conversation: str = "",
                       requester: str = "") -> dict:
         """A delivery loop on a card a person asked for (#481), so the events about it — the
@@ -3253,8 +3267,8 @@ class ProductModule:
         except OSError:
             return ""
 
-    def _open_delivery(self, requirement, results: list[WriteResult], *, conversation: str = "",
-                       requester: str = "") -> None:
+    def _open_delivery(self, requirement, results: list[WriteResult], *, by: str = "",
+                       tracker=None, conversation: str = "", requester: str = "") -> None:
         """The moment a requirement becomes filed work is the moment she starts WAITING on it
         (ADR-0021): a `delivery` loop opens here, and it closes when every one of these issues is
         delivered — each card's delivery through its door announces what it completes
@@ -3262,19 +3276,39 @@ class ProductModule:
         pronto", in the conversation it was asked in (`conversation`), else the room (#267 slice
         3).
 
-        Filing is the ONLY place this can open. `followup.deliveries_to_open` existed, was tested,
-        and was called by nothing — the twelfth instance of this repo's signature defect, caught
-        the same hour it was written. Closing worked; nothing ever opened, so "it's done" was a
-        sentence she could still never say. Best-effort: the issues were filed either way, and a
-        delivery she fails to track is a missing courtesy, not lost work — but it says so."""
+        THROUGH EACH CARD'S DOOR (ADR-0055, amended 2026-10-04, #414). The promise spans several
+        cards, and the breakdown REUSED some of them — open cards the requirement verified on the
+        board, which no transition of theirs marked as joining it — so it opened here, beside every
+        door, and an all-reused requirement went through none. Now every card of the breakdown,
+        filed or reused, is handed `promised`, carrying the whole promise (`_track_requirement`):
+        recorded on each card, and opened by the door's `Loops("open")` with the first card it
+        admits — ONE per subject, so every other card finds it owed already. A card the door
+        refuses (closed or removed since the breakdown read it) records nothing and stops nobody:
+        the others open the same promise this opened before, over every card that landed. Keyed by
+        the card and the promise (`_promised_id`), so a retried breakdown is answered from each
+        card's record and opens nothing twice.
+
+        Filing is the ONLY place this can open. Its first builder, `followup.deliveries_to_open`
+        (gone since #414), existed, was tested, and was called by nothing — the twelfth instance
+        of this repo's signature defect, caught the same hour it was written. Closing worked;
+        nothing ever opened, so "it's done" was a sentence she could still never say.
+        Best-effort: the issues were filed either way, and a delivery she fails to track is a
+        missing courtesy, not lost work — but it says so."""
         import logging
 
         log = logging.getLogger("openfactory.product")
         try:
-            from openfactory.contracts.refs import ref_numbers
+            from openfactory.contracts.refs import ref_number
 
             landed = [r.ref for r in results if r.ok and r.ref]
-            numbers = ref_numbers(landed)
+            # ONE CARD PER NUMBER, the first ref that carries it — the ledger keys this delivery
+            # by number (`ref_numbers`), and the card's door is handed the ref it was filed under
+            refs: dict[int, str] = {}
+            for ref in landed:
+                number = ref_number(ref)
+                if number is not None:
+                    refs.setdefault(number, str(ref))
+            numbers = sorted(refs)
             if not numbers:
                 # No numeric ref among them. On a numeric tracker that means nothing landed; on a
                 # provider whose refs are not numbers it means the ledger cannot key this delivery
@@ -3285,23 +3319,40 @@ class ProductModule:
                              "issues exist and the open-loop ledger is keyed by number",
                              self.project.name, landed)
                 return
-            from datetime import UTC, datetime
+            from openfactory.lifecycle import CardEvent, transition
+            from openfactory.lifecycle.ports import Ports
 
-            from openfactory.memory import store as loop_store
-            from openfactory.memory.ledger import waiting
-            from openfactory.product.followup import OWNER, deliveries_to_open
-
-            ledger = loop_store.read(self.project.name)
-            fresh = deliveries_to_open({requirement.number: numbers},
-                                       waiting(ledger, owner=OWNER),
-                                       ts=datetime.now(UTC).isoformat(),
-                                       conversation=conversation, requester=requester)
-            if fresh:
-                loop_store.write(self.project.name, fresh)
+            owed = self._track_requirement(requirement.number, numbers,
+                                           conversation=conversation, requester=requester)
+            # THE BOARD IS NOT READ (`columns={}`): a promise moves nothing, and whether a card may
+            # join one is the tracker's word on whether it is open — so a board that cannot be
+            # read does not cost a promise this opened before without it
+            ports = Ports(self.project, tracker=tracker, columns={})
         except Exception as exc:  # noqa: BLE001 — the work was filed; only the follow-up is lost
             log.warning("could not start tracking the delivery of REQ-%s (%s) — the work exists, "
-                        "but nobody will announce when it is done", 
+                        "but nobody will announce when it is done",
                         getattr(requirement, "number", "?"), exc)
+            return
+        name = getattr(self.project, "name", "") or ""
+        for number in numbers:
+            ref = refs[number]
+            try:
+                moved = transition(self.project, ref, CardEvent.PROMISED,
+                                   by=str(by or "") or "the product role",
+                                   facts={"requirement": requirement.number, "owed": owed},
+                                   event_id=_promised_id(name, ref, owed), ports=ports)
+            except Exception as exc:  # noqa: BLE001 — one card must not cost the others' promise
+                log.warning("OPENFACTORY_PRODUCT_PROMISE_UNRECORDED ref=%s req=%s (%s) — the "
+                            "card's door could not be gone through; the requirement's other "
+                            "cards still open its promise", ref, requirement.number, exc)
+                continue
+            if moved.refused:
+                log.info("REQ-%s: #%s was not promised — %s", requirement.number,
+                         str(ref).lstrip("#"), moved.refused)
+            elif moved.failed:
+                log.warning("OPENFACTORY_PRODUCT_PROMISE_NOT_OPENED ref=%s req=%s (%s) — the "
+                            "hourly round opens it again", ref, requirement.number,
+                            "; ".join(moved.failed))
 
     def _reused_card(self, draft, requirement, tracker,
                      known_open: set[str] | None) -> str | None:
@@ -5295,13 +5346,28 @@ _CARD_KINDS = ("ticket", "defect")
 
 
 def _owed(subject: str, marks: dict[str, str], *, conversation: str, requester: str) -> dict:
-    """THE PROMISE ONE CARD'S FILING MAKES — a reported defect's and a card somebody asked for
-    (#481), built one way so the two cannot drift — as the card's door opens it (`Loops("open")`,
-    #414): one delivery loop per card, deduplicated by its subject. Who asked travels as the
-    ledger keeps it, a digest (`delivered_to`), so the card's record never holds a name."""
+    """THE PROMISE A CARD'S DOOR OPENS (`Loops("open")`, #414) — a reported defect's and a card
+    somebody asked for (#481), with its filing, and a requirement's, with each card of its
+    breakdown (`promised`) — built one way so the three cannot drift: one delivery loop per
+    subject. Who asked travels as the ledger keeps it, a digest (`delivered_to`), so the card's
+    record never holds a name."""
     from openfactory.product.followup import delivered_to
 
     return {"subject": subject, "context": {**marks, **delivered_to(conversation, requester)}}
+
+
+def _promised_id(project: str, card: str, owed: dict) -> str:
+    """The id of `promised` for `card` joining ONE promise — its subject and every card of it — so
+    a retried breakdown is answered from the card's record and never recorded or applied twice
+    (ADR-0055 D5, #414). A later breakdown of the same requirement over other cards is another
+    promise to this card, recorded; while the first still waits, it opens nothing (`loops.owe`)."""
+    import hashlib
+
+    from openfactory.contracts.refs import canonical_ref
+
+    issues = str(((owed or {}).get("context") or {}).get("issues") or "")
+    seed = f"{project}|{canonical_ref(card)}|{(owed or {}).get('subject', '')}|{issues}"
+    return f"promised-{hashlib.sha256(seed.encode()).hexdigest()[:20]}"
 
 
 def _saved_in_the_repository(result: WriteResult) -> tuple[str, str] | None:

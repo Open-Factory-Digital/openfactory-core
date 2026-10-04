@@ -28,7 +28,8 @@ by the worker through the door; one written from the box fails this walk like an
 
 THE WRITERS NOT MOVED YET are in `card_writers_outside_the_door.py`, each with why and the slice
 that moves it, under a ceiling and a baseline held HERE — so a new exemption is a visible change of
-this file, never a quiet line in that one.
+this file, never a quiet line in that one. THERE ARE NONE since #414 (ADR-0055 D9): a requirement's
+delivery, the last, goes through each of its cards' doors as `promised`, and the ceiling is zero.
 """
 
 from __future__ import annotations
@@ -76,13 +77,12 @@ BOX_WRITERS = frozenset({("openfactory/orchestrator/machine.py", "_set_state"),
 #: outcomes, which it hands back for the worker to apply (D7) — its progress marks stay, by rule
 #: (`BOX_WRITERS`) — and the promise one card's filing opens (`Loops("open")`); 1 since the job's
 #: exit and the weekly sweep stopped announcing beside the door, and the sweep's own questions were
-#: closed apart from any card's promise.
-#: Each slice lowers the ceiling and drops what it moved in from both. Slice 3 ends at one: a
-#: requirement's delivery, which needs an event ADR-0055 does not have (the list says why).
-CEILING = 1
-BASELINE = frozenset({
-    ("openfactory/product/followup.py", "deliveries_to_open", "open_loop"),
-})
+#: closed apart from any card's promise; 0 since ADR-0055 gained `promised` (amended 2026-10-04)
+#: and a requirement's delivery went through each of its cards' doors.
+#: Each slice lowered the ceiling and dropped what it moved in from both. SLICE 3 ENDS AT ZERO, as
+#: D9 says it must (#414): raising it again is a change of this line, in review.
+CEILING = 0
+BASELINE: frozenset[tuple[str, str, str]] = frozenset()
 
 #: THE DOOR'S PROMISE HALF (#414): `lifecycle/loops.py`, whose callers are the door's effects. A
 #: call into it from anywhere the walk reads is a promise about a card kept beside the door — the
@@ -208,6 +208,12 @@ def test_the_list_may_only_shrink():
     added = sorted(set(OUTSIDE_THE_DOOR) - BASELINE)
     assert not added, f"named outside the door and not in the baseline: {added}"
     assert len(BASELINE) == CEILING, "the baseline and the ceiling were moved apart"
+
+
+def test_slice_3_ends_with_the_list_empty():
+    """D9's done-when for #414: nothing but the box's progress marks, allowed by rule, changes a
+    card outside its door — the list, its ceiling and its baseline are all empty."""
+    assert OUTSIDE_THE_DOOR == {} and BASELINE == frozenset() and CEILING == 0
 
 
 def test_every_writer_on_the_list_says_why_and_which_slice_moves_it():

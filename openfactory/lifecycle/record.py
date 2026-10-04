@@ -20,6 +20,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from openfactory.lifecycle.table import MOVES_NOTHING
+
 log = logging.getLogger("openfactory.lifecycle.record")
 
 KIND = "card_transition"
@@ -79,6 +81,15 @@ class History:
     @property
     def latest(self) -> Row | None:
         return self.rows[-1] if self.rows else None
+
+    @property
+    def latest_move(self) -> Row | None:
+        """The newest transition that MOVED the card — the record's word on where the card is. A
+        promise moves nothing (`table.MOVES_NOTHING`, #414), so it never stands for it: the sweep
+        supersedes an older transition's late effect only by a newer move (`executor.converge`),
+        an observed change is judged against the last move (`card.transition`, `observed`), and
+        "the work on it stopped" is read off the last move (`card.back_in_the_backlog`)."""
+        return next((r for r in reversed(self.rows) if r.event not in MOVES_NOTHING), None)
 
     def by_event_id(self, event_id: str) -> Row | None:
         return next((r for r in self.rows if r.event_id == event_id), None)

@@ -25,7 +25,9 @@ the whole of it.
 
 Slice 1 (#412) moves the endings a person causes through the door; job endings (#413) and filing,
 promotion, edits and observed changes (#414) follow, and the writers they still own are named in
-one list that may only shrink (`tests/card_writers_outside_the_door.py`).
+one list that may only shrink (`tests/card_writers_outside_the_door.py`) — empty since #414, whose
+last writer, a requirement's promise over several cards, goes through each card's door as
+`promised`.
 """
 
 from __future__ import annotations

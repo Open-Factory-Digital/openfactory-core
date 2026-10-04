@@ -16,8 +16,13 @@ promise is still possible and stays open, and the card line says the card is in 
 THE CARD IS FILED, AND SOMEBODY IS OWED IT (`filed` carrying `owed`, #414): the delivery a reported
 defect or a card asked for in a conversation is owed opens with the filing, through the card's
 door — so it is recorded with the transition that made it, and a filing whose promise could not be
-written is the hourly sweep's to open again. A requirement's delivery is not opened here: it
-spans several cards, some the breakdown reused rather than filed, and no one card's filing is it.
+written is the hourly sweep's to open again.
+
+THE CARD JOINS A REQUIREMENT'S PROMISE (`promised`, ADR-0055 amended 2026-10-04, #414): a
+requirement's delivery spans several cards, some the breakdown reused rather than filed, so no one
+card's filing is it. Every card of the breakdown carries the whole promise — the requirement's
+subject, every card of it — through its own door, and the same `owe` opens it: the first card the
+door admits, and every other finds it owed already.
 
 THE FACTORY ASKS (`question_asked`, #414): the question it put to the requester on the card opens,
 for the card-question sweep to close when the answer arrives (ADR-0048 §6).
@@ -98,11 +103,12 @@ def cancel(project, card: str) -> tuple[str, bool]:
 
 
 def owe(project, card: str, owed) -> str:
-    """Open the delivery `card` is owed — `owed` is what its filing carried: the loop's subject
-    and its context (who asked, and where, as `followup.delivered_to` keeps them). ONE LOOP PER
-    SUBJECT, as it always was: a promise already waiting is not opened again, so a retried filing
-    or the sweep applying it again opens nothing twice. Raises when the ledger cannot be written,
-    so the sweep applies it again."""
+    """Open the delivery `card` is owed — `owed` is what its transition carried: the loop's
+    subject and its context (who asked, and where, as `followup.delivered_to` keeps them; for a
+    requirement, `issues`: every card of its breakdown, which `card` alone would not name). ONE
+    LOOP PER SUBJECT, as it always was: a promise already waiting is not opened again, so a retried
+    filing, the next card of the same requirement or the sweep applying it again opens nothing
+    twice. Raises when the ledger cannot be written, so the sweep applies it again."""
     from openfactory.adapters.board_db import now_iso
     from openfactory.memory import store as loop_store
     from openfactory.memory.ledger import DELIVERY, open_loop, waiting

@@ -151,9 +151,10 @@ def transition(project, card: str, event: CardEvent, *, by: str, why: str = "",
         if observed:
             # WHAT THE PLATFORM LAST KNEW, NOT WHAT THE TRACKER SHOWS NOW (D8): the tracker already
             # shows the change, so asked of it a close would be refused as the close of a closed
-            # card. The record's latest transition says where the card was; with no record, the
-            # sweep's own reading of what was promised about it (`facts["before"]`)
-            latest = history.latest
+            # card. The record's latest MOVE says where the card was — never a promise, which moves
+            # nothing (#414); with no move recorded, the sweep's own reading of what was promised
+            # about it (`facts["before"]`)
+            latest = history.latest_move
             seen = replace(seen, state=_state(latest.after) if latest is not None else
                            _state(str((facts or {}).get("before") or "")))
             seen = replace(seen, open=seen.state not in _NOT_OPEN)
@@ -191,9 +192,10 @@ def transition(project, card: str, event: CardEvent, *, by: str, why: str = "",
         if "note" not in known:     # the caller's own words win, and only then is one composed
             known["note"] = card_note(event.value, who=by, why=why, language=language)
         effects = consequences(event, known)
+        lands = after(event, known)
         row = record.Row(card=card, seq=history.next_seq, event_id=this_id, event=event.value,
                          by=by, why=why, before=seen.state.value if seen.state else "",
-                         after=after(event, known).value,
+                         after=lands.value if lands else "",
                          effects=tuple(name_of(e) for e in effects), facts=known)
         recorded = False
         if sink is not None:
@@ -207,7 +209,7 @@ def transition(project, card: str, event: CardEvent, *, by: str, why: str = "",
                 sink = None
         done = executor.apply(ports, row, effects, sink=sink if recorded else None)
         return Transition(card=card, event=event, event_id=this_id, seq=row.seq,
-                          before=seen.state, after=after(event, known), effects=tuple(done),
+                          before=seen.state, after=lands, effects=tuple(done),
                           recorded=recorded, facts=known)
     return Transition(card=card, event=event, refused=card_raced(ref=card, language=language))
 
@@ -226,14 +228,15 @@ _STOPPED_THERE = frozenset({CardEvent.DISCARDED.value, CardEvent.SKIPPED.value,
 
 def back_in_the_backlog(project, card: str) -> bool:
     """Whether `card` is in the backlog because a person ended the work on it — its record's latest
-    transition is a discard, a skip or a stop — rather than because it was filed there and nobody
-    has started it. False when the record cannot say: "the work stopped" is a claim, and a card
-    nobody can account for is not said to have one."""
+    MOVE is a discard, a skip or a stop — rather than because it was filed there and nobody has
+    started it. A promise after it moves nothing (#414): a stopped card a requirement reused is
+    still one whose work stopped. False when the record cannot say: "the work stopped" is a claim,
+    and a card nobody can account for is not said to have one."""
     from openfactory.contracts.refs import canonical_ref
 
     try:
         latest = record.read(record.keyed_sink(), getattr(project, "name", "") or "",
-                             canonical_ref(card)).latest
+                             canonical_ref(card)).latest_move
     except Exception:  # noqa: BLE001 — see the docstring: unknown is not "stopped"
         log.info("could not read #%s's record to tell why it is in the backlog", card,
                  exc_info=True)

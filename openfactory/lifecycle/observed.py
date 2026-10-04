@@ -11,8 +11,9 @@ door every difference the tracker's row can report (`tracker/base.py::observes`)
 `by=OBSERVED`. The door judges it against what the platform last knew and applies what follows
 MINUS THE WRITES TO THE CARD, which the vendor's interface already made (`table.consequences`).
 
-    what the platform holds      the record's latest transition; else an open promise about the
-                                 card (a delivery waiting on it, a question asked on it)
+    what the platform holds      the record's latest move (`History.latest_move`); else an open
+                                 promise about the card (a delivery waiting on it, a question
+                                 asked on it)
     what is compared             open and now closed      `closed`, delivered or not as the row
                                                           says why (`ports.withdrawn`)
                                  closed and now open      `reopened`
@@ -45,8 +46,9 @@ _CLOSED = frozenset({State.CLOSED, State.DELIVERED, State.REMOVED})
 
 
 def _held(project, ports) -> dict[str, State | None]:
-    """`{card: where the platform last placed it}` — the record's latest transition, else `None`
-    (open, placed nowhere the platform knows) for a card it only promised something about."""
+    """`{card: where the platform last placed it}` — the record's latest MOVE (a promise moves
+    nothing, #414), else `None` (open, placed nowhere the platform knows) for a card it only
+    promised something about."""
     from openfactory.contracts.refs import canonical_ref
     from openfactory.lifecycle import record
     from openfactory.memory import store as loop_store
@@ -69,7 +71,7 @@ def _held(project, ports) -> dict[str, State | None]:
                  exc_info=True)
     try:
         for card, history in record.cards(ports.sink(), ports.name).items():
-            latest = history.latest
+            latest = history.latest_move
             if latest is not None:
                 try:
                     held[card] = State(latest.after) if latest.after else None

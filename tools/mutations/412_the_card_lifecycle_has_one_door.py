@@ -127,8 +127,9 @@ MUTATIONS = [
      TABLE_TEST),
 
     ("the sweep applies an older transition's late effect, moving the card backwards", EXECUTOR,
-     "            if row.seq != latest.seq or tuple(name_of(e) for e in effects) != row.effects:\n",
-     "            if tuple(name_of(e) for e in effects) != row.effects:\n",
+     # re-pinned 2026-10-04: superseded by a newer MOVE — a promise moves nothing (#414)
+     "            if ((moved is not None and row.seq < moved.seq)\n",
+     "            if (False\n",
      TABLE_TEST),
 
     ("the hourly round never announces a delivery whose last card was cancelled, so it waits a "
@@ -200,7 +201,8 @@ MUTATIONS = [
     ("the ceiling is raised quietly, so the list can grow", GUARD_TEST,
      # RE-PINNED 2026-10-02 (#414): the ceiling is 16 since #414's first part
      # re-pinned 2026-10-04: and 1 since its B1 and B2, merged, and the last delivery producers (#414)
+     # re-pinned 2026-10-04: and 0 since a requirement's promise goes through its cards' doors (#414)
+     "CEILING = 0\n",
      "CEILING = 1\n",
-     "CEILING = 2\n",
      GUARD_TEST),
 ]

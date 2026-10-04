@@ -6,10 +6,11 @@ person's decision is never lost because the tracker blinked; each effect's outco
 under (transition, effect), and a half-applied transition is visible in the record, never silent.
 
 CONVERGED AFTER, AND NEVER BACKWARDS. The hourly sweep (`converge`) applies again every effect
-that failed or never ran — but only while its transition is still the card's latest. A late effect
+that failed or never ran — but only while no newer transition has MOVED the card. A late effect
 of an older transition is marked `superseded` instead: applying it would move a card back to a
 column a person has since moved it out of, the defect this record exists to end, produced by its
-own repair.
+own repair. A promise moves nothing (`table.MOVES_NOTHING`, #414), so it supersedes nothing: a
+filing whose placement failed is still placed when a requirement's promise was recorded after it.
 
 ONE ROW STOPS AT A FAILED WRITE (`table.STOPS_AT_A_FAILED_WRITE`, #414): a question waits only on
 a card that was parked for it. Its caller goes on without what failed, so what follows is not
@@ -172,8 +173,8 @@ def _due(row: record.Row, *, now: datetime) -> set[int]:
 
 def converge(project, *, ports=None) -> list[str]:
     """Apply again what failed or never ran, on every card of `project` whose record has some —
-    only for the card's latest transition; an older one's are superseded. Returns one line per
-    effect it touched; never raises (the next sweep tries again)."""
+    only for the card's latest move and the promises after it; an older one's are superseded.
+    Returns one line per effect it touched; never raises (the next sweep tries again)."""
     from openfactory.lifecycle.ports import Ports
 
     ports = ports or Ports(project)
@@ -186,7 +187,9 @@ def converge(project, *, ports=None) -> list[str]:
         return said
     now = datetime.now(UTC)
     for card, history in histories.items():
-        latest = history.latest
+        # THE LATEST MOVE, NOT THE LATEST ROW (#414): a promise recorded after a filing moves
+        # nothing, so it supersedes nothing — the filing's failed placement is still applied
+        moved = history.latest_move
         for row in history.rows:
             due = _due(row, now=now)
             if not due:
@@ -195,8 +198,9 @@ def converge(project, *, ports=None) -> list[str]:
                 effects = consequences(CardEvent(row.event), row.facts)
             except (KeyError, ValueError):
                 effects = ()
-            if row.seq != latest.seq or tuple(name_of(e) for e in effects) != row.effects:
-                # NEVER BACKWARDS: a newer transition decided where the card is now — or the table
+            if ((moved is not None and row.seq < moved.seq)
+                    or tuple(name_of(e) for e in effects) != row.effects):
+                # NEVER BACKWARDS: a newer move decided where the card is now — or the table
                 # no longer says what this one recorded, and a guess would be worse than nothing
                 for index in sorted(due):
                     record.write_outcome(sink, ports.name, row, index, SUPERSEDED)

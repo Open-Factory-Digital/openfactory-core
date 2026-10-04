@@ -27,8 +27,10 @@ from openfactory.lifecycle.ports import Seen
 from openfactory.lifecycle.table import (
     ALLOWED,
     DECIDED,
+    MOVES_NOTHING,
     OBSERVED,
     ONLY_ON_A_CLOSED_CARD,
+    WRITES_THE_CARD,
     CardEvent,
     Close,
     Column,
@@ -235,7 +237,9 @@ def test_the_five_consumers_the_defects_missed_are_each_in_the_rows():
     the requester's conversation (#401) and the preview (#405)."""
     backlog = (CardEvent.DISCARDED, CardEvent.SKIPPED, CardEvent.STOPPED)
     gone = (CardEvent.WITHDRAWN, CardEvent.REMOVED)
-    for event in DECIDED:
+    # every event that MOVES the card forgets the snapshot; one that moves nothing has no board
+    # to forget, and is held to moving nothing in `test_a_promise_moves_nothing` (#414)
+    for event in DECIDED - MOVES_NOTHING:
         assert Forget() in consequences(event, {}), f"{event}: the snapshot is not forgotten"
     for event in backlog:
         row = consequences(event, {})
@@ -627,3 +631,74 @@ def test_a_question_waits_only_on_a_card_parked_for_it_and_the_sweep_leaves_it_a
     assert [n for n, _ in landed.effects] == ["comment", "column:needs_refinement", "loops:ask",
                                               "forget"]
     assert not landed.failed and not any(o.startswith(NOT_APPLIED) for _, o in landed.effects)
+
+
+# ── 10. a card joins a requirement's promise (#414, ADR-0055 amended 2026-10-04) ──────────────
+
+def test_a_promise_moves_nothing_and_opens_the_promise_it_carries():
+    """`promised` is a fact about the card's promises, never about where it is: no write to the
+    card, no column, no snapshot to forget — the state after is the state before, and on a card no
+    board places it is still placed nowhere. What follows is the promise it carries, opened."""
+    assert MOVES_NOTHING == frozenset({CardEvent.PROMISED})
+    for event in MOVES_NOTHING:
+        row = consequences(event, {"owed": {"subject": "7"}})
+        assert row == (Loops("open"),), row
+        assert not any(isinstance(e, (*WRITES_THE_CARD, Forget)) for e in row), row
+        for state in ALLOWED[event]:
+            assert after(event, {"before": state.value}) is state, state
+        assert after(event, {"before": ""}) is None
+
+
+def test_a_requirement_is_promised_on_an_open_card_wherever_it_is_and_never_on_one_done_or_gone():
+    """The breakdown REUSES open cards wherever they are — queued, under a job, at the merge gate —
+    so the promise is allowed in every open state, and on a card no board places. A card whose
+    work is done or gone is refused: a promise waiting on it would wait for ever."""
+    for open_state in (State.BACKLOG, State.TODO, State.RUNNING, State.WAITING_ON_A_PERSON,
+                       State.MERGED, State.STAGED, None):
+        assert allowed(open_state, CardEvent.PROMISED) is None, open_state
+    for done_or_gone in (State.DELIVERED, State.CLOSED, State.REMOVED):
+        assert allowed(done_or_gone, CardEvent.PROMISED, open_card=False) is not None, done_or_gone
+    assert allowed(State.DELIVERED, CardEvent.PROMISED, open_card=True) is not None
+
+
+def test_a_promise_after_a_filing_does_not_strand_the_filings_failed_placement():
+    """THE LATEST MOVE, NOT THE LATEST ROW: a requirement's cards are promised a moment after they
+    are filed, so a placement the board refused at the filing is followed by a promise. The sweep
+    supersedes a late effect only by a newer MOVE — so it still places the card, where a promise
+    taken for the card's latest transition would have stranded it with no column for ever."""
+    sink = InMemoryMetricsSink()
+    ports = Ports(Seen(state=None), sink_=sink, breaks={"place"})
+    filed, _ = _drive(CardEvent.FILED, None, ports=ports)
+    assert filed.outcome("place").startswith("failed"), filed.effects
+    ports.breaks = set()
+    promised, _ = _drive(CardEvent.PROMISED, None, ports=ports,
+                         facts={"owed": {"subject": "7"}})
+    assert promised.ok and promised.seq == 2, promised
+
+    ports.calls.clear()
+    converge(Project(), ports=ports)
+
+    assert ("place", "12", "backlog") in ports.calls, ports.calls
+    first = record.read(sink, "acme", "12").rows[0]
+    assert first.outcome(first.effects.index("place:backlog")) == "place done"
+
+
+def test_an_observed_change_is_judged_against_the_last_move_not_the_last_promise():
+    """The board sweep judges what the vendor's screen shows against where the platform last placed
+    the card — a promise recorded since placed it nowhere, so it does not stand for it."""
+    from openfactory.lifecycle import observed
+
+    sink = InMemoryMetricsSink()
+    ports = Ports(Seen(state=State.BACKLOG), sink_=sink)
+    assert _drive(CardEvent.FILED, State.BACKLOG, ports=ports)[0].ok
+    ports.seen_as = Seen(state=None)            # the promise reads no board (`_open_delivery`)
+    assert _drive(CardEvent.PROMISED, None, ports=ports, facts={"owed": {"subject": "7"}})[0].ok
+    [_, promise] = record.read(sink, "acme", "12").rows
+    assert (promise.before, promise.after) == ("", "")
+
+    assert observed._held(Project(), ports).get("12") is State.BACKLOG
+
+    ports.seen_as = Seen(state=State.TODO)      # dragged into the queue on the vendor's screen
+    moved = transition(Project(), "#12", CardEvent.PROMOTED, by=OBSERVED, ports=ports)
+    assert moved.ok and moved.before is State.BACKLOG, moved
+

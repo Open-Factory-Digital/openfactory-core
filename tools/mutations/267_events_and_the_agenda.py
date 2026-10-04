@@ -262,9 +262,11 @@ MUTATIONS = [
      '            "requester": requester_of(entry)}\n',
      '            "requester": ""}\n'),
     ("the filing forgets where it was asked on its way to the delivery", MODULE,
-     "        self._open_delivery(requirement, results, conversation=conversation,\n"
-     "                            requester=requester)\n",
-     "        self._open_delivery(requirement, results)\n"),
+     # re-pinned 2026-10-04: the breakdown hands who confirmed it and its tracker on to the cards'
+     # doors, which carry the requirement's promise as `promised` (#414)
+     "        self._open_delivery(requirement, results, by=actor, tracker=tracker,\n"
+     "                            conversation=conversation, requester=requester)\n",
+     "        self._open_delivery(requirement, results, by=actor, tracker=tracker)\n"),
     # RE-PINNED 2026-10-02: the defect's loop is keyed on the tracker's own ref (#479)
     ("the defect's delivery forgets where it was reported", MODULE,
      # re-pinned 2026-10-04: the defect's promise travels with its filing through the card's door (#414)

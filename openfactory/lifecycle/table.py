@@ -14,7 +14,9 @@ its edits — `filed`, `promoted`, `reordered`, `edited` — what follows a chan
 the vendor's own interface (`OBSERVED`, D8), the job's tellings — the question before the plan
 (`question_asked`), the card a split closes, the delivery a finished card completes — and the
 outcomes the box hands back for the worker to apply (D7): `refused`, `pr_opened`, `merged`,
-beside the `parked` and `delivered` of slice 2.
+beside the `parked` and `delivered` of slice 2 — and `promised`, the one event ADR-0055 gained
+after its slices were cut (amended 2026-10-04): a card joining a requirement's promise, which no
+one card's filing can carry, and which moves nothing (`MOVES_NOTHING`).
 """
 
 from __future__ import annotations
@@ -52,6 +54,7 @@ class CardEvent(StrEnum):
     REMOVED = "removed"
     REOPENED = "reopened"
     EDITED = "edited"
+    PROMISED = "promised"
 
 
 class State(StrEnum):
@@ -168,6 +171,12 @@ ALLOWED: dict[CardEvent, frozenset[State]] = {
     # where no job holds the card, and never a card that is gone, which is nobody's to try
     CardEvent.PR_OPENED: frozenset({State.TODO, State.RUNNING, State.WAITING_ON_A_PERSON}),
     CardEvent.MERGED: frozenset({State.RUNNING, State.WAITING_ON_A_PERSON}),
+    # A CARD JOINS A REQUIREMENT'S PROMISE (#414, ADR-0055 amended 2026-10-04): the breakdown files
+    # some cards and REUSES others — open cards the requirement verified on the board — so a card
+    # joins wherever it is open, a job on it or not. Never a card that is done or gone: its work
+    # is no longer to come, and a promise waiting on it waits for a transition it will not make
+    CardEvent.PROMISED: frozenset({State.BACKLOG, State.TODO, State.RUNNING,
+                                   State.WAITING_ON_A_PERSON, State.MERGED, State.STAGED}),
 }
 
 #: The events that need the card CLOSED on its tracker, whatever its state says. `delivered` is a
@@ -185,7 +194,16 @@ WHERE_NO_BOARD_PLACES_IT: frozenset[CardEvent] = frozenset({
     CardEvent.WITHDRAWN, CardEvent.REMOVED, CardEvent.QUESTION_ANSWERED, CardEvent.PARKED,
     CardEvent.DELIVERED, CardEvent.ADJUSTED, CardEvent.FILED, CardEvent.PROMOTED,
     CardEvent.REORDERED, CardEvent.EDITED, CardEvent.QUESTION_ASKED, CardEvent.REFUSED,
-    CardEvent.PR_OPENED, CardEvent.MERGED})
+    CardEvent.PR_OPENED, CardEvent.MERGED, CardEvent.PROMISED})
+
+#: THE EVENTS THAT MOVE NOTHING (#414): what they record is a fact about the card's promises, never
+#: where the card is — no column, no write to the card, no snapshot to forget, and the state after
+#: is the state before. So the record's word on where a card is is its LATEST MOVE
+#: (`record.History.latest_move`), never one of these: the sweep supersedes an older transition's
+#: late effect only by a newer move, and an observed change is judged against the last move. A
+#: requirement's promise recorded on a card a moment after its filing must neither stand for where
+#: the card is nor strand the filing's placement, which the sweep would otherwise repair.
+MOVES_NOTHING: frozenset[CardEvent] = frozenset({CardEvent.PROMISED})
 
 #: THE ROWS THAT STOP AT A FAILED WRITE TO THE CARD — the one exception to "one effect failing
 #: does not stop the next" (`executor.apply`). A question waits only on a card that was parked for
@@ -279,9 +297,11 @@ class Loops:
     waited on closes as answered; `moot`: it closes as cancelled — the card is gone (#413). `ask`:
     the question the factory just put to the requester opens, to be answered on the card;
     `deliver`: every delivery the card completes is announced to whoever asked for it, closed,
-    and its "did it work?" opened; `open`: the promise a filing makes — the delivery a reported
-    defect, or a card somebody asked for in a conversation, is owed — opens, as the filing carried
-    it (`facts["owed"]`) (#414)."""
+    and its "did it work?" opened; `open`: the promise the transition carries (`facts["owed"]`)
+    opens — the delivery a reported defect, or a card somebody asked for in a conversation, is
+    owed with its filing; a requirement's, over every card of its breakdown, with each card's
+    `promised` — ONE per subject, so the first card to carry it opens it and every other finds it
+    owed already (#414)."""
 
     action: str
 
@@ -431,8 +451,8 @@ def _row(event: CardEvent, facts: Mapping[str, object]) -> tuple[Effect, ...]:
         # AND THE PROMISE THE FILING MAKES OPENS WITH IT (#414): a reported defect, or a card
         # somebody asked for in a conversation, is owed its delivery, and the events about the card
         # find their requester through it. A requirement's delivery spans several cards — some
-        # the breakdown reused rather than filed — so no one card's filing carries it
-        # (`followup.deliveries_to_open`, still outside the door)
+        # the breakdown reused rather than filed — so no one card's filing carries it: every card
+        # of the breakdown carries it as `promised`, below
         key = _filed_in(facts)
         owed = (Loops("open"),) if facts.get("owed") else ()
         return (*((Place(key),) if key else ()), *owed, Forget())
@@ -445,6 +465,16 @@ def _row(event: CardEvent, facts: Mapping[str, object]) -> tuple[Effect, ...]:
     if event is CardEvent.EDITED:
         # the note says which parts moved (`card_edit_note`), on every row — the door's comment
         return (Comment(), Forget())
+    if event is CardEvent.PROMISED:
+        # THE CARD JOINS A REQUIREMENT'S PROMISE, AND THE PROMISE OPENS (#414, ADR-0055 amended
+        # 2026-10-04). Every card of the breakdown, filed or reused, carries the WHOLE promise —
+        # the requirement's subject and every card of it — and the ledger keeps one per subject
+        # (`loops.owe`): the first card the door admits opens it, every other finds it owed
+        # already, so neither one card's refusal nor a breakdown interrupted after its first card
+        # leaves it unopened. Nothing is said and nothing is written to the card: the breakdown
+        # answered its requester, and a reused card was told which requirement it now serves
+        # (`module._reused_card`). It moves nothing (`MOVES_NOTHING`)
+        return (Loops("open"),)
     raise KeyError(f"no slice has decided what follows {event.value!r} — it is refused in every "
                    f"state until one does (ADR-0055 D2)")
 
@@ -455,9 +485,13 @@ def _said(facts: Mapping[str, object]) -> tuple[Effect, ...]:
     return (Comment(),) if facts.get("note") else ()
 
 
-def after(event: CardEvent, facts: Mapping[str, object] | None = None) -> State:
-    """The state a decided event leaves the card in."""
+def after(event: CardEvent, facts: Mapping[str, object] | None = None) -> State | None:
+    """The state a decided event leaves the card in — `None` only for an event that moves nothing
+    (`MOVES_NOTHING`) found on a card no board places: it leaves the card where it found it."""
     facts = facts or {}
+    if event in MOVES_NOTHING:
+        before = str(facts.get("before") or "")
+        return State(before) if before else None
     if event in _BACK_TO_THE_BACKLOG or event is CardEvent.REOPENED:
         return State.BACKLOG
     if event is CardEvent.CLOSED and facts.get("delivered"):

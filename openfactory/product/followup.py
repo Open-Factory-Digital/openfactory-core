@@ -155,23 +155,6 @@ def answered(waiting: list[Loop], live_keys: set[str]) -> dict[tuple[str, str, s
     }
 
 
-def deliveries_to_open(filed: dict[int, list[str]], waiting: list[Loop], *,
-                       ts: str, conversation: str = "", requester: str = "") -> list[Loop]:
-    """A loop per requirement that just became work. `filed` is `requirement → issue numbers`.
-
-    `conversation` is where the requester asked for it, and `requester` a digest of who
-    (`delivered_to`) — so "está pronto" is said in THEIR conversation when the work is done, not
-    in the project's room at the next sweep (#267 slice 3)."""
-    already = {loop.subject for loop in waiting if loop.kind == DELIVERY}
-    return [
-        open_loop(DELIVERY, str(req), owner=OWNER, ts=ts,
-                  context={"issues": ",".join(str(i) for i in issues),
-                           **delivered_to(conversation, requester)})
-        for req, issues in sorted(filed.items())
-        if str(req) not in already and issues
-    ]
-
-
 def delivered_to(conversation: str, requester: str) -> dict[str, str]:
     """Where a delivery is announced, as its loop's `context` holds it — `{}` when nobody's
     conversation is known, and the room hears it (#267 slice 3).

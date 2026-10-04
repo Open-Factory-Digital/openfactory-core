@@ -12,29 +12,19 @@ Slice 3 (#414) moved filing, promotion, edits and the stale-pickup healer (its f
 split's children and parent, the gather's question, the ready-for-you tellings, the delivery's
 loop and the factory's own impediment card (B1); the box's outcomes, which it hands back for the
 worker to apply (D7) — its progress marks are admitted by rule, not named here (`BOX_WRITERS`) —
-and the promise one card's filing opens (B2); and the last three delivery producers: the job's exit
+and the promise one card's filing opens (B2); the last three delivery producers: the job's exit
 and the weekly sweep announced a delivery beside the door, and since every way a card reaches Done
-is a door transition whose `Loops("deliver")` announces it, they announce nothing — the sweep's
-second chance is the door's converge, and the questions it closes are the product role's own.
+is a door transition whose `Loops("deliver")` announces it, they announce nothing; and the last
+writer, a REQUIREMENT'S DELIVERY — one promise over several cards, some the breakdown reused —
+which needed an event ADR-0055 did not have. The ADR gained it (`promised`, amended 2026-10-04):
+every card of the breakdown, filed or reused, carries the whole promise through its own door, and
+the door's `Loops("open")` opens it once (`module._open_delivery`).
 
-#414 IS DONE BUT FOR ONE WRITER, below, and the reason it stays. A REQUIREMENT'S DELIVERY is one
-promise over several cards: the breakdown files some of them and REUSES others — open cards the
-requirement verified on the board, which no transition of theirs marks as joining it — and it opens
-only once every card is known (`module._open_delivery`, after the last filing). No one card's
-`filed` can carry it, an all-reused requirement has no transition at all, and the closed event set
-(ADR-0055 D2) has no event for "a card joins a requirement's promise". Moving it needs that event,
-which is an ADR change, not a slice of this one. D9's "empty" waits on it.
+#414 IS DONE, AND SO IS D9's "slice 3 ends with it empty". Only the box's progress marks remain
+outside the door, allowed by rule. The list stays, empty, so that a writer added later is a
+visible change of the ceiling in review — never a quiet line here.
 """
 
 from __future__ import annotations
 
-OUTSIDE_THE_DOOR: dict[tuple[str, str, str], tuple[str, str]] = {
-    # ── slice 3 (#414): the promise a requirement's filing opens ─────────────────────────────────
-    # One card's promise opens with its `filed` since the door's `Loops("open")`; a requirement's
-    # spans several cards — the breakdown files some and REUSES others, which no transition of
-    # theirs marks — so no one card's filing can carry it, and the closed event set has no event
-    # for "a card joins a requirement's promise"
-    ("openfactory/product/followup.py", "deliveries_to_open", "open_loop"):
-        ("the delivery a requirement's cards are owed (`filed`) — one promise over several cards, "
-         "the reused ones among them, which no single card's filing can open alone", "3"),
-}
+OUTSIDE_THE_DOOR: dict[tuple[str, str, str], tuple[str, str]] = {}

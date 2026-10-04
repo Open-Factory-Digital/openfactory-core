@@ -15,6 +15,7 @@
   - Issues: #411 (this record), and its slices #412, #413, #414. The defects that led here: #384, #393, #401, #405, #409.
   - #448, the requester's loop (ask → preview → adjust × N → accept → merge → staging → production → delivered): the path this lifecycle has to express, from the person's side. #330 and #339, the same class seen from the forge and the inbox. #452, the sibling record for what the role *waits for* from a person.
 - **Amended:** 2026-09-30, before any slice landed, from one manual run of the full loop on a live deployment (#448): the event set gains the adjust, acceptance, staging and release events; a second pure table decides **who** may cause an event (D2); a card corrected at the merge gate is judged again and its standing review marked out of date (D3); the slices name where each new event lands.
+- **Amended:** 2026-10-04, when slice 3 reached the one writer it could not move (#414): the event set gains `promised`, a card joining a requirement's promise (D1); a promise moves nothing, so the record's word on where a card is is its latest move (D4, D5); and D9's list ends empty.
 
 ## Context
 
@@ -80,7 +81,7 @@ transition(project, card, event: CardEvent, *, by, why="", facts=None) -> Transi
 
 It is the only way a card changes state. `CardEvent` is a closed set, named from what happened, not from the column it lands in:
 
-`filed` · `promoted` · `reordered` · `picked_up` · `refused` · `question_asked` · `question_answered` · `pr_opened` · `parked` · `resumed` · `adjusted` · `accepted` · `merged` · `staged` · `stage_rejected` · `released` · `delivered` · `discarded` · `skipped` · `stopped` · `closed` · `withdrawn` · `removed` · `reopened` · `edited`
+`filed` · `promoted` · `reordered` · `picked_up` · `refused` · `question_asked` · `question_answered` · `pr_opened` · `parked` · `resumed` · `adjusted` · `accepted` · `merged` · `staged` · `stage_rejected` · `released` · `delivered` · `discarded` · `skipped` · `stopped` · `closed` · `withdrawn` · `removed` · `reopened` · `edited` · `promised` *(amended 2026-10-04)*
 
 `facts` carries what the event knows: the PR URL, the verdict, `delivered=True/False`, the note.
 
@@ -98,6 +99,44 @@ nobody can write. Amended 2026-09-30.
 `accepted` is the input the merge was missing: with a human merge it is shown to the merger; with
 an automatic one and `preview.required`, it is what lets the factory merge (ADR-0050 D9 stands: a
 preview nobody looked at is not an acknowledgement; a recorded acceptance of the head is one).
+
+**A card joins a requirement's promise: `promised`.** Amended 2026-10-04, from the last writer
+slice 3 could not move (#414). A requirement's delivery is ONE promise over several cards. Its
+breakdown files some of them and **reuses** others — open cards the requirement verified on the
+board — and the promise is whole only once every card is known. No one card's `filed` can carry
+it, a reused card has no transition of its own at all, and a requirement whose cards are all
+reused had none. So the promise was opened beside every door, and D9's list could not end empty.
+
+| | |
+|---|---|
+| who emits it | the breakdown, once it knows every card (`module._open_delivery`): one `promised` per card, **filed and reused alike** |
+| facts | the requirement; the promise it joins — its subject (the requirement's number) and its context: every card of the breakdown, the conversation it was asked in, a digest of who asked |
+| allowed (D2) | on an open card wherever it is — `backlog`, `todo`, `running`, `waiting_on_a_person`, `merged`, `staged`, or placed by no board; refused on a card `delivered`, `closed` or `removed`: work that is done or gone is not owed again, and a promise waiting on it would wait for a transition it will never make |
+| what follows (D3) | `Loops(open)` — the effect a filing's promise already opens with. The ledger keeps ONE delivery per subject, so the first card the door admits opens the promise, naming every card, and every other card's finds it owed already. Nothing is written to the card and nobody is told: the breakdown answered its requester, and a reused card is told on its own which requirement it now serves |
+| after | where it was. **A promise moves nothing**: no column, no snapshot to forget |
+| event id (D4) | derived from the card and the promise it joins (its subject and its cards), so a retried breakdown is answered from each card's record and opens nothing twice |
+
+*Why on the card, and every card, rather than on the requirement or on the last card.* The record
+is per card (D4: one row per transition, keyed by the card and its sequence number), and a
+requirement has no lifecycle state, no `allowed` row and no door; an event on it would be a second
+record and a second door. Every card carries the **whole** promise, and the ledger deduplicates by
+subject, so no single card is load-bearing: a card refused because it was closed meanwhile does
+not stop the others opening it; a breakdown interrupted after its first card still leaves the
+whole promise open; and a promise the ledger did not take is re-applied by the hourly round from
+any card that carries it (D5). Waiting for "the last card" would hang the promise on one card's
+transition — refused, or never reached, and nobody opens it.
+
+*An all-reused requirement* hands every card `promised`, so its promise opens. *A card the door
+refuses* records nothing; the breakdown goes on, and the promise the other cards open is the one
+it opened before this event existed — over every card the breakdown landed. Only when every card
+is refused does nothing open: a promise over work that is all done or gone has no transition left
+to close it.
+
+*A promise moves nothing, so it never stands for where a card is.* The record's word on that is
+the card's **latest move** — its newest transition that is not a promise. The sweep supersedes an
+older transition's late effect only by a newer move (D5): a card filed a moment before its
+promise still has its failed placement applied. An observed change is judged against the last
+move (D8), and "the work on it stopped" is read off it (D10).
 
 ### D2. The door decides whether the event is allowed, before it decides what follows
 
@@ -220,7 +259,8 @@ hourly sweep re-applies failed effects idempotently, the way `events.py` already
 Before re-applying, the sweep checks that the effect's transition is **still the card's latest**.
 If a newer transition exists, the late effect is marked `superseded` and is not applied. Without
 this rule the sweep would move a card back to a column a person has since moved it out of, which
-is the defect this record exists to end, produced by its own repair.
+is the defect this record exists to end, produced by its own repair. *(Amended 2026-10-04: "newer"
+means a newer **move** — a promise moves nothing, D1, so it supersedes nothing.)*
 
 ### D6. The comment is the door's, not the tracker's
 
@@ -264,7 +304,8 @@ It allows two things:
 - the box's **progress marks** (D7), by rule: `set_state` with a state in the closed progress
   set, from the box;
 - an explicit **exemption list**, each entry with its reason and the slice that removes it. The
-  list may only shrink, and slice 3 ends with it empty.
+  list may only shrink, and slice 3 ends with it empty. *(It did, 2026-10-04 (#414): its last entry,
+  a requirement's promise, goes through each of its cards' doors as `promised`, D1.)*
 
 "May only shrink" is enforced, not intended. The list lives in one file, with a committed ceiling
 on its length that each slice lowers, and a test fails when the list is longer than the ceiling
@@ -316,7 +357,7 @@ The tab becomes **Pending**: only what the product role **waits for from the per
 |---|---|---|
 | 1 | The door, the record, the pure table, and the executor with its ports. The person-driven endings through it: `discarded`, `skipped`, `stopped`, `closed`, `withdrawn`, `removed`, `reopened`. `cancelled` loops. Preview stop on cancel. The conversation notice. Cache invalidation. The comment as the door's own. The Pending tab. The guard, with its exemption list. | Every live defect of the Context table has a table row and a derived test. The exemption list names only slice 2 and 3 writers. |
 | 2 | **Every change to `JobWorkflow` is behind `workflow.patched`**, so a job in flight replays its old ending. Job endings through the door: `merged`, `delivered`, `parked`, `resumed` (a resumed merge decision leaves *Needs Action*), `pr_opened` (ready-for-you and the preview start move into the table), `refused`, `question_asked/answered` (the sweep checks the card is open). **`adjusted`** — every pass ends the way the first did: the gates run on the new head, the review reads it, the preview is rebuilt, the requester is told, keyed per pass (#448 slice 2). **`accepted`**, recorded against the head, shown to the merger, and admitted by the automatic merge in place of the `preview.required` block (#448 slice 3). The stale-pickup healer no longer maps *not planned* to Done. `stop` writes its journal line. | The workflow and the worker hold no card write outside the door. |
-| 3 | `filed`, `promoted`, `reordered`, `edited` (with `Judge` and `Review(stale)` at the merge gate, #448 slice 1). `permitted` replaces the scattered actor checks. The box's outcomes are applied by the worker. `set_state` stops commenting. Observed events from the board sweep (D8). | **The exemption list is empty.** Only the box's progress marks remain, allowed by rule. |
+| 3 | `filed`, `promoted`, `reordered`, `edited` (with `Judge` and `Review(stale)` at the merge gate, #448 slice 1). `promised`, a card joining a requirement's promise (amended 2026-10-04). `permitted` replaces the scattered actor checks. The box's outcomes are applied by the worker. `set_state` stops commenting. Observed events from the board sweep (D8). | **The exemption list is empty.** Only the box's progress marks remain, allowed by rule. |
 | 4 | `staged`, `stage_rejected`, `released`, with `delivered` moved to the last declared stage. The staging address goes to the requester's conversation; a "not yet" there re-enters the loop as an adjustment (#448 slices 4–5). | The scenario of #448 runs end to end on real parts: *request → preview → adjust × 2 → accepted → auto-merge → staging "not yet" → adjust → staging approved → production → delivered*, with the requester told at every step. |
 
 Slice 0 is this record's amendment of 2026-09-30, landed before slice 1's code: D2 makes an event

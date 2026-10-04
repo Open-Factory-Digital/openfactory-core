@@ -18,7 +18,6 @@ from openfactory.product.followup import (
     chase_text,
     delivered,
     delivered_text,
-    deliveries_to_open,
     questions_from,
     to_open,
 )
@@ -102,15 +101,40 @@ def test_a_delivery_closes_only_when_ALL_of_the_work_is_done():
     assert delivered(waiting, closed_issues={"500", "501"}) == {(DELIVERY, "7", ""): "delivered"}
 
 
-def test_a_requirement_that_produced_no_work_opens_no_delivery_loop():
+def test_a_requirement_that_produced_no_work_opens_no_delivery_loop(monkeypatch):
     """A loop nothing can ever close is a row that sits open for ever and teaches everyone to
-    ignore the list."""
-    assert deliveries_to_open({7: []}, [], ts="T1") == []
+    ignore the list. A requirement's promise goes through its cards' doors since #414 — and a
+    breakdown that landed no card it can key the promise by hands no door anything."""
+    from types import SimpleNamespace
+
+    from openfactory import lifecycle
+    from openfactory.product.authoring import WriteResult
+    from openfactory.product.module import ProductModule
+
+    handed: list = []
+    monkeypatch.setattr(lifecycle, "transition", lambda *a, **k: handed.append((a, k)))
+    fake = SimpleNamespace(project=SimpleNamespace(name="books"))
+    ProductModule._open_delivery(fake, SimpleNamespace(number=7),
+                                 [WriteResult(ok=False, detail="refused"),
+                                  WriteResult(ok=True, ref="CONT-4")])
+    assert handed == []
 
 
-def test_a_delivery_is_not_opened_twice_for_one_requirement():
-    already = [open_loop(DELIVERY, "7", owner="product", ts="T1")]
-    assert deliveries_to_open({7: [500]}, already, ts="T2") == []
+def test_a_delivery_is_not_opened_twice_for_one_requirement(monkeypatch):
+    """ONE PER SUBJECT, opened by the card's door (`loops.owe`, #414): a requirement's next card,
+    or the same breakdown run again, finds its promise owed already."""
+    from types import SimpleNamespace
+
+    from openfactory.lifecycle import loops
+    from openfactory.memory import store as loop_store
+
+    rows = [open_loop(DELIVERY, "7", owner="product", ts="T1", context={"issues": "500"})]
+    monkeypatch.setattr(loop_store, "read", lambda project, **_k: list(rows))
+    monkeypatch.setattr(loop_store, "write",
+                        lambda project, loops_, **_k: rows.extend(loops_) or len(loops_))
+    owed = {"subject": "7", "context": {"issues": "500,501"}}
+    assert loops.owe(SimpleNamespace(name="books"), "501", owed) == "7 was owed already"
+    assert len(rows) == 1
 
 
 # ── how it reads ────────────────────────────────────────────────────────────────────────────────

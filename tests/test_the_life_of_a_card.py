@@ -25,6 +25,9 @@ take down and the door says so).
     delivered at the box's last stage, or beside the door → announced by the door, once; the
         job's exit and the weekly sweep announce nothing of their own (#414)
     the factory's own card closed when its trouble is gone, kept apart from the product's (B1)
+    a requirement broken into two cards filed and one reused → one promise over all three, each
+        card's record holding it; retried, said nothing twice; all reused, still opened; a card
+        gone before its promise refused, and the promise the same (#414, `promised`)
 """
 
 from __future__ import annotations
@@ -1317,3 +1320,157 @@ def test_a_factory_board_of_its_own_keeps_its_cards_record_apart_from_the_produc
     assert observe(deployment) == []
     assert _told(heard, about=product_card.lstrip("#")) == []
     impediment._LAST.pop(f"acme|{cause}", None)
+
+
+# ── a requirement's promise, through each of its cards' doors (#414, ADR-0055 amended 2026-10-04)
+#
+# The breakdown files some cards and REUSES others — open cards the requirement verified on the
+# board — and its promise is one over all of them. Driven through `file_issues` on the real local
+# board, the real ledger and the real card record; the model's answer and the card judge are stood
+# in (the floor still runs), as for every breakdown in the suite.
+
+_REQUIREMENT = 7
+
+
+def _breakdown(project, tmp_path, fronts: list[dict]):
+    """Requirement 7 broken into `fronts` — a front naming `already_on_board` reuses that card —
+    for ASKER, in CONVERSATION, confirmed by ADMIN."""
+    import json
+
+    from openfactory.contracts import AgentRunResult
+    from openfactory.product.config import ProductLink
+    from openfactory.product.corpus import Corpus, Requirement
+    from openfactory.product.loader import ProductContext
+    from openfactory.product.module import ProductModule
+
+    requirement = Requirement(number=_REQUIREMENT, slug="report", path="0007-report.md",
+                              title="The monthly report", status="accepted")
+    answer = json.dumps({"issues": [{"objective": "o", "acceptance_criteria": ["c"], **front}
+                                    for front in fronts]})
+
+    class _Model:
+        name = "recording"
+
+        def ask(self, *, sandbox, workspace, prompt, phase="ask"):
+            return AgentRunResult(ok=True, summary=answer)
+
+    context = ProductContext(
+        link=ProductLink(active=True, docs_repo="acme/docs", kind="ok", reason="fine"),
+        corpus=Corpus(requirements=[requirement]), docs_path=str(tmp_path / "docs"),
+        docs_commit="abc123", requirements_dir="requirements")
+    (tmp_path / "docs").mkdir(exist_ok=True)
+    return ProductModule(project, context=context, agent=_Model()).file_issues(
+        requirement, actor=ADMIN, conversation=CONVERSATION, requester=ASKER)
+
+
+def _on_the_board(title: str) -> str:
+    out = _act("card_create", who="rob", project="acme", title=title, body=_A_CARD)
+    assert out.ok, out.message
+    return out.data["issue"].lstrip("#")
+
+
+def _the_promise(project):
+    from openfactory.memory.ledger import DELIVERY
+
+    return [x for x in _loops(project, DELIVERY) if x.subject == str(_REQUIREMENT)]
+
+
+def _promised(project, ref: str) -> list:
+    return [r for r in _history(project, ref) if r.event == "promised"]
+
+
+def test_a_requirement_that_files_two_cards_and_reuses_one_opens_one_promise_over_all_three(
+        deployment, heard, tmp_path):
+    """The promise opened beside every door, and the reused card joined it through none (#414).
+    Now every card of the breakdown is handed `promised`, carrying the whole promise: the first the
+    door admits opens it, naming all three, and each card's record says it joined. A retried
+    breakdown is answered from those records — no second promise, and no second row. And a promise
+    moves nothing: the reused card a person had queued is still in the queue."""
+    from openfactory.product.speaker import sealed
+
+    reused = _on_the_board("The export already on the board")
+    queued = _act("card_move", who="rob", project="acme", issue=reused, column="TO-DO")
+    assert queued.ok, queued.message
+
+    results = _breakdown(deployment, tmp_path, [
+        {"title": "The report"}, {"title": "Its schedule"},
+        {"title": "The export", "already_on_board": reused}])
+
+    assert [(r.ok, r.existed) for r in results] == [(True, False), (True, False), (True, True)]
+    filed = [r.ref.lstrip("#") for r in results[:2]]
+    cards = sorted([*filed, reused], key=int)
+    [promise] = _the_promise(deployment)
+    assert promise.waiting and promise.context["issues"] == ",".join(cards), promise.context
+    assert promise.context["conversation"] == CONVERSATION
+    assert promise.context["requester"] == sealed(ASKER)
+    for ref in filed:
+        assert [r.event for r in _history(deployment, ref)] == ["filed", "promised"], ref
+    assert [r.event for r in _history(deployment, reused)] == ["filed", "promoted", "promised"]
+    rows = [row for ref in cards for row in _promised(deployment, ref)]
+    for row in rows:
+        assert row.by == ADMIN and row.facts["requirement"] == _REQUIREMENT, row
+        assert row.facts["owed"]["context"]["issues"] == ",".join(cards), row.facts
+        # A PROMISE MOVES NOTHING: the record holds the card where the promise found it
+        assert (row.before, row.after) == ("", ""), row
+    opened = sorted(row.outcome(row.effects.index("loops:open")) for row in rows)
+    assert opened == ["7 owed", "7 was owed already", "7 was owed already"], opened
+    # nothing said to anybody, and every card still where it was: filed in the backlog, or queued
+    assert heard == [], [m.text for m in heard]
+    assert [_column(deployment, ref) for ref in [*filed, reused]] == ["backlog", "backlog", "todo"]
+
+    again = _breakdown(deployment, tmp_path, [
+        {"title": "The report"}, {"title": "Its schedule"},
+        {"title": "The export", "already_on_board": reused}])
+
+    assert [r.ref.lstrip("#") for r in again] == [*filed, reused]
+    assert len(_the_promise(deployment)) == 1, "a retried breakdown opened a second promise"
+    for ref in cards:
+        assert len(_promised(deployment, ref)) == 1, f"#{ref} was promised twice"
+
+
+def test_a_requirement_whose_every_card_is_reused_still_opens_its_promise(deployment, heard,
+                                                                          tmp_path):
+    """No card is filed, so before `promised` no transition at all carried the promise. And a
+    reused card whose work had stopped still reads as one whose work stopped: the promise moved
+    nothing, so the card's line still says it is back in the backlog."""
+    from openfactory.lifecycle import CardEvent, back_in_the_backlog, transition
+
+    first, second = _on_the_board("The report"), _on_the_board("Its export")
+    _at_the_merge_gate(deployment, first)
+    assert transition(deployment, first, CardEvent.DISCARDED, by="Rob", why="later").ok
+    assert back_in_the_backlog(deployment, first)
+
+    results = _breakdown(deployment, tmp_path, [
+        {"title": "The report", "already_on_board": first},
+        {"title": "Its export", "already_on_board": second}])
+
+    assert [r.existed for r in results] == [True, True]
+    [promise] = _the_promise(deployment)
+    assert promise.waiting and promise.context["issues"] == f"{first},{second}"
+    for ref in (first, second):
+        assert len(_promised(deployment, ref)) == 1, ref
+    assert back_in_the_backlog(deployment, first), (
+        "a promise recorded after the discard was taken for where the card is")
+
+
+def test_a_card_gone_before_its_promise_is_refused_and_the_others_open_the_same_promise(
+        deployment, heard, tmp_path):
+    """A breakdown run again finds a card by its title — on the local board a closed one too — and
+    the door refuses to promise work that is done or gone: nothing is recorded on it. The other
+    cards still open the promise, the one the breakdown opened before this event existed: over
+    every card that landed (`_open_delivery`'s outcome, kept)."""
+    from openfactory.adapters.tracker.base import close_ticket
+
+    gone = _on_the_board("The old report")
+    close_ticket(_tracker(deployment), gone, "not needed", delivered=False)
+
+    results = _breakdown(deployment, tmp_path, [{"title": "The old report"},
+                                                {"title": "Its export"}])
+
+    assert results[0].ref.lstrip("#") == gone and results[0].existed
+    fresh = results[1].ref.lstrip("#")
+    [promise] = _the_promise(deployment)
+    assert promise.waiting and promise.context["issues"] == f"{gone},{fresh}", promise.context
+    assert _promised(deployment, gone) == [], "a card that is gone was promised"
+    [row] = _promised(deployment, fresh)
+    assert row.outcome(row.effects.index("loops:open")) == "7 owed"
