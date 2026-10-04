@@ -30,9 +30,10 @@ line on that conversation — behind the turn in progress, never inside one.
     document_ingested   `documents/ingest.py::announce` (#269) — a document read into the
                         product's memory, on the knowledge pipeline's tick or when somebody
                         brings it; an internal one is never said in a room (`_told_where`)
-    card_withdrawn      `module.py::withdraw_card` (#384) — a card closed, or removed before
-                        the factory took it up, from the card itself on either surface; the
-                        conversation that asked for it hears it is off the table
+    card_moved          the card's door (`lifecycle/ports.py::tell`, ADR-0055) — a person
+                        ended the work on a card (discarded, skipped, stopped: it is back in the
+                        backlog), took it off the table (closed, withdrawn, removed: it will not
+                        be built), or put it back (reopened); once per transition (#384, #412)
 
 WHERE AN EVENT IS SAID (`conversation_for`). About a card: to the conversation its REQUESTER asked
 in — recorded on the card's delivery loop when the work was filed, from what they had staged
@@ -75,13 +76,14 @@ from datetime import UTC, datetime
 
 log = logging.getLogger("openfactory.product.events")
 
-#: The kinds of event (#267 slice 3; `card_withdrawn` since #384; `ready_for_you` since #401). A
-#: closed set: each has its sentence, its routing and its record of having been said, and a kind
-#: nobody knows how to say is one nobody should tell.
-DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED, CARD_WITHDRAWN, READY_FOR_YOU = (
-    "delivered", "ci_red", "pr_waiting", "preview_up", "document_ingested", "card_withdrawn",
+#: The kinds of event (#267 slice 3; `ready_for_you` since #401; `card_moved` since #412, in place
+#: of #384's `card_withdrawn`, which only the product role's own close could tell). A closed set:
+#: each has its sentence, its routing and its record of having been said, and a kind nobody knows
+#: how to say is one nobody should tell.
+DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED, CARD_MOVED, READY_FOR_YOU = (
+    "delivered", "ci_red", "pr_waiting", "preview_up", "document_ingested", "card_moved",
     "ready_for_you")
-KINDS = (DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED, CARD_WITHDRAWN,
+KINDS = (DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED, CARD_MOVED,
          READY_FOR_YOU)
 
 #: Which producer tells each kind on this branch — "" for a kind whose producer lives elsewhere.
@@ -92,7 +94,7 @@ PRODUCERS = {
     PR_WAITING: "openfactory/runtime/temporal/activities.py::techlead_watch",
     PREVIEW_UP: "openfactory/runtime/temporal/activities.py::preview_up",
     DOCUMENT_INGESTED: "openfactory/product/documents/ingest.py::announce",
-    CARD_WITHDRAWN: "openfactory/product/module.py::withdraw_card",
+    CARD_MOVED: "openfactory/lifecycle/ports.py::tell",
     READY_FOR_YOU: "openfactory/runtime/temporal/activities.py::tell_the_requester",
 }
 
@@ -511,25 +513,36 @@ def document_ingested(project, *, name: str, key: str = "", conversation: str = 
                                 agent_name=_agent(project))))
 
 
-def card_withdrawn(project, *, card: str, title: str = "", removed: bool = False,
-                   key: str = "") -> bool:
-    """A CARD WAS TAKEN OFF THE TABLE FROM THE CARD ITSELF (#384): closed, or removed before the
-    factory took it up — said to the conversation its requester asked in, else the room, once per
-    happening (`key`, the moment it was done: a card closed, reopened and closed again is two).
+def card_moved(project, *, card: str, notice: str, event_id: str, title: str = "",
+               removed: bool = False, conversation: str = "") -> str:
+    """THE CARD'S DOOR MOVED IT (ADR-0055 D10) — said to the conversation its requester asked in,
+    else the room, once per transition: `event_id` is the transition's own, so the door applying
+    its effects again (a retry, the sweep) never says it twice.
 
     WHY THE CONVERSATION HEARS IT. The product role answers from what was said in it; a card that
-    disappears from the board with nothing said there is one the role goes on describing as
-    coming. Its producer is the product role's own `withdraw_card`, the one path both surfaces'
-    controls reach — never a transport."""
-    if not _speaks(project) or not str(card or "").strip():
-        return False
-    from openfactory.product import voice
+    disappears from the board, or stops being worked on, with nothing said there is one the role
+    goes on describing as coming (#384, #409). Its only producer is the door every person-made
+    ending goes through — never a transport.
 
-    return _once(project, _event_id(CARD_WITHDRAWN, project, card, key or str(removed)),
-                 lambda: (conversation_for(project, card),
-                          voice.card_withdrawn(ref=card, title=title, removed=removed,
-                                               language=_language(project),
-                                               agent_name=_agent(project))))
+    `conversation` is where the requester asked, as the door read it BEFORE the transition's
+    effects ran — a cancellation closes the delivery loop that records it.
+
+    RETURNS THE DOOR'S OUTCOME, AND RAISES WHEN NOTHING WAS SAID: the card's record keeps what each
+    effect came to, and a telling the conversation did not take is applied again by the sweep —
+    which `_once` makes safe, and which "told already" ends."""
+    if not _speaks(project) or not str(card or "").strip():
+        return "nobody to tell"
+    from openfactory.product import voice
+    said = _event_id(CARD_MOVED, project, card, event_id)
+    if _once(project, said, lambda: (conversation or conversation_for(project, card),
+                                     voice.card_moved(notice, ref=card, title=title,
+                                                      removed=removed,
+                                                      language=_language(project),
+                                                      agent_name=_agent(project)))):
+        return "told"
+    if said in _read(_store_path(project))["told"]:
+        return "told already"
+    raise RuntimeError("the conversation's door did not take it")
 
 
 # ── ready for you ────────────────────────────────────────────────────────────────────────────────
@@ -656,9 +669,9 @@ def ready_at_the_gate(project, gates: list[tuple[str, str]]) -> list[str]:
 
 
 
-__all__ = ["CARD_WITHDRAWN", "CI_RED", "DELIVERED", "DOCUMENT_INGESTED", "KINDS", "PREVIEW_UP",
+__all__ = ["CARD_MOVED", "CI_RED", "DELIVERED", "DOCUMENT_INGESTED", "KINDS", "PREVIEW_UP",
            "PRODUCERS", "PR_WAITING", "PR_WAIT_HOURS", "READY_FOR_YOU", "card_finished",
-           "card_withdrawn", "ci_went_red", "conversation_for", "deliver", "document_ingested",
+           "card_moved", "ci_went_red", "conversation_for", "deliver", "document_ingested",
            "forget_record", "issues_of", "preview_up", "pull_requests_at_the_gate",
            "ready_at_the_gate", "ready_for_you", "requester_conversation", "room_of", "say_to",
            "to_room"]

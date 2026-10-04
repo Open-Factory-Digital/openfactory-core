@@ -56,6 +56,10 @@ MUTATIONS = [
      'RECORD_KINDS = {"card_verdict": "card verdicts", "preview": "preview records",',
      'RECORD_KINDS = {"card_verdict": "card verdicts",'),
 
+    ("the preview allowances leave the list of what is forgotten (#477)", FORGET,
+     '                "preview_shape": "preview allowances"}',
+     '                }'),
+
     ("the intake cases are not forgotten", FORGET,
      '    return Went(INTAKE, FORGOTTEN, {"intake cases": case.forget_project(t.project),',
      '    return Went(INTAKE, FORGOTTEN, {"intake cases": 0,'),
@@ -83,8 +87,9 @@ MUTATIONS = [
 
     # ── 2. nothing that is not the project's ──────────────────────────────────────────────────
     ("the deployment's people join the record kinds", FORGET,
-     '                "channel_message": "panel messages"}',
-     '                "channel_message": "panel messages", "person": "people"}'),
+     # re-pinned 2026-10-04: the preview allowances (`preview_shape`) closed the list (#477)
+     '                "preview_shape": "preview allowances"}',
+     '                "preview_shape": "preview allowances", "person": "people"}'),
 
     # ── 3. refused by name, never reported done ───────────────────────────────────────────────
     ("a store that cannot delete is handed to the layers anyway", FORGET,

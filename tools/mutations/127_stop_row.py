@@ -24,10 +24,12 @@ MUTATIONS = [
      '    if str(tv.status_label(described.status)) != "running":\n        return refused(',
      "    if False:\n        return refused("),
 
+    # RE-PINNED 2026-10-01 (#412): the settle is `stopped`'s row of the card's door now, and what
+    # the row reports is the outcome the door recorded for the column
     ("a tracker that refused is reported as success",
      "openfactory/actions/catalog.py",
-     "        return False\n    return True\n\n\n# ── ask —",
-     "        return True\n    return True\n\n\n# ── ask —"),
+     '    settled = not moved.outcome("column").startswith("failed")\n',
+     "    settled = True\n"),
 
     ("the browser decides what wedged means",
      "openfactory/runtime/temporal/view.py",

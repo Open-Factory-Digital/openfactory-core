@@ -830,14 +830,29 @@ class _WatchedWrites:
     body edits, so a failed close read as a clean write here, the client was told the card was
     closed, and the impediment a real failure had opened was closed by the write that never
     happened. A guard sharing the failure mode of the thing it guards is worth less than none.
+
+    IT HAS WHAT IT WRAPS, AS FAR AS `isinstance` CAN SEE (#511). A capability is a
+    `runtime_checkable` protocol beside the port (`Rankable`, `Watchable`, `Staged`), and since
+    Python 3.12 `isinstance` asks for a protocol's members STATICALLY (`inspect.getattr_static`),
+    which never reaches `__getattr__`. Forwarding alone therefore made every watched board a board
+    that cannot rank: `reorder` asked the wrapper, heard no, and every backlog order a person
+    confirmed in the conversation was answered "este quadro ainda não aceita reordenação" — on the
+    three boards that rank. Asking the inner adapter at the call site would fix that one question
+    and leave the next `isinstance` somebody writes against a watched adapter to fail the same
+    quiet way, so `__new__` gives each wrapper a class that carries every public name its adapter
+    statically has, and nothing else. Reading one is `__getattr__` — the same forward, the same
+    watch — so a capability is visible AND its write still reported, and an adapter that lacks a
+    member is, wrapped, still an adapter that lacks it.
     """
 
     #: What actually changes something — and the only evidence that CLOSES the impediment. A read
     #: coming back is the forge answering; a write landing is the capability the ticket names.
+    #: `place_after` is the backlog order a person confirmed (#511): a rank the board refused is
+    #: the platform not doing what it said, exactly like a column it refused.
     _WRITES = frozenset({"create_ticket", "comment", "close_ticket", "update_body", "update_title",
                          "add_label", "remove_ticket",
                          "remove_label", "set_assignees", "set_state", "link_child",
-                         "add_item", "set_column"})
+                         "add_item", "set_column", "place_after"})
 
     #: What can FAIL a write. The lookup that gates one belongs here even though it changes
     #: nothing: `_file_one` and `file_defect` both ask "does this already exist?" first, so a
@@ -845,6 +860,11 @@ class _WatchedWrites:
     #: machine reason, which is exactly what the ticket is for. The client is told the same thing
     #: either way, and an operator who only hears about half of them triages a board that lies.
     _WATCHED = _WRITES | frozenset({"find_ticket", "get_ticket"})
+
+    def __new__(cls, inner, tell):
+        # ONE CLASS PER SHAPE OF ADAPTER, cached: a wrapper is built on every `_board()` and
+        # `_tracker()`, and the shape of a given row does not change between them.
+        return super().__new__(_watched_kind(type(inner), _static_shape(inner)))
 
     def __init__(self, inner, tell) -> None:
         self._inner = inner
@@ -875,6 +895,50 @@ class _WatchedWrites:
         # `inspect.signature` follows `__wrapped__`, so the question reaches the row through this.
         watched.__wrapped__ = attr
         return watched
+
+
+class _Forwarded:
+    """One name a watched adapter has, put ON THE CLASS so a static lookup finds it (#511).
+
+    Reading it is reading `_WatchedWrites.__getattr__`: the same forward and, for a write, the same
+    watch. All it adds is that the name is THERE before anything runs."""
+
+    __slots__ = ("name",)
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __get__(self, watched, owner=None):
+        return self if watched is None else watched.__getattr__(self.name)
+
+
+def _static_shape(inner) -> tuple[tuple[str, bool], ...]:
+    """Every public name `inner` has without running any of its code, and whether it is `None` —
+    what `isinstance` against a `runtime_checkable` protocol reads of it (`getattr_static`).
+
+    `None` IS KEPT AS `None`, because the protocol reads it that way: a method set to `None` is a
+    row saying it does not do that, and a forward standing in its place would claim it does."""
+    import inspect
+
+    names = {name for klass in type(inner).__mro__ for name in vars(klass)}
+    try:
+        names |= set(object.__getattribute__(inner, "__dict__"))
+    except AttributeError:  # a row with `__slots__` keeps its names on the class
+        pass
+    shape = []
+    for name in sorted(n for n in names if not n.startswith("_")):
+        try:
+            shape.append((name, inspect.getattr_static(inner, name) is None))
+        except AttributeError:
+            continue
+    return tuple(shape)
+
+
+@functools.lru_cache(maxsize=256)
+def _watched_kind(row: type, shape: tuple[tuple[str, bool], ...]) -> type:
+    """The `_WatchedWrites` class for one shape of adapter — see the class's #511 paragraph."""
+    return type(f"_WatchedWrites[{row.__name__}]", (_WatchedWrites,),
+                {name: None if absent else _Forwarded(name) for name, absent in shape})
 
 
 def _bound_answer(module, answer: ProductAnswer) -> ProductAnswer:
@@ -4131,7 +4195,7 @@ class ProductModule:
                                delivered=False)
 
     def _close_one(self, number: str, *, actor: str, in_favour_of: str | None, reason: str,
-                   delivered: bool = False) -> WriteResult:
+                   delivered: bool = False, event: str = "closed") -> WriteResult:
         """`close_card` once the person is authorised — shared with `withdraw_card` (#384), so the
         close a card's own control asks for IS this role's close, not a copy of it.
 
@@ -4172,30 +4236,28 @@ class ProductModule:
                            f"trabalho. Me digam qual cartão fica com ele.")
 
         tracker = self._tracker()
-        try:
-            # NOT A DELIVERY. This act takes an item off the list of work — "deixa de ser algo a
-            # fazer", in the words the client confirms — which is the opposite of shipping it.
-            # Left as the default, `#511` (closed as a duplicate of `#288` at a client's request)
-            # came back marked completed and read as delivered work everywhere downstream.
-            #
-            # THROUGH THE PORT'S SEAM (#203): a row written before `delivered` existed is refused
-            # this close by name, instead of raising a `TypeError` this `except` would report as
-            # "I could not close it" with nothing a person could act on.
-            from openfactory.adapters.tracker.base import close_ticket
+        # NOT A DELIVERY. This act takes an item off the list of work — "deixa de ser algo a
+        # fazer", in the words the client confirms — which is the opposite of shipping it. Left as
+        # the default, `#511` (closed as a duplicate of `#288` at a client's request) came back
+        # marked completed and read as delivered work everywhere downstream.
+        #
+        # THROUGH THE CARD'S DOOR (ADR-0055), whose close is the port's seam (#203) and whose row
+        # of the table does what this close did by hand — forgetting the snapshot — and what it
+        # never did: the promise about the card cancelled, its requester told, its preview down.
+        from openfactory.lifecycle import transition
 
-            close_ticket(tracker, f"#{number}",
-                         _closing_note(in_favour_of=in_favour_of, actor=actor,
-                                       reason=reason, agent=self._name()),
-                         delivered=delivered)
-        except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
+        moved = transition(self.project, f"#{number}", event, by=actor, why=reason,
+                           facts={"delivered": delivered,
+                                  "note": _closing_note(in_favour_of=in_favour_of, actor=actor,
+                                                        reason=reason, agent=self._name())},
+                           tracker=tracker)
+        if moved.refused:
+            return WriteResult(ok=False, existed=True, ref=f"#{number}", detail=moved.refused)
+        if moved.outcome("close").startswith("failed") and not moved.recorded:
             return _could_not(f"não consegui fechar o #{number} agora. Nada mudou — o time foi "
                               f"avisado e resolve.",
-                              act=f"close #{number}", cause=exc, ref=f"#{number}")
-
-        from openfactory.product.board import forget_board
-
-        forget_board(getattr(self.project, "name", ""))   # what we cached is now wrong
-
+                              act=f"close #{number}", cause=RuntimeError(moved.outcome("close")),
+                              ref=f"#{number}")
         detail = ""
         if survivor is not None:
             try:
@@ -4219,9 +4281,9 @@ class ProductModule:
         the board REFUSING was the whole answer, and the refusal sent the person off to find a
         conversation and say in words what a button could have done. So the board asks the role,
         and the role writes — through `_close_one`, which is `close_card`'s own close, and through
-        the tracker's own removal — and the conversation the card was asked in is told
-        (`events.card_withdrawn`). #150's rule for EDITS is untouched: changing what a card says
-        still goes through the conversation, where the requirement and the card move together.
+        the tracker's own removal — and the conversation the card was asked in is told (by the
+        card's door, ADR-0055). #150's rule for EDITS is untouched: changing what a card says still
+        goes through the conversation, where the requirement and the card move together.
 
         WHO MAY, AND ON WHOSE AUTHORITY — three, of which only the first is `may_act`:
 
@@ -4242,7 +4304,6 @@ class ProductModule:
         deletes the card and keeps an audit line; a row that can only close closes, and the answer
         says so. `delivered` is the column's word for a close (#162), passed by the row that read
         it; a delivered close tells no conversation that the work "will not be built"."""
-        from openfactory.product import events
         from openfactory.product.speaker import is_guest
         from openfactory.product.voice import card_withdrawn_result
 
@@ -4256,20 +4317,16 @@ class ProductModule:
             return WriteResult(ok=False, detail=card_withdrawn_result(ref=number, how="not_yours",
                                                                       language=lang))
 
-        tickets, _error = self._read_board()
-        title = next((t.title for t in tickets if t.number == number), "")
+        # THE CONVERSATION IS TOLD BY THE CARD'S DOOR (ADR-0055), once per transition, for every
+        # way a card leaves the table — not only this one, which was the only path that told it
         if remove:
-            result = self._remove_one(number, actor=actor, reason=reason)
-        else:
-            result = self._close_one(number, actor=actor, in_favour_of=None, reason=reason,
-                                     delivered=delivered)
-            if result.ok and not result.detail:
-                result.detail = card_withdrawn_result(ref=number, how="closed", language=lang)
-        if result.ok and not delivered:
-            from openfactory.adapters.board_db import now_iso
-
-            events.card_withdrawn(self.project, card=number, title=title,
-                                  removed=bool(remove), key=now_iso())
+            return self._remove_one(number, actor=actor, reason=reason)
+        # a card the factory finished closes as delivered (#162) — `closed`, which cancels nothing;
+        # anything else is a card the person withdrew
+        result = self._close_one(number, actor=actor, in_favour_of=None, reason=reason,
+                                 delivered=delivered, event="closed" if delivered else "withdrawn")
+        if result.ok and not result.detail:
+            result.detail = card_withdrawn_result(ref=number, how="closed", language=lang)
         return result
 
     def _asked_by(self, number: str) -> str:
@@ -4285,8 +4342,6 @@ class ProductModule:
     def _remove_one(self, number: str, *, actor: str, reason: str) -> WriteResult:
         """Remove one card through the tracker's own removal, or close it where the row has none —
         and say which, because only one of the two leaves the card in a tracker's history."""
-        from openfactory.adapters.tracker.base import remove_ticket
-        from openfactory.product.board import forget_board
         from openfactory.product.voice import card_withdrawn_result
 
         tickets, error = self._read_board()
@@ -4298,22 +4353,27 @@ class ProductModule:
         if card.state != "open":
             return WriteResult(ok=False, existed=True, ref=f"#{number}",
                                detail=f"o #{number} já estava fechado — não mexi nele")
-        tracker = self._tracker()
-        try:
-            removed = remove_ticket(tracker, f"#{number}", reason, by=actor,
-                                    note=_closing_note(in_favour_of=None, actor=actor,
-                                                       reason=reason, agent=self._name()))
-        except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
+        # THROUGH THE CARD'S DOOR (ADR-0055): the tracker's own removal, then what a removal means
+        # for the promise, the requester, the preview and the snapshot
+        from openfactory.lifecycle import CardEvent, transition
+        moved = transition(self.project, f"#{number}", CardEvent.REMOVED, by=actor, why=reason,
+                           facts={"note": _closing_note(in_favour_of=None, actor=actor,
+                                                        reason=reason, agent=self._name())},
+                           tracker=self._tracker())
+        if moved.refused:
+            return WriteResult(ok=False, existed=True, ref=f"#{number}", detail=moved.refused)
+        if moved.outcome("remove").startswith("failed") and not moved.recorded:
             return _could_not(f"não consegui remover o #{number} agora. Nada mudou — o time foi "
                               f"avisado e resolve.",
-                              act=f"remove #{number}", cause=exc, ref=f"#{number}")
-        forget_board(getattr(self.project, "name", ""))   # what we cached is now wrong
+                              act=f"remove #{number}", cause=RuntimeError(moved.outcome("remove")),
+                              ref=f"#{number}")
         return WriteResult(ok=True, ref=f"#{number}", detail=card_withdrawn_result(
-            ref=number, how="removed" if removed else "only_closed",
+            ref=number, how="removed" if moved.outcome("remove") == "removed" else "only_closed",
             language=getattr(self.project, "language", None)))
 
     def correct_card(self, number: str, *, actor: str, text: str = "",
-                     title: str = "") -> WriteResult:
+                     title: str = "", criteria: list[str] | tuple[str, ...] = (),
+                     gate=None, vouched: bool = False) -> WriteResult:
         """Correct what a card this role opened from a request or a defect says (#156).
 
         THE ONE WAY SUCH A CARD CHANGES. #150 decided that a card this role opened is the product
@@ -4331,17 +4391,38 @@ class ProductModule:
         NOT ONCE THE FACTORY HAS IT, for the reason `card_edit` refuses: an agent works from the
         text it read at pickup. A column this platform does not map refuses too: it cannot say.
 
+        EXCEPT THE BAR, AT THE MERGE GATE, WITH ANOTHER PASS (#448). `criteria` replaces the card's
+        acceptance criteria. On a card the factory has taken up it is admitted ONLY when `gate` is
+        the engine's own answer for THIS card that its job waits on a person and may be sent back
+        (`adjust.gate_of`) — never while a job is running on it — and only alone: what was asked
+        and the title stay. The caller is `send_back`, which sends the pass right after, so the
+        pass and its review read the corrected bar; a correction at the gate with no pass would be
+        a target moved with nobody building to it. Measured live on #1000007: the role rewrote the
+        two loose criteria in the conversation and had no hand to write them with.
+
+        WHO MAY: a product admin (`may_act`), as for every correction — and at the merge gate also
+        the card's own requester, and an operator a row vouches for, `withdraw_card`'s rule (#384):
+        the person who tried the change judges it, and correcting the bar of what they asked for
+        with the pass they asked for needs nobody's yes.
+
         TWO WRITES, TWO OUTCOMES (`close_card`): the correction, then the note. A note that failed
         is reported on a SUCCESS, never as a failure of the correction that landed.
         """
         from openfactory.adapters.board.base import stage_key
-        from openfactory.adapters.board.columns import has_started
+        from openfactory.adapters.board.columns import has_finished, has_started
         from openfactory.product.voice import correction_note, correction_refused
 
         number = canonical_ref(number)
         text, title = (text or "").strip(), (title or "").strip()
+        bar = list(dict.fromkeys(" ".join(str(c).split()) for c in (criteria or ())
+                                 if str(c).strip()))
         lang = getattr(self.project, "language", None)
-        if not may_act(self.project, actor, via=self._via):
+        # THE GATE THE ENGINE ANSWERED, FOR THIS CARD, OPEN — and a correction of the bar alone
+        at_the_gate = bool(bar and not text and not title and gate is not None
+                           and getattr(gate, "open", False)
+                           and canonical_ref(getattr(gate, "card", "")) == number)
+        if not (may_act(self.project, actor, via=self._via)
+                or (at_the_gate and (vouched or self.asked_for(number, actor)))):
             return WriteResult(ok=False, detail=unauthorized_message(self.project))
 
         tickets, error = self._read_board()
@@ -4366,7 +4447,11 @@ class ProductModule:
             # not map", and on one that HAD typed the option it raised `TypeError` into a chat.
             # The row holds the deployment's names (`adapters/board/base.py::Staged`).
             key = stage_key(self._board(), column)
-            if not key or has_started(key):
+            # THE MERGE GATE ADMITS THE BAR, AND NOTHING ELSE DOES (#448). A column cannot tell a
+            # job waiting on a person from one at work — `in_review` holds both, and a pass
+            # rewriting the pull request too — so the admission is the ENGINE's answer for this
+            # card (`at_the_gate`), and a card the factory finished is never reopened by it.
+            if not key or (has_started(key) and not (at_the_gate and not has_finished(key))):
                 return WriteResult(ok=False, ref=f"#{number}", detail=correction_refused(
                     "started" if key else "unmapped", number=number, column=column,
                     language=lang))
@@ -4379,17 +4464,21 @@ class ProductModule:
 
         before = card.body or ""
         after, old_text, removed = _corrected(before, kind, text) if text else (before, "", None)
+        old_bar: list[str] = []
+        if bar:
+            after, old_bar = _with_the_bar(after, bar)
+        bar_changed = bool(bar) and [_as_said(c) for c in old_bar] != [_as_said(c) for c in bar]
         text_changed = bool(text) and _as_said(old_text) != _as_said(text)
         title_changed = bool(title) and title != (card.title or "").strip()
-        if not text_changed and not title_changed:
+        if not text_changed and not title_changed and not bar_changed:
             return WriteResult(ok=True, existed=True, ref=f"#{number}")
-        if not text_changed:
-            removed = None
+        if not text_changed or bar:
+            removed = None      # a bar given is not criteria taken away
 
         from openfactory.product.board import forget_board
 
         failed = correction_refused("failed", number=number, language=lang)
-        if text_changed:
+        if text_changed or bar_changed:
             try:
                 tracker.update_body(f"#{number}", after)
             except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
@@ -4401,7 +4490,7 @@ class ProductModule:
             try:
                 rename(f"#{number}", title)
             except Exception as exc:  # noqa: BLE001 — the text may have landed; the title did not
-                if not text_changed:
+                if not (text_changed or bar_changed):
                     return _could_not(failed, act=f"rename #{number}", cause=exc,
                                       ref=f"#{number}")
                 log.warning("OPENFACTORY_PRODUCT_CORRECT_UNRENAMED card=#%s (%s) — the text was "
@@ -4415,7 +4504,8 @@ class ProductModule:
             tracker.comment(f"#{number}", correction_note(
                 kind=kind, actor=actor, old_text=old_text, old_title=card.title or "",
                 text_changed=text_changed, title_changed=title_changed,
-                criteria_removed=removed is not None, language=lang, agent_name=self._name()))
+                criteria_removed=removed is not None, language=lang, agent_name=self._name(),
+                bar_changed=bar_changed, old_bar=old_bar, with_a_pass=at_the_gate))
         except Exception as exc:  # noqa: BLE001 — the correction landed; only its record is lost
             log.warning("OPENFACTORY_PRODUCT_CORRECT_UNNOTED card=#%s (%s) — the card was "
                         "corrected and does not say what it said before", number, exc)
@@ -4427,6 +4517,165 @@ class ProductModule:
         # text, which the reply turns into the offer to write new ones.
         return WriteResult(ok=True, ref=f"#{number}",
                            detail=f"{removed} critérios" if removed is not None else "")
+
+    # ---- another pass on a change that waits on its requester (#448) ---------------------------
+
+    def asked_for(self, number: str, actor: str) -> bool:
+        """Whether `actor` is the person this card records as having asked for it — never a guest,
+        never nobody (`withdraw_card`'s rule, #384)."""
+        from openfactory.product.speaker import is_guest
+
+        return (bool(actor) and not is_guest(actor)
+                and self._asked_by(canonical_ref(number)) == actor)
+
+    def may_send_back(self, number: str, actor: str, *, vouched: bool = False) -> bool:
+        """WHO MAY send a card's change back for another pass — #384's three, for the card's own
+        controls: an operator a row vouches for, a product admin (`may_act`), and the person who
+        asked for the card. The third is the point (#448): the requester judges the change, and
+        "routing their judgement through another person is the gap" (#448, *Not the fix*)."""
+        return (vouched or may_act(self.project, actor, via=self._via)
+                or self.asked_for(number, actor))
+
+    def prepare_adjustment(self, number: str, *, actor: str, conversation: str = "",
+                           reply: str = "", request: str = "", language: str | None = None):
+        """What the conversation stages when a person says what is still wrong with a change that
+        waits on them — an `adjust.Prepared`: the pass drafted from the conversation and the bar
+        it must meet, or the sentence to say instead (#448).
+
+        READ-ONLY, like `compose_card`: nothing is written until the yes, and the draft runs in a
+        room with nothing to open (`cards.in_a_room`), never under the product's semaphore. The
+        cheap refusals come first — who may, then the engine's gate — so no model is spent on a
+        pass that could not be sent."""
+        from openfactory.product import adjust, cards
+        from openfactory.product.voice import adjust_said, correction_refused
+
+        number = canonical_ref(number)
+        lang = language or getattr(self.project, "language", None)
+        if not self.may_send_back(number, actor):
+            return adjust.Prepared(said=adjust_said("not_yours", ref=number, language=lang))
+        gate = adjust.gate_of(self.project, number)
+        if not gate.open:
+            return adjust.Prepared(gate=gate, said=adjust_said(gate.why, ref=number,
+                                                               passes=gate.passes, language=lang))
+        try:
+            body = getattr(self._tracker().get_ticket(f"#{number}"), "raw", "") or ""
+        except Exception as exc:  # noqa: BLE001 — a card that cannot be read is not drafted from
+            log.info("could not read #%s to draft another pass (%s)", number, exc)
+            return adjust.Prepared(gate=gate, said=correction_refused("not_found", number=number,
+                                                                      language=lang))
+        kind = filed_by_the_product_role(body)
+        # THE BAR IS MOVED ONLY WHERE `correct_card` MAY MOVE IT: a card this role opened from a
+        # request or a defect. A requirement's card changes with its requirement; a card a person
+        # wrote is theirs. The pass is still sent — and the proposal says the bar stays.
+        keeps = "" if kind in _WHAT_WAS_ASKED else "requirement" if kind == "requirement" \
+            else "board"
+        harness = self._agent
+        if harness is None:
+            from openfactory.adapters.agent import build_product
+
+            harness = build_product(self.project)
+        drafted = adjust.draft(cards.as_json(cards.in_a_room(self.project, harness,
+                                                             adjust.DRAFT_PHASE)),
+                               number=number, card=body, conversation=conversation,
+                               request=request, reply=reply, language=lang)
+        if drafted is None:
+            return adjust.Prepared(gate=gate, said=adjust_said("undrafted", ref=number,
+                                                               language=lang))
+        return adjust.Prepared(ok=True, gate=gate, instruction=drafted.instruction,
+                               criteria=() if keeps else drafted.criteria, keeps=keeps)
+
+    def send_back(self, number: str, *, actor: str, instruction: str,
+                  criteria: list[str] | tuple[str, ...] = (), vouched: bool = False) -> WriteResult:
+        """Send the change that waits on this card's requester back for another pass on the same
+        pull request, with the card's acceptance criteria corrected first to the bar it must meet
+        (#448) — the hand behind the conversation's yes and the card's own control.
+
+        IN THIS ORDER, AND EACH STEP IS WHY THE NEXT IS SAFE:
+
+            who may        `may_send_back` — the requester, a product admin, a vouched operator;
+            the gate       the ENGINE's answer for this card: waiting on a person, no pass running,
+                           budget left (`adjust.gate_of`) — a refusal says what happens instead;
+            the bar        `correct_card` with that gate: the pass reads the card when it starts
+                           (`machine.repair_ci` reads the ticket), so the correction lands first;
+            the pass       `adjust.send_back`, through the seam every answer crosses.
+
+        A PASS THAT COULD NOT BE SENT AFTER THE BAR MOVED says both: the correction stands — it is
+        what the person agreed — and the pass is what to ask for again."""
+        from openfactory.product import adjust
+        from openfactory.product.voice import adjust_said
+
+        number = canonical_ref(number)
+        lang = getattr(self.project, "language", None)
+        said = (instruction or "").strip()
+        if not said:
+            return WriteResult(ok=False, ref=f"#{number}",
+                               detail=adjust_said("empty", ref=number, language=lang))
+        if len(said) > adjust.INSTRUCTION_LIMIT:
+            return WriteResult(ok=False, ref=f"#{number}", detail=adjust_said(
+                "too_long", ref=number, length=len(said), limit=adjust.INSTRUCTION_LIMIT,
+                language=lang))
+        if not self.may_send_back(number, actor, vouched=vouched):
+            return WriteResult(ok=False, ref=f"#{number}",
+                               detail=adjust_said("not_yours", ref=number, language=lang))
+        gate = adjust.gate_of(self.project, number)
+        if not gate.open:
+            return WriteResult(ok=False, ref=f"#{number}", detail=adjust_said(
+                gate.why, ref=number, passes=gate.passes, language=lang))
+        corrected, residue = False, ""
+        if any(str(c).strip() for c in criteria or ()):
+            fixed = self.correct_card(number, actor=actor, criteria=list(criteria), gate=gate,
+                                      vouched=vouched)
+            if not fixed.ok:
+                return fixed
+            corrected, residue = not fixed.existed, str(fixed.detail or "")
+        why = adjust.send_back(self.project, number, instruction=said, by=actor)
+        if why:
+            detail = adjust_said(why, ref=number, passes=gate.passes, language=lang)
+            if corrected:
+                detail += " " + adjust_said("corrected_anyway", ref=number, language=lang)
+            return WriteResult(ok=False, ref=f"#{number}", detail=detail)
+        # THE FACTS, AND ON SUCCESS `detail` IS ONLY WHAT DID NOT LAND (`confirm._unfinished`): the
+        # headline is composed by whoever answers the person, from these (`adjust.headline`)
+        return adjust.Sent(ok=True, ref=f"#{number}", detail=residue, corrected=corrected,
+                           passes=gate.passes,
+                           pass_number=(gate.passes - gate.left + 1
+                                        if gate.passes is not None and gate.left is not None
+                                        else None))
+
+    def adjust_view(self, number: str, *, actor: str, vouched: bool = False) -> dict:
+        """What the card's "send back for another pass" control needs on the product view (#448):
+        whether it is offered to THIS person, the card's criteria to edit, the words, and — when no
+        pass can be sent — what happens instead. `{"offered": False}` and nothing else when nobody
+        is asked anything: a card no change waits on carries no sentence about passes.
+
+        ASKED ONLY OF A CARD THE FACTORY HAS TAKEN UP AND NOT FINISHED (the caller's column), so
+        the engine is not asked about every card a person opens."""
+        from openfactory.adapters.tracker.parse import parse_ticket_body
+        from openfactory.product import adjust
+        from openfactory.product.voice import adjust_controls, adjust_said
+
+        number = canonical_ref(number)
+        lang = getattr(self.project, "language", None)
+        if not self.may_send_back(number, actor, vouched=vouched):
+            return {"offered": False}
+        gate = adjust.gate_of(self.project, number)
+        if gate.why in (adjust.SPENT, adjust.WORKING, adjust.DEAF):
+            return {"offered": False, "note": adjust_said(gate.why, ref=number,
+                                                          passes=gate.passes, language=lang)}
+        if not gate.open:
+            return {"offered": False}
+        try:
+            body = getattr(self._tracker().get_ticket(f"#{number}"), "raw", "") or ""
+        except Exception as exc:  # noqa: BLE001 — the control is a courtesy; the row asks again
+            log.info("could not read #%s to draw its pass control (%s)", number, exc)
+            body = ""
+        criteria = [c.text for c in parse_ticket_body(id="", title="", body=body,
+                                                      repo="").acceptance_criteria]
+        return {"offered": True, "left": gate.left, "passes": gate.passes,
+                # THE BAR IS EDITABLE ONLY WHERE `correct_card` MAY MOVE IT (`prepare_adjustment`)
+                "corrects": filed_by_the_product_role(body) in _WHAT_WAS_ASKED,
+                "criteria": criteria,
+                "words": adjust_controls(left=gate.left, passes=gate.passes, language=lang)}
 
     def align_card(self, number: str, *, requirement: int, actor: str) -> WriteResult:
         """Make a card execute the requirement it should — citation AND what it must satisfy.
@@ -4821,6 +5070,24 @@ def _corrected(body: str, kind: str, text: str) -> tuple[str, str, int | None]:
         for section in _REFINED_FROM_THE_TEXT:
             after = _without_section(after, section)
     return after, old_text, removed
+
+
+def _with_the_bar(body: str, criteria: list[str]) -> tuple[str, list[str]]:
+    """`(new body, the criteria it had)` — the acceptance criteria replaced by `criteria` (#448).
+
+    SURGERY, like `_corrected`: one section, every other line as it was. THE CARD KEEPS THE NAME
+    IT WAS WRITTEN WITH (#429) — a Portuguese card's `## Critérios de aceite` is rewritten under
+    that heading — and a card with none gains the identity's own (`_with_criteria`, #160), above
+    its Source line. What it said before is read by the parser the pickup gate reads with, so the
+    "before" a note keeps is the list the last pass was judged against."""
+    from openfactory.adapters.tracker.parse import parse_ticket_body
+
+    before = [c.text for c in parse_ticket_body(id="", title="", body=body or "",
+                                                repo="").acceptance_criteria]
+    old = _section_of(body, "Acceptance criteria")
+    named = old.split("\n", 1)[0].lstrip("#").strip() if old else "Acceptance criteria"
+    listed = "\n".join(f"- {c}" for c in criteria)
+    return _with_section(body, "Acceptance criteria", f"## {named}\n\n{listed}"), before
 
 
 def _rewritten(body: str, canonical: str, headings: tuple[str, ...]) -> str:

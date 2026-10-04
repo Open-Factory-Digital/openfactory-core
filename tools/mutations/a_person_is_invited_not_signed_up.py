@@ -118,8 +118,8 @@ MUTATIONS = [
 
     # ── the declaration and the document ──
     ("the kind is not declared", METRICS,
-     '                     "person"]\n',
-     "                     ]\n"),
+     '                     "person",\n',
+     ""),
 
     ("the shell reference forgets the command", CLI_DOC,
      "| `openfactory people invite \\| list` |",

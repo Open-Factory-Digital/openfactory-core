@@ -39,6 +39,9 @@ projects:
                      # phantom enabled project is polled every few minutes with your credential
     manifest_path: .openfactory/project.yaml
     language: pt-BR   # this example project is Brazilian; yours says whatever your client reads
+    # adjust_passes: 2  # how many more passes one change may be sent back for once its pull
+    #                   # request waits on a person — the requester's "not yet", or an
+    #                   # operator's. 0 to 10, 2 when unset; a job keeps the budget it started with
     # Where the FACTORY files its OWN impediments — never the client's board (ADR-0027).
     # Absent, an impediment becomes a log line (`OPENFACTORY_OPS_NO_BOARD`) and reaches nobody, while the
     # product agent tells the client the team was warned. `supervisor` is the forge login of who

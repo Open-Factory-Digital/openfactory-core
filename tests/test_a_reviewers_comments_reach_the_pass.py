@@ -426,6 +426,6 @@ def test_the_inbox_and_the_floor_offer_it_only_where_the_server_says():
     app = (ROOT / "openfactory/api/app.py").read_text()
     panel = (ROOT / "openfactory/api/panel.html").read_text()
     view = (ROOT / "openfactory/runtime/temporal/view.py").read_text()
-    assert 'if act.get("can_address"):' in app
-    assert "a.can_address?" in panel and 'data-k="address"' in panel
+    assert 'if act.get("can_address") and act.get("adjusts_left") != 0:' in app
+    assert "a.can_address&&a.adjusts_left!==0?" in panel and 'data-k="address"' in panel
     assert '"can_address": _lists_review_comments(' in view

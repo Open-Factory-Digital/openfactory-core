@@ -169,6 +169,47 @@ class SqliteMetricsSink:
             log.warning("metrics write failed for %s#%s: %s", rec.project, rec.ticket, exc)
             return False
 
+    def record_if_absent(self, rec: MetricRecord, *, key: str) -> bool:
+        """Write `rec` under `key` only if no row of its project holds that key (`KeyedSink`).
+
+        A PLAIN `INSERT`, NOT `record`'s `INSERT OR REPLACE` — the primary key `(pk, sk)` is the
+        condition, so the second of two writers racing for one key is refused by the database
+        itself, inside one statement, and no read-then-write window exists to lose. The keys a
+        caller chooses never begin with a digit (`lifecycle/record.py`), so they cannot meet a
+        time-keyed row's `sk`.
+
+        RAISES `StoreUnreadable` on anything but the collision, unlike `record`: this write is a
+        person's decision being recorded, and "the store could not take it" must not read as
+        "somebody else's decision came first"."""
+        from openfactory.observability.query import StoreUnreadable
+
+        payload = {**rec.model_dump(), "pk": rec.project, "sk": key}
+        try:
+            with self._connect(write=True) as conn:
+                conn.execute(
+                    "INSERT INTO metrics (pk, sk, kind, ts, ticket, expires_at, data)"
+                    " VALUES (?,?,?,?,?,?,?)",
+                    (rec.project, key, rec.kind, rec.ts, rec.ticket, rec.expires_at,
+                     json.dumps(payload, default=str)),
+                )
+            return True
+        except sqlite3.IntegrityError:
+            return False
+        except Exception as exc:
+            log.warning("keyed metrics write failed for %s %s: %s", rec.project, key, exc)
+            raise StoreUnreadable(f"could not write to the metrics store at {self.path}: "
+                                  f"{exc}") from exc
+
+    def records_under(self, project: str, prefix: str) -> list[dict]:
+        """Every row of `project` whose key starts with `prefix`, in key order (`KeyedSink`).
+
+        A RANGE ON THE PRIMARY KEY, not `LIKE`: `prefix` is the caller's text (a card's ref can
+        hold `%` or `_` on a hosted tracker), and `[prefix, prefix + U+FFFF)` is every key that
+        starts with it, read from the index the table already has."""
+        return self._query(
+            "SELECT data FROM metrics WHERE pk = ? AND sk >= ? AND sk < ? ORDER BY sk",
+            (project, prefix, prefix + "￿"))
+
     def forget(self, project: str, *, kind: str) -> int:
         """Delete every row of one kind for one client, and say how many went.
 

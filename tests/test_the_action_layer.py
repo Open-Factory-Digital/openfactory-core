@@ -218,12 +218,13 @@ OWNED = {
     # the spec gate a job runs at pickup, asked of a draft — a page that judged a card itself would
     # be the second rule the queue already proved goes wrong
     "spec_verdict": "card_check",
-    "close_ticket": "card_close",
     "reopen_ticket": "card_reopen",
-    # #384: removing a card nobody has started. The marker is the port module's own seam, which
-    # removes where the row can and closes where it cannot — a front end calling it would be a
-    # second place deciding what "remove" means, without the stage gate in front of it.
-    "remove_ticket": "card_remove",
+    # #384, ADR-0055: closing a card and removing one nobody has started go THROUGH THE CARD'S
+    # DOOR, which owns the port's `close_ticket` and `remove_ticket` now; the door's own guard
+    # (`test_the_card_lifecycle_has_one_door`) fails on either anywhere outside it, front end or
+    # not — the stronger form of what those two markers held here. What these rows own is the way
+    # in: a front end calling the door itself would skip the stage gate in front of it.
+    "_through_the_door": "card_close/card_remove",
     # `build_tracker` WAS CLAIMED HERE AND GIVEN BACK, which is this table working. The three rows
     # do build a tracker — and so does the panel's `GET /api/board/{project}`, which is a READ and
     # not one of these acts. A marker that binds an identifier a front end legitimately needs is a
@@ -296,6 +297,9 @@ OWNED = {
                      # #384: the product view's cards, and the control on a card, reach the role
                      # through the same seam — the module decides who may drop a card
                      "product_board/product_withdraw_card/"
+                     # #448: another pass from the card, through the same seam — the module
+                     # decides who may send a card's change back
+                     "product_adjust/"
                      "product_record_decision/product_note_fact/product_file_defect/product_file_ticket/"
                      "product_reorder/product_say/"
                      # `product_pending` LISTS rather than acts, and is here for the gate rather
@@ -1435,13 +1439,26 @@ async def test_the_confirmation_says_HOW_MUCH_it_received(_gate):
     assert "…" not in out.message, "nothing was cut, so nothing may claim it was"
 
 
-async def test_discard_says_that_nothing_is_deleted(_gate):
+async def test_discard_says_that_nothing_is_deleted(_gate, monkeypatch):
     """The word promises more destruction than the operation performs: `gh pr close` leaves the
     branch and its commits, which is exactly why this needs no password gate."""
+    from types import SimpleNamespace
+
+    from openfactory.actions import catalog
+    from openfactory.contracts import JobState
+
+    moved: list = []
+    card = SimpleNamespace(get_ticket=lambda ref: SimpleNamespace(state="open", title="", raw=""),
+                           set_state=lambda ref, state, reason=None, **kw: moved.append(state),
+                           comment=lambda ref, body: None)
+    monkeypatch.setattr(catalog, "_board_pair",
+                        lambda name: (_start_project(), card, None, None))
     out = await actions.perform("discard", by=actions.SYSTEM, project="demo", issue="7")
 
     assert out.ok is True and out.data["freed"] is True
     assert "untouched" in out.message or "branch" in out.message
+    # the card's half went through its door: back to the backlog (#409, ADR-0055)
+    assert moved == [JobState.SKIPPED]
 
 
 async def test_a_job_not_at_the_merge_gate_is_a_CONFLICT(monkeypatch):
