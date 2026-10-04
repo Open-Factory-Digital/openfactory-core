@@ -13,7 +13,8 @@ SIX CLAIMS:
   2. **Removal is only before pickup.** `has_started` refuses it, with the close's own sentence
      where a job may be on the card; no engine is asked.
   3. **The person who asked, a product admin, or a vouched operator — nobody else.**
-  4. **The conversation is told** (`events.card_withdrawn`).
+  4. **The conversation is told** — by the card's door since #412 (`Tell` in `withdrawn`'s and
+     `removed`'s rows of `lifecycle/table.py`), where `withdraw_card` told it by hand before.
   5. **What "remove" means is the row's.** The local board deletes and keeps an audit line; a row
      with no removal closes as NOT delivered and says so.
   6. **A removed card's number is never handed out again** (`next_ref`) — not even after the
@@ -68,10 +69,11 @@ MUTATIONS = [
      "    operator = bool(by.admin)\n"),
 
     # ── 4. the conversation is told ────────────────────────────────────────────────────────────
-    ("a dropped card vanishes with nothing said where it was asked for", MODULE,
-     "            events.card_withdrawn(self.project, card=number, title=title,\n"
-     "                                  removed=bool(remove), key=now_iso())\n",
-     "            pass\n"),
+    # RE-PINNED 2026-10-01 (#412): the telling moved from `withdraw_card` into the card's table
+    ("a dropped card vanishes with nothing said where it was asked for",
+     "openfactory/lifecycle/table.py",
+     '_GONE = (Comment(), Loops("cancel"), Tell(WILL_NOT_BE_BUILT), Preview("stop"), Forget())',
+     '_GONE = (Comment(), Loops("cancel"), Preview("stop"), Forget())'),
 
     # ── 5. the row decides ─────────────────────────────────────────────────────────────────────
     ("a row with no removal is called anyway, so the tracker that can only close raises instead "

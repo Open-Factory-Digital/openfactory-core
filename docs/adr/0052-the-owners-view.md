@@ -437,6 +437,14 @@ event (D11): a chase at 48 hours happens at 48 hours, not at the next sweep.
 *Why:* ADR-0021 §5 bounds a chase to one and then leaves the question "a visible open item". The
 items are served (`open_loops`), and no page shows them.
 
+> **Amended 2026-10-01 by ADR-0055 D11 (#412).** The tab shows only what the role **waits for from
+> the person** — a decision, an answer, a "did it work?" — and is called **Pending**; each item
+> names its card and opens where it is answered, the conversation or the card. What the role
+> **owes** stays in its memory, the ledger, and is shown as one line on the card it is about
+> (*"the product role will tell you in the conversation when this is delivered"*), because the
+> person cannot act on a promise. The owed chip and the owed half of the tab's sentence (#406) are
+> removed; the owed sentences stay what the role's own prompt reads.
+
 ### D13 — The weekly sweep stays only as a catch-all
 
 The sweep's work — announcing deliveries, closing what the board resolved, asking what is new,

@@ -838,7 +838,8 @@ def test_the_inbox_shows_the_person_merging_who_accepted_and_on_which_head(
         return object()
 
     async def _jobs(_client, _ns):
-        return [_gate_job("7")]
+        # `attention` as `view.list_jobs` answers it for a live run at a gate (#339)
+        return [_gate_job("7") | {"attention": True}]
 
     monkeypatch.setattr(tv, "connect", _connect)
     monkeypatch.setattr(tv, "temporal_config", lambda: ("localhost:7233", "default"))

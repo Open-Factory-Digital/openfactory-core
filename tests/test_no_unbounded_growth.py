@@ -155,6 +155,10 @@ def test_the_declared_exemptions_still_exist():
 #: a process that never restarts is a slow leak; a cache bounded "by nature" must say by what.
 _CACHES = {
     ("openfactory/runtime/repo_cache.py", "_locks"): "one lock per project — bounded by the registry",
+    # #412 — the projects this process has said run on a store that cannot keep a card's record,
+    # so the warning is one line per project
+    ("openfactory/lifecycle/card.py", "_UNRECORDED_SAID"):
+        "one name per registered project — bounded by the registry, never by traffic",
     # #369 — the roots this process has said cannot hardlink, so the warning is one line per root.
     ("openfactory/runtime/repo_cache.py", "_LINKLESS_ROOTS"):
         "one per cache root this process serves — the deployment's `OPENFACTORY_REPO_CACHE` and "

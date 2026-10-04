@@ -437,6 +437,9 @@ def test_every_kind_it_forgets_is_one_the_store_knows_and_never_the_people():
     known = set(get_args(MetricKind))
     assert set(forget.RECORD_KINDS) | {LEDGER_KIND} <= known
     assert PEOPLE not in forget.RECORD_KINDS and PEOPLE != LEDGER_KIND
+    # the card's door keeps a record of every transition (ADR-0055); a forgotten project's cards
+    # are removed, and that record must not outlive them
+    assert "card_transition" in forget.RECORD_KINDS
     assert not {"agent_run", "job", "techlead_watch", "product_sweep"} & set(forget.RECORD_KINDS)
 
 

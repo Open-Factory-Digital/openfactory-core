@@ -83,8 +83,9 @@ MUTATIONS = [
 
     # ── 2. nothing that is not the project's ──────────────────────────────────────────────────
     ("the deployment's people join the record kinds", FORGET,
-     '                "channel_message": "panel messages"}',
-     '                "channel_message": "panel messages", "person": "people"}'),
+     # re-pinned 2026-10-03: the door's record (`card_transition`) joined the list (#412)
+     '                "card_transition": "card transitions"}',
+     '                "card_transition": "card transitions", "person": "people"}'),
 
     # ── 3. refused by name, never reported done ───────────────────────────────────────────────
     ("a store that cannot delete is handed to the layers anyway", FORGET,

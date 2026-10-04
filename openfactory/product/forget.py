@@ -16,7 +16,8 @@ offer, and the next deployment writing it again. The layers are the core's; so i
                                                           the names given to them
     loops            "I will tell you when it is fixed"   the store's `forget` of `agent_loop`
     records          old buttons, stale previews          the store's `forget` of `card_verdict`,
-                                                          `preview`, `channel_message`
+                                                          `preview`, `channel_message`,
+                                                          `card_transition`
     intake           "I already noted this"               `case.forget_project`,
                                                           `events.forget_record`
     closed cards     "this was already reported as #N"    the row's own `remove_ticket`, each
@@ -60,7 +61,11 @@ LAYERS = (CONVERSATIONS, LOOPS, RECORDS, INTAKE, CLOSED_CARDS, CONTEXT, PROCESSE
 #: identity store), `agent_run` and `job` (what the work cost), `techlead_watch` and
 #: `product_sweep` (what the rounds already reported — clearing them re-sends old notices).
 RECORD_KINDS = {"card_verdict": "card verdicts", "preview": "preview records",
-                "channel_message": "panel messages"}
+                "channel_message": "panel messages",
+                # THE CARD'S DOOR KEEPS A RECORD OF EVERY TRANSITION (ADR-0055): who closed which
+                # card and why. A forgotten project's cards are removed (`closed cards`), and the
+                # record of their lives goes with them.
+                "card_transition": "card transitions"}
 
 #: What is kept, said before anything is deleted.
 KEPT = (

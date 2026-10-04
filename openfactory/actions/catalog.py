@@ -160,7 +160,88 @@ async def _resume(*, project: str, issue: str, by: Actor, choice: str = "") -> O
 
 
 async def _skip(*, project: str, issue: str, by: Actor) -> Outcome:
-    return await _signal_parked(project=project, issue=issue, by=by, action="skip")
+    """Answer a park with "stop working on this" — THROUGH THE CARD'S DOOR (ADR-0055), so the card
+    goes back to the backlog with one comment saying who decided, its requester is told where it
+    is, its preview comes down and the role's snapshot is forgotten. The engine's half — the
+    signal, refused when the job is not parked — runs inside the door, after it asked whether the
+    card may be skipped at all."""
+    from openfactory.lifecycle import CardEvent
+
+    proj, tracker, board, bad = _board_pair(project)
+    if bad:
+        return bad
+    said: dict[str, Outcome] = {}
+
+    async def signal() -> Outcome:
+        said["it"] = await _signal_parked(project=project, issue=issue, by=by, action="skip")
+        return said["it"]
+
+    moved = await _through_the_door(proj, issue, CardEvent.SKIPPED, by=by, act=signal,
+                                    tracker=tracker, board=board)
+    return _refusal_of(moved) or _after_the_door(moved, said["it"])
+
+
+# ── the card's door, from a row (ADR-0055) ───────────────────────────────────────────────────────
+
+async def _through_the_door(proj, issue: str, event, *, by: Actor, why: str = "",
+                            facts: dict | None = None, act=None, tracker=None, board=None,
+                            stage: _Stage | None = None):
+    """`lifecycle.transition`, from an async row. The door reads and writes through blocking
+    ports, so it runs on a thread; `act` — the engine's half of the decision, a coroutine function
+    returning an `Outcome` — runs back on THIS loop, where the row's engine client lives, between
+    the door's `allowed` and its record. A refused act is returned untouched as the answer.
+
+    `stage` is where the row's own gate read the card (`_withdraw_refusal`): handed to the door as
+    the board's answer, so the gate and the door judge one read, not two (#162)."""
+    import asyncio
+
+    from openfactory.contracts.refs import canonical_ref
+    from openfactory.lifecycle import transition
+
+    loop = asyncio.get_running_loop()
+    columns = None
+    if stage is not None and not stage.cannot_tell:
+        columns = {canonical_ref(issue): stage.column} if stage.column else {}
+
+    def engine():
+        outcome = asyncio.run_coroutine_threadsafe(act(), loop).result()
+        return None if outcome is None or outcome.ok else outcome
+
+    return await asyncio.to_thread(lambda: transition(
+        proj, issue, event, by=str(by), why=why, facts=facts, act=engine if act else None,
+        tracker=tracker, board=board, columns=columns))
+
+
+def _refusal_of(moved) -> Outcome | None:
+    """The row's refusal for a transition the door did not make — the engine's own answer when it
+    said no, else the door's sentence."""
+    if moved.answer is not None:
+        return moved.answer
+    if moved.refused:
+        return refused(CONFLICT, moved.refused)
+    return None
+
+
+def _after_the_door(moved, outcome: Outcome) -> Outcome:
+    """`outcome`, saying also what of the transition did not land. RECORDED, a failed effect is the
+    sweep's to apply again within the hour, and the sentence says so; UNRECORDED (a store that
+    cannot keep the record), nothing will retry it, and the sentence names what is left to do by
+    hand. Either way the decision happened: a row whose own write failed unrecorded refuses before
+    calling this, and a comment or a telling that did not land does not undo a close."""
+    data = {**(outcome.data or {}), "event": moved.event.value, "recorded": moved.recorded,
+            "told": moved.outcome("tell")}
+    if not moved.failed:
+        return Outcome(ok=outcome.ok, message=outcome.message, data=data, code=outcome.code)
+    left = "; ".join(moved.failed)
+    said = outcome.message.rstrip()
+    said += " " if said.endswith((".", "!", "?")) else ". "
+    if moved.recorded:
+        return Outcome(ok=outcome.ok, data={**data, "pending": moved.failed}, code=outcome.code,
+                       message=f"{said}Not everything landed yet ({left}) — it is recorded, "
+                               f"and applied again within the hour.")
+    return Outcome(ok=outcome.ok, data={**data, "pending": moved.failed}, code=outcome.code,
+                   message=f"{said}Not everything landed ({left}), and this deployment keeps "
+                           f"no record to apply it again — finish it by hand.")
 
 
 # ── ack — a person has this one ─────────────────────────────────────────────────────────────────
@@ -1091,15 +1172,31 @@ async def _discard(*, project: str, issue: str, by: Actor, reason: str = "") -> 
 
     NOTHING IS DELETED — `gh pr close` leaves the branch and its commits, so this is reversible
     and needs no password gate. The message says so, because the word promises more destruction
-    than the operation performs."""
-    gate, bad = await _answer_gate(project=project, issue=issue, by=by, answer="discard")
+    than the operation performs.
+
+    THROUGH THE CARD'S DOOR (ADR-0055). The gate's answer is the engine's half and runs inside the
+    door; the card's half — back to the backlog, one comment saying who decided, the requester told
+    where it is, the preview down, the snapshot forgotten — is the table's. The job's own settle
+    still writes the column too, until slice 2 moves job endings in (#413)."""
+    from openfactory.lifecycle import CardEvent
+
+    proj, tracker, board, bad = _board_pair(project)
     if bad:
         return bad
-    return done(
+    gate: dict = {}
+
+    async def answer() -> Outcome | None:
+        gate["it"], refusal = await _answer_gate(project=project, issue=issue, by=by,
+                                                 answer="discard")
+        return refusal
+
+    moved = await _through_the_door(proj, issue, CardEvent.DISCARDED, by=by, why=reason[:280],
+                                    act=answer, tracker=tracker, board=board)
+    return _refusal_of(moved) or _after_the_door(moved, done(
         f"#{issue}: PR closed without merging by {by} — the floor is free. The branch and its "
         f"commits are untouched, so the work can be picked up again.",
-        project=project, issue=issue, answer="discard", pr_url=(gate or {}).get("pr_url"),
-        by=str(by), reason=reason[:280], freed=True)
+        project=project, issue=issue, answer="discard", pr_url=(gate.get("it") or {}).get("pr_url"),
+        by=str(by), reason=reason[:280], freed=True))
 
 
 # ── stop — end a job that is going nowhere, without opening the engine ──────────────────────────
@@ -1128,12 +1225,15 @@ async def _stop(*, project: str, issue: str, by: Actor, reason: str = "") -> Out
 
     THE TICKET IS SETTLED, NOT LEFT. A workflow terminated with nobody told is the wedged job's
     own failure mode repeated by hand: the floor frees, and the card sits wherever it was, with no
-    record of who ended it or why.
+    record of who ended it or why. Since ADR-0055 the card's half is the door's: the terminate is
+    the engine's half and runs inside it, and what follows is `stopped`'s row of the table — which
+    is also what tells the requester and takes the preview down, which the settle never did.
     """
+    from openfactory.lifecycle import CardEvent
     from openfactory.runtime.temporal import view as tv
     from openfactory.util.causes import first_message
 
-    found, bad = _project(project)
+    found, tracker, board, bad = _board_pair(project)
     if bad:
         return bad
     client, unreachable = await _connected()
@@ -1166,22 +1266,29 @@ async def _stop(*, project: str, issue: str, by: Actor, reason: str = "") -> Out
             f"the run, and `stop` is for a job nothing else can reach.")
 
     why = str(reason or "").strip()[:280]
-    try:
-        await handle.terminate(reason=f"stopped by {by}" + (f": {why}" if why else ""))
-    except Exception as exc:  # noqa: BLE001 — the engine refused; nothing changed
-        log.exception("could not stop %s#%s", found.name, issue)
-        return refused(
-            FAILED,
-            f"could not stop #{issue}: {first_message(exc, limit=160)} — nothing was changed, and "
-            f"the floor is still held.")
 
-    settled = await _settle_after_stop(found.name, issue, by=by, why=why)
-    return done(
+    async def terminate() -> Outcome | None:
+        try:
+            await handle.terminate(reason=f"stopped by {by}" + (f": {why}" if why else ""))
+        except Exception as exc:  # noqa: BLE001 — the engine refused; nothing changed
+            log.exception("could not stop %s#%s", found.name, issue)
+            return refused(
+                FAILED,
+                f"could not stop #{issue}: {first_message(exc, limit=160)} — nothing was changed, "
+                f"and the floor is still held.")
+        return None
+
+    moved = await _through_the_door(found, issue, CardEvent.STOPPED, by=by, why=why,
+                                    act=terminate, tracker=tracker, board=board)
+    bad = _refusal_of(moved)
+    if bad:
+        return bad
+    settled = not moved.outcome("column").startswith("failed")
+    return _after_the_door(moved, done(
         f"#{issue}: stopped by {by} — the floor is free. This does not resume: the ticket goes "
         f"back to the board and a fresh job starts from the beginning, so whatever that run had "
-        f"in flight is gone." + ("" if settled else " The ticket itself could not be updated — "
-                                 "move it by hand and say why."),
-        project=found.name, issue=issue, by=str(by), reason=why, freed=True, settled=settled)
+        f"in flight is gone.",
+        project=found.name, issue=issue, by=str(by), reason=why, freed=True, settled=settled))
 
 
 #: What a job may be waiting for, and HOW A PERSON ANSWERS IT — in words they can act on.
@@ -1220,32 +1327,6 @@ async def _what_it_is_waiting_on(handle) -> tuple[str, str] | None:
         if answered:
             return _HOW_TO_ANSWER.get(query, (f"whatever `{query}` reports", "the panel"))
     return None
-
-
-async def _settle_after_stop(project: str, issue: str, *, by: Actor, why: str) -> bool:
-    """Put the ticket back where a person will find it, with one comment saying who and why.
-
-    BEST-EFFORT AND REPORTED. The workflow is already terminated — refusing to say so because the
-    tracker blinked would leave the operator believing nothing happened, which is worse than a
-    card in the wrong column."""
-    import asyncio
-
-    from openfactory.contracts import JobState
-    from openfactory.registry import ProjectRegistry
-    from openfactory.runtime.temporal.activities import _tracker_for
-
-    said = f"Stopped by {by}." + (f" Reason: {why}" if why else "") + (
-        " The job was terminated in the engine; nothing was merged and no branch was deleted. "
-        "This ticket is back on the board and can be picked up again.")
-    try:
-        tracker = _tracker_for(ProjectRegistry().get(project))
-        await asyncio.to_thread(lambda: tracker.set_state(issue, JobState.SKIPPED, reason=said))
-        await asyncio.to_thread(lambda: tracker.comment(issue, said))
-    except Exception as exc:  # noqa: BLE001 — the stop stands; only the telling failed
-        log.error("OPENFACTORY_STOP_NOT_RECORDED project=%s issue=%s (%s) — the job was stopped "
-                  "and the ticket does not say so", project, issue, str(exc)[:160])
-        return False
-    return True
 
 
 # ── ask — the tech-lead answers a question, from any front end ──────────────────────────────────
@@ -2840,7 +2921,9 @@ async def _product_thread(*, project: str, by: Actor, thread: str = "") -> Outco
 
 
 async def _product_agenda(*, project: str, by: Actor) -> Outcome:
-    """What the product role owes, and to whom — its open loops as an AGENDA (#267 slice 3).
+    """What waits on the person — the product role's open loops it is waiting FOR, the Pending tab
+    (#267 slice 3; ADR-0055 D11). What it OWES is not here: the person cannot act on a promise, so
+    it is one line on the card it is about (`_product_board`'s `owed`).
 
     FILTERED LIKE THE CHAT, BY WHO IS ASKING (`product/agenda.py`): the room's items, and the
     items of this person's own conversation — the one the credential names (`Actor.conversation`),
@@ -2867,7 +2950,7 @@ async def _product_agenda(*, project: str, by: Actor) -> Outcome:
     from openfactory.product.voice import agenda_about, agenda_empty
 
     language = getattr(proj, "language", None)
-    found = agenda.items(rows, viewer, room=events.room_of(proj), language=language)
+    found = agenda.pending(rows, viewer, room=events.room_of(proj), language=language)
     agent = getattr(getattr(proj, "product", None), "agent_name", "") or ""
     return done(agenda.render(found, language=language), project=proj.name,
                 measured_on=_measured_on(by), items=[item.as_dict() for item in found],
@@ -3844,6 +3927,7 @@ async def _product_board(*, project: str, by: Actor, card: str = "") -> Outcome:
                 detail = {"ref": canonical_ref(wanted), "readable": True, "title": ticket.title,
                           "body": raw, "state": state, "column": column or "",
                           "opened_by_product": opened,
+                          "owed": _owed_line(proj, by, wanted, column=column or "", board=board),
                           **card_view(proj, tracker, board, wanted, opened_by=opened,
                                       column=column, state=state)}
         return {"cards": cards, "card": detail}
@@ -3865,6 +3949,37 @@ async def _product_board(*, project: str, by: Actor, card: str = "") -> Outcome:
                 lambda: module.accept_view(shown["ref"], actor=by.id, vouched=vouched))
     count = "could not be read" if read["cards"] is None else f"{len(read['cards'])} open"
     return done(f"{proj.name}'s board — {count}", project=proj.name, **read)
+
+
+def _owed_line(proj, by: Actor, card: str, *, column: str, board) -> str:
+    """WHAT THE PRODUCT ROLE OWES, ON THE CARD IT IS ABOUT (ADR-0055 D11) — `""` when it owes
+    nothing about it that this person may see. A card the work stopped on is in the backlog, and
+    the line says so: the promise is still open (D10), and "I will tell you" alone would read as
+    work under way."""
+    from openfactory.adapters.board.base import stage_key
+    from openfactory.memory import store as loop_store
+    from openfactory.product import agenda, events
+    from openfactory.product.voice import card_owed
+
+    viewer = agenda.Viewer(own=getattr(by, "conversation", "") or "", person=by.id,
+                           may_read_room=by.may_enter(PRODUCT))
+    try:
+        if not agenda.owed_on(loop_store.read(proj.name), viewer, card,
+                              room=events.room_of(proj)):
+            return ""
+    except Exception:  # noqa: BLE001 — a courtesy line; the card reads on without it
+        log.info("could not read what is owed about %s", card, exc_info=True)
+        return ""
+    # BACK IN THE BACKLOG, NOT NEW TO IT: every card the role files lands in Backlog (ADR-0019 §5),
+    # and the first live run of this line told the person who had just reported a defect that the
+    # work on it "stopped". Only a card whose work a person ended is back there — which only the
+    # card's record says (ADR-0055 D4).
+    from openfactory.lifecycle import back_in_the_backlog
+
+    backlog = bool(board is not None and column and stage_key(board, column) == "backlog"
+                   and back_in_the_backlog(proj, card))
+    return card_owed(agent_name=getattr(getattr(proj, "product", None), "agent_name", "") or "",
+                     in_backlog=backlog, language=getattr(proj, "language", None))
 
 
 async def _product_withdraw_card(*, project: str, number: str, reason: str, by: Actor,
@@ -4742,27 +4857,24 @@ async def _card_close(*, project: str, issue: str, by: Actor, reason: str = "") 
         return await _by_the_product_role(proj, issue, by=by, reason=said, remove=False,
                                           delivered=delivered, vouched=True)
 
-    def _close() -> None:
-        # THROUGH THE PORT'S OWN SEAM, NOT `tracker.close_ticket(...)` WITH A `TypeError` FALLBACK
-        # (#203). The fallback was here because one shipped row took no `delivered`; it dropped the
-        # word exactly when the word was "not delivered", and it took the same branch for a
-        # `TypeError` raised INSIDE a real close — closing the card twice. Every shipped row takes
-        # the keyword now, and `close_ticket` is where a row written before it is answered by name.
-        from openfactory.adapters.tracker.base import close_ticket
-        from openfactory.product.voice import card_close_note
+    # THROUGH THE CARD'S DOOR (ADR-0055), whose close goes through the port's own seam
+    # (`tracker/base.py::close_ticket`, #203) and is followed by `closed`'s row of the table: the
+    # requester told, the promise cancelled, the preview down, the snapshot forgotten — none of
+    # which this row's own close did.
+    from openfactory.lifecycle import CardEvent
 
-        note = card_close_note(who=str(by), reason=said,
-                               language=getattr(proj, "language", None))
-        close_ticket(tracker, issue, note, delivered=delivered)
-
-    try:
-        await asyncio.to_thread(_close)
-    except Exception as exc:  # noqa: BLE001 — see `_card_create`
-        return refused(UNAVAILABLE, f"{issue} is still open: {exc}")
+    moved = await _through_the_door(proj, issue, CardEvent.CLOSED, by=by, why=said,
+                                    facts={"delivered": delivered}, tracker=tracker, board=board,
+                                    stage=stage)
+    bad = _refusal_of(moved)
+    if bad:
+        return bad
+    if moved.outcome("close").startswith("failed") and not moved.recorded:
+        return refused(UNAVAILABLE, f"{issue} is still open: {moved.outcome('close')}")
     how = (f"as delivered, because it was in {stage.column!r} — what it shipped stays on the "
            f"record" if delivered else "it is off the board, not deleted")
-    return done(f"closed {issue} ({by}) — {how}, and its thread is intact",
-                project=proj.name, issue=str(issue), delivered=delivered)
+    return _after_the_door(moved, done(f"closed {issue} ({by}) — {how}, and its thread is intact",
+                                       project=proj.name, issue=str(issue), delivered=delivered))
 
 
 async def _card_remove(*, project: str, issue: str, by: Actor, reason: str = "") -> Outcome:
@@ -4790,41 +4902,32 @@ async def _card_remove(*, project: str, issue: str, by: Actor, reason: str = "")
     kind, unreadable = await asyncio.to_thread(_opened_by, tracker, issue)
     if unreadable:
         return refused(CONFLICT, unreadable)
-    _stage_at, refusal = await _withdraw_refusal(proj, board, issue, remove=True)
+    stage, refusal = await _withdraw_refusal(proj, board, issue, remove=True)
     if refusal:
         return refused(CONFLICT, refusal)
     if kind:
         return await _by_the_product_role(proj, issue, by=by, reason=said, remove=True,
                                           delivered=False, vouched=True)
 
-    def _remove() -> bool:
-        from openfactory.adapters.tracker.base import remove_ticket
-        from openfactory.product.voice import card_close_note
+    # THROUGH THE CARD'S DOOR (ADR-0055): a card that is already closed is refused by its table
+    # (`removed` is not allowed from `closed`), and the removal is followed by what the card's
+    # removal means for the promise, the requester and the preview.
+    from openfactory.lifecycle import CardEvent
 
-        ticket = tracker.get_ticket(issue)
-        if (getattr(ticket, "state", "") or "open") != "open":
-            raise _AlreadyClosed(issue)
-        note = card_close_note(who=str(by), reason=said,
-                               language=getattr(proj, "language", None))
-        return remove_ticket(tracker, issue, said, by=str(by), note=note)
-
-    try:
-        removed = await asyncio.to_thread(_remove)
-    except _AlreadyClosed:
-        return refused(CONFLICT, f"{issue} is already closed — there is nothing on the board to "
-                                 f"remove. Nothing was changed.")
-    except Exception as exc:  # noqa: BLE001 — see `_card_create`
-        return refused(UNAVAILABLE, f"{issue} is still on the board: {exc}")
+    moved = await _through_the_door(proj, issue, CardEvent.REMOVED, by=by, why=said,
+                                    tracker=tracker, board=board, stage=stage)
+    bad = _refusal_of(moved)
+    if bad:
+        return bad
+    if moved.outcome("remove").startswith("failed") and not moved.recorded:
+        return refused(UNAVAILABLE, f"{issue} is still on the board: {moved.outcome('remove')}")
+    removed = moved.outcome("remove") == "removed"
     how = ("it is gone from the board, its number will not be used again, and who removed it, "
            "when and why is kept" if removed else
            "this tracker can only close a card, so it was closed as not delivered and stays in "
            "the tracker's history")
-    return done(f"removed {issue} ({by}) — {how}", project=proj.name, issue=str(issue),
-                removed=removed)
-
-
-class _AlreadyClosed(Exception):
-    """A removal asked of a card that is no longer open — an answer, not a failure."""
+    return _after_the_door(moved, done(f"removed {issue} ({by}) — {how}", project=proj.name,
+                                       issue=str(issue), removed=removed))
 
 
 def card_view(proj, tracker, board, ref: str, *, opened_by: str, column: str | None = None,
@@ -4871,8 +4974,6 @@ async def _card_reopen(*, project: str, issue: str, by: Actor) -> Outcome:
     if owned:
         return refused(CONFLICT, owned)
 
-    from openfactory.product.voice import card_reopen_note
-
     # NAMED, NOT `getattr`-ed, AND ONLY THE LOOKUP IS GUARDED. `reopen_ticket` is not on the tracker
     # port (#150: putting it there made `check_tracker` report the missing method instead of the
     # read-side findings it exists for), but `test_the_action_layer.py` asks every action row for a
@@ -4880,27 +4981,32 @@ async def _card_reopen(*, project: str, issue: str, by: Actor) -> Outcome:
     # branch once wrapped the reopen AND its note, so an `AttributeError` from the note described a
     # card that had been reopened as one this tracker cannot reopen (review of #153).
     try:
-        reopen = tracker.reopen_ticket
+        tracker.reopen_ticket  # noqa: B018 — asked before the door records a reopen it cannot do
     except AttributeError:
         return refused(INVALID,
                        f"{proj.name}'s tracker cannot reopen a card from here. Reopen it in the "
                        f"tracker's own screen — the card, its thread and its number are all still "
                        f"there, because closing never deleted anything.")
-    try:
-        await asyncio.to_thread(reopen, issue)
-    except Exception as exc:  # noqa: BLE001 — see `_card_create`
-        return refused(UNAVAILABLE, f"{issue} is still closed: {exc}")
+    # THROUGH THE CARD'S DOOR (ADR-0055). Its table allows a reopen of a CLOSED card only: this row
+    # once reopened an open one, and on the local board that threw a card in progress back into
+    # Backlog. The note saying who reopened it is the door's comment, and the promise the close
+    # cancelled waits on the card again.
+    from openfactory.lifecycle import CardEvent
+
+    moved = await _through_the_door(proj, issue, CardEvent.REOPENED, by=by, tracker=tracker,
+                                    board=_board)
+    bad = _refusal_of(moved)
+    if bad:
+        return bad
+    if moved.outcome("reopen").startswith("failed") and not moved.recorded:
+        return refused(UNAVAILABLE, f"{issue} is still closed: {moved.outcome('reopen')}")
     reopened = f"reopened {issue} ({by}) — it is back on the board for somebody to pick up"
-    # TWO WRITES, TWO OUTCOMES: the card IS open, whatever happens to the note that says who did it.
-    try:
-        await asyncio.to_thread(tracker.comment, issue, card_reopen_note(
-            who=str(by), language=getattr(proj, "language", None)))
-    except Exception as exc:  # noqa: BLE001 — the reopen landed; only its record did not
+    if moved.outcome("comment").startswith("failed"):
+        # TWO WRITES, TWO OUTCOMES: the card IS open, whatever happens to the note that says who
         log.warning("OPENFACTORY_CARD_REOPEN_UNNOTED card=%s: reopened, and the note saying who "
-                    "reopened it could not be left — %s", issue, exc)
-        return done(f"{reopened}, but the note saying who reopened it could not be left on the "
-                    f"card", project=proj.name, issue=str(issue))
-    return done(reopened, project=proj.name, issue=str(issue))
+                    "reopened it could not be left — %s", issue, moved.outcome("comment"))
+        reopened += ", but the note saying who reopened it could not be left on the card"
+    return _after_the_door(moved, done(reopened, project=proj.name, issue=str(issue)))
 
 
 async def _pr_merge(*, project: str, pr: str, by: Actor) -> Outcome:

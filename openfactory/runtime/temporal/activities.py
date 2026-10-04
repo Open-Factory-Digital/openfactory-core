@@ -5652,6 +5652,14 @@ def _hours_since(iso: str) -> float:
         return 0.0
 
 
+def _converge_card_transitions(project) -> None:
+    """`lifecycle.converge` on the hourly round, logged — see its call in `techlead_watch`."""
+    from openfactory.lifecycle import converge
+
+    for line in converge(project):
+        activity.logger.info("card transition converged: %s", line)
+
+
 @activity.defn
 async def techlead_watch(project_name: str) -> str:
     """The tech-lead's rounds (ADR-0020 §3): look at the floor, say what is stuck, resume what the
@@ -5708,6 +5716,11 @@ async def techlead_watch(project_name: str) -> str:
     # build against a promise nobody holds any more. Same position and the same reason: upstream of
     # everything that can fail this round.
     await asyncio.to_thread(_repoint_product_orphans, project)
+
+    # WHAT A CARD'S DOOR RECORDED AND COULD NOT APPLY (ADR-0055 D5) — the tracker blinked, the
+    # engine was away — applied again while its transition is still the card's latest, superseded
+    # otherwise. Upstream of nothing, and it never raises.
+    await asyncio.to_thread(_converge_card_transitions, project)
 
     client = engine_client()
 
