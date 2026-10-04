@@ -98,8 +98,12 @@ MUTATIONS = [
      '    title = (loop.context or {}).get("title", "")\n'
      '    about = f"#{loop.subject} ({title})" if title else f"#{loop.subject}"'),
 
+    # re-pinned 2026-10-04: the "not yet" branch lists the same way since #508, so the anchor
+    # carries the line before it and its indentation (review of the merge of #508)
     ("the releases waiting are listed `#CONT-412`", ENGINE,
+     """        listed = _waiting_release_refs(project)\n"""
      """        which = f" ({', '.join(ref_label(r) for r in listed)})" if listed else \"\"""",
+     """        listed = _waiting_release_refs(project)\n"""
      """        which = f" ({', '.join(f'#{r}' for r in listed)})" if listed else \"\""""),
 
     # ── the module's details, in one language ───────────────────────────────────────────────────
