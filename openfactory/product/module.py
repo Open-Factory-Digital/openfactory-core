@@ -3034,12 +3034,11 @@ class ProductModule:
         slice 5) — the other half of the link, on the card a person opens first. A comment, never a
         state: the card stays delivered, and the defect is the work. Best-effort: the defect is
         filed, and a card that could not be told keeps its link in the defect's own body."""
-        from openfactory.product.authoring import _said
+        from openfactory.product.authoring import defect_after_delivery_note
 
-        line = _said(lang)["defect_after_delivery"].format(ref=f"#{canonical_ref(ref)}")
         for card in [r.strip() for r in str(linked).split(",") if r.strip()]:
             try:
-                tracker.comment(card, line)
+                tracker.comment(card, defect_after_delivery_note(ref, language=lang))
             except Exception as exc:  # noqa: BLE001 — the defect is filed; its body links back
                 log.info("the delivered card %s was not told of defect %s (%s)", card, ref, exc)
 

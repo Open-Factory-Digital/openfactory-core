@@ -898,6 +898,15 @@ def _said(language: str | None) -> dict[str, str]:
     return _pick(_CARD_LINES, language)
 
 
+def defect_after_delivery_note(ref: str, *, language: str | None = None) -> str:
+    """What a delivered card says when a defect was filed after its delivery (#448 slice 5): the
+    other half of the link, naming the defect as its tracker spells it (`ref_label`: `#12`, or
+    `CONT-412` on Jira — never `#CONT-412`)."""
+    from openfactory.contracts.refs import ref_label
+
+    return _said(language)["defect_after_delivery"].format(ref=ref_label(ref))
+
+
 def _marker(markers: dict[str, str], language: str | None) -> str:
     from openfactory.product.voice import _pick
 
