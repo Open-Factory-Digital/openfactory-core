@@ -37,6 +37,8 @@ with workflow.unsafe.imports_passed_through():
         nothing_ran_note,
     )
     from openfactory.contracts.project import ADJUST_PASSES
+    from openfactory.lifecycle.handed_back import recorded_park
+    from openfactory.review.verdict import of_result
     from openfactory.runtime.temporal.activities import (
         adjust_pr,
         card_adjusted,
@@ -1159,45 +1161,15 @@ class JobWorkflow:
         TRIMMED HERE, not by the reader. A query response crosses the wire on every panel refresh
         that asks for it, and a reviewer's `summary` plus a dozen findings is prose measured in
         kilobytes; the caller that wants all of it reads the closed job's result, which has always
-        carried the whole thing."""
-        review = getattr(result, "review", None)
-        gates = [{"name": v.name, "passed": bool(v.passed), "advisory": bool(v.advisory)}
-                 for v in (result.validations or [])]
-        # SUPPRESSIONS TRAVEL AS THEIR KINDS. They are the single commonest reason a green PR is
-        # handed to a person (`_why` says so in as many words), so a merge gate that did not
-        # mention them would be answering the question with the one fact left out.
-        kinds = sorted({str(k) for k in (result.added_suppressions or [])})
-        if review is None and not gates and not kinds:
+        carried the whole thing.
+
+        THE PROJECTION IS `verdict.of_result` since #414: the worker that applies the pull request
+        the box handed back tells its requester the review's word from the same result, and two
+        hand-listed copies of it would come to disagree. Pure — no command, replay-safe."""
+        projected = of_result(result)
+        if projected is None:
             return  # nothing was measured — say nothing rather than an empty verdict
-        self._verdict = {
-            "decision": getattr(review, "decision", "") or "",
-            "score": getattr(review, "score", None),
-            "summary": (getattr(review, "summary", "") or "")[:600],
-            "findings": [{"severity": f.severity, "description": (f.description or "")[:300],
-                          "file": f.file or ""}
-                         for f in (getattr(review, "findings", None) or [])[:8]],
-            "gates": gates,
-            "suppressions": kinds,
-            # WHAT THE REVIEWER SAID ABOUT EACH CRITERION (#184). This projection is hand-listed,
-            # and the field was simply never added to it — so the map reached the tech-lead's
-            # channel, which reads the whole `ReviewResult`, and died at the merge gate, which
-            # reads this query. #184 taught the renderer to show it and the data never arrived:
-            # the fix worked on one surface and was invisible on the one where somebody decides.
-            #
-            # TRIMMED LIKE ITS NEIGHBOURS, for the reason the docstring above gives — this crosses
-            # the wire on every panel refresh. The criterion text is what identifies it to a
-            # reader; the evidence is prose and belongs to the closed job's result.
-            #
-            # AND WHAT EXECUTED IT (#447): `executed_by` is the gate the platform confirmed ran the
-            # evidence, `would_verify` the check no gate runs, `evidence_checked` whether the
-            # platform looked at all — the three the stance is computed from. Fields, not a
-            # command: replay-safe for the reason `verdict` states.
-            "acceptance": [{"criterion": (c.criterion or "")[:200], "status": c.status,
-                            "executed_by": getattr(c, "executed_by", None) or "",
-                            "would_verify": (getattr(c, "would_verify", None) or "")[:160]}
-                           for c in (getattr(review, "acceptance", None) or [])[:12]],
-            "evidence_checked": bool(getattr(review, "evidence_checked", False)),
-        }
+        self._verdict = projected
 
     async def _flag_review_findings(self, params: JobParams, result: RunResult) -> None:
         """Something just merged. If the independent review REJECTED it or raised anything
@@ -2876,12 +2848,17 @@ class JobWorkflow:
                 # it). patched(): an in-flight job replaying its pre-fix history must skip this new
                 # command to stay deterministic; new runs and their live tail set it.
                 author = ""
+                #
+                # A PARK THE BOX REACHED WAS APPLIED BY THE WORKER ALREADY (#414): its id goes with
+                # the reconcile, which the door answers from the card's record. Only the input
+                # changes, which replay records rather than compares — no new command.
                 if workflow.patched("park-marks-needs-action"):
                     try:
                         author = await workflow.execute_activity(
                             mark_needs_action,
                             HoldSyncInput(project=params.project, issue=params.issue,
-                                          state=parked.state.value, note=parked.note or ""),
+                                          state=parked.state.value, note=parked.note or "",
+                                          event_id=recorded_park(parked)),
                             start_to_close_timeout=timedelta(minutes=1), retry_policy=_ONCE)
                     except Exception:  # noqa: BLE001 — reconciliation must never block the park
                         # The board now LIES: the card still reads "In progress" while the ticket

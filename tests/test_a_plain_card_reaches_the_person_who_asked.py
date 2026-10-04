@@ -203,11 +203,16 @@ def test_a_card_filed_with_NO_conversation_opens_nothing_as_before(project, tmp_
 
 
 def test_the_same_card_is_followed_ONCE(project, tmp_path):
-    """Deduplicated as a defect's is: an open loop on the card is not opened again."""
+    """Deduplicated as a defect's is: an open loop on the card is not opened again — the promise
+    the card's filing carries, opened by its door (#414), applied twice and spelled both ways."""
+    from openfactory.lifecycle import loops
+
     pen = _pen(project, tmp_path)
 
-    pen._track_ticket("12", title=TITLE, conversation=ANAS, requester=ANA)
-    pen._track_ticket("#12", title=TITLE, conversation=ANAS, requester=ANA)
+    loops.owe(project, "12", pen._track_ticket("12", title=TITLE, conversation=ANAS,
+                                               requester=ANA))
+    loops.owe(project, "12", pen._track_ticket("#12", title=TITLE, conversation=ANAS,
+                                               requester=ANA))
 
     assert [x.subject for x in _deliveries(project)] == ["cartao-12"]
 

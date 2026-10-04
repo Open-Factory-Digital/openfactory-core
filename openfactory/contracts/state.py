@@ -56,6 +56,34 @@ class JobState(StrEnum):
     FAILED = "failed"
 
 
+#: THE BOX'S PROGRESS MARKS (ADR-0055 D7, #414) — the states a job writes on its card ITSELF, from
+#: wherever it runs, because they say how far the job is and nothing follows them. While a job
+#: runs, the card is in one lifecycle state, `running`; these are the board's view of how far it
+#: got, and a write that needs a consequence is not one of them.
+#:
+#: EVERY OTHER STATE A BOX REACHES IS AN OUTCOME — a pull request opened, a merge, a delivery, a
+#: refusal, a park — and is HANDED BACK in its result (`RunResult.handed_back`) for the worker to
+#: apply through the card's door, which knows every consumer of it (`lifecycle/handed_back.py`).
+#: The box may run on another machine with no ledger and no conversation; the door may not.
+#:
+#: A CLOSED SET, AND THE GUARD READS IT BY NAME: `tests/test_the_card_lifecycle_has_one_door.py`
+#: admits the box's `set_state` only under `if <state> in PROGRESS_MARKS`, and holds this set to
+#: exactly these members — so widening it is a visible change of that test, never a quiet line
+#: here.
+#:   - the job's own working states, the columns `in_progress` and `in_review` show;
+#:   - `paused`, a rate limit the workflow resumes on its own: the card stays the job's, and no
+#:     column holds it;
+#:   - the promotion's steps between a merge and its outcome — observing a stage, tagging and
+#:     observing production, rolling back.
+PROGRESS_MARKS: frozenset[JobState] = frozenset({
+    JobState.SPEC_VALIDATION, JobState.PREPARING, JobState.PLANNING, JobState.IMPLEMENTING,
+    JobState.VALIDATING, JobState.REPAIRING, JobState.REVIEWING,
+    JobState.PAUSED,
+    JobState.STAGING_VERIFYING, JobState.PROD_RELEASING, JobState.PROD_VERIFYING,
+    JobState.ROLLING_BACK,
+})
+
+
 class RiskLevel(StrEnum):
     """Per-component risk (ADR-0001 D-6). Drives how strong the human gate is."""
 

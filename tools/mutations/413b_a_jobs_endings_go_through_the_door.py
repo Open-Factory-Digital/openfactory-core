@@ -29,8 +29,9 @@ MUTATIONS = [
 
     # re-pinned 2026-10-04: the row announces what the card completes since #414's B1
     ("a delivered card is not moved to Done, so nothing closes it", TABLE,
-     '        return (Column("done"), Comment(), Loops("deliver"), Forget())\n',
-     '        return (Comment(), Loops("deliver"), Forget())\n'),
+     # re-pinned 2026-10-04: the comment is the caller's note when it has one (#414's B2)
+     '        return (Column("done"), *_said(facts), Loops("deliver"), Forget())\n',
+     '        return (*_said(facts), Loops("deliver"), Forget())\n'),
 
     ("the settle of a DONE job no longer goes through the door", ACTIVITIES,
      "    event = {JobState.SKIPPED: CardEvent.SKIPPED, JobState.DONE: CardEvent.DELIVERED}"
@@ -57,8 +58,8 @@ MUTATIONS = [
 
     ("the ceiling is raised quietly, so the list can grow", GUARD_TEST,
      # RE-PINNED 2026-10-02 (#414): the ceiling is 16 since #414's first part
-     # re-pinned 2026-10-04: and 7 since its B1 (#414)
-     "CEILING = 7\n",
-     "CEILING = 8\n",
+     # re-pinned 2026-10-04: and 4 since its B1 and B2, merged (#414)
+     "CEILING = 4\n",
+     "CEILING = 5\n",
      GUARD_TEST),
 ]

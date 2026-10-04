@@ -968,6 +968,12 @@ async def _promote(*, project: str, issue: str, version: str, approver: str, pas
     )
     result = runner.release_prod(f"#{issue.lstrip('#')}", version=version, approver=approver,
                                  comment=comment)
+    # THE RELEASE HANDS ITS OUTCOME BACK (ADR-0055 D7, #414) — delivered, or parked on a rollback —
+    # and this row is the worker that ran it, so the card hears it through its door
+    from openfactory.lifecycle.handed_back import apply as the_outcome_goes_through_the_door
+
+    the_outcome_goes_through_the_door(p, f"#{issue.lstrip('#')}", result,
+                                      tracker=getattr(runner, "tracker", None))
     return done(f"#{issue}: {result.note or result.state.value}",
                 project=p.name, issue=issue, state=result.state.value, note=result.note)
 

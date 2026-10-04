@@ -29,10 +29,10 @@ MUTATIONS = [
      '        key = canonical_ref(ref) if canonical_ref(ref).isdigit() else ""\n'),
 
     ("a reported defect on Jira is placed, and its delivery is never followed", MOD,
-     "        if key:\n"
-     "            self._track_defect(key, conversation=conversation, requester=requester)\n",
-     "        if key.isdigit():\n"
-     "            self._track_defect(key, conversation=conversation, requester=requester)\n"),
+     # re-pinned 2026-10-04: the defect's promise travels with its filing through the card's door (#414)
+     "                owed=self._track_defect(key, conversation=conversation, requester=requester))\n",
+     "                owed=(self._track_defect(key, conversation=conversation, requester=requester)\n"
+     "                      if key.isdigit() else None))\n"),
 
     ("a requirement's card is placed only when its ref is a number", MOD,
      "            key = split_repo_ref(ref)[1]\n",
@@ -44,8 +44,10 @@ MUTATIONS = [
     # canonicalisation changes nothing — and the placement under `12` stays pinned by the test.
 
     ("a reported defect is followed as `defeito-#12`, a subject no earlier loop had", MOD,
-     "            self._track_defect(key, conversation=conversation, requester=requester)\n",
-     "            self._track_defect(str(ref), conversation=conversation, requester=requester)\n"),
+     # re-pinned 2026-10-04: the defect's promise travels with its filing through the card's door (#414)
+     "                owed=self._track_defect(key, conversation=conversation, requester=requester))\n",
+     "                owed=self._track_defect(str(ref), conversation=conversation, "
+     "requester=requester))\n"),
 
     # RETIRED 2026-10-03, for the same reason: "a requirement's card is placed under the ref as
     # filed, not the part after its repository". The door places the ref it is handed, qualified

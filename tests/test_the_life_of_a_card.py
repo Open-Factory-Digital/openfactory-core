@@ -20,6 +20,8 @@ take down and the door says so).
         delivered → the requirement announced once, when the last one is (#414, B1)
     asked a question before the plan → parked → asked again by a retry, said once (#414, B1)
     pull request → ready to try, from the watch and the round, said once (#414, B1)
+    pull request handed back by the box → the same one the watch and the round find told; a
+        later pass back at the gate placed again (#414, B1 and B2 merged)
     the factory's own card closed when its trouble is gone, kept apart from the product's (B1)
 """
 
@@ -1088,6 +1090,78 @@ def test_a_ready_to_try_the_conversation_did_not_take_is_told_by_the_hourly_roun
     assert len(_told(heard, about=bare)) == 1
     assert acts._pull_requests_waiting(deployment, [(bare, _PR)]) == []
     assert len(_told(heard, about=bare)) == 1
+
+
+def test_the_pull_request_the_box_hands_back_is_the_one_the_watch_and_the_round_find_told(
+        deployment, heard):
+    """B1 AND B2, MERGED (#414): one `pr_opened` per pull request a person decides. The box that
+    opened it hands it back, and the worker takes it through the door keyed by the pull request —
+    the column the box used to write, and the requester told it is theirs to try, with the review's
+    word read from the result. The merge watch, the round and the same activity retried hand in the
+    same event and are answered from the card's record: one row, one telling, nothing on the card
+    (the box said it there). A LATER pass that brings the card back to the gate is its own
+    transition — its progress mark moved the card — and tells nobody twice."""
+    from openfactory.contracts import JobState
+    from openfactory.contracts.review import ReviewResult
+    from openfactory.contracts.run import HandedBack, RunResult
+    from openfactory.runtime.temporal import activities as acts
+    from openfactory.runtime.temporal.io import ReadyForYouInput
+
+    ref = _filed(deployment)
+    _promoted(deployment, ref)
+    bare = ref.lstrip("#")
+    _tracker(deployment).set_state(ref, JobState.IMPLEMENTING)        # the box's last mark
+
+    def opened() -> RunResult:
+        return RunResult(ticket_id=ref, state=JobState.PR_OPEN, pr_url=_PR,
+                         review=ReviewResult(decision="rejected", score=30),
+                         handed_back=[HandedBack(state=JobState.PR_OPEN, needs_person=True)])
+
+    acts._the_worker_applies("acme", bare, "handed-back-run-1-act-1", opened())
+
+    assert _column(deployment, ref) == "needs_action"
+    [told] = _told(heard, about=bare)
+    assert "is ready for you to check" in told and "review rejected it" in told, told
+
+    assert not asyncio.run(acts.tell_the_requester(ReadyForYouInput(project="acme", issue=bare,
+                                                                    pr_url=_PR)))
+    assert acts._pull_requests_waiting(deployment, [(bare, _PR)]) == []
+    acts._the_worker_applies("acme", bare, "handed-back-run-1-act-1", opened())   # retried
+    assert [r.event for r in _history(deployment, ref)] == ["pr_opened"]
+    assert len(_told(heard, about=bare)) == 1
+    assert _said_on_the_card(deployment, ref) == []
+
+    # A RE-REVIEW: its progress mark took the card to review, and the gate is handed back again
+    _tracker(deployment).set_state(ref, JobState.REVIEWING)
+    assert _column(deployment, ref) == "in_review"
+    acts._the_worker_applies("acme", bare, "handed-back-run-1-act-2", opened())
+    assert _column(deployment, ref) == "needs_action"
+    assert [r.event for r in _history(deployment, ref)] == ["pr_opened", "pr_opened"]
+    assert len(_told(heard, about=bare)) == 1
+
+
+def test_an_armed_merge_tells_nobody_and_a_person_handed_it_later_is_told_by_the_round(
+        deployment, heard):
+    """A pull request whose merge is armed waits on a build, not a person: its `pr_opened` places
+    the card in review and is keyed by its activity, not by the pull request — so when the merge
+    is handed to a person later, the round's catch-all is a new transition, and tells them."""
+    from openfactory.contracts import JobState
+    from openfactory.contracts.run import HandedBack, RunResult
+    from openfactory.runtime.temporal import activities as acts
+
+    ref = _filed(deployment)
+    _promoted(deployment, ref)
+    bare = ref.lstrip("#")
+    _tracker(deployment).set_state(ref, JobState.IMPLEMENTING)
+
+    acts._the_worker_applies("acme", bare, "handed-back-run-1-act-1", RunResult(
+        ticket_id=ref, state=JobState.PR_OPEN, pr_url=_PR, auto_merge=True,
+        handed_back=[HandedBack(state=JobState.PR_OPEN, needs_person=False)]))
+
+    assert _column(deployment, ref) == "in_review" and _told(heard, about=bare) == []
+    assert acts._pull_requests_waiting(deployment, [(bare, _PR)]) == [bare]
+    assert _column(deployment, ref) == "needs_action"
+    assert [r.event for r in _history(deployment, ref)] == ["pr_opened", "pr_opened"]
 
 
 def test_the_factorys_own_card_is_closed_through_its_door_with_its_evidence_once(deployment):

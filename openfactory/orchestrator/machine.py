@@ -40,10 +40,13 @@ from openfactory.contracts import (
 from openfactory.contracts.bot import BotIdentity
 from openfactory.contracts.item_space import closing_keyword, forge_owns_the_card
 from openfactory.contracts.refs import canonical_ref
+from openfactory.contracts.run import HandedBack
+from openfactory.contracts.state import PROGRESS_MARKS
 from openfactory.observability import EventKind, EventSink, JobEvent, NullEventSink, now_iso
 from openfactory.orchestrator.context import build_context
 from openfactory.orchestrator.errors import SetupFailed, SpecValidationError
 from openfactory.orchestrator.merge_policy import format_review, review_event, should_auto_merge
+from openfactory.orchestrator.outcomes import hands_back
 from openfactory.orchestrator.risk import assess as risk_assess
 from openfactory.orchestrator.risk import of_attempt as risk_of_attempt
 from openfactory.orchestrator.validation import (
@@ -707,6 +710,9 @@ class JobRunner:
     #: (the ONE place production assembles a runner) passes it, which is what makes the gate real
     #: rather than decorative. Absent → no gate, and the test that pins the wiring says so.
     project: object | None = None
+    #: The outcomes this call reached on the card and did not write, in order — stamped on the
+    #: result its public method returns (`outcomes.hands_back`, ADR-0055 D7, #414).
+    _handed_back: list[HandedBack] = field(default_factory=list, init=False, repr=False)
 
     def _review(self, *, sandbox, workspace, review_input: ReviewInput) -> ReviewResult:
         """The reviewer's verdict with its evidence checked against the gates that ran (#447).
@@ -2045,13 +2051,24 @@ class JobRunner:
         # with a revoked token stopped jobs from parking at all, and the panel went on showing them
         # as running. So a mirror that cannot be updated is an ERROR somebody must act on, never a
         # reason to abandon the transition itself.
-        try:
-            self.tracker.set_state(ticket.id, state, reason=reason, needs_person=needs_person)
-        except Exception as exc:  # noqa: BLE001 — the job still transitions; the board lags
-            log.error("OPENFACTORY_TICKET_STATE_UNRECORDED ticket=%s -> %s (%s) — the platform "
-                      "moved on "
-                      "and the board still shows the old state", ticket.id, state.value,
-                      str(exc)[:160])
+        #
+        # ONLY A PROGRESS MARK IS WRITTEN HERE (ADR-0055 D7, #414). An outcome — a pull request
+        # opened, a merge, a delivery, a refusal, a park — is handed back in the result, and the
+        # worker applies it through the card's door, which tells every consumer of it: this box
+        # may run on a machine with no ledger, no conversation and no record of the card's life.
+        # The guard admits this `set_state` by rule, and only under this test.
+        if state in PROGRESS_MARKS:
+            try:
+                self.tracker.set_state(ticket.id, state, needs_person=needs_person)
+            except Exception as exc:  # noqa: BLE001 — the job still transitions; the board lags
+                log.error("OPENFACTORY_TICKET_STATE_UNRECORDED ticket=%s -> %s (%s) — the platform "
+                          "moved on "
+                          "and the board still shows the old state", ticket.id, state.value,
+                          str(exc)[:160])
+        else:
+            # `vars(...)`: a runner built without its constructor starts its list here
+            vars(self).setdefault("_handed_back", []).append(
+                HandedBack(state=state, needs_person=needs_person, reason=reason or ""))
         self._emit(ticket, "state", state.value, reason=reason)
         # The bot stopped actively working (parked / done / handed to a human) → drop the working
         # label so it never lingers on a ticket the bot has let go. Best-effort.
@@ -3448,3 +3465,14 @@ class JobRunner:
         if result.total_cost_usd is not None:
             lines += ["", f"{_COST_LINE}{result.total_cost_usd:.4f}"]
         return "\n".join(lines)
+
+
+# THE PUBLIC ENTRIES HAND THEIR OUTCOMES BACK (ADR-0055 D7, #414): each call's result carries what
+# it reached on the card and did not write (`outcomes.hands_back`). WRAPPED HERE, AFTER THE CLASS,
+# AND NOT DECORATED: guards across the suite parse these methods' source with
+# `ast.parse(src.lstrip())`, which a decorator line turns into an `IndentationError`
+# (`test_one_cost_for_a_ticket_on_every_surface.py`); `inspect.getsource` unwraps, so they still
+# read each method as it is written.
+for _entry in ("run", "repair_ci", "review_pr"):
+    setattr(JobRunner, _entry, hands_back(getattr(JobRunner, _entry)))
+del _entry

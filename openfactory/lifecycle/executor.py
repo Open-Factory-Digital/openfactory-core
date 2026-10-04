@@ -65,7 +65,10 @@ def _one(ports, row: record.Row, effect: Effect, *, carried: bool) -> str:
     facts = row.facts or {}
     note = str(facts.get("note") or "")
     if isinstance(effect, Column):
-        return ports.column(row.card, effect.key)
+        if effect.needs_person is None:
+            return ports.column(row.card, effect.key)
+        # who the blocker is, where only the caller knew it (#166): a pull request's gate
+        return ports.column(row.card, effect.key, needs_person=effect.needs_person)
     if isinstance(effect, Place):
         # the board's own name for the column when the caller holds it (what the person named,
         # or the module's constant); else the port asks the platform's own name for the key
@@ -82,6 +85,9 @@ def _one(ports, row: record.Row, effect: Effect, *, carried: bool) -> str:
         # second one here is the double comment D6 ends
         return "carried by the close" if carried else ports.comment(row.card, note)
     if isinstance(effect, Loops):
+        if effect.action == "open":
+            # THE PROMISE A FILING MAKES, as the filing carried it (#414)
+            return ports.loops(row.card, effect.action, owed=dict(facts.get("owed") or {}))
         # `asked` is the loop a question opens, as its asker composed it (`_do_gather`); the
         # title is how a delivery finds the card a split card was split from (`loops.deliver`)
         return ports.loops(row.card, effect.action, about=str(facts.get("about") or ""),

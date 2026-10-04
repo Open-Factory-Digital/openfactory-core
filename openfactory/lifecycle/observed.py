@@ -24,9 +24,10 @@ MINUS THE WRITES TO THE CARD, which the vendor's interface already made (`table.
 WHAT IS NOT AN OBSERVED CHANGE, ON PURPOSE:
 
 - a move into the factory's own columns (in progress, in review, needs action, done): the box's
-  progress marks are not card events (D7), and before the box hands its outcomes back (#414's
-  second part) the record does not hold them — reading them as a person's drag would be a story
-  nobody lived;
+  progress marks are not card events (D7) and the record never holds them, so a card the record
+  last placed at a pull request reads as moved by every mark the next pass writes — reading them
+  as a person's drag would be a story nobody lived. The box's outcomes the record DOES hold since
+  it hands them back (#414): they reach it through the door, never by observation;
 - the close of a card some other card was SPLIT from: the splitter closes it as not delivered and
   its work lives in its children (`triage.delivered_numbers`), so its promise is not cancelled.
 """

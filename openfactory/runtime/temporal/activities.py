@@ -453,8 +453,10 @@ async def run_job(inp: RunJobInput) -> RunResult:
     # running, so it is what pulls on the box. `watch` is None for a box that cannot be read, and
     # `_watch_for` says so in the log rather than attaching a watcher that would see nothing.
     watch = _watch_for(inp)
+    applied = _this_activitys_event("handed-back")
     result = await _heartbeat_while(
-        lambda: _do_run_job(inp, run_id, watch=watch),
+        lambda: _the_worker_applies(inp.project, inp.issue, applied,
+                                    _do_run_job(inp, run_id, watch=watch)),
         f"{inp.project}#{inp.issue} via {inp.sandbox}",
         tick=watch.tick if watch else None,
     )
@@ -468,6 +470,38 @@ async def run_job(inp: RunJobInput) -> RunResult:
             "OPENFACTORY_PREVIEW_AUTO_START_CUT %s#%s — starting its preview outlived %ss; the "
             "job's result is returned without it, and the card's button starts one",
             inp.project, inp.issue, _A_PREVIEW_STARTS_WITHIN)
+    return result
+
+
+def _the_worker_applies(project_name: str, issue: str, event_id: str, result: RunResult
+                        ) -> RunResult:
+    """THE BOX HANDS ITS OUTCOMES BACK, AND THE WORKER APPLIES THEM THROUGH THE CARD'S DOOR
+    (ADR-0055 D7, #414) — a pull request opened, a merge, a delivery, a refusal, a park, in the
+    order the box reached them. The box wrote only its progress marks; this is where the board, the
+    record and the role's snapshot hear the rest. Returns `result`, each outcome stamped with the
+    transition the door recorded (`HandedBack.event_id`), which the workflow hands the park's
+    reconcile so it is answered from the record (`mark_needs_action`).
+
+    INSIDE THE HEARTBEAT, NOT IN THE ACTIVITY'S TAIL: the door reads the card and writes the
+    tracker, and a tail past the last beat is a window the engine is still counting (#408).
+    `event_id` is this activity's own, so a retried activity — a box that re-attaches to the work
+    it already did — is answered from the card's record and applies nothing twice (D5).
+
+    A RESULT WITH NOTHING HANDED BACK is applied as nothing: a box from before #414 wrote its own
+    outcomes, and an older result in a job's history replays as it always did. NEVER RAISES — the
+    job's result is the workflow's to act on whatever the door managed."""
+    if not getattr(result, "handed_back", None):
+        return result
+    try:
+        from openfactory.lifecycle import handed_back
+
+        project = ProjectRegistry().get(project_name)
+        handed_back.apply(project, issue, result, event_id=event_id,
+                          tracker=_tracker_for(project))
+    except Exception as exc:  # noqa: BLE001 — see the docstring
+        activity.logger.warning("OPENFACTORY_CARD_OUTCOME_UNAPPLIED %s#%s — the outcomes its box "
+                                "handed back did not go through the card's door (%s)",
+                                project_name, issue, str(exc)[:200])
     return result
 
 
@@ -2270,8 +2304,10 @@ async def adjust_pr(inp: AdjustInput) -> RunResult:
     CI log. Same per-attempt idempotency scoping, and for the same reason: a genuine second pass
     must launch a fresh task rather than reconcile the first one's stale STOPPED result."""
     run_id = f"{activity.info().workflow_run_id}-a{inp.attempt}"
+    applied = _this_activitys_event("handed-back")
     return await _heartbeat_while(
-        lambda: _run_adjust(inp, run_id), f"{inp.project}#{inp.issue} adjust"
+        lambda: _the_worker_applies(inp.project, inp.issue, applied, _run_adjust(inp, run_id)),
+        f"{inp.project}#{inp.issue} adjust"
     )
 
 
@@ -2347,8 +2383,11 @@ async def review_pr(inp: ReviewPassInput) -> RunResult:
     needs no `instruction` slot, cannot conflict with a repair on the same PR (its own variant and
     idempotency suffix), and the verdict it brings back REPLACES the one the gate was showing."""
     run_id = f"{activity.info().workflow_run_id}-v{inp.attempt}"
+    applied = _this_activitys_event("handed-back")
     return await _heartbeat_while(
-        lambda: _run_review_pass(inp, run_id), f"{inp.project}#{inp.issue} re-review"
+        lambda: _the_worker_applies(inp.project, inp.issue, applied,
+                                    _run_review_pass(inp, run_id)),
+        f"{inp.project}#{inp.issue} re-review"
     )
 
 
@@ -2433,8 +2472,10 @@ async def repair_ci(inp: CiRepairInput) -> RunResult:
     reads as a distinct run and runs fresh."""
     run_id = f"{activity.info().workflow_run_id}-r{inp.attempt}"
     await asyncio.to_thread(_the_checks_went_red, inp)
+    applied = _this_activitys_event("handed-back")
     return await _heartbeat_while(
-        lambda: _run_ci_repair(inp, run_id), f"{inp.project}#{inp.issue} ci-repair"
+        lambda: _the_worker_applies(inp.project, inp.issue, applied, _run_ci_repair(inp, run_id)),
+        f"{inp.project}#{inp.issue} ci-repair"
     )
 
 
@@ -2563,13 +2604,15 @@ async def mark_needs_action(inp: HoldSyncInput) -> str:
             author = ""
         # THROUGH THE CARD'S DOOR (ADR-0055, #413): `parked`, the park's own state as the column
         # and the note as the comment — on every row, where `set_state(reason=…)` wrote it on two
-        # and dropped it on the local board
+        # and dropped it on the local board. A park the box reached was applied by the worker
+        # already (#414), and its id answers this from the card's record: one park, one row
         from openfactory.lifecycle import CardEvent, transition
 
         moved = transition(ProjectRegistry().get(inp.project), inp.issue, CardEvent.PARKED,
                            by="the workflow", facts={"job_state": state.value,
                                                      "note": inp.note or ""},
-                           tracker=tracker, event_id=_this_activitys_event("parked"))
+                           tracker=tracker,
+                           event_id=inp.event_id or _this_activitys_event("parked"))
         if moved.refused:
             activity.logger.info("mark_needs_action: #%s not parked by the door (%s)", inp.issue,
                                  moved.refused[:160])
@@ -2652,26 +2695,26 @@ _THE_CARD_IS_DONE = frozenset({JobState.DONE.value, JobState.MERGED.value})
 _ANNOUNCE_WITHIN = 75.0
 
 
-def _gate_event(pr_url: str) -> str:
-    """The id of `pr_opened` for one pull request — the watch's and the round's alike, so whichever
-    hands it to the card's door second is answered from the record, never told twice (D5)."""
-    import hashlib
-
-    return f"pr_opened-{hashlib.sha256(str(pr_url or '').encode()).hexdigest()[:20]}"
-
-
 def _ready_to_try(project, card: str, pr_url: str, *, by: str, review: str = "",
                   tracker=None, ports=None) -> bool:
     """`pr_opened` through the card's door (ADR-0055, #414): its requester hears the change is
     theirs to try (`events.ready_to_try`), once per card and pull request. Returns whether they
-    were told NOW. The live preview's link travels when one is up (#405)."""
+    were told NOW. The live preview's link travels when one is up (#405).
+
+    ONE TRANSITION WITH THE BOX'S (`handed_back.gate_event`): the box that opened the pull request
+    handed it back first, and the worker applied it with its column and this telling — so the
+    watch and the round, coming after it, are answered from the card's record. They hand in a
+    gate a person holds (`needs_person`) and no note: the box said the pull request on the card,
+    and a watch or a round that comes first, for a box from before the hand-back, says nothing
+    there twice either."""
     from openfactory.lifecycle import CardEvent, transition
+    from openfactory.lifecycle.handed_back import gate_event
     from openfactory.preview.live import link_for
 
     moved = transition(project, card, CardEvent.PR_OPENED, by=by,
-                       facts={"pr_url": pr_url, "review": review,
-                              "preview_url": link_for(project, card)},
-                       tracker=tracker, ports=ports, event_id=_gate_event(pr_url))
+                       facts={"pr_url": pr_url, "review": review, "needs_person": True,
+                              "note": "", "preview_url": link_for(project, card)},
+                       tracker=tracker, ports=ports, event_id=gate_event(pr_url))
     if moved.refused:
         activity.logger.info("#%s: its door did not hand the pull request to its requester (%s)",
                              card, moved.refused[:160])
@@ -2921,9 +2964,10 @@ async def promote_staging(inp: PromoteInput) -> RunResult:
     program on the job's REMOTE box (it has the forge credential and the cloned manifest — the
     worker has neither), H12."""
     run_id = activity.info().workflow_run_id
+    applied = _this_activitys_event("handed-back")
     return await _heartbeat_while(
-        lambda: _run_promotion(inp.project, inp.issue, "staging", {}, run_id,
-                               sandbox=inp.sandbox),
+        lambda: _the_worker_applies(inp.project, inp.issue, applied, _run_promotion(
+            inp.project, inp.issue, "staging", {}, run_id, sandbox=inp.sandbox)),
         f"{inp.project}#{inp.issue} staging",
     )
 
@@ -2944,8 +2988,9 @@ async def release_prod(inp: ReleaseInput) -> RunResult:
     """Tag → prod on an authenticated human approval, then observe prod (D-12). On the job's
     remote box, like `promote_staging`."""
     run_id = activity.info().workflow_run_id
+    applied = _this_activitys_event("handed-back")
     return await _heartbeat_while(
-        lambda: _run_promotion(
+        lambda: _the_worker_applies(inp.project, inp.issue, applied, _run_promotion(
             inp.project, inp.issue, "release",
             {
                 "OPENFACTORY_RELEASE_VERSION": inp.version,
@@ -2954,7 +2999,7 @@ async def release_prod(inp: ReleaseInput) -> RunResult:
             },
             run_id,
             sandbox=inp.sandbox,
-        ),
+        )),
         f"{inp.project}#{inp.issue} release",
     )
 

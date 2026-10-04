@@ -183,6 +183,11 @@ TRANSITIONS = [
      {"note": "Merged, and nothing follows the merge."}),
     (CardEvent.DISCARDED, State.WAITING_ON_A_PERSON, {}),
     (CardEvent.QUESTION_ANSWERED, State.WAITING_ON_A_PERSON, {}),
+    # the box's outcomes, applied by the worker through the door (#414, D7)
+    (CardEvent.PR_OPENED, State.RUNNING, {"needs_person": True,
+                                          "note": "Ready for review: https://x/pr/3"}),
+    (CardEvent.MERGED, State.RUNNING, {"note": "Merged."}),
+    (CardEvent.REFUSED, State.RUNNING, {"note": "The card has no acceptance criteria."}),
 ]
 
 

@@ -3294,7 +3294,9 @@ _CARD_NOTE = {
         "reordered": "_Tirado da fila por {who}: voltou para o backlog._{why}",
         "edited": "_Editado por {who}._{why}",
         "question_asked": "_Perguntado por {who}: o cartão espera a resposta._{why}",
-        "pr_opened": "_Pull request aberto: uma pessoa decide o merge._{why}",
+        "refused": "_Devolvido para refinamento: a fábrica não o constrói como está escrito._{why}",
+        "pr_opened": "_A mudança está num pull request._{why}",
+        "merged": "_Mergeado._{why}",
     },
     "en": {
         "discarded": ("_Pull request closed without merging by {who}._{why} Nothing was "
@@ -3314,7 +3316,9 @@ _CARD_NOTE = {
         "reordered": "_Taken out of the queue by {who}: back in the backlog._{why}",
         "edited": "_Edited by {who}._{why}",
         "question_asked": "_Asked by {who}: the card waits on the answer._{why}",
-        "pr_opened": "_Pull request opened: a person decides the merge._{why}",
+        "refused": "_Sent back to be refined: the factory does not build it as written._{why}",
+        "pr_opened": "_The change is in a pull request._{why}",
+        "merged": "_Merged._{why}",
     },
 }
 _CARD_NOTE_WHY = {"pt-BR": " Motivo: {why}", "en": " Reason: {why}"}
@@ -3385,12 +3389,15 @@ _CARD_DONE_TO = {
               "reopened": "reaberto", "filed": "registrado", "promoted": "colocado na fila",
               "reordered": "tirado da fila", "edited": "editado",
               "question_asked": "parado à espera de uma resposta",
-              "pr_opened": "entregue a uma pessoa para conferir"},
+              "refused": "devolvido para refinamento", "pr_opened": "posto num pull request",
+              "merged": "mergeado"},
     "en": {"discarded": "discarded", "skipped": "skipped", "stopped": "stopped",
            "closed": "closed", "withdrawn": "withdrawn", "removed": "removed",
            "reopened": "reopened", "filed": "filed", "promoted": "queued",
            "reordered": "taken out of the queue", "edited": "edited",
-           "question_asked": "parked on a question", "pr_opened": "handed to a person to try"},
+           "question_asked": "parked on a question",
+           "refused": "sent back to be refined", "pr_opened": "put in a pull request",
+           "merged": "merged"},
 }
 _CARD_REFUSED = {
     "pt-BR": "O #{ref} está {where} — não pode ser {done} a partir daí. Nada foi alterado.",

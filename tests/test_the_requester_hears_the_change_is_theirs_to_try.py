@@ -202,7 +202,7 @@ def test_the_round_hands_its_merge_gates_to_the_event_before_the_two_day_reminde
     assert "_ready_to_try(project, card, pr," in helper
     assert helper.index("_ready_to_try(") < helper.index("pull_requests_at_the_gate(")
     door = inspect.getsource(acts._ready_to_try)
-    assert "CardEvent.PR_OPENED" in door and "event_id=_gate_event(pr_url)" in door
+    assert "CardEvent.PR_OPENED" in door and "event_id=gate_event(pr_url)" in door
 
 
 def test_a_preview_already_up_is_IN_the_message_instead_of_start_the_preview(registry, ledger,

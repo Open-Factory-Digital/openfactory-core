@@ -893,7 +893,11 @@ def test_filing_the_work_records_WHERE_it_was_asked_and_a_digest_of_WHO(ledger):
     ProductModule._open_delivery(fake, SimpleNamespace(number=7),
                                  [WriteResult(ok=True, ref="#500")], conversation=ANAS,
                                  requester=ANA)
-    ProductModule._track_defect(fake, "88", conversation=ANAS, requester=ANA)
+    # a defect's promise opens with its filing, through the card's door (#414)
+    from openfactory.lifecycle import loops
+
+    loops.owe(fake.project, "88",
+              ProductModule._track_defect(fake, "88", conversation=ANAS, requester=ANA))
 
     assert [(x.subject, x.context.get("conversation"), x.context.get("requester"))
             for x in ledger.rows] == [("7", ANAS, sealed(ANA)), ("defeito-88", ANAS, sealed(ANA))]

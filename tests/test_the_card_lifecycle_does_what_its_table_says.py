@@ -567,22 +567,37 @@ def test_a_finished_card_announces_what_it_completes_after_it_is_closed():
 
 def test_a_question_and_a_pull_request_happen_only_where_a_job_holds_the_card():
     """The narrowest rule ADR-0055 allows for two events it names and does not place: a question
-    before the plan on a card a job holds; a pull request a person decides on a card the factory
-    worked on. Never on a card that is gone, and never on one nobody started."""
+    before the plan on a card a job holds; a pull request on a card a job holds — TO-DO included,
+    where a job re-picked from the queue finds its pull request already open before its first
+    progress mark (#414's B2). Never on a card that is gone, and never on one in the backlog."""
     for held in (State.TODO, State.RUNNING, State.WAITING_ON_A_PERSON):
         assert allowed(held, CardEvent.QUESTION_ASKED) is None, held
-    for held in (State.RUNNING, State.WAITING_ON_A_PERSON):
         assert allowed(held, CardEvent.PR_OPENED) is None, held
     for gone in (State.CLOSED, State.REMOVED, State.DELIVERED):
         for event in (CardEvent.QUESTION_ASKED, CardEvent.PR_OPENED):
             assert allowed(gone, event, open_card=gone is State.DELIVERED) is not None, (gone,
                                                                                          event)
-    assert allowed(State.BACKLOG, CardEvent.QUESTION_ASKED) is not None
-    for unstarted in (State.BACKLOG, State.TODO):
-        assert allowed(unstarted, CardEvent.PR_OPENED) is not None, unstarted
-    assert consequences(CardEvent.PR_OPENED, {}) == (Tell("ready_for_you"), Forget())
+    for event in (CardEvent.QUESTION_ASKED, CardEvent.PR_OPENED):
+        assert allowed(State.BACKLOG, event) is not None, event
     assert consequences(CardEvent.QUESTION_ASKED, {}) == (
         Comment(), Column("needs_refinement"), Loops("ask"), Forget())
+
+
+def test_a_pull_request_is_one_row_the_column_and_for_a_person_the_telling():
+    """ONE ROW, whoever hands the pull request in (#414, B1 and B2 merged): the column the box's
+    hand-back always wrote, and — only when a person decides it, and the transition names it — the
+    requester told it is theirs to try. An armed merge waits on a build, and tells nobody."""
+    gate = {"needs_person": True, "pr_url": "https://x/pr/1", "note": ""}
+    assert consequences(CardEvent.PR_OPENED, gate) == (
+        Column("pr_open", needs_person=True), Tell("ready_for_you"), Forget())
+    assert after(CardEvent.PR_OPENED, gate) is State.WAITING_ON_A_PERSON
+    armed = {"needs_person": False, "pr_url": "https://x/pr/1", "note": ""}
+    assert consequences(CardEvent.PR_OPENED, armed) == (Column("pr_open", needs_person=False),
+                                                        Forget())
+    assert after(CardEvent.PR_OPENED, armed) is State.RUNNING
+    # a later pass back at the gate names no pull request: the column again, and nothing retold
+    assert consequences(CardEvent.PR_OPENED, {"needs_person": True, "note": ""}) == (
+        Column("pr_open", needs_person=True), Forget())
 
 
 def test_a_question_waits_only_on_a_card_parked_for_it_and_the_sweep_leaves_it_alone():

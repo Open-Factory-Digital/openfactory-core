@@ -54,26 +54,26 @@ MUTATIONS = [
      "    tally = {}"),
 ]
 
-WF = "openfactory/runtime/temporal/workflow.py"
-
 MUTATIONS += [
     # ── the seam that actually broke it on the pilot ─────────────────────────────────────────────
-    ("the verdict query drops the map again, so the gate renders nothing", WF,
+    # re-pinned 2026-10-04: the verdict query's projection is `verdict.of_result`, which the
+    # workflow keeps and the worker that tells a pull request's requester reads too (#414)
+    ("the verdict query drops the map again, so the gate renders nothing", V,
      # re-pinned 2026-09-30 (#447): the projection also carries what executed each criterion
-     '            "acceptance": [{"criterion": (c.criterion or "")[:200], "status": c.status,\n'
-     '                            "executed_by": getattr(c, "executed_by", None) or "",\n'
-     '                            "would_verify": (getattr(c, "would_verify", None) or "")[:160]}\n'
-     '                           for c in (getattr(review, "acceptance", None) or [])[:12]],\n',
+     '        "acceptance": [{"criterion": (c.criterion or "")[:200], "status": c.status,\n'
+     '                        "executed_by": getattr(c, "executed_by", None) or "",\n'
+     '                        "would_verify": (getattr(c, "would_verify", None) or "")[:160]}\n'
+     '                       for c in (getattr(review, "acceptance", None) or [])[:12]],\n',
      ""),
 
-    ("…and it crosses the wire untrimmed", WF,
+    ("…and it crosses the wire untrimmed", V,
      '"criterion": (c.criterion or "")[:200]', '"criterion": (c.criterion or "")'),
 
-    ("…and unbounded", WF,
+    ("…and unbounded", V,
      '(getattr(review, "acceptance", None) or [])[:12]',
      '(getattr(review, "acceptance", None) or [])'),
 
-    ("the evidence prose is published on every panel refresh", WF,
+    ("the evidence prose is published on every panel refresh", V,
      '{"criterion": (c.criterion or "")[:200], "status": c.status,\n',
      '{"criterion": (c.criterion or "")[:200], "status": c.status, "evidence": c.evidence,\n'),
 ]

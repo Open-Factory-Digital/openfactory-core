@@ -99,9 +99,10 @@ MUTATIONS = [
      "                                         State.CLOSED}),"),
 
     # ── 3. the delivery a finished card completes ──────────────────────────────────────────────
+    # re-pinned 2026-10-04: the comment is the caller's note since B2 (#414)
     ("a delivered card announces nothing: its requester waits for the weekly catch-all", TABLE,
-     '        return (Column("done"), Comment(), Loops("deliver"), Forget())\n',
-     '        return (Column("done"), Comment(), Forget())\n'),
+     '        return (Column("done"), *_said(facts), Loops("deliver"), Forget())\n',
+     '        return (Column("done"), *_said(facts), Forget())\n'),
 
     ("finished work closed by a person or on the vendor's screen announces nothing", TABLE,
      '            return (Close(delivered=True), Comment(), Loops("deliver"), Forget())\n',
@@ -122,18 +123,23 @@ MUTATIONS = [
      '        return "not all announced"\n'),
 
     # ── 4. the pull request a person decides ───────────────────────────────────────────────────
+    # re-pinned 2026-10-04: the pull request's id is the lifecycle's since B2 merged in, shared
+    # with the box's hand-back (`handed_back.gate_event`, #414)
     ("the watch and the round key the pull request apart, so the round decides it again", ACTIVITIES,
-     "                       tracker=tracker, ports=ports, event_id=_gate_event(pr_url))",
+     "                       tracker=tracker, ports=ports, event_id=gate_event(pr_url))",
      "                       tracker=tracker, ports=ports)"),
 
+    # re-pinned 2026-10-04: one `pr_opened` row since B2 merged in — the column and the telling
     ("the requester is never told the change is theirs to try", TABLE,
-     "        return (Tell(READY_FOR_YOU), Forget())\n",
-     "        return (Forget(),)\n"),
+     '        tell = (Tell(READY_FOR_YOU),) if facts.get("needs_person") and facts.get("pr_url") '
+     'else ()\n',
+     "        tell = ()\n"),
 
+    # re-pinned 2026-10-04: one rule for the box's, the watch's and the round's pull request
     ("a card nobody is working on is handed to its requester to try", TABLE,
-     "    CardEvent.PR_OPENED: frozenset({State.RUNNING, State.WAITING_ON_A_PERSON}),",
-     "    CardEvent.PR_OPENED: frozenset({State.BACKLOG, State.RUNNING, "
-     "State.WAITING_ON_A_PERSON}),"),
+     "    CardEvent.PR_OPENED: frozenset({State.TODO, State.RUNNING, State.WAITING_ON_A_PERSON}),",
+     "    CardEvent.PR_OPENED: frozenset({State.BACKLOG, State.TODO, State.RUNNING,\n"
+     "                                    State.WAITING_ON_A_PERSON}),"),
 
     ("a telling the conversation did not take is taken for told, and nobody tries again", EVENTS,
      "preview_starts_itself=_preview_starts_itself(project)))):\n"
