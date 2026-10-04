@@ -5797,7 +5797,11 @@ def _a_closed_card_in_the_queue(project, tracker, board, ref: str) -> str:
                        tracker=tracker, board=board)
     if moved.refused:
         return f"not moved: {moved.refused}"
-    where = "Done" if target is JobState.DONE else "Backlog"
+    # THE COLUMN AS THIS BOARD CALLS IT (#502): the line names where the close put the card, and a
+    # renamed board has no `Done` for the operator to find
+    from openfactory.adapters.board.base import stage_column
+
+    where = stage_column(board, "done" if target is JobState.DONE else "backlog")
     return f"moving the card to {where} ({moved.outcome('column') or 'nothing to move'})"
 
 

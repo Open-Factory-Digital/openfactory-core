@@ -1805,12 +1805,12 @@ _QUEUED = {
 #: Why a card `promote` or `reorder` was asked to move did not (#497). They were Portuguese literals
 #: in the module, so an English conversation read "1 did not go in: o quadro recusou a
 #: movimentação" — and the two that name the card wrote `#{number}`, which on Jira is `#CONT-412`,
-#: a spelling nobody there writes and nobody can paste back. The card is named by `ref_label`.
+#: a spelling nobody there writes and nobody can paste back. The card is named by `ref_label`. A
+#: queue the board refused is the card's door's to say (`module._FILING`, #414): the promotion is
+#: recorded, and applied again.
 _BOARD_MOVE_SAID = {
     "unreachable": {"pt-BR": "não consegui acessar o quadro",
                     "en": "I could not reach the board"},
-    "queue_refused": {"pt-BR": "o quadro recusou a movimentação",
-                      "en": "the board refused the move"},
     "queue_failed": {"pt-BR": ("não consegui mover o {ref} para a fila agora. O time foi avisado e "
                                "resolve."),
                      "en": ("I could not move {ref} into the queue just now. The team has been "

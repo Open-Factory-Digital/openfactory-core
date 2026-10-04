@@ -35,6 +35,7 @@ import io
 import json
 import re
 import urllib.error
+import urllib.parse
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -144,8 +145,9 @@ COMPOSERS = {
         voice.preview_up(ref=a, url="https://books.example/", language=lang),
         voice.card_withdrawn(ref=a, removed=True, language=lang),
         voice.ready_for_you(ref=a, title="T", language=lang)],
-    "card_moved": lambda a, b, lang: [voice.card_moved(notice, ref=a, title="T", language=lang)
-                                      for notice in ("stopped_work", "back")],
+    "card_moved": lambda a, b, lang: [voice.card_moved(notice, ref=a, title="T", language=lang,
+                                                       pass_number=2, link="https://books.example/")
+                                      for notice in ("stopped_work", "back", "pass_ready")],
     "card_refused": lambda a, b, lang: [
         voice.card_refused("closed", state="running", ref=a, language=lang),
         voice.card_raced(ref=a, language=lang)],
@@ -255,13 +257,22 @@ class _Site:
     """A Jira site whose cards wait in `Backlog`. Its workflow offers the move into the queue
     unless the card is one it `refuses` to move — and then it offers no move at all, so the board
     has nothing to match whatever name it asks for. Its rank endpoint answers 400 for a card in
-    `unranked`."""
+    `unranked`.
+
+    THE CARD'S DOOR READS THE CARD, AND THE BOARD, BEFORE IT QUEUES ONE (ADR-0055, #414): a card in
+    `unread` answers 500, and a site that is `blind` answers 500 to every search."""
 
     def __init__(self, *cards: str) -> None:
         self.status = dict.fromkeys(cards, BACKLOG)
         self.refuses: set[str] = set()
         self.unranked: set[str] = set()
+        self.unread: set[str] = set()
+        self.blind = False
         self.ranked: list[dict] = []
+
+    @staticmethod
+    def _refused(url: str):
+        return urllib.error.HTTPError(url, 500, "down", {}, io.BytesIO(b"{}"))
 
     def urlopen(self, req, timeout=0):  # noqa: ARG002 — urllib's own signature
         method, url = req.get_method(), req.full_url
@@ -273,8 +284,20 @@ class _Site:
             return _Answer(None)
         path = url.split("/rest/api/3/", 1)[1]
         if method == "GET" and path.startswith("search/jql?"):    # the board's own read
-            return _Answer({"isLast": True, "issues": [{"key": k} for k, s in self.status.items()
-                                                       if s == BACKLOG]})
+            if self.blind:
+                raise self._refused(url)
+            jql = urllib.parse.parse_qs(path.split("?", 1)[1])["jql"][0]
+            status = re.search(r'status = "([^"]+)"', jql)
+            return _Answer({"isLast": True, "issues": [
+                {"key": k, "fields": {"status": {"name": s}}} for k, s in self.status.items()
+                if status is None or s == status.group(1)]})
+        read = re.fullmatch(rf"issue/({KEY}-\d+)", path)
+        if read and method == "GET":
+            if read.group(1) in self.unread:
+                raise self._refused(url)
+            return _Answer({"key": read.group(1), "fields": {
+                "summary": "Exportar CSV", "description": None, "reporter": None,
+                "status": {"name": self.status[read.group(1)], "statusCategory": {"key": "new"}}}})
         moved = re.fullmatch(rf"issue/({KEY}-\d+)/transitions", path)
         if moved and method == "GET":
             card = moved.group(1)
@@ -373,19 +396,46 @@ def test_an_order_half_refused_on_jira_is_said_in_the_conversations_language(mon
 def test_a_queue_the_board_refused_on_jira_is_said_in_the_conversations_language(monkeypatch,
                                                                                 tmp_path):
     """The partial line was English and the detail under it Portuguese; with every card refused,
-    the detail is the whole reply."""
+    the detail is the whole reply. Through the card's door (ADR-0055, #414) a refused placement is
+    a promotion RECORDED, which the hourly round applies again — and the sentence says so."""
     project, site, module = _jira(monkeypatch, tmp_path, language="en")
     site.refuses = {"DAR-9", "DAR-10"}
 
     said = _yes(project, module, "queue", ["DAR-9", "DAR-10"])
 
     assert site.status == {"DAR-9": BACKLOG, "DAR-10": BACKLOG}
-    assert said == "the board refused the move", said
+    assert said == ("I could not put DAR-9 in the queue just now — it is noted, and I try again "
+                    "within the hour."), said
+
+
+@pytest.mark.parametrize(("broken", "said"), [
+    ("card", "DAR-9 could not be read ("),
+    ("board", "acme's board could not be read, so there is no way to tell where DAR-9 is."),
+    ("column", "DAR-9 is in 'Arquivado', which is not a column this platform maps"),
+])
+def test_a_card_the_door_cannot_place_is_named_as_jira_names_it(monkeypatch, tmp_path, broken,
+                                                                 said):
+    """`promote` answers with the door's refusal (#414), and the door wrote `#{card}`: a card it
+    could not read, on a board it could not read, or in a column nobody mapped, was `#DAR-9`."""
+    _project, site, module = _jira(monkeypatch, tmp_path, language="en")
+    site.unread = {"DAR-9"} if broken == "card" else set()
+    site.blind = broken == "board"
+    if broken == "column":
+        site.status["DAR-9"] = "Arquivado"
+
+    [refused] = module.promote(["DAR-9"], actor=ANA)
+
+    assert not refused.ok and said in refused.detail, refused.detail
+    assert "#DAR" not in refused.detail, refused.detail
 
 
 class _Down:
     """A board that is there and raises on every move — the branch Jira's adapter never reaches,
-    since it answers False for everything that goes wrong."""
+    since it answers False for everything that goes wrong. It reads where its cards are: the card's
+    door asks before it queues one (ADR-0055, #414)."""
+
+    def columns(self):
+        return {"DAR-9": BACKLOG}
 
     def add_item(self, *, issue_url):
         return None
@@ -397,15 +447,23 @@ class _Down:
         raise RuntimeError("board down: PUT /rest/agile/1.0/issue/rank 503")
 
 
-@pytest.mark.parametrize(("language", "queue", "order"), [
-    ("pt-BR", "não consegui mover o DAR-9 para a fila agora. O time foi avisado e resolve.",
-     "não consegui reposicionar o DAR-9 agora. O time foi avisado e resolve."),
-    ("en", "I could not move DAR-9 into the queue just now. The team has been told and will sort "
-           "it out.",
-     "I could not put DAR-9 in its place just now. The team has been told and will sort it out."),
+@pytest.mark.parametrize(("language", "queue", "order", "door"), [
+    ("pt-BR", "não consegui colocar o DAR-9 na fila agora — ficou anotado, e eu tento de novo "
+              "dentro de uma hora.",
+     "não consegui reposicionar o DAR-9 agora. O time foi avisado e resolve.",
+     "não consegui mover o DAR-9 para a fila agora. O time foi avisado e resolve."),
+    ("en", "I could not put DAR-9 in the queue just now — it is noted, and I try again within the "
+           "hour.",
+     "I could not put DAR-9 in its place just now. The team has been told and will sort it out.",
+     "I could not move DAR-9 into the queue just now. The team has been told and will sort it "
+     "out."),
 ])
 def test_a_move_that_raised_names_the_jira_card_in_the_conversations_language(
-        monkeypatch, tmp_path, language, queue, order):
+        monkeypatch, tmp_path, language, queue, order, door):
+    """A queue move that raised is a failed effect of a promotion the door RECORDED (#414), applied
+    again by the hourly round; what raises around the door is the team's to sort out."""
+    import openfactory.lifecycle as lifecycle
+
     _project, _site, module = _jira(monkeypatch, tmp_path, language=language, board=_Down(),
                                     ranks=True)
 
@@ -414,6 +472,13 @@ def test_a_move_that_raised_names_the_jira_card_in_the_conversations_language(
 
     assert (queued.ok, queued.detail) == (False, queue)
     assert (ordered.ok, ordered.detail) == (False, order)
+
+    def _raises(*_a, **_k):
+        raise RuntimeError("the card record is down: sqlite3.OperationalError")
+
+    monkeypatch.setattr(lifecycle, "transition", _raises)
+    [unrecorded] = module.promote(["DAR-9"], actor=ANA)
+    assert (unrecorded.ok, unrecorded.detail) == (False, door)
 
 
 @pytest.mark.parametrize(("language", "unreachable", "unrankable"), [

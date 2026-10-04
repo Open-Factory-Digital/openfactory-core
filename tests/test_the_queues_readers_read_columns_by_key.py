@@ -475,6 +475,9 @@ def test_on_a_renamed_github_board_an_approved_card_lands_in_the_named_queue(tmp
                                                                             monkeypatch):
     board, module, gh = _github_board(tmp_path, monkeypatch, columns={"todo": TODO},
                                       pickup_status=READY)
+    # where the card's door reads it before a promotion (ADR-0055, #414): in the board's backlog,
+    # which this deployment did not rename
+    monkeypatch.setattr(board, "columns", lambda: {"12": "Backlog"})
 
     [only] = module.promote(["12"], actor=ANA, board=board)
 

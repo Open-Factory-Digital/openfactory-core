@@ -4,15 +4,16 @@ conversation's language (#497).
 Run:  .venv/bin/python tools/mutate.py \
         tools/mutations/497_a_jira_card_is_named_as_jira_names_it.py
 
-Row 1 is the label: a key a person typed with its `#` keeps it. Rows 2-15 put GitHub's `#` back in
+Row 1 is the label: a key a person typed with its `#` keeps it. Rows 2-19 put GitHub's `#` back in
 front of a card, one sentence family at a time — the queue's and the filing's, a close catalogue,
 a close composer handing the raw ref to a table with no `#` of its own (so `#12` would lose its
-hash: the numbered half of the claim), the events' card, the waiting line, the agenda's question,
-the cards named after a breakdown, the follow-ups and the releases waiting. Rows 16-20 put the
-module's details back as Portuguese literals, or the voice ignoring the conversation's language.
-Rows 21-22 are for the guard alone: a new catalogue and a new f-string that write `#` before a
-card, which no rendered sentence under test reaches. Row 23 is the order: the cards that landed
-are sorted again before the reply says "nesta ordem".
+hash: the numbered half of the claim), an adjust pass made ready (#413) and the card's door's
+three refusals, which `promote` answers with since it queues through the door (#414), the events'
+card, the waiting line, the agenda's question, the cards named after a breakdown, the follow-ups
+and the releases waiting. Rows 20-24 put the module's details back as Portuguese literals, or the
+voice ignoring the conversation's language. Rows 25-26 are for the guard alone: a new catalogue
+and a new f-string that write `#` before a card, which no rendered sentence under test reaches.
+Row 27 is the order: the cards that landed are sorted again before the reply says "nesta ordem".
 """
 
 TEST = "tests/test_a_jira_card_is_named_as_jira_names_it.py"
@@ -23,6 +24,7 @@ VOICE = "openfactory/product/voice.py"
 MOD = "openfactory/product/module.py"
 FOLLOWUP = "openfactory/product/followup.py"
 ENGINE = "openfactory/product/engine.py"
+PORTS = "openfactory/lifecycle/ports.py"
 
 MUTATIONS = [
     # ── the label ──────────────────────────────────────────────────────────────────────────────
@@ -73,6 +75,22 @@ MUTATIONS = [
      "    text = _pick(catalogue, language).format(number=number,\n"
      '                                             other=in_favour_of or "")'),
 
+    ("the pass a requester is told is ready names its card `#CONT-412`", VOICE,
+     '"pass_ready": ("{sig}Pass {pass_number} of {ref}{title} is ready',
+     '"pass_ready": ("{sig}Pass {pass_number} of #{ref}{title} is ready'),
+
+    ("the card's door refuses a card it cannot read as `#DAR-9`", PORTS,
+     '            return Seen(cannot_tell=(f"{ref_label(card)} could not be read',
+     '            return Seen(cannot_tell=(f"#{card} could not be read'),
+
+    ("…a card on a board it cannot read", PORTS,
+     '                f"{ref_label(card)} is. Nothing was changed — try again."))',
+     '                f"#{card} is. Nothing was changed — try again."))'),
+
+    ("…and a card in a column nobody mapped", PORTS,
+     '                f"{ref_label(card)} is in {column!r}, which is not a column',
+     '                f"#{card} is in {column!r}, which is not a column'),
+
     ("the events name the card `#CONT-412` (ready, preview, checks, withdrawn)", VOICE,
      '_CARD = {"pt-BR": "o {ref}{title}", "en": "{ref}{title}"}',
      '_CARD = {"pt-BR": "o #{ref}{title}", "en": "#{ref}{title}"}'),
@@ -103,9 +121,11 @@ MUTATIONS = [
      """        which = f" ({', '.join(f'#{r}' for r in listed)})" if listed else \"\""""),
 
     # ── the module's details, in one language ───────────────────────────────────────────────────
+    # re-pinned 2026-10-04: merge of main into #458 (#514/#507) — the queue goes through the
+    # card's door, and a placement it could not make is said from the module's own table
     ("the queue the board refused is answered in Portuguese again", MOD,
-     '        refused = board_move_said("queue_refused", language=lang)',
-     '        refused = "o quadro recusou a movimentação"'),
+     '                said = _pick(_FILING, lang)',
+     '                said = _pick(_FILING, "pt-BR")'),
 
     ("a queue move that raised is the Portuguese literal again, naming `#DAR-9`", MOD,
      '                out.append(_could_not(board_move_said("queue_failed", ref=number, '
