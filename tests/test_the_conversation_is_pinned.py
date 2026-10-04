@@ -1173,7 +1173,7 @@ def test_accept_is_staged_with_the_title_and_agreed_on_a_yes_then_broken_down(ta
     assert module.asked("accept") == [{"number": 4, "actor": ADMIN}]
     assert module.asked("break_down") == [{"number": 4, "actor": ADMIN, "asked_for": False}]
     assert done == voice.accepted(number=4, language=LANG, agent_name=AGENT) + (
-        "\n\nO requisito 4 virou **1** tarefa: #40.\n\nEstá no Backlog — começar a trabalhar "
+        "\n\nO requisito 4 virou **1** tarefa: #40.\n\nEstá na coluna Backlog — começar a trabalhar "
         "nela continua sendo decisão de uma pessoa.")
 
 
@@ -1429,7 +1429,7 @@ def test_a_breakdown_an_admin_types_files_the_work_as_ASKED_FOR(table, ledger):
     reply = talk.say(BREAK, user=ADMIN)
 
     assert module.asked("break_down") == [{"number": 5, "actor": ADMIN, "asked_for": True}]
-    assert reply == (f"{AGENT}: O requisito 5 virou **1** tarefa: #40.\n\nEstá no Backlog — "
+    assert reply == (f"{AGENT}: O requisito 5 virou **1** tarefa: #40.\n\nEstá na coluna Backlog — "
                      f"começar a trabalhar nela continua sendo decisão de uma pessoa.")
     assert talk.receipts == [_receipt(BREAK)]
     assert _nothing_staged()

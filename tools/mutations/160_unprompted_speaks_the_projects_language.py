@@ -79,10 +79,12 @@ MUTATIONS = [
      '        head = (f"✂️ Dividi o {parent_ref} — {parent.title[:80]} em {n}: era grande demais "\n'
      '                f"({inp.reasons[:160]}).")', SPLIT),
 
+    # re-pinned 2026-10-04: the destination names the board's own column (review of #507)
     ("…and the destination it names", ACT,
      '                where=tl_voice.say(tl_voice.NARRATION,\n'
      '                                   "split.to-todo" if to_todo else '
-     '"split.to-backlog", lang))',
+     '"split.to-backlog", lang,\n'
+     '                                   queue=named["todo"], backlog=named["backlog"]))',
      '                where="TO-DO (rodam um por vez, em ordem)")', SPLIT),
 
     # ── the runners ──────────────────────────────────────────────────────────────────────────────
@@ -112,10 +114,12 @@ MUTATIONS = [
      "        return voice._pick(voice._HANDBACK_UNCLEAR, language).format(sig=sig, why=why)",
      '        return f"{sig} olhei este impedimento e não consegui dizer{why}."', ROLE),
 
+    # re-pinned 2026-10-04: the call also hands the board's own column names to the comment
+    # (#502) — the claim is unchanged: the language is the project's
     ("the role's language never arrives from the project", MODULE,
      '        return review(verdicts, may_act=False, agent_name=self._name(),\n'
-     '                      language=getattr(self.project, "language", None)), ""',
-     '        return review(verdicts, may_act=False, agent_name=self._name()), ""',
+     '                      language=getattr(self.project, "language", None), columns=words), ""',
+     '        return review(verdicts, may_act=False, agent_name=self._name(), columns=words), ""',
      REACH),
 
     # ── the card's own headings ──────────────────────────────────────────────────────────────────

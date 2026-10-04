@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from openfactory import namespace
 from openfactory.contracts import Manifest
+from openfactory.contracts.manifest import CI_THAT_READS_NO_DEPLOY
 from openfactory.contracts.project import Project
 
 log = logging.getLogger("openfactory.loader")
@@ -77,13 +78,28 @@ def load_manifest(project: Project, *, repo_root: Path | None = None) -> Manifes
             "parses to a list or a bare string would fail later as a missing field."
         )
     try:
-        manifest = Manifest(**data)
+        manifest = Manifest.model_validate(data, context=_what_only_the_registry_knows(project))
         _say_what_is_inert(project, data)
         return manifest
     except ValidationError as exc:
         # One deployment hosts N projects. "manifest version 42 is not supported" is true and
         # useless without the path: the operator has to know WHICH client's repository to open.
         raise ValueError(f"{manifest_file} (project {project.name!r}) is invalid: {exc}") from exc
+
+
+def _what_only_the_registry_knows(project) -> dict[str, str]:
+    """The validation context: what the manifest's rules need about this project and its file
+    cannot say.
+
+    TODAY ONE FACT — that the project's CI reads no deploy (`ci: none`, or a `local` forge,
+    which maps to it), named by its kind (#518). The client's file declares the stages; the
+    operator's registry declares what watches them; a stage only a deploy would show is wrong
+    only when the two are read together, and this is the one place both are in hand."""
+    from openfactory.adapters.environment.registry import observer_kind, reads_deploys
+
+    if reads_deploys(project):
+        return {}
+    return {CI_THAT_READS_NO_DEPLOY: observer_kind(project)}
 
 
 #: Manifest keys the schema still ACCEPTS and nothing reads. Kept loadable so an existing

@@ -103,6 +103,11 @@ def _none(project, *, token=None):
 #: NOTHING IS WATCHED, and the panel says that rather than a dash: a dash is a value that could
 #: not be read, and this one was read (ADR-0049 D1). The sentence is this row's own name.
 _none.display_name = "nothing is watched"
+#: AND IT READS NO DEPLOY (#518), declared on the row for the reason the name is: a stranger's CI
+#: that cannot read one says so the same way. `deploy_status` answers "none" for every ref, so on
+#: this project a stage is observed by its `health_url` or by nothing — `reads_deploys` below is
+#: what `loader.load_manifest` asks, and a chain stage with no `health_url` is refused there.
+_none.reads_deploys = False
 
 
 OBSERVERS: dict[str, Callable[..., object]] = {
@@ -155,6 +160,21 @@ def observer_name(project) -> str:
     kind = observer_kind(project)
     row = OBSERVERS.get(kind) or plugins.builder(AXIS, kind, builtin=OBSERVERS)
     return plugins.display_name(row, kind)
+
+
+def reads_deploys(project) -> bool:
+    """Whether the CI that watches `project` can read a deploy at all (#518).
+
+    ASKED OF THE ROW, NOT OF A LIST OF NAMES, like `observer_name`: `none` and `local` share one
+    row, and an add-on whose CI cannot see deployments says so by declaring
+    `reads_deploys = False` on its builder. ONLY `False` IS A DECLARATION — a row that says
+    nothing, a kind with no row (refused by `build_observer`, with its own sentence) and a test
+    double that answers every attribute all read deploys as far as this is concerned, so nothing
+    is refused on a guess."""
+    kind = observer_kind(project)
+    declared = getattr(OBSERVERS.get(kind) or plugins.builder(AXIS, kind, builtin=OBSERVERS),
+                       "reads_deploys", True)
+    return declared is not False
 
 
 def build_observer(project, *, token=None):

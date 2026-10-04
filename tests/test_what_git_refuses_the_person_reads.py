@@ -6,7 +6,8 @@ WHAT IS PROVEN HERE:
     Here the branch IS the work, and the box deleted it and then asked a remote that is this
     repository whether it still had it;
   · **nothing watches this project's code, and every answer says so** — `[]` checks, `none`
-    deploy, `False` health, none of them `None`;
+    deploy, none of them `None`; and its `health` PROBES the client's own page, like every other
+    row's, because since #518 that page is the one observation such a project has;
   · **what git refuses, the person reads.** The three sentences on the merge path were GitHub's,
     and a deployment that never had branch protection was told about it.
 """
@@ -153,14 +154,31 @@ def test_a_project_with_no_CI_has_an_observer_rather_than_a_refusal():
     assert isinstance(observer, EnvironmentObserver)
 
 
-def test_every_answer_says_there_is_nothing_watching_rather_than_it_could_not_look():
+def test_every_answer_says_there_is_nothing_watching_rather_than_it_could_not_look(monkeypatch):
+    import httpx
+
     from openfactory.adapters.environment.none import NoObserver
 
     watched = NoObserver()
     assert watched.ci_status(repo="o/r", ref="abc") == [], "a fact, not a failed read"
     assert watched.deploy_status(env="staging", ref="abc") == "none"
-    assert watched.health(url="http://localhost") is False, (
-        "a probe nobody made must not report a healthy service")
+
+    # THE HEALTH PROBE IS MADE (#518), and reports only what it got — never a page it did not
+    # reach. No packet leaves the test: `httpx.get` answers from here.
+    asked: list[str] = []
+
+    def _get(url, timeout):
+        asked.append(url)
+        if "down" in url:
+            raise httpx.ConnectError("refused")
+        return httpx.Response(200 if "up" in url else 503)
+
+    monkeypatch.setattr(httpx, "get", _get)
+    assert watched.health(url="http://up/health") is True, "a page that answered is not healthy"
+    assert watched.health(url="http://sick/health") is False
+    assert watched.health(url="http://down/health") is False, (
+        "a probe that reached nothing must not report a healthy service")
+    assert asked == ["http://up/health", "http://sick/health", "http://down/health"]
 
 
 def test_ANY_forge_may_say_that_nothing_watches_it():

@@ -61,7 +61,8 @@ def test_the_names_here_are_what_the_TAIL_walks_by_default():
     from openfactory.contracts import Manifest
 
     m = Manifest(version=1, base_branch="main", validate={"test": "t", "security": "true"},
-                 environments={"staging": {}, "prod": {}})
+                 environments={"staging": {"health_url": "https://s/h"},
+                               "prod": {"health_url": "https://p/h"}})
     stages, production = m.promotion_chain()
 
     assert tuple(stages) + ((production,) if production else ()) == OBSERVED_ENVIRONMENTS, (
@@ -77,7 +78,8 @@ def test_a_DECLARED_chain_is_the_observed_set(tmp_path, caplog):
     (tmp_path / namespace.MANIFEST).write_text(yaml.safe_dump({
         "version": 1, "base_branch": "main",
         "validate": {"test": "pytest -q", "security": "true"},
-        "environments": {"dev": {}, "qa": {}, "prod": {}},
+        "environments": {"dev": {"deploy_ref": "dev"}, "qa": {"deploy_ref": "qa"},
+                         "prod": {"deploy_ref": "prod"}},
         "promote": ["dev", "qa", "prod"],
     }))
 

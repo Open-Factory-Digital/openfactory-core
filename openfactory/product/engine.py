@@ -73,9 +73,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from openfactory.contracts.refs import canonical_ref
+from openfactory.contracts.refs import canonical_ref, ref_label
 from openfactory.product import progress as _progress
 from openfactory.product.confirm import (
+    _board_word,
     _breakdown_reply,
     _client_detail,
     _is_requester,
@@ -1787,7 +1788,8 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         # the file cannot show that, and a person saying so can (#182).
         _progress.stage("breaking_down")
         results = module.break_down(number, actor=user, asked_for=True)
-        return _breakdown_reply(results, number, name, lang, project)
+        return _breakdown_reply(results, number, name, lang, project,
+                                backlog=_board_word(module, "backlog"))
 
     if intent == "accept":
         number = int(captures.get("number") or 0)
@@ -2278,7 +2280,7 @@ def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, l
             # sends that card back for another pass, and the newest of two is a guess — nothing
             # is closed, and the person is asked which one, in the sentence the parser reads
             listed = _waiting_release_refs(project)
-            which = f" ({', '.join(f'#{r}' for r in listed)})" if listed else ""
+            which = f" ({', '.join(ref_label(r) for r in listed)})" if listed else ""
             return head + engine_said("not_yet_ambiguous", language=lang, which=which)
         # A "NÃO FUNCIONOU" CLOSES THE LOOP from whoever says it, as it did when the module closed
         # it: it spends nothing, and a release that did not work is not waiting on anybody's yes.
@@ -2292,7 +2294,7 @@ def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, l
         # reply no code path could read — an unfollowable instruction from the platform's own
         # mouth.
         listed = _waiting_release_refs(project)
-        which = f" ({', '.join(f'#{r}' for r in listed)})" if listed else ""
+        which = f" ({', '.join(ref_label(r) for r in listed)})" if listed else ""
         return head + engine_said("release_ambiguous", language=lang, which=which)
     admin = may_act(project, user, via=via)
     theirs = not admin and _asked_for(module, issue, user)
@@ -2333,7 +2335,7 @@ def _asked_for(module, issue: str, user: str) -> bool:
     try:
         return bool(asks(issue, user))
     except Exception:  # noqa: BLE001 — "could not tell" authorises nobody
-        log.info("could not tell whether %s asked for #%s", user, issue, exc_info=True)
+        log.info("could not tell whether %s asked for %s", user, ref_label(issue), exc_info=True)
         return False
 
 

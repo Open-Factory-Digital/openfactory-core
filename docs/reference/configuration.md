@@ -64,7 +64,16 @@ calls it, so the manifest agrees with your change-management document instead of
 to satisfy ours. A chain step with no matching environment is refused with both sides named; an
 environment declared but absent from the chain is warned as unwatched, never silently accepted.
 Omit `promote:` and the two fixed names apply — `staging` observed if declared, `prod` gated if
-declared.
+declared; environments with neither name and no `promote:` are refused, because that chain walks
+nothing and the delivery would be announced at the merge. Every stage the chain walks, production
+included, declares `deploy_ref`, `health_url`, or both — a stage with neither is refused rather
+than counted as reached with nothing seen — and a deploy still pending is waited for, never
+passed (#501). A stage counts as reached only on what was observed (#518): a green deploy of this
+change, or a `health_url` that answered healthy. A `deploy_ref` nothing recorded this change
+against (*unknown*) goes to the `health_url`, and with none the stage is held as not reached. On a
+project with no CI (`ci: none`, which a `forge: local` project gets by default), nothing reads a
+deploy, so every stage of the chain needs a `health_url`; the manifest is refused when it loads
+until it has one, or until the registry names a CI that reads deploys (`forge.options.ci`).
 
 **Measured limitation — one base branch.** `base_branch` is both where the factory's PRs land and
 where the release tag is cut. A two-branch flow (integration `develop` + release `main`) cannot be

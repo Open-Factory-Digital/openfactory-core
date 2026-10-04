@@ -3706,7 +3706,7 @@ class ProductModule:
         # line, `_board_tickets` was only ever set by propose_queue — so on the sweep path it was
         # permanently empty, every question went unowned, and the delivery loop could NEVER close.
         self._board_tickets = tickets
-        return triage(tickets), ""
+        return triage(tickets, stages=self._stages(tickets)), ""
 
     def introduce(self, *, areas: list[str] | None = None, with_situation: bool = True,
                   previous_backlog: int | None = None) -> str:
@@ -3726,7 +3726,7 @@ class ProductModule:
         if with_situation:
             tickets, error = self._read_board()
             if not error:
-                state = readiness(tickets)
+                state = readiness(tickets, stages=self._stages(tickets))
         # arriving still works when the board does not: without a state it introduces itself and
         # says what it would do, which is more use than saying nothing
         return announcement(product=self.project.name, areas=areas, language=lang,
@@ -3759,6 +3759,8 @@ class ProductModule:
         if not items:
             return review([], may_act=False, agent_name=self._name(),
                           language=getattr(self.project, "language", None)), ""
+        # the comment names the backlog and the queue as THIS board calls them (#502)
+        words = self.board_words()
 
         sandbox, ws = self._workspace()
         role = self._role()
@@ -3774,7 +3776,7 @@ class ProductModule:
                 Verdict(ticket=item.number, **answer) if isinstance(answer, dict)
                 else Verdict(ticket=item.number))
         return review(verdicts, may_act=False, agent_name=self._name(),
-                      language=getattr(self.project, "language", None)), ""
+                      language=getattr(self.project, "language", None), columns=words), ""
 
     def open_cards_for(self, number: int, *, actor: str, tracker=None, board=_UNSET,
                        conversation: str = "", requester: str = ""):
@@ -3916,7 +3918,9 @@ class ProductModule:
         if error:
             return None, None, error
 
-        state = readiness(tickets)
+        # BY KEY, AS THE BOARD NAMES ITS COLUMNS (#502) — `promote` below writes the queue by the
+        # board's own name, and this is the read that has to find it there again
+        state = readiness(tickets, stages=self._stages(tickets))
         self._board_tickets = tickets   # kept so the reply can show titles without reading again
         by_number = {t.number: t for t in tickets}
         # TO-DO is included in the ordering, not just the backlog: the poller pulls in board order,
@@ -3964,12 +3968,19 @@ class ProductModule:
 
         Gated on the allowlist, and ordered: they are moved in the sequence given, because the
         poller pulls in board order and an approved sequence that arrives shuffled is not the
-        sequence anybody approved."""
+        sequence anybody approved.
+
+        WHAT IT ANSWERS IS SAID IN THE CONVERSATION'S LANGUAGE, the card named as its tracker names
+        it (`voice.board_move_said`, #497): `CONT-412` on Jira, never `#CONT-412`."""
+        from openfactory.product.voice import board_move_said
+
+        lang = getattr(self.project, "language", None)
+        refused = board_move_said("queue_refused", language=lang)
         if not may_act(self.project, actor, via=self._via):
             return [WriteResult(ok=False, detail=unauthorized_message(self.project))]
         board = board or self._board()
         if board is None:
-            return [WriteResult(ok=False, detail="não consegui acessar o quadro")]
+            return [WriteResult(ok=False, detail=board_move_said("unreachable", language=lang))]
 
         from openfactory.product.board import forget_board
 
@@ -3989,14 +4000,13 @@ class ProductModule:
                 board.add_item(issue_url=url)
                 moved = board.set_column(issue=str(number), issue_url=url, name=queue)
                 out.append(WriteResult(ok=bool(moved), ref=f"#{number}",
-                                       detail="" if moved else "o quadro recusou a movimentação"))
+                                       detail="" if moved else refused))
             except Exception as exc:  # noqa: BLE001 — one failure must not lose the rest
                 # A CLIENT READS THIS ONE. Both branches of the reply speak it — the whole-failure
                 # branch as the entire message, the partial one under a pt-BR headline — so
                 # `str(exc)` here made "1 não entraram:" continue into a `gh api graphql` argv
                 # carrying the mutation and the board's field ids.
-                out.append(_could_not(f"não consegui mover o #{number} para a fila agora. O time "
-                                      f"foi avisado e resolve.",
+                out.append(_could_not(board_move_said("queue_failed", ref=number, language=lang),
                                       act="queue approved work", cause=exc, ref=f"#{number}"))
         return out
 
@@ -4012,17 +4022,20 @@ class ProductModule:
         an order anybody could write is an order anybody could spend against. Spends nothing itself.
 
         A BOARD THAT CANNOT RANK SAYS SO. `Rankable` is a capability, not a promise every board
-        makes; the refusal names the board rather than raising in a listener."""
+        makes; the refusal names the board rather than raising in a listener. Said like
+        `promote`'s, in the conversation's language (#497)."""
+        from openfactory.product.voice import board_move_said
+
+        lang = getattr(self.project, "language", None)
+        refused = board_move_said("order_refused", language=lang)
         if not may_act(self.project, actor, via=self._via):
             return [WriteResult(ok=False, detail=unauthorized_message(self.project))]
         board = board or self._board()
         if board is None:
-            return [WriteResult(ok=False, detail="não consegui acessar o quadro")]
+            return [WriteResult(ok=False, detail=board_move_said("unreachable", language=lang))]
         from openfactory.adapters.board.base import Rankable
         if not isinstance(board, Rankable):
-            return [WriteResult(ok=False, detail="este quadro ainda não aceita reordenação por "
-                                                 "aqui — a ordem precisa ser mudada no próprio "
-                                                 "quadro")]
+            return [WriteResult(ok=False, detail=board_move_said("unrankable", language=lang))]
         from openfactory.product.board import forget_board
         forget_board(getattr(self.project, "name", ""))
         tracker = self._tracker()
@@ -4036,12 +4049,11 @@ class ProductModule:
                 placed = bool(board.place_after(issue=str(number), issue_url=url, after=previous,
                                                 column=backlog))
                 out.append(WriteResult(ok=placed, ref=f"#{number}",
-                                       detail="" if placed else "o quadro recusou a reordenação"))
+                                       detail="" if placed else refused))
                 if placed:
                     previous = str(number)
             except Exception as exc:  # noqa: BLE001 — one failure must not lose the rest
-                out.append(_could_not(f"não consegui reposicionar o #{number} agora. O time foi "
-                                      f"avisado e resolve.",
+                out.append(_could_not(board_move_said("order_failed", ref=number, language=lang),
                                       act="reorder the backlog", cause=exc, ref=f"#{number}"))
         return out
 
@@ -4079,6 +4091,37 @@ class ProductModule:
             # is the same wrong-system 401 wearing a different call site.
             inner = build_board(self.project, token=tracker_token_for(self.project) or self.token)
         return None if inner is None else _WatchedWrites(inner, self._write_outcome)
+
+    def _board_to_ask(self):
+        """`_board()` for a question rather than a write — `None`, said in the log, when it cannot
+        be built. A reader and a sentence degrade to the platform's own names; neither raises."""
+        try:
+            return self._board()
+        except Exception as exc:  # noqa: BLE001 — asking what a column is called is not a write
+            log.warning("could not build %s's board to ask what its columns are called (%s) — "
+                        "reading them by the platform's own names",
+                        getattr(self.project, "name", "?"), str(exc)[:200])
+            return None
+
+    def _stages(self, tickets) -> dict[str, str]:
+        """`{column: stage key}` for one board read, asked of THIS project's board (#502) — what
+        `readiness` and `triage` judge by, instead of the platform's names for the columns."""
+        from openfactory.product.board import stages_of
+
+        return stages_of(tickets, self._board_to_ask())
+
+    def board_words(self) -> dict[str, str]:
+        """What this project's board calls the two columns the role's sentences name — `{key:
+        name}` for the backlog and the queue (#502).
+
+        THE ROLE TOLD A CLIENT "ESTÁ NO BACKLOG" ABOUT A CARD IT HAD JUST PUT IN `PENDÊNCIAS`.
+        Since #496 the cards land in the column the board calls the key; the replies kept the
+        platform's words, so the person was sent looking on their own board for a column it does
+        not have. Asked through the same gate the moves use — the two keys, and nothing else — so a
+        sentence can never name a column the role does not file or queue into."""
+        board = self._board_to_ask()
+        return {self.FILING_KEY: stage_column(board, self.FILING_KEY),
+                self.QUEUE_KEY: stage_column(board, self.QUEUE_KEY)}
 
     # ---- refining what is not ready ------------------------------------------------------------
 
