@@ -240,10 +240,12 @@ def test_on_a_product_of_two_repositories_the_loop_waits_for_the_card_in_the_oth
     assert (loop.subject, loop.context["issues"]) == ("7", "1,acme/web#1")
     assert events.requester_conversation(project, "acme/web#1") == ANAS
 
-    # THE API'S #1 IS NOT THE WEB'S — and the web's #1 was asked, and is still open
+    # THE API'S #1 IS NOT THE WEB'S — and the web's #1 was asked, and is still open. Only the reads
+    # from here on: the card's door reads each card it files too (#458)
+    asked_before = len(gh.viewed)
     assert _finished(project, monkeypatch, "1", delivered={"1"}) == []
     assert told == [] and _deliveries(project) == [loop]
-    assert gh.viewed == [("acme/web", "1")], gh.viewed
+    assert gh.viewed[asked_before:] == [("acme/web", "1")], gh.viewed
 
     written = _finished(project, monkeypatch, "acme/web#1", delivered={"1", "acme/web#1"})
 
