@@ -286,9 +286,13 @@ def _confirm_queue(project, entry, *, module, user, lang) -> str:
     """the action that spends money."""
     numbers = entry["numbers"]
     results = module.promote(numbers, actor=user)
-    from openfactory.contracts.refs import ref_numbers
+    from openfactory.contracts.refs import ref_number
 
-    landed = ref_numbers(r.ref for r in results if r.ok and r.ref)
+    # IN THE ORDER IT WAS APPROVED, NEVER SORTED (#497). `promote` moves the cards in the sequence
+    # the person approved, and `queued` says "nesta ordem" over what it is handed: `ref_numbers`
+    # sorted it, so "3, 1, 2" approved and moved was read back as "#1, #2, #3".
+    moved = (ref_number(r.ref) for r in results if r.ok and r.ref)
+    landed = list(dict.fromkeys(n for n in moved if n is not None))
     failed = [r for r in results if not r.ok]
     if not landed:
         return (_client_detail(failed[0].detail, lang, project=project) if failed

@@ -577,3 +577,52 @@ def test_the_allowlist_names_only_what_still_exists():
                   for t in n.targets if isinstance(t, ast.Name)}
         assert name in names, f"ALLOWED names {rel}::{name}, which is gone"
         assert why.strip(), f"ALLOWED names {rel}::{name} without saying why"
+
+
+# ── the order the person approved ────────────────────────────────────────────────────────────────
+
+def test_a_queue_is_read_back_in_the_order_it_was_approved(monkeypatch, tmp_path):
+    """`promote` moves the cards in the sequence approved — the poller pulls in board order — and
+    the reply says "nesta ordem". `_confirm_queue` sorted what landed, so a queue approved and
+    moved as 3, 1, 2 was read back as "#1, #2, #3": the order the person approved, contradicted in
+    the sentence that confirms it. Driven on the local row, a numbered board, through the yes.
+
+    The sentence reads back what `promote` did. Which card the board then hands the factory first
+    is the board's own ordering — the local board's is by ref — and not this sentence's to
+    settle."""
+    from openfactory.adapters.board import build_board
+    from openfactory.adapters.board_setup.local import LocalBoardSetup
+    from openfactory.adapters.tracker.registry import build_tracker
+    from openfactory.contracts.product import ProductConfig
+    from openfactory.contracts.project import Project, ProviderRef
+    from openfactory.product.config import ProductLink
+    from openfactory.product.loader import ProductContext
+    from openfactory.product.module import ProductModule
+    from openfactory.registry import ProjectRegistry
+    from tests.test_card_maintenance import COMMIT, REQUIREMENTS_DIR, _corpus, _Harness
+
+    monkeypatch.setenv("OPENFACTORY_METRICS_SINK", "sqlite")
+    monkeypatch.setenv("OPENFACTORY_METRICS_DB", str(tmp_path / "metrics.db"))
+    monkeypatch.setenv("OPENFACTORY_BOARD_DB", str(tmp_path / "board.db"))
+    monkeypatch.setenv("OPENFACTORY_REGISTRY", str(tmp_path / "registry.yaml"))
+    registry = ProjectRegistry()
+    registry.add(Project(name=ROOM, repo_path=str(tmp_path), language="pt-BR",
+                         tracker=ProviderRef(kind="local", repo=ROOM, options={}),
+                         product=ProductConfig(docs_repo="acme/acme-docs", admins=[ANA],
+                                               agent_name=AGENT)))
+    project = registry.get(ROOM)
+    LocalBoardSetup().create(project=project, owner="", title=ROOM, token=None)
+    tracker = build_tracker(project)
+    assert [tracker.create_ticket(title=t, body="x") for t in ("Um", "Dois", "Três")] == [
+        "#1", "#2", "#3"]
+    ctx = ProductContext(link=ProductLink(active=True, docs_repo="acme/acme-docs", kind="ok",
+                                          reason="fine"),
+                         corpus=_corpus(), docs_path=str(tmp_path), docs_commit=COMMIT,
+                         requirements_dir=REQUIREMENTS_DIR)
+    module = ProductModule(project, context=ctx, agent=_Harness("{}"))
+
+    said = _yes(project, module, "queue", ["3", "1", "2"])
+
+    assert sorted(build_board(project).items_in_status(QUEUE)) == ["1", "2", "3"]
+    assert said == ("Nina: Coloquei na fila, nesta ordem: #3, #1, #2. "
+                    "A fábrica começa pelo primeiro."), said

@@ -11,12 +11,14 @@ hash: the numbered half of the claim), the events' card, the waiting line, the a
 the cards named after a breakdown, the follow-ups and the releases waiting. Rows 16-20 put the
 module's details back as Portuguese literals, or the voice ignoring the conversation's language.
 Rows 21-22 are for the guard alone: a new catalogue and a new f-string that write `#` before a
-card, which no rendered sentence under test reaches.
+card, which no rendered sentence under test reaches. Row 23 is the order: the cards that landed
+are sorted again before the reply says "nesta ordem".
 """
 
 TEST = "tests/test_a_jira_card_is_named_as_jira_names_it.py"
 
 REFS = "openfactory/contracts/refs.py"
+CONFIRM = "openfactory/product/confirm.py"
 VOICE = "openfactory/product/voice.py"
 MOD = "openfactory/product/module.py"
 FOLLOWUP = "openfactory/product/followup.py"
@@ -131,4 +133,9 @@ MUTATIONS = [
 
     ("a new composer writes `f\"#{n}\"` — no sentence under test renders it", FOLLOWUP, "",
      '\n\ndef _later(n):\n    return f"card #{n}"\n'),
+
+    # ── the order the person approved ───────────────────────────────────────────────────────────
+    ("the cards that landed are sorted before the reply says \"nesta ordem\"", CONFIRM,
+     "    landed = list(dict.fromkeys(n for n in moved if n is not None))",
+     "    landed = sorted(dict.fromkeys(n for n in moved if n is not None))"),
 ]
