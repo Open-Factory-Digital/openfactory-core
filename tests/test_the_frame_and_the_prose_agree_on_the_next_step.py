@@ -50,6 +50,8 @@ def test_the_markers_that_stage_are_the_ones_the_engine_stages():
     assert set(STAGING_MARKERS) == {
         role_module.REQUEST_MARKER, role_module.DEFECT_MARKER, role_module.TICKET_MARKER,
         role_module.ORDER_MARKER, role_module.QUEUE_MARKER,
+        # #448: another pass on a change that waits on its requester, drafted after the reply
+        role_module.ADJUST_MARKER,
     }
 
 

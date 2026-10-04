@@ -125,14 +125,13 @@ MUTATIONS = [
      '    if getattr(getattr(project, "product", None), "accept_on_behalf", False):\n'
      '        return ""\n',
      ""),
+    # re-pinned 2026-10-01 (#448): the approver's check moved into `_may_say_yes`, which also
+    # admits a card's requester for their own card's pass; its last line refuses everybody else
     ("`accept_on_behalf` also lets somebody off the admin list confirm", CONFIRM,
-     "    if not may_act(project, user, via=via):\n"
-     "        return unauthorized_message(project)\n\n"
-     "    from openfactory.product.staging import consume\n",
-     "    if not may_act(project, user, via=via) and not getattr(\n"
-     '            getattr(project, "product", None), "accept_on_behalf", False):\n'
-     "        return unauthorized_message(project)\n\n"
-     "    from openfactory.product.staging import consume\n"),
+     "    return unauthorized_message(project)\n\n\ndef confirm(",
+     '    if getattr(getattr(project, "product", None), "accept_on_behalf", False):\n'
+     '        return ""\n'
+     "    return unauthorized_message(project)\n\n\ndef confirm("),
     ("the requester is found INSIDE a mention again — `ana` confirms for `<@joana>`", CONFIRM,
      "    return bool(user) and requester_of(entry) == user",
      '    return bool(user) and any(user in str(entry.get(k) or "")\n'

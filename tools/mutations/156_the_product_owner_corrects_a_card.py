@@ -43,16 +43,22 @@ MUTATIONS = [
      "        if kind not in _WHAT_WAS_ASKED:\n",
      "        if False:\n"),
 
+    # re-pinned 2026-10-01 (#448): the gate now also admits the BAR at the merge gate, by the
+    # engine's word (`at_the_gate`); the claim is unchanged — without the line, a started card is
+    # corrected under the agent working from it
     ("a card the factory has taken up is corrected under the agent working from it", MODULE,
-     "            if not key or has_started(key):\n",
+     "            if not key or (has_started(key) and not (at_the_gate and not has_finished(key))):\n",
      "            if False:\n"),
 
     ("a column nobody mapped is read as not started", MODULE,
-     "            if not key or has_started(key):\n",
-     "            if key and has_started(key):\n"),
+     "            if not key or (has_started(key) and not (at_the_gate and not has_finished(key))):\n",
+     "            if key and (has_started(key) and not (at_the_gate and not has_finished(key))):\n"),
 
     ("the gate is skipped, so anybody corrects somebody else's request", MODULE,
-     "        if not may_act(self.project, actor, via=self._via):\n"
+     # re-pinned 2026-10-01 (#448): the requester and a vouched operator are admitted for the
+     # bar at the merge gate; the line that refuses everybody else is the same line
+     "        if not (may_act(self.project, actor, via=self._via)\n"
+     "                or (at_the_gate and (vouched or self.asked_for(number, actor)))):\n"
      "            return WriteResult(ok=False, detail=unauthorized_message(self.project))\n\n"
      "        tickets, error = self._read_board()\n"
      "        if error:\n"
@@ -78,7 +84,7 @@ MUTATIONS = [
      'old_title=card.title or "",'),
 
     ("a correction that says what the card already says rewrites it anyway", MODULE,
-     "        if not text_changed and not title_changed:\n",
+     "        if not text_changed and not title_changed and not bar_changed:\n",
      "        if False:\n"),
 
     ("the reply never learns the criteria went, so nobody is offered new ones", CONFIRM,

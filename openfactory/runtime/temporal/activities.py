@@ -3271,7 +3271,8 @@ async def start_jobs(inp: StartJobsInput) -> list[str]:
             await client.start_workflow(
                 "JobWorkflow",
                 JobParams(project=inp.project, issue=issue, sandbox=inp.sandbox, image=image,
-                          language=str(getattr(project, "language", "") or ""), box=traits),
+                          language=str(getattr(project, "language", "") or ""), box=traits,
+                          adjust_passes=project.adjust_passes),
                 id=f"openfactory-{inp.project}-{issue}",
                 task_queue=TASK_QUEUE,
                 # THE ONLY WORKFLOW WITHOUT A CEILING, and the only one that holds a floor. The
