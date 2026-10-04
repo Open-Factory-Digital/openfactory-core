@@ -138,6 +138,16 @@ _DECISION_RE = re.compile(
 #: the gesture — the pattern stopped being the only door.
 QUEUE_MARKER = "[[FILA]]"
 
+#: THE PERSON TRIED A CHANGE THAT WAITS ON THEM AND SAID WHAT IS STILL WRONG (#448). `[[AJUSTE:
+#: #N]]`, N the card. Measured live on #1000007 (2026-09-30): the role understood the requester
+#: perfectly — named the loose criterion it had written and rewrote two — and had no gesture to
+#: hand it to, so it told them to go back through the card, which they could not do either. The
+#: engine reads the gate, drafts the pass and the bar from the conversation, and stages them for
+#: the yes (`engine.py::_offer_adjust`).
+ADJUST_MARKER = "[[AJUSTE"
+_ADJUST_RE = re.compile(
+    r"\[\[AJUSTE:\s*#?(?P<number>[A-Za-z][A-Za-z0-9_]*-\d+|\d{1,12})\s*\]\]")
+
 #: WHAT EVERY STAGING MARKER'S INSTRUCTION TELLS THE MODEL ABOUT THE NEXT STEP (#430). A marker that
 #: stages something is described twice in one message: by the model, before the marker, and by the
 #: frame the code appends after it, with its own question. They agree only when the model knows the
@@ -155,7 +165,8 @@ STAGED_AFTER_YOUR_REPLY = (
 #: card, an order, a queue — each shown with its own question (`engine.py::gestures`, `staging`).
 #: A marker added here must carry `STAGED_AFTER_YOUR_REPLY` in its instruction; one that stages
 #: nothing (teach, evidence, decision) must not be here.
-STAGING_MARKERS = (REQUEST_MARKER, DEFECT_MARKER, TICKET_MARKER, ORDER_MARKER, QUEUE_MARKER)
+STAGING_MARKERS = (REQUEST_MARKER, DEFECT_MARKER, TICKET_MARKER, ORDER_MARKER, QUEUE_MARKER,
+                   ADJUST_MARKER)
 
 #: THE ROLE ASKS THE ENGINE TO SEARCH THE PRODUCT'S MEMORY (#269 slice 2, ADR-0053 D8) — in the
 #: family of `[[DECISAO: …]]`: text the model writes, so it works on every harness, with no tool
@@ -391,6 +402,9 @@ class ProductAnswer(BaseModel):
     #: and a fourth flag would make five booleans describe one question ("what was this person
     #: doing?") that only ever has one answer. The next gesture is a value here, not a column.
     gesture: str = ""
+    #: THE CARD A GESTURE IS ABOUT, when it names one — the `#N` of `[[AJUSTE: #N]]` (#448); "" for
+    #: a gesture about no card, which is every other one today
+    gesture_card: str = ""
     #: the brownfield reading, when this answer came from `survey`
     baseline: object | None = None
     #: the requirement the role believes is violated — None when it could not name one
@@ -627,6 +641,16 @@ class ProductRole:
             "discussing something already decided, do not add it. The marker is how a conversation "
             "turns into a written requirement, so a missing one loses the request and a spurious "
             "one asks somebody to confirm a requirement they never made.\n\n"
+            "IF THEY TRIED A CHANGE THAT IS WAITING ON THEM — a card whose change is built and "
+            "waits for a person to look at it before it goes into the product, its preview or "
+            "the change itself — and they say what is STILL WRONG with it, or what they want "
+            "different before it goes in, end with [[AJUSTE: #N]] on its own line, N the card's "
+            f"number. {STAGED_AFTER_YOUR_REPLY} What is prepared is what the next pass on that "
+            "same change must do, and the card's criteria as they must read now — the bar the "
+            "pass is judged against. Say in your reply what you understood is still wrong and "
+            "which criterion was loose, if one was. It is NOT a defect nor a new request: what "
+            "they tried has not gone into the product yet. Do NOT use it for a card no change of "
+            "which waits on them, nor when they are happy with what they tried.\n\n"
             "If instead they REPORTED THAT SOMETHING IS NOT WORKING — a MALFUNCTION: a control "
             "or content cut off, hidden or unreachable, an error, lost or wrong data, something "
             "that does not respond, a layout that breaks — end with [[DEFEITO:REQ-NNNN]] naming "
@@ -725,7 +749,10 @@ class ProductRole:
         # recognise; a gesture read after it would be read from text the net had already emptied,
         # and the change would be built, tested and reached by nothing — this codebase's signature
         # defect, fifteen times over.
-        gesture = "queue" if QUEUE_MARKER in text else ""
+        # ANOTHER PASS NAMES ITS CARD, and outranks a queue: it is about work already waiting on
+        # the person, never a request to start something (#448)
+        adjusted = _ADJUST_RE.search(text)
+        gesture = "adjust" if adjusted else "queue" if QUEUE_MARKER in text else ""
         defect = _DEFECT_RE.search(text)
         violates = int(defect.group("req")) if defect and defect.group("req") else None
         ticket = _TICKET_RE.search(text)
@@ -738,6 +765,7 @@ class ProductRole:
                  if ordered else [])
         # the markers are plumbing between the role and the channel — never let them reach a person
         text = text.replace(QUEUE_MARKER, "").rstrip()
+        text = _ADJUST_RE.sub("", text).rstrip()
         text = text.replace(REQUEST_MARKER, "").rstrip()
         text = _DEFECT_RE.sub("", text).rstrip()
         text = _TICKET_RE.sub("", text).rstrip()
@@ -785,6 +813,7 @@ class ProductRole:
                              harness=getattr(res, "harness", None) or "",
                              is_request=asked_for_something, decisions=decisions,
                              gesture=gesture,
+                             gesture_card=adjusted.group("number") if adjusted else "",
                              is_defect=defect is not None, violates=violates,
                              is_ticket=ticket is not None,
                              ticket_title=((ticket.group("title") or "").strip()
