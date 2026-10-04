@@ -88,12 +88,12 @@ release/0.5          ●───●─────●────●───�
 
 ## Versions
 
-- **`X.Y.Z`, pre-1.0 semver.** A minor (`0.5.0`) carries features and changes of behaviour. A patch
-  (`0.5.1`) carries fixes only, and is always tagged on `release/X.Y`, never on `main`.
-- **A release candidate is `vX.Y.Z-rc.N`.** It is published like a release (images, wheel, GitHub
-  release), but as a pre-release: `install.sh` and `pip install openfactory` keep resolving the
-  last final release, and only somebody who names the candidate gets it
-  (`install.sh --version v0.5.0-rc.1`, `pip install openfactory==0.5.0rc1`). A minor always goes
+- **`x.y.z`, pre-1.0 semver.** A minor (`0.5.0`) carries features and changes of behaviour. A patch
+  (`0.5.1`) carries fixes only, and is always tagged on `release/x.y`, never on `main`.
+- **A release candidate is `vx.y.z-rc.N`.** It is published like a release (images, wheel, GitHub
+  release), but as a pre-release: `install.sh` and an install of the wheel from PyPI keep
+  resolving the last final release, and only somebody who names the candidate gets it
+  (`install.sh --version v0.5.0-rc.1`, or the wheel's exact version `0.5.0rc1`). A minor always goes
   through at least one candidate. A patch may skip it, at the release manager's call.
 - **The package declares exactly the tag without its `v`.** `pyproject.toml` and
   `openfactory/__init__.py` say `0.5.0-rc.1` for the tag `v0.5.0-rc.1` (PyPI normalises it to
@@ -140,27 +140,27 @@ release manager decides what earns it.
 
 ### 2. The cut
 
-1. **Open the release tracking issue**, `Release X.Y.0`, from the checklist at the end of this page.
-2. **Create `release/X.Y` from the green commit of `main`** (release manager's go):
-   `git push origin <sha>:refs/heads/release/X.Y`.
+1. **Open the release tracking issue**, `Release x.y.0`, from the checklist at the end of this page.
+2. **Create `release/x.y` from the green commit of `main`** (release manager's go):
+   `git push origin <sha>:refs/heads/release/x.y`.
 3. **On `main`, a pull request declares the next development version**: "The package declares
-   X.(Y+1).0.dev0".
+   x.(y+1).0.dev0".
 
-**Exit:** `release/X.Y` exists and is protected by the `release/*` ruleset.
+**Exit:** `release/x.y` exists and is protected by the `release/*` ruleset.
 
 ### 3. A release candidate
 
-1. **A pull request on `release/X.Y`** declares the candidate's version: "The package declares
-   X.Y.Z-rc.N". The reviewer approves it, and it is squash-merged.
+1. **A pull request on `release/x.y`** declares the candidate's version: "The package declares
+   x.y.z-rc.N". The reviewer approves it, and it is squash-merged.
 2. **Tag the merge commit** (release manager's go):
    ```bash
    git fetch origin
-   git tag -a vX.Y.Z-rc.N origin/release/X.Y -m "OpenFactory X.Y.Z-rc.N"
-   git push origin vX.Y.Z-rc.N
+   git tag -a vx.y.z-rc.N origin/release/x.y -m "OpenFactory x.y.z-rc.N"
+   git push origin vx.y.z-rc.N
    ```
 3. **Watch the `release` workflow to the end**, then check what it published:
-   - the three images, under `ghcr.io/open-factory-digital/openfactory-{worker,sandbox,cli}:vX.Y.Z-rc.N`;
-   - the wheel, as `openfactory==X.Y.ZrcN` on PyPI;
+   - the three images, under `ghcr.io/open-factory-digital/openfactory-{worker,sandbox,cli}:vx.y.z-rc.N`;
+   - the wheel, as `openfactory==x.y.zrcN` on PyPI;
    - the GitHub release, **marked as a pre-release and not as Latest**, with its assets and `SHA256SUMS`.
 
 ### 4. Verifying a candidate
@@ -178,7 +178,7 @@ tracking issue.
   6. Remove the images and the directories.
 
   Never start the stack, and never touch a live installation.
-- **A fresh install** with `install.sh --version vX.Y.Z-rc.N --no-run`.
+- **A fresh install** with `install.sh --version vx.y.z-rc.N --no-run`.
 - **The end-to-end bed** (Playwright over the panel) against the candidate.
 - **A real deployment**, when one is available for it (a staging box), at the release manager's
   call.
@@ -189,11 +189,11 @@ records in the tracking issue why it ships anyway and what the workaround is.
 
 ### 5. The final release
 
-1. **A pull request on `release/X.Y`** declares `X.Y.Z`. Its body carries the release notes as
+1. **A pull request on `release/x.y`** declares `x.y.z`. Its body carries the release notes as
    they will be published.
 2. **Rehearse the upgrade on that commit** if anything changed since the last candidate's
    rehearsal. Only the version line changed? Then the candidate's rehearsal stands.
-3. **Tag `vX.Y.Z` on the merge commit** (release manager's go), the same commands as for a
+3. **Tag `vx.y.z` on the merge commit** (release manager's go), the same commands as for a
    candidate.
 4. **Check the publication**, as for a candidate. This time the GitHub release is **Latest**.
 5. **Replace the generated notes on the GitHub release with the curated ones.** The install block
@@ -203,15 +203,15 @@ records in the tracking issue why it ships anyway and what the workaround is.
 
 ### 6. Patch releases
 
-- A merged fix that the line needs gets the label `backport-X.Y`.
+- A merged fix that the line needs gets the label `backport-x.y`.
 - **Backporting a fix:**
-  1. Branch from `release/X.Y`.
+  1. Branch from `release/x.y`.
   2. `git cherry-pick -x <the squash commit on main>`.
-  3. Open a pull request into `release/X.Y` titled `[X.Y] <the original title> (#<original>)`, with a
+  3. Open a pull request into `release/x.y` titled `[x.y] <the original title> (#<original>)`, with a
      body that links the original and names any conflict resolved.
 
   The agent prepares these; the reviewer approves them like any other pull request.
-- A patch release is then steps 3–5 with `Z+1`. Its candidate is optional, and its rehearsal is not.
+- A patch release is then steps 3–5 with `z+1`. Its candidate is optional, and its rehearsal is not.
 - **Which lines get patches:** the latest minor line. The line before it gets security fixes only,
   and only when the release manager decides so.
 
@@ -222,7 +222,7 @@ as an issue or an ordinary pull request:
 
 1. **Open a draft advisory.** It is private.
 2. **Open the advisory's temporary private fork** and add the reviewer as a collaborator.
-3. **Put the fix there:** one pull request into `main`, and one into each `release/X.Y` that
+3. **Put the fix there:** one pull request into `main`, and one into each `release/x.y` that
    receives it.
 4. **Request the CVE.** The number is assigned after the advisory is published.
 5. **Merge from the advisory page.** A repository admin's "merge and bypass branch protections" is
@@ -236,21 +236,21 @@ as an issue or an ordinary pull request:
 - **A ruleset on `release/*`** with the rules `main` has: no deletion, no force-push, linear
   history, and changes only through a reviewed pull request.
 - **A tag ruleset on `v*`:** creation, update and deletion restricted to the release manager.
-- **The labels** `release-blocker` and `backport-X.Y` (one per supported line).
+- **The labels** `release-blocker` and `backport-x.y` (one per supported line).
 
 ## The release tracking issue
 
-Opened at the cut, titled `Release X.Y.Z`, on the milestone:
+Opened at the cut, titled `Release x.y.z`, on the milestone:
 
 ```markdown
 - [ ] Milestone audited; everything left moved or marked `release-blocker`
-- [ ] `release/X.Y` cut from <sha> (main's CI green on it)
-- [ ] `main` declares X.(Y+1).0.dev0 (#…)
+- [ ] `release/x.y` cut from <sha> (main's CI green on it)
+- [ ] `main` declares x.(y+1).0.dev0 (#…)
 - [ ] rc.1 declared (#…), tagged, published as a pre-release
 - [ ] Upgrade rehearsal from v<previous>: <result>
 - [ ] Fresh install of the candidate: <result>
 - [ ] End-to-end bed against the candidate: <result>
 - [ ] Final version declared (#…) with the release notes
-- [ ] vX.Y.Z tagged, published, Latest; curated notes on the release page
+- [ ] vx.y.z tagged, published, Latest; curated notes on the release page
 - [ ] Milestone closed; next milestone open with its due date
 ```

@@ -67,18 +67,18 @@ its commit or name, and the checks that are green. Never take that step yourself
   End with a proposal (in, or moved to the next milestone, with one line each). The release
   manager decides.
 - **The release notes draft.** Start from the pull requests merged into the milestone
-  (`gh pr list --state merged --search "milestone:X.Y.Z"`). Group them by what somebody installing
+  (`gh pr list --state merged --search "milestone:x.y.z"`). Group them by what somebody installing
   the release would notice: new behaviour, fixes, upgrade notes, security. Name every pull
   request. Write nothing a pull request does not support.
-- **The version pull requests**, titled "The package declares X.Y.Z-rc.N" or "The package declares
-  X.Y.Z". They change `pyproject.toml` and `openfactory/__init__.py` and nothing else, so the two
+- **The version pull requests**, titled "The package declares x.y.z-rc.N" or "The package declares
+  x.y.z". They change `pyproject.toml` and `openfactory/__init__.py` and nothing else, so the two
   agree, and they target the release branch (or `main`, for the next development version after
   a cut).
-- **The backport pull requests.** For each merged pull request labelled `backport-X.Y`:
-  1. Branch from `release/X.Y`.
+- **The backport pull requests.** For each merged pull request labelled `backport-x.y`:
+  1. Branch from `release/x.y`.
   2. `git cherry-pick -x <its squash commit>`.
   3. Run the tests it touches (temporary `HOME`).
-  4. Open a pull request into `release/X.Y` titled `[X.Y] <original title> (#<original>)`. Its body
+  4. Open a pull request into `release/x.y` titled `[x.y] <original title> (#<original>)`. Its body
      links the original and names any conflict and how it was resolved.
 
   A cherry-pick that does not apply cleanly is reported, never forced.
