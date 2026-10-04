@@ -50,8 +50,11 @@ MUTATIONS = [
      '    if answer in ("adjust", "address") and gate.get("adjusts_left") == 0:\n',
      "    if False:\n"),
     ("a job that finished is read as one still at its gate", VIEW,
-     "    if described.status != WorkflowExecutionStatus.RUNNING:\n",
-     "    if False:\n"),
+     # re-pinned 2026-10-04: the last gate is read the same way beside it (#448 slice 4)
+     "    if described.status != WorkflowExecutionStatus.RUNNING:\n        return None\n"
+     "    return await handle.query(JobWorkflow.awaiting_merge) or None\n",
+     "    if False:\n        return None\n"
+     "    return await handle.query(JobWorkflow.awaiting_merge) or None\n"),
     ("the floor folds a spent budget into 'not waiting on a merge'", CATALOG,
      "    except tv.AdjustsSpent as exc:\n",
      "    except tv.GateDeaf as exc:\n"),
@@ -114,15 +117,19 @@ MUTATIONS = [
     ("the card view offers the pass to anybody who opens it", MODULE,
      "        if not self.may_send_back(number, actor, vouched=vouched):\n"
      '            return {"offered": False}\n'
-     "        gate = adjust.gate_of(self.project, number)\n"
+     # re-pinned 2026-10-04: the card view asks the gate a person can send back from (#448)
+     "        gate = adjust.pass_gate_of(self.project, number)       # the last gate too (#448 "
+     "slice 4)\n"
      "        if gate.why in (adjust.SPENT, adjust.WORKING, adjust.DEAF):\n",
      "        if False:\n"
      '            return {"offered": False}\n'
-     "        gate = adjust.gate_of(self.project, number)\n"
+     "        gate = adjust.pass_gate_of(self.project, number)       # the last gate too (#448 "
+     "slice 4)\n"
      "        if gate.why in (adjust.SPENT, adjust.WORKING, adjust.DEAF):\n"),
     ("a spent budget reads as a gate a pass can be sent to", ADJUST,
-     "    if left == 0:\n",
-     "    if left == -1:\n"),
+     # re-pinned 2026-10-04: the last gate reads its own budget beside it (#448 slice 4)
+     "    if deaf:\n        return Gate(why=DEAF, **said)\n    if left == 0:\n",
+     "    if deaf:\n        return Gate(why=DEAF, **said)\n    if left == -1:\n"),
     ("a pass rewriting the change reads as a gate waiting on a person", ADJUST,
      '    if gate.get("working"):\n',
      "    if False:\n"),

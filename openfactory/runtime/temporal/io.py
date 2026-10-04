@@ -128,6 +128,17 @@ class JobParams(BaseModel):
     #: up: the workflow may not read the registry. A history that predates the field deserialises
     #: it as today's hard-coded 2, so a job in flight replays and refuses exactly as it did.
     adjust_passes: int = ADJUST_PASSES
+    #: THE CARD'S NEXT CHANGE, ASKED FOR AT THE LAST GATE (#448 slice 4). A job parked before the
+    #: product's users, its change merged, is told "not yet" by the person who asked for the card
+    #: (`JobWorkflow.not_yet`), and continues as new with these three: what is still wrong — the
+    #: words its brief carries beside the card, whose criteria were corrected first; how many
+    #: passes the job had spent by then, so the project's one budget (`adjust_passes`) is counted
+    #: across both runs and never starts again; and which change of the card this run builds,
+    #: which names its branch (`namespace.job_branch`) so it never pushes over the merged one.
+    #: Defaults are a first run, so a history that predates them reads exactly what it did.
+    another_pass: str = ""
+    passes_spent: int = 0
+    change: int = 0
 
     def traits(self) -> BoxTraits:
         """What the WORKFLOW may ask about this job's box, with no I/O: the stamped traits, else the
@@ -160,6 +171,11 @@ class RunJobInput(BaseModel):
     # text ("DECISION A — Trust only configured proxies"). Carried into the box so the agent
     # proceeds with the chosen option instead of re-asking. Empty on a normal run.
     decision: str = ""
+    #: What the card's requester said is still wrong with its last change, which merged — and
+    #: which change of the card this run builds (#448 slice 4, `JobParams`). Empty and 0 on every
+    #: first run.
+    another_pass: str = ""
+    change: int = 0
 
 
 class PreflightInput(BaseModel):
@@ -234,6 +250,8 @@ class CiRepairInput(BaseModel):
     # a SECOND attempt launches a fresh task instead of reconciling the FIRST attempt's stale
     # (still-STOPPED, ≤1h in ECS) result — otherwise the repair cap of 2 collapses to 1.
     attempt: int = 0
+    #: which change of the card the pull request is (#448 slice 4) — it names the branch
+    change: int = 0
 
 
 class AdjustInput(BaseModel):
@@ -263,6 +281,8 @@ class AdjustInput(BaseModel):
     source: str = ""
     #: who asked for the pass, for the note the pull request carries about it.
     by: str = ""
+    #: which change of the card the pull request is (#448 slice 4) — it names the branch
+    change: int = 0
 
 
 #: `AdjustInput.source` for a pass whose words are the pull request's review comments (#330).
@@ -285,6 +305,8 @@ class ReviewPassInput(BaseModel):
     #: which re-review this is (1-based), folded into the launcher's idempotency scope — without
     #: it a second ask would reconcile the first one's stale STOPPED task and return its verdict.
     attempt: int = 1
+    #: which change of the card the pull request is (#448 slice 4) — it names the branch
+    change: int = 0
 
 
 class PromoteInput(BaseModel):

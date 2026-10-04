@@ -1977,7 +1977,8 @@ def test_it_worked_on_a_RELEASE_puts_it_live_with_the_admin_as_the_approver(tabl
 
 def test_it_did_not_work_on_a_RELEASE_releases_nothing_and_says_so(table, ledger, released):
     """"não funcionou o #12" on a release loop releases NOTHING, even from an admin, and says so
-    plainly; the loop is closed as rejected."""
+    plainly; the loop is closed as rejected. A module that cannot stage another pass — this
+    double — hears what the person can do, never a promise (#448 slice 4)."""
     project = _project()
     _awaiting_release(ledger)
     talk = _Conversation(project, _Module(project))
@@ -1985,8 +1986,8 @@ def test_it_did_not_work_on_a_RELEASE_releases_nothing_and_says_so(table, ledger
     reply = talk.say("não funcionou o #12", user=ADMIN)
 
     assert released == []
-    assert reply == (f"{AGENT}: entendi — **não subi nada**. Vou devolver isso ao time com o que "
-                     f"você disse, e volto quando estiver corrigido para você conferir de novo.")
+    assert reply == (f"{AGENT}: entendi — **não subi nada**. Se você me disser o que ainda está "
+                     f"errado, eu posso mandar isso de volta para mais uma passada.")
     [loop] = [x for x in fold(ledger) if x.kind == ACCEPTANCE]
     assert (loop.state, loop.outcome) == ("closed", "did-not-work")
 

@@ -582,7 +582,8 @@ def acceptance_chase_text(loop: Loop, *, mention: str = "", agent_name: str = ""
 
 
 def release_of(issue: str, *, channel: str, ts: str, requirement: str = "",
-               where: str = "", conversation: str = "", requester: str = "") -> Loop:
+               where: str = "", conversation: str = "", requester: str = "",
+               run: str = "") -> Loop:
     """The loop that opens when a job parks waiting to go to production.
 
     An ACCEPTANCE loop, deliberately, rather than a kind of its own: it asks the same question
@@ -600,6 +601,10 @@ def release_of(issue: str, *, channel: str, ts: str, requirement: str = "",
     conversation, so the two copies are two rows of the ledger and never one — the room's is keyed
     on the room. `requester` is ALREADY A DIGEST (`speaker.sealed`), as the card's delivery holds
     it: the round never has the person's id, and sealing a digest again would name nobody.
+
+    `run` is the run of the parked job the question is about (#448 slice 4), on both copies: what
+    the room is told once when the requester says it is right is keyed on it
+    (`events.tried_and_right`). Absent on a question asked before it was recorded.
     """
     where_asked = str(conversation or "").strip()
     return open_loop(ACCEPTANCE, f"release-{issue}", owner=OWNER, ts=ts,
@@ -608,7 +613,8 @@ def release_of(issue: str, *, channel: str, ts: str, requirement: str = "",
                               "where": where, "channel": channel,
                               **({"conversation": where_asked} if where_asked else {}),
                               **({"requester": str(requester)}
-                                 if where_asked and str(requester or "").strip() else {})})
+                                 if where_asked and str(requester or "").strip() else {}),
+                              **({"run": str(run)} if str(run or "").strip() else {})})
 
 
 def requirement_behind(issue: str, waiting: list[Loop]) -> str:

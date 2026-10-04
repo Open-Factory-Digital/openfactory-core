@@ -817,17 +817,18 @@ MUTATIONS = [
     # RE-PINNED 2026-09-24 (#273): the refusal carries a comment now, so the anchor is the gate
     # and that comment's first line; the cut still removes the gate, and the claim is unchanged
     ("a release is put live for anyone who says it worked", ENGINE,
-     "    if not may_act(project, user, via=via):\n"
-     "        # THE QUESTION STAYS OPEN FOR SOMEBODY WHO MAY ANSWER IT (#273).",
-     "    if False:\n"
-     "        # THE QUESTION STAYS OPEN FOR SOMEBODY WHO MAY ANSWER IT (#273)."),
+     # re-pinned 2026-10-04: who may release is one reading now — an admin, or the card's
+     # requester where the project lets them (#448)
+     "    admin = may_act(project, user, via=via)\n",
+     "    admin = True\n"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     # RE-PINNED 2026-09-24 (#273): the branch closes the loop before it answers now, so the anchor
     # is the branch and its comment's first line; the claim is unchanged
     ("a did-not-work on a release puts it live", ENGINE,
-     '    if verdict != "worked":\n        # A "NÃO FUNCIONOU" CLOSES THE LOOP',
-     '    if False:\n        # A "NÃO FUNCIONOU" CLOSES THE LOOP'),
+     # re-pinned 2026-10-04: an ambiguous "not yet" is asked about first (#448)
+     '    if verdict != "worked":\n        if ambiguous:\n',
+     '    if False:\n        if ambiguous:\n'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("a release the workflow refused is announced as going live", ENGINE,
@@ -851,11 +852,10 @@ MUTATIONS = [
      ""),
 
     ("the release gate closes the loop before it asks who is speaking (#273)", ENGINE,
-     "    if not may_act(project, user, via=via):\n"
-     "        # THE QUESTION STAYS OPEN FOR SOMEBODY WHO MAY ANSWER IT (#273).",
+     # re-pinned 2026-10-04: who may release is one reading now (#448)
+     "    admin = may_act(project, user, via=via)\n",
      "    _close_release(project, loop, verdict)\n"
-     "    if not may_act(project, user, via=via):\n"
-     "        # THE QUESTION STAYS OPEN FOR SOMEBODY WHO MAY ANSWER IT (#273)."),
+     "    admin = may_act(project, user, via=via)\n"),
 
     ("an admin's worked releases and leaves the release question open (#273)", ENGINE,
      "    # whether the workflow was still there to take it.\n"
@@ -870,15 +870,16 @@ MUTATIONS = [
      "yes.\n"),
 
     ("an authorised worked closes the release only when the workflow took it (#273)", ENGINE,
+     # re-pinned 2026-10-04: the release's comment says whose yes it was (#448)
      "    _close_release(project, loop, verdict)\n\n"
      "    from openfactory.product.release import release\n\n"
      "    ok, why = release(project, issue, approver=user,\n"
-     '                      comment=engine_said("released_by_client", language=lang))\n'
+     '                      comment=engine_said(said, language=lang))\n'
      "    if not ok:\n"
      '        return f"{head}{why}"\n',
      "    from openfactory.product.release import release\n\n"
      "    ok, why = release(project, issue, approver=user,\n"
-     '                      comment=engine_said("released_by_client", language=lang))\n'
+     '                      comment=engine_said(said, language=lang))\n'
      "    if not ok:\n"
      '        return f"{head}{why}"\n'
      "    _close_release(project, loop, verdict)\n"),

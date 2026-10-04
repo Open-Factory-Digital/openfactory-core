@@ -134,23 +134,19 @@ MUTATIONS = [
     ("the release gate is cut on the shared stage — anyone typing 'funcionou' in the panel "
      "releases production",
      ENGINE,
-     "    if not may_act(project, user, via=via):\n"
+     # re-pinned 2026-10-04: the refusal sits under the requester's own branch now (#448)
      "        # THE QUESTION STAYS OPEN FOR SOMEBODY WHO MAY ANSWER IT (#273). Nothing has closed "
      "the\n"
      "        # loop before this line, so it is still waiting — still chased — and an admin's own\n"
      "        # \"funcionou\" lands on it and releases.\n"
      "        return unauthorized_message(project)\n",
-     ""),
+     "        pass\n"),
     # RE-PINNED 2026-09-24: moved to engine.py
     # RE-PINNED 2026-09-24 (#273): the same whole gate, made to refuse everyone
     ("the release is performed for nobody — the gate refuses everyone, the positive twin sees it",
      ENGINE,
-     "    if not may_act(project, user, via=via):\n"
-     "        # THE QUESTION STAYS OPEN FOR SOMEBODY WHO MAY ANSWER IT (#273). Nothing has closed "
-     "the\n"
-     "        # loop before this line, so it is still waiting — still chased — and an admin's own\n"
-     "        # \"funcionou\" lands on it and releases.\n"
-     "        return unauthorized_message(project)\n",
+     # re-pinned 2026-10-04: who may release is one reading now (#448)
+     "    admin = may_act(project, user, via=via)\n",
      "    return unauthorized_message(project)\n"),
     # RE-PINNED 2026-09-24: the worker's turn hands the transport to the engine on the message
     # RE-PINNED 2026-09-24 (#266 slice 3): `_product_turn` became `_conversation_turn`, the

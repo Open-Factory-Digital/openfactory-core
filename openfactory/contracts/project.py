@@ -454,6 +454,18 @@ class Project(BaseModel):
     #: "not yet" goes straight to a person.
     adjust_passes: int = ADJUST_PASSES
 
+    #: WHETHER THE PERSON WHO ASKED FOR A CARD MAY PUT ITS CHANGE IN FRONT OF EVERYONE with their
+    #: own "it worked", at the last gate before the product's users (#448 slice 4). Off, their yes
+    #: is recorded — the copy of the question asked of them closes as `worked` — and the room is
+    #: told once that they say it is right, so a product admin (`product.admins`) releases it;
+    #: on, their yes releases it as an admin's does. Never a guest's, and only the card's own
+    #: requester's (`ProductModule.asked_for`).
+    #: THE OPERATOR'S, in the registry and never the manifest, for the reason `adjust_passes` and
+    #: `preview.required` are: it is a gate — who may put software in front of the client's
+    #: users — and the agent edits the manifest. Off by default, so a project that says nothing
+    #: keeps exactly the admins it had.
+    release_by_requester: bool = False
+
     @field_validator("adjust_passes", mode="before")
     @classmethod
     def _adjust_passes_in_bounds(cls, v):

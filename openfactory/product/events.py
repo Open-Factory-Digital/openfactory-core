@@ -41,6 +41,10 @@ line on that conversation — behind the turn in progress, never inside one.
                         — a job parked at the last gate before the product's users, ready for its
                         requester to try (#448 slice 4); once per card and run of its job, and
                         only after the room's own question landed
+    tried               the product role's settling stage (`engine._the_requesters_yes`) — the
+                        card's requester tried the change at the last gate and said it is right,
+                        and the project does not let their word release it, so the ROOM hears
+                        it, for a product admin (#448 slice 4); once per card and run
 
 WHERE AN EVENT IS SAID (`conversation_for`). About a card: to the conversation its REQUESTER asked
 in — recorded on the card's delivery loop when the work was filed, from what they had staged
@@ -85,15 +89,17 @@ log = logging.getLogger("openfactory.product.events")
 
 #: The kinds of event (#267 slice 3; `ready_for_you` since #401; `card_moved` since #412, in place
 #: of #384's `card_withdrawn`, which only the product role's own close could tell; `merged` since
-#: #448; `staged` since #448 slice 4). A closed set: each has its sentence, its routing and its
-#: record of having been said, and a kind nobody knows how to say is one nobody should tell.
+#: #448; `staged` and `tried` since #448 slice 4). A closed set: each has its sentence, its
+#: routing and its record of having been said, and a kind nobody knows how to say is one nobody
+#: should tell.
 DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED, CARD_MOVED, READY_FOR_YOU = (
     "delivered", "ci_red", "pr_waiting", "preview_up", "document_ingested", "card_moved",
     "ready_for_you")
 MERGED = "merged"
 STAGED = "staged"
+TRIED = "tried"
 KINDS = (DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED, CARD_MOVED,
-         READY_FOR_YOU, MERGED, STAGED)
+         READY_FOR_YOU, MERGED, STAGED, TRIED)
 
 #: Which producer tells each kind on this branch — "" for a kind whose producer lives elsewhere.
 #: The guard reads this, so a producer claimed here is a call that exists.
@@ -107,6 +113,7 @@ PRODUCERS = {
     READY_FOR_YOU: "openfactory/runtime/temporal/activities.py::tell_the_requester",
     MERGED: "openfactory/runtime/temporal/activities.py::tell_the_requester_it_merged",
     STAGED: "openfactory/runtime/temporal/activities.py::_offer_the_release_to_the_client",
+    TRIED: "openfactory/product/engine.py::_the_requesters_yes",
 }
 
 #: Whose loops these are.
@@ -827,10 +834,39 @@ def staged_for_you(project, *, card: str, where: str = "", run: str = "") -> boo
                              language=_language(project), agent_name=_agent(project))))
 
 
+def tried_and_right(project, *, card: str, run: str, where: str = "", who: str = "") -> bool:
+    """THE CARD'S REQUESTER TRIED IT AT THE LAST GATE AND SAYS IT IS RIGHT, and the project does
+    not let their word put it in front of everyone (`Project.release_by_requester`) — so the ROOM
+    hears it, where a product admin's "it worked" does (#448 slice 4). Returns whether the room
+    KNOWS — told now, or told already for this run. Never raises.
+
+    ONCE PER CARD AND RUN OF ITS JOB, like `staged_for_you`: a second "funcionou" from the same
+    person about the same change is not news, and a later run — the work done again — is. `run`
+    is the run the question was asked for (`followup.release_of`), or the time it was asked when
+    the question predates it. `who` is a name a person reads, or "" for "the person who asked for
+    it": the room is told THAT the requester tried it, never handed an identifier."""
+    if not _speaks(project) or not str(card or "").strip():
+        return False
+    from openfactory.product import voice
+
+    event = _event_id(TRIED, project, card, run)
+    if _once(project, event, lambda: (
+            room_of(project),
+            voice.tried_and_right(ref=card, title=_title_of(project, card), who=who, where=where,
+                                  language=_language(project), agent_name=_agent(project)))):
+        return True
+    try:
+        with _held(project, required=True) as path:
+            return event in _read(path)["told"]
+    except (OSError, TimeoutError):
+        return False
+
+
 __all__ = ["CARD_MOVED", "CI_RED", "DELIVERED", "DOCUMENT_INGESTED", "KINDS", "MERGED",
            "PREVIEW_UP", "PRODUCERS", "PR_WAITING", "PR_WAIT_HOURS", "READY_FOR_YOU", "STAGED",
+           "TRIED",
            "card_finished", "card_moved", "ci_went_red", "conversation_for", "deliver",
            "document_ingested", "forget_record", "issues_of", "merged_for_you", "preview_up",
            "pull_requests_at_the_gate", "ready_at_the_gate", "ready_for_you",
            "requester_conversation", "requester_of", "room_of", "say_to", "staged_for_you",
-           "to_room"]
+           "to_room", "tried_and_right"]

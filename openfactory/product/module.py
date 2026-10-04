@@ -4363,7 +4363,8 @@ class ProductModule:
         WHO MAY: a product admin (`may_act`), as for every correction — and at the merge gate also
         the card's own requester, and an operator a row vouches for, `withdraw_card`'s rule (#384):
         the person who tried the change judges it, and correcting the bar of what they asked for
-        with the pass they asked for needs nobody's yes.
+        with the pass they asked for needs nobody's yes. The LAST gate admits it the same way
+        (#448 slice 4, `adjust.pass_gate_of`): the pass is a new change, built to the bar it reads.
 
         TWO WRITES, TWO OUTCOMES (`close_card`): the correction, then the note. A note that failed
         is reported on a SUCCESS, never as a failure of the correction that landed.
@@ -4513,7 +4514,9 @@ class ProductModule:
         lang = language or getattr(self.project, "language", None)
         if not self.may_send_back(number, actor):
             return adjust.Prepared(said=adjust_said("not_yours", ref=number, language=lang))
-        gate = adjust.gate_of(self.project, number)
+        # THE MERGE GATE, OR THE LAST ONE (#448 slice 4): a change already in, waiting before the
+        # product's users, is sent back too — as a new change (`Gate.merged`)
+        gate = adjust.pass_gate_of(self.project, number)
         if not gate.open:
             return adjust.Prepared(gate=gate, said=adjust_said(gate.why, ref=number,
                                                                passes=gate.passes, language=lang))
@@ -4537,7 +4540,8 @@ class ProductModule:
         drafted = adjust.draft(cards.as_json(cards.in_a_room(self.project, harness,
                                                              adjust.DRAFT_PHASE)),
                                number=number, card=body, conversation=conversation,
-                               request=request, reply=reply, language=lang)
+                               request=request, reply=reply, language=lang,
+                               merged=gate.merged)
         if drafted is None:
             return adjust.Prepared(gate=gate, said=adjust_said("undrafted", ref=number,
                                                                language=lang))
@@ -4577,7 +4581,7 @@ class ProductModule:
         if not self.may_send_back(number, actor, vouched=vouched):
             return WriteResult(ok=False, ref=f"#{number}",
                                detail=adjust_said("not_yours", ref=number, language=lang))
-        gate = adjust.gate_of(self.project, number)
+        gate = adjust.pass_gate_of(self.project, number)
         if not gate.open:
             return WriteResult(ok=False, ref=f"#{number}", detail=adjust_said(
                 gate.why, ref=number, passes=gate.passes, language=lang))
@@ -4588,7 +4592,9 @@ class ProductModule:
             if not fixed.ok:
                 return fixed
             corrected, residue = not fixed.existed, str(fixed.detail or "")
-        why = adjust.send_back(self.project, number, instruction=said, by=actor)
+        # AT THE LAST GATE, THE GATE'S OWN ANSWER (#448 slice 4): a new change of the card
+        why = adjust.send_back(self.project, number, instruction=said, by=actor,
+                               merged=gate.merged)
         if why:
             detail = adjust_said(why, ref=number, passes=gate.passes, language=lang)
             if corrected:
@@ -4597,7 +4603,7 @@ class ProductModule:
         # THE FACTS, AND ON SUCCESS `detail` IS ONLY WHAT DID NOT LAND (`confirm._unfinished`): the
         # headline is composed by whoever answers the person, from these (`adjust.headline`)
         return adjust.Sent(ok=True, ref=f"#{number}", detail=residue, corrected=corrected,
-                           passes=gate.passes,
+                           passes=gate.passes, merged=gate.merged,
                            pass_number=(gate.passes - gate.left + 1
                                         if gate.passes is not None and gate.left is not None
                                         else None))
@@ -4618,7 +4624,7 @@ class ProductModule:
         lang = getattr(self.project, "language", None)
         if not self.may_send_back(number, actor, vouched=vouched):
             return {"offered": False}
-        gate = adjust.gate_of(self.project, number)
+        gate = adjust.pass_gate_of(self.project, number)       # the last gate too (#448 slice 4)
         if gate.why in (adjust.SPENT, adjust.WORKING, adjust.DEAF):
             return {"offered": False, "note": adjust_said(gate.why, ref=number,
                                                           passes=gate.passes, language=lang)}

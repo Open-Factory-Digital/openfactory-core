@@ -94,6 +94,10 @@ class BoxConfig:
     resume_handle: str | None = None  # C2: opaque token to resume a prior paused attempt
     spent_turns: int = 0  # cumulative effort already spent on this ticket (ADR-0013 D4)
     decision: str = ""  # a resolved human choice to inject into the agent (a resumed blocker)
+    #: #448 slice 4: what is still wrong with the card's last change, which merged, and which
+    #: change of the card this box builds — it names the branch (`namespace.job_branch`)
+    another_pass: str = ""
+    change: int = 0
 
 
 def materialize_app_key(env: dict[str, str], *, dest_dir: Path) -> str | None:
@@ -178,7 +182,26 @@ def config_from_env(env: dict[str, str]) -> BoxConfig:
         resume_handle=env.get("OPENFACTORY_RESUME_HANDLE") or None,
         spent_turns=int(env.get("OPENFACTORY_SPENT_TURNS") or 0),
         decision=env.get("OPENFACTORY_DECISION") or "",
+        another_pass=env.get("OPENFACTORY_ANOTHER_PASS") or "",
+        change=_a_count(env.get("OPENFACTORY_CHANGE")),
     )
+
+
+def _of_the_change(cfg: BoxConfig) -> dict:
+    """`build_runner`'s change number, ONLY for a later change of the card (#448 slice 4): a box
+    building a card's first change calls the runner exactly as every box before it did."""
+    return {"change": cfg.change} if cfg.change else {}
+
+
+def _a_count(raw: str | None) -> int:
+    """A non-negative count from the environment — 0 when absent or unreadable, which is a card's
+    first change: the name every box launched before #448 slice 4 worked on."""
+    try:
+        return max(int(raw or 0), 0)
+    except ValueError:
+        print(f"OPENFACTORY_WARN: could not read a change number ({str(raw)[:20]!r}) — working "
+              f"on the card's first branch", flush=True)
+        return 0
 
 
 def _clone(cfg: BoxConfig, dest: Path, token: str | None) -> None:
@@ -252,10 +275,12 @@ def run_boxed(cfg: BoxConfig, *, workdir: Path, token: str | None) -> object:
     events = journal_for(events_file(project, cfg.issue), live=True)
     print("OPENFACTORY_PHASE: running", flush=True)
     runner = build_runner(
-        project, cfg.issue, sandbox="worktree", image="", review=cfg.review, events=events
+        project, cfg.issue, sandbox="worktree", image="", review=cfg.review, events=events,
+        **_of_the_change(cfg),
     )
     result = runner.run(cfg.issue, resume_handle=cfg.resume_handle,
-                        spent_turns=cfg.spent_turns, decision=cfg.decision)
+                        spent_turns=cfg.spent_turns, decision=cfg.decision,
+                        **({"another_pass": cfg.another_pass} if cfg.another_pass else {}))
     # Stamp WHICH A/B ARM this run was in (ADR-0017's gate). Stamped here rather than inside the
     # runner because `run()` returns from a dozen paths; one place at the boundary can't be
     # forgotten by a new early return. See RunResult.knowledge. Guarded because this runs AFTER
@@ -313,7 +338,8 @@ def run_ci_repair(cfg: BoxConfig, *, workdir: Path, token: str | None, human: bo
             return held
     print(f"OPENFACTORY_PHASE: {'adjust' if human else 'ci-repair'}", flush=True)
     return build_runner(
-        project, cfg.issue, sandbox="worktree", image="", review=cfg.review, events=events
+        project, cfg.issue, sandbox="worktree", image="", review=cfg.review, events=events,
+        **_of_the_change(cfg),
     ).repair_ci(cfg.issue, ci_log, pr_url=pr, human=human)
 
 
@@ -335,7 +361,8 @@ def run_review_pass(cfg: BoxConfig, *, workdir: Path, token: str | None):
     pr = os.environ.get("OPENFACTORY_PR", "")
     print("OPENFACTORY_PHASE: review", flush=True)
     return build_runner(
-        project, cfg.issue, sandbox="worktree", image="", review=True, events=events
+        project, cfg.issue, sandbox="worktree", image="", review=True, events=events,
+        **_of_the_change(cfg),
     ).review_pr(cfg.issue, pr_url=pr)
 
 

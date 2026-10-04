@@ -1190,9 +1190,21 @@ _ENGINE_SAID = {
                            "confirmarem."),
         "conflict_requirement": "requisito {number}",
         "conflict_decided": "algo já decidido",
-        "release_declined": ("entendi — **não subi nada**. Vou devolver isso ao time com o que "
-                             "você disse, e volto quando estiver corrigido para você conferir de "
-                             "novo."),
+        # NO PROMISE NOBODY KEEPS (#448 slice 4). This said "vou devolver isso ao time… e volto
+        # quando estiver corrigido", and nothing took anything to anybody: the job waited out its
+        # window and held. A "não funcionou" now stages another pass (`engine._offer_another_pass`)
+        # and this is only what is said where none can be staged — what the person can do.
+        "release_declined": ("entendi — **não subi nada**. Se você me disser o que ainda está "
+                             "errado, eu posso mandar isso de volta para mais uma passada."),
+        "nothing_released": "entendi — **não subi nada**.",
+        "not_yet_ambiguous": ("tem mais de uma coisa esperando a sua conferida{which}, então **não "
+                              "subi nada** e não mandei nada de volta — prefiro não adivinhar qual "
+                              "delas você testou. Responda «não funcionou o #número» e eu sigo com "
+                              "essa."),
+        "released_by_requester": ("aprovado no canal de produto por quem pediu, que pode liberar "
+                                  "neste projeto"),
+        "released_after_the_requester": ("aprovado pelo cliente no canal de produto, depois que "
+                                         "quem pediu experimentou e disse que estava certo"),
         "release_ambiguous": ("tem mais de uma coisa esperando a sua conferida{which}, então **não "
                               "subi nada** — prefiro não adivinhar qual delas você testou. "
                               "Responda «funcionou o #número» e eu coloco essa no ar."),
@@ -1221,9 +1233,18 @@ _ENGINE_SAID = {
                            "confirm."),
         "conflict_requirement": "requirement {number}",
         "conflict_decided": "something already decided",
-        "release_declined": ("understood — **I released nothing**. I will take this back to the "
-                             "team with what you said, and come back when it is fixed for you to "
-                             "check again."),
+        "release_declined": ("understood — **I released nothing**. If you tell me what is still "
+                             "wrong, I can send it back for another pass."),
+        "nothing_released": "understood — **I released nothing**.",
+        "not_yet_ambiguous": ("more than one thing is waiting for your check{which}, so **I "
+                              "released nothing** and sent nothing back — I would rather not guess "
+                              "which one you tested. Reply «it did not work #number» and I will go "
+                              "on with that one."),
+        "released_by_requester": ("approved in the product channel by the person who asked for "
+                                  "it, who may release in this project"),
+        "released_after_the_requester": ("approved by the client in the product channel, after "
+                                         "the person who asked for it tried it and said it was "
+                                         "right"),
         "release_ambiguous": ("more than one thing is waiting for your check{which}, so **I "
                               "released nothing** — I would rather not guess which one you "
                               "tested. Reply «it worked #number» and I will put that one live."),
@@ -2769,6 +2790,15 @@ _ADJUST_SENT = {
     "en": "sent #{ref} back for {which}, to change:\n{instruction}\n\n{corrected}It works on the "
           "same change, and when it ends the change waits on you again.",
 }
+#: …AND ONCE IT IS ON ITS WAY, FOR A CHANGE ALREADY IN (#448 slice 4): never "the same change".
+_ADJUST_SENT_MERGED = {
+    "pt-BR": "mandei o #{ref} de volta para {which}, para mudar:\n{instruction}\n\n{corrected}"
+             "Ela vira uma mudança nova; o que está no ar continua como está, e quando a mudança "
+             "nova estiver pronta ela espera por você de novo.",
+    "en": "sent #{ref} back for {which}, to change:\n{instruction}\n\n{corrected}It becomes a "
+          "new change; what is live stays as it is, and when the new change is ready it waits on "
+          "you again.",
+}
 _ADJUST_WHICH = {
     "pt-BR": {"counted": "a passada {n} de {of}", "plain": "mais uma passada"},
     "en": {"counted": "pass {n} of {of}", "plain": "another pass"},
@@ -2786,6 +2816,24 @@ _ADJUST_CONFIRM = {
     "en": ("I'll send *#{number}* back for another pass{count}, with these criteria as the "
            "bar:\n{criteria}\n\nand correct the card to match. What the pass will change:\n"
            "{instruction}\n\nConfirm?"),
+}
+#: THE SAME PROPOSAL FOR A CHANGE ALREADY IN (#448 slice 4): at the last gate, before the
+#: product's users, the pass is a new change of the card — and what is live is not touched by it.
+_ADJUST_CONFIRM_MERGED = {
+    "pt-BR": ("Vou mandar o *#{number}* de volta para mais uma passada{count}, com estes critérios "
+              "como régua:\n{criteria}\n\ncomo uma mudança nova — o que está no ar continua como "
+              "está — e corrigir o cartão para dizer o mesmo. O que a passada vai mudar:\n"
+              "{instruction}\n\nConfirma?"),
+    "en": ("I'll send *#{number}* back for another pass{count}, with these criteria as the "
+           "bar:\n{criteria}\n\nas a new change — what is live stays as it is — and correct the "
+           "card to match. What the pass will change:\n{instruction}\n\nConfirm?"),
+}
+_ADJUST_CONFIRM_MERGED_KEEPS = {
+    "pt-BR": ("Vou mandar o *#{number}* de volta para mais uma passada{count}, como uma mudança "
+              "nova — o que está no ar continua como está. O que a passada vai mudar:\n"
+              "{instruction}\n\n{keeps}\n\nConfirma?"),
+    "en": ("I'll send *#{number}* back for another pass{count}, as a new change — what is live "
+           "stays as it is. What the pass will change:\n{instruction}\n\n{keeps}\n\nConfirm?"),
 }
 #: The same proposal on a card whose bar the role may not move — said BEFORE the yes, so nobody
 #: confirms a correction that will not be written.
@@ -2845,11 +2893,12 @@ def adjust_said(reason: str, *, ref: str, passes: int | None = None, length: int
 
 def adjust_sent(*, ref: str, instruction: str, number: int | None = None,
                 passes: int | None = None, corrected: bool = False,
-                language: str | None = None) -> str:
+                language: str | None = None, merged: bool = False) -> str:
     """What the person reads once the pass is on its way — which pass of how many, when the job
-    said, and whether the card was corrected with it."""
+    said, and whether the card was corrected with it. `merged`: a new change of a card whose last
+    one is already in (#448 slice 4)."""
     which = _pick(_ADJUST_WHICH, language)
-    return _pick(_ADJUST_SENT, language).format(
+    return _pick(_ADJUST_SENT_MERGED if merged else _ADJUST_SENT, language).format(
         ref=str(ref).lstrip("#"), instruction=_quoted(instruction),
         which=(which["counted"].format(n=number, of=passes)
                if number is not None and passes is not None else which["plain"]),
@@ -2858,17 +2907,19 @@ def adjust_sent(*, ref: str, instruction: str, number: int | None = None,
 
 def adjust_confirmation(*, number: str, instruction: str, criteria=(), keeps: str = "",
                         pass_number: int | None = None, passes: int | None = None,
-                        language: str | None = None) -> str:
+                        language: str | None = None, merged: bool = False) -> str:
     """The proposal the yes answers: the bar the pass is judged against and the correction of the
-    card to match — or, where the role may not move the bar (`keeps`), why it stays."""
+    card to match — or, where the role may not move the bar (`keeps`), why it stays. `merged`: the
+    change is already in and the pass is a new one (#448 slice 4)."""
     count = (_pick(_ADJUST_COUNT, language).format(n=pass_number, of=passes)
              if pass_number is not None and passes is not None else "")
     number = str(number).lstrip("#")
     if keeps:
-        return _pick(_ADJUST_CONFIRM_KEEPS, language).format(
+        return _pick(_ADJUST_CONFIRM_MERGED_KEEPS if merged else _ADJUST_CONFIRM_KEEPS,
+                     language).format(
             number=number, count=count, instruction=_quoted(instruction),
             keeps=_pick(_ADJUST_KEEPS[keeps], language).format(number=number))
-    return _pick(_ADJUST_CONFIRM, language).format(
+    return _pick(_ADJUST_CONFIRM_MERGED if merged else _ADJUST_CONFIRM, language).format(
         number=number, count=count, instruction=_quoted(instruction),
         criteria="\n".join(f"- {c}" for c in criteria))
 
@@ -3735,6 +3786,59 @@ def staged_for_you(*, ref: str, title: str = "", where: str = "", language: str 
     middle = (_pick(_STAGED_TRY, language).format(where=where) if where
               else _pick(_STAGED_NOWHERE, language))
     said = "\n\n".join([head, middle, _pick(_STAGED_ASK, language)])
+    return said[0].upper() + said[1:]
+
+
+# ── their yes, at the last gate (#448 slice 4) ──────────────────────────────────────────────────
+#
+# THE REQUESTER SAID IT IS RIGHT, AND THE PROJECT DID NOT LET THEIR WORD RELEASE IT
+# (`Project.release_by_requester`, off by default). Their yes is recorded, the room is told once,
+# and both sentences say who puts it in front of everyone — a product admin — rather than leaving
+# a person who said "funcionou" to wonder why nothing happened. NO PIPELINE VOCABULARY, the rule
+# of `staged_for_you` above; "funcionou"/"it worked" is the sentence an admin types, so it is named.
+
+_SAID_RIGHT = {
+    "pt-BR": ("anotado — você experimentou o #{ref} e disse que está certo, e isso fica "
+              "registrado. Colocar na frente de todo mundo que usa o produto é com um "
+              "administrador do produto: {room}"),
+    "en": ("noted — you tried #{ref} and said it is right, and that is recorded. Putting it in "
+           "front of everyone who uses the product is for a product admin to do: {room}"),
+}
+_SAID_RIGHT_ROOM = {
+    "pt-BR": {"told": "avisei a sala do produto que você disse que está certo.",
+              "untold": ("não consegui avisar a sala do produto agora, então diga a um deles que "
+                         "você já experimentou.")},
+    "en": {"told": "I have told the product's room that you say it is right.",
+           "untold": ("I could not reach the product's room just now, so tell one of them you "
+                      "have tried it.")},
+}
+_TRIED_AND_RIGHT = {
+    "pt-BR": ("{sig}{card}: {who} experimentou{at} e diz que está certo. Um administrador do "
+              "produto coloca na frente de todos dizendo que funcionou."),
+    "en": ("{sig}{card}: {who} tried it{at} and says it is right. A product admin puts it in "
+           "front of everyone by saying it worked."),
+}
+_TRIED_WHO = {"pt-BR": "quem pediu", "en": "the person who asked for it"}
+_TRIED_AT = {"pt-BR": " em {where}", "en": " at {where}"}
+
+
+def requester_said_right(*, ref: str, told: bool, language: str | None = None) -> str:
+    """What the card's requester reads when their "it worked" was recorded and did not release it:
+    that it was recorded, who puts it in front of everyone, and whether the room knows."""
+    room = _pick(_SAID_RIGHT_ROOM, language)["told" if told else "untold"]
+    return _pick(_SAID_RIGHT, language).format(ref=str(ref).lstrip("#"), room=room)
+
+
+def tried_and_right(*, ref: str, title: str = "", who: str = "", where: str = "",
+                    language: str | None = None, agent_name: str = "") -> str:
+    """The room's line: the person who asked for the card tried it and says it is right, and a
+    product admin's "it worked" puts it in front of everyone — said once per card and run.
+    `who` is a name a person reads, or "" for "the person who asked for it"."""
+    where = str(where or "").strip()
+    said = _pick(_TRIED_AND_RIGHT, language).format(
+        sig=_sig(agent_name), card=_card(ref, title, language),
+        who=str(who or "").strip() or _pick(_TRIED_WHO, language),
+        at=_pick(_TRIED_AT, language).format(where=where) if where else "")
     return said[0].upper() + said[1:]
 
 

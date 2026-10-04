@@ -25,9 +25,14 @@ the board, and the release itself (`release.release`, which signals the engine):
   · a verdict that counts closes every copy, from either side, and the round asks nothing again
     while either is open; a post that did not land opens nothing.
 
-WHAT IS NOT DECIDED HERE, AND IS PINNED AS IT STANDS: who may put it in front of everyone. The
-requester's own "it works" still reaches the gate that lists the product's admins (`may_act`), and
-is refused there like anybody's; that is the who-may decision of #448 slice 4, pending.
+WHO PUTS IT IN FRONT OF EVERYONE (#448 slice 4, decided by the product owner's delegate). The
+requester's own "it works" was refused at the gate that lists the product's admins, like a
+stranger's. Now it is the input the last gate waits for, and the project says what it does
+(`Project.release_by_requester`, the operator's, off by default): off, it is RECORDED — their copy
+closes as `worked`, the room's stays open, the room is told once that they say it is right, and
+they hear who puts it live; on, it releases as an admin's does. An admin's release after their yes
+says so in the record it leaves. Proven on a LOCAL board, where the card records who asked for it
+(`ProductModule.asked_for`), with the real record of what was told.
 """
 
 from __future__ import annotations
@@ -80,6 +85,40 @@ def project(monkeypatch, tmp_path):
 
 
 @pytest.fixture
+def card_of_theirs(monkeypatch, tmp_path):
+    """`make(release_by_requester)` → `(project, card)`: the deployment above, on a LOCAL board
+    where the card records who asked for it — what `ProductModule.asked_for` reads, so the
+    requester is the card's own and not a name the test asserts (#448 slice 4)."""
+    from openfactory.adapters.board_setup.local import LocalBoardSetup
+    from openfactory.adapters.tracker.registry import build_tracker
+    from openfactory.contracts.product import ProductConfig
+    from openfactory.contracts.project import Project, ProviderRef
+    from openfactory.product.board import forget_board
+    from openfactory.registry import ProjectRegistry
+
+    def make(release_by_requester: bool):
+        monkeypatch.setenv("OPENFACTORY_REGISTRY", str(tmp_path / "registry.yaml"))
+        monkeypatch.setenv("OPENFACTORY_LOG_DIR", str(tmp_path / "logs"))
+        monkeypatch.setenv("OPENFACTORY_METRICS_SINK", "sqlite")
+        monkeypatch.setenv("OPENFACTORY_METRICS_DB", str(tmp_path / "metrics.db"))
+        monkeypatch.setenv("OPENFACTORY_BOARD_DB", str(tmp_path / "board.db"))
+        ProjectRegistry().add(Project(
+            name=ROOM, repo_path=str(tmp_path), language=LANG,
+            tracker=ProviderRef(kind="local", repo=ROOM, options={}),
+            product=ProductConfig(docs_repo="acme/docs", admins=[ADMIN], agent_name=AGENT),
+            release_by_requester=release_by_requester))
+        project = ProjectRegistry().get(ROOM)
+        LocalBoardSetup().create(project=project, owner="", title=ROOM, token=None)
+        forget_board()
+        ref = build_tracker(project).create_ticket(title=TITLE, body="export the list",
+                                                   requester=ASKER)
+        return project, ref.lstrip("#")
+
+    yield make
+    forget_board()
+
+
+@pytest.fixture
 def told(monkeypatch, tmp_path) -> SimpleNamespace:
     """Every telling the door was handed — the room's question and the requester's own — and the
     real record of what was told, on disk. `refuse` names conversations the door will not take."""
@@ -109,23 +148,32 @@ def _nothing_staged_nothing_recorded(monkeypatch):
     monkeypatch.setattr(transcript, "recent", lambda *a, **k: [])
 
 
+class _Released(list):
+    """`(issue, approver)` for every release the gate let through, and the record each left."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.comments: list[str] = []
+
+
 @pytest.fixture
 def released(monkeypatch) -> list:
     """Every release the gate let through — the act, not its sentence."""
-    calls: list = []
+    calls = _Released()
 
     def _release(project, issue, *, approver, comment=""):
         calls.append((str(issue), approver))
+        calls.comments.append(comment)
         return True, ""
 
     monkeypatch.setattr("openfactory.product.release.release", _release)
     return calls
 
 
-def _asked_in_their_conversation(where: str = THEIRS) -> None:
+def _asked_in_their_conversation(where: str = THEIRS, card: str = CARD) -> None:
     """The card's delivery, as the work was filed from the requester's conversation."""
     loop_store.write(ROOM, [open_loop(DELIVERY, "7", owner=followup.OWNER, ts=T0,
-                                      context={"issues": CARD,
+                                      context={"issues": card,
                                                **followup.delivered_to(where, ASKER)})])
 
 
@@ -302,6 +350,10 @@ def test_both_copies_open_and_each_lives_where_it_was_asked(project, told, engin
     # sent to; the PERSON is a digest, sealed once, as the card's delivery holds it
     assert theirs.context["requester"] == sealed(ASKER) != sealed(sealed(ASKER))
 
+    # THE RUN RIDES ON BOTH (#448 slice 4): what the room is told when they say it is right is
+    # keyed on it (`events.tried_and_right`)
+    assert rooms.context["run"] == theirs.context["run"] == "run-1"
+
     assert agenda.audience(rooms, room=ROOM).room
     mine = agenda.audience(theirs, room=ROOM)
     assert not mine.room and mine.conversation == sealed(owner_of(THEIRS))
@@ -395,24 +447,234 @@ def test_the_requesters_no_closes_both_copies_and_releases_nothing(project, told
     assert _closed() == {ROOM: "did-not-work", THEIRS: "did-not-work"}
 
 
-def test_the_requesters_yes_is_refused_by_the_admin_gate_as_it_stands(project, told, engine,
-                                                                     released):
-    """PENDING THE WHO-MAY DECISION OF #448 SLICE 4. The requester's "funcionou" reaches the release
-    gate — it is no longer lost in a conversation nobody asked in — and the gate still lists only
-    the product's admins (`may_act`), so it is refused and both copies stay open for somebody who
-    may answer. When the product owner decides who may put a change in front of everyone, this is
-    the test that changes."""
-    from openfactory.product.module import unauthorized_message
+# ── 3b. who puts it in front of everyone (#448 slice 4) ─────────────────────────────────────────
 
+def _at_the_last_gate(project, card, engine, told, *, run: str = "run-1") -> None:
+    """The card's change parked at the last gate, asked in the room and of its requester."""
+    _asked_in_their_conversation(card=card)
+    engine.parks(card, run=run)
+    _round(project, engine)
+    told.said.clear()
+
+
+@pytest.mark.parametrize("theirs_counts", [False, True])
+def test_the_requesters_yes_is_the_projects_to_count(card_of_theirs, told, engine, released,
+                                                     theirs_counts):
+    """THE DECISION, BOTH WAYS. Off (the default): their yes is recorded — their copy closes as
+    `worked`, the room's stays open for an admin, the room is told, and they hear who puts it live.
+    On: their yes releases it, as an admin's does, and says whose it was in the release's record."""
+    project, card = card_of_theirs(theirs_counts)
+    _at_the_last_gate(project, card, engine, told)
+
+    settled = _answer(project, "funcionou", who=ASKER, where=THEIRS)
+
+    if theirs_counts:
+        assert released == [(card, ASKER)]
+        assert released.comments == [voice.engine_said("released_by_requester", language=LANG)]
+        assert _releases() == [] and _closed() == {ROOM: "worked", THEIRS: "worked"}
+        assert told.said == [], "the room was told to release what is already going out"
+        assert settled.reply == f"{AGENT}: " + voice.engine_said("releasing", language=LANG)
+        return
+    assert released == [], "the requester's word released it where the project does not let it"
+    assert [x.about for x in _releases()] == [ROOM], "the room's question went with their yes"
+    assert _closed() == {THEIRS: "worked"}, "their yes was not recorded"
+    [room] = told.said
+    assert room["conversation"] == ROOM
+    assert room["text"] == voice.tried_and_right(ref=card, title=TITLE, where=URL, language=LANG,
+                                                 agent_name=AGENT)
+    assert settled.reply == f"{AGENT}: " + voice.requester_said_right(ref=card, told=True,
+                                                                      language=LANG)
+
+
+def test_the_room_is_told_once_and_their_second_yes_is_answered_the_same(
+        card_of_theirs, told, engine, released):
+    project, card = card_of_theirs(False)
+    _at_the_last_gate(project, card, engine, told)
+
+    first = _answer(project, "funcionou", who=ASKER, where=THEIRS)
+    second = _answer(project, "funcionou", who=ASKER, where=THEIRS)
+
+    assert [t["conversation"] for t in told.said] == [ROOM], "the room was told twice"
+    assert second.reply == first.reply, "the second yes was told the room does not know"
+    assert released == [] and [x.about for x in _releases()] == [ROOM]
+
+
+def test_an_admins_release_after_their_yes_records_that_they_said_it_was_right(
+        card_of_theirs, told, engine, released):
+    project, card = card_of_theirs(False)
+    _at_the_last_gate(project, card, engine, told)
+    _answer(project, "funcionou", who=ASKER, where=THEIRS)
+
+    _answer(project, "funcionou", who=ADMIN, where=ROOM)
+
+    assert released == [(card, ADMIN)]
+    assert released.comments == [voice.engine_said("released_after_the_requester",
+                                                   language=LANG)]
+    assert _releases() == []
+
+
+def test_an_admins_release_says_the_requester_said_so_only_of_the_asking_they_answered(
+        card_of_theirs, told, engine, released):
+    """Their yes to an EARLIER asking is not a yes to this one: the job ran again, they were not
+    reached this time, and the admin's release is recorded as the admin's alone."""
+    project, card = card_of_theirs(False)
+    _at_the_last_gate(project, card, engine, told)
+    _answer(project, "funcionou", who=ASKER, where=THEIRS)
+    _answer(project, "não funcionou", who=ADMIN, where=ROOM)
+    assert _releases() == []
+    told.refuse = {THEIRS}
+    engine.parks(card, run="run-2")
+    _round(project, engine)
+    assert [x.about for x in _releases()] == [ROOM], "the test did not ask the room alone"
+
+    _answer(project, "funcionou", who=ADMIN, where=ROOM)
+
+    assert released.comments == [voice.engine_said("released_by_client", language=LANG)]
+
+
+def test_an_admins_release_without_their_yes_is_the_admins(card_of_theirs, told, engine,
+                                                           released):
+    project, card = card_of_theirs(False)
+    _at_the_last_gate(project, card, engine, told)
+
+    _answer(project, "funcionou", who=ADMIN, where=ROOM)
+
+    assert released == [(card, ADMIN)]
+    assert released.comments == [voice.engine_said("released_by_client", language=LANG)]
+
+
+def test_somebody_who_neither_asked_nor_may_approve_is_refused_and_nothing_closes(
+        card_of_theirs, told, engine, released):
+    """Even where the requester's word counts: the rule is the CARD's requester, never whoever
+    answers — and never a guest."""
+    from openfactory.product.module import unauthorized_message
+    from openfactory.product.speaker import GUEST
+
+    project, card = card_of_theirs(True)
+    _at_the_last_gate(project, card, engine, told)
+
+    for who in ("somebody-else-42", GUEST):
+        settled = _answer(project, "funcionou", who=who, where=ROOM)
+        assert settled.reply == unauthorized_message(project), who
+    assert released == [] and len(_releases()) == 2 and told.said == []
+
+
+def test_the_room_hears_their_name_when_the_people_store_knows_it(card_of_theirs, told, engine,
+                                                                  released):
+    from openfactory.identity.people import PASSWORD_MIN_CHARS, PeopleStore
+
+    project, card = card_of_theirs(False)
+    store = PeopleStore()
+    token, _ = store.invite(ASKER, by=ADMIN)
+    assert not isinstance(store.register(token=token, display="Ana Souza",
+                                         password="x" * PASSWORD_MIN_CHARS), str)
+    _at_the_last_gate(project, card, engine, told)
+
+    _answer(project, "funcionou", who=ASKER, where=THEIRS)
+
+    [room] = told.said
+    assert room["text"] == voice.tried_and_right(ref=card, title=TITLE, who="Ana Souza",
+                                                 where=URL, language=LANG, agent_name=AGENT)
+
+
+def test_an_id_is_never_said_as_a_name():
+    from openfactory.product.engine import _name_of
+
+    assert _name_of("nobody-registered") == ""
+
+
+def test_a_person_registered_with_no_name_is_not_named_by_their_id(card_of_theirs):
+    """`register` keeps the id as the display when none was chosen — an identity provider's key,
+    which the room is never handed as a name."""
+    from openfactory.identity.people import PASSWORD_MIN_CHARS, PeopleStore
+    from openfactory.product.engine import _name_of
+
+    card_of_theirs(False)
+    store = PeopleStore()
+    token, _ = store.invite(ASKER, by=ADMIN)
+    store.register(token=token, display="", password="x" * PASSWORD_MIN_CHARS)
+    assert PeopleStore().snapshot().people[ASKER].display == ASKER
+    assert _name_of(ASKER) == ""
+
+
+def test_the_room_is_told_once_per_run_and_again_for_a_new_one(project, told):
+    assert events.tried_and_right(project, card=CARD, run="run-1", where=URL)
+    assert events.tried_and_right(project, card=CARD, run="run-1", where=URL), (
+        "told once already, and the room was said not to know")
+    assert events.tried_and_right(project, card=CARD, run="run-2", where=URL)
+    assert [t["conversation"] for t in told.said] == [ROOM, ROOM]
+    told.refuse = {ROOM}
+    assert not events.tried_and_right(project, card=CARD, run="run-3", where=URL), (
+        "a telling the door did not take was reported as known")
+
+
+def test_a_not_yet_that_could_be_either_of_two_closes_nothing_and_asks_which(project, told,
+                                                                           engine, released):
+    """A "não funcionou" closes the question it lands on and sends that card back for another
+    pass — on a guess, the wrong card would be rebuilt."""
+    from openfactory.product.engine import _waiting_release_refs
+
+    _asked_in_their_conversation()
+    engine.parks(CARD, run="run-1")
+    engine.parks("501", run="run-9")
+    _round(project, engine)
+
+    settled = _answer(project, "não funcionou", who=ADMIN, where=ROOM)
+
+    assert settled.not_yet == "", "a pass was asked for on a guess"
+    assert len(_releases()) == 3, "a question was closed on a guess"
+    listed = ", ".join(f"#{r}" for r in _waiting_release_refs(project))
+    assert settled.reply == f"{AGENT}: " + voice.engine_said(
+        "not_yet_ambiguous", language=LANG, which=f" ({listed})")
+
+
+def test_a_not_yet_names_the_card_for_another_pass_and_a_yes_names_none(project, told, engine,
+                                                                       released):
     _asked_in_their_conversation()
     engine.parks(CARD, run="run-1")
     _round(project, engine)
 
-    settled = _answer(project, "funcionou", who=ASKER, where=THEIRS)
+    assert _answer(project, "funcionou", who=ADMIN, where=ROOM).not_yet == ""
+    engine.parks(CARD, run="run-2")
+    _round(project, engine)
+    assert _answer(project, "não funcionou", who=ASKER, where=THEIRS).not_yet == CARD
 
-    assert settled.reply == unauthorized_message(project)
-    assert released == []
-    assert len(_releases()) == 2
+
+@pytest.mark.parametrize("language", ["en", "pt-BR"])
+def test_what_they_and_the_room_read_has_no_pipeline_vocabulary(language):
+    said = [voice.requester_said_right(ref=CARD, told=told, language=language)
+            for told in (True, False)]
+    said += [voice.tried_and_right(ref=CARD, title=TITLE, who=who, where=where,
+                                   language=language, agent_name=AGENT)
+             for who in ("", "Ana Souza") for where in (URL, "")]
+    for text in said:
+        prose = text.replace(URL, "«the address»").lower()
+        assert not voice.jargon_in(prose), voice.jargon_in(prose)
+        for word in ("staging", "deploy", "release", "produção", "production", "pipeline"):
+            assert word not in prose, f"{word!r} reached a person: {text}"
+    assert "admin" in said[0].lower()
+    assert (URL in said[2]) and (URL not in said[3]), "the address was dropped, or one implied"
+    # NO ADDRESS IS NO "AT": the sentence changes, never a preposition left hanging
+    nowhere = {"en": " tried it and says it is right", "pt-BR": " experimentou e diz que"}
+    assert nowhere[language] in said[3], said[3]
+    assert "Ana Souza" in said[4]
+
+
+def test_the_requesters_yes_is_a_known_event_told_by_the_settling_stage():
+    from pathlib import Path
+
+    assert events.TRIED in events.KINDS
+    assert events.PRODUCERS[events.TRIED] == "openfactory/product/engine.py::_the_requesters_yes"
+    source = (Path(__file__).resolve().parent.parent / "openfactory/product/engine.py").read_text()
+    start = source.index("def _the_requesters_yes(")
+    assert "events.tried_and_right(" in source[start:source.index("\ndef ", start)]
+
+
+def test_the_flag_is_the_operators_and_off_by_default():
+    from openfactory.contracts.project import Project
+
+    assert Project(name="a", repo_path=".").release_by_requester is False
+    assert Project(name="a", repo_path=".", release_by_requester=True).release_by_requester
 
 
 # ── 4. the round asks once, and only what landed ─────────────────────────────────────────────────

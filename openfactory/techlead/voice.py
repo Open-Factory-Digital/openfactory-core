@@ -393,6 +393,12 @@ NARRATION: dict[str, dict[str, str]] = {
               "Nothing shipped. Re-run the promotion when somebody can approve it.",
         "pt-BR": "⏰ #{issue}: a janela de aprovação de produção ({days}d) passou sem resposta. "
                  "Nada foi publicado. Rode a promoção de novo quando alguém puder aprovar."},
+    "prod.another-change": {
+        "en": "↩️ #{issue} was tried before production and is not right yet — nothing was "
+              "released, and it goes back as a new change from the base (pass {n} of {of})",
+        "pt-BR": "↩️ #{issue} foi experimentado antes da produção e ainda não está certo — nada "
+                 "foi publicado, e ele volta como uma mudança nova a partir da base (passada {n} "
+                 "de {of})"},
     "prod.released": {
         "en": "#{issue} released to production",
         "pt-BR": "#{issue} publicado em produção"},
