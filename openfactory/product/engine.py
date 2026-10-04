@@ -73,7 +73,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from openfactory.contracts.refs import canonical_ref
+from openfactory.contracts.refs import canonical_ref, ref_label
 from openfactory.product import progress as _progress
 from openfactory.product.confirm import (
     _breakdown_reply,
@@ -2164,7 +2164,7 @@ def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, l
         # reply no code path could read — an unfollowable instruction from the platform's own
         # mouth.
         listed = _waiting_release_refs(project)
-        which = f" ({', '.join(f'#{r}' for r in listed)})" if listed else ""
+        which = f" ({', '.join(ref_label(r) for r in listed)})" if listed else ""
         return head + engine_said("release_ambiguous", language=lang, which=which)
     if not may_act(project, user, via=via):
         # THE QUESTION STAYS OPEN FOR SOMEBODY WHO MAY ANSWER IT (#273). Nothing has closed the
