@@ -340,12 +340,12 @@ def test_a_card_filed_on_jira_is_said_to_be_in_the_boards_own_backlog(site, jira
     said = _confirm_ticket(project, {"title": "Exportar CSV", "described": "o relatório",
                                      "reported_by": ANA}, module=module, user=ANA, lang="pt-BR")
 
-    assert f"Fica no {PENDING} até o time" in said and "Backlog" not in said, said
+    assert f"Fica na coluna {PENDING} até o time" in said and "Backlog" not in said, said
     assert site.issues["DAR-1"]["status"] == PENDING
 
 
 @pytest.mark.parametrize("lang, sentence", [
-    ("pt-BR", f"Está no {PENDING} — começar a trabalhar nela"),
+    ("pt-BR", f"Está na coluna {PENDING} — começar a trabalhar nela"),
     ("en", f"It is in the {PENDING} — starting work on it"),
 ])
 def test_a_breakdown_says_the_boards_own_backlog_in_either_door(site, jira, lang, sentence):
@@ -377,7 +377,7 @@ def test_the_cards_opened_for_a_requirement_are_said_to_be_in_the_boards_backlog
 
     said, cards = _the_official_cards(opened, 7, ANA, project, "pt-BR", "Escrito.")
 
-    assert cards == ["DAR-1"] and f"no {PENDING}, ainda **sem aceite**" in said, said
+    assert cards == ["DAR-1"] and f"na coluna {PENDING}, ainda **sem aceite**" in said, said
 
 
 def test_a_handback_comment_names_the_boards_backlog_and_queue(site, jira):
@@ -390,7 +390,7 @@ def test_a_handback_comment_names_the_boards_backlog_and_queue(site, jira):
     [decision] = review([verdict], may_act=True, language="pt-BR",
                         columns=module.board_words()).decisions
 
-    assert f"Devolvi para o {PENDING}. Promover para {TODO}" in decision.comment
+    assert f"Devolvi para a coluna {PENDING}. Promover para a coluna {TODO}" in decision.comment
 
 
 def test_the_role_reviews_what_is_parked_in_the_boards_own_words(site, jira):
@@ -404,7 +404,7 @@ def test_the_role_reviews_what_is_parked_in_the_boards_own_words(site, jira):
     found, error = module.review_needs_action()
 
     assert error == "" and found.decisions, error
-    assert f"Promover para {TODO}" in found.decisions[0].comment
+    assert f"Promover para a coluna {TODO}" in found.decisions[0].comment
 
 
 def test_a_refusal_names_the_queue_as_the_board_calls_it(site, jira, tmp_path):
@@ -416,14 +416,14 @@ def test_a_refusal_names_the_queue_as_the_board_calls_it(site, jira, tmp_path):
 
     done = transition(project, "DAR-1", "discarded", by=ANA, tracker=tracker, board=board)
 
-    assert done.refused and f"em {TODO}, esperando a fábrica" in done.refused, done.refused
+    assert done.refused and f"na coluna {TODO}, esperando a fábrica" in done.refused, done.refused
 
 
 def test_a_sentence_with_no_board_to_ask_says_the_platforms_words():
     from openfactory.product import voice
 
-    assert "Fica no Backlog até" in voice.ticket_filed(ref="1", language="pt-BR")
-    assert "em TO-DO, esperando" in voice.card_refused("discarded", state="todo", ref="1",
+    assert "Fica na coluna Backlog até" in voice.ticket_filed(ref="1", language="pt-BR")
+    assert "na coluna TO-DO, esperando" in voice.card_refused("discarded", state="todo", ref="1",
                                                        language="pt-BR")
 
 

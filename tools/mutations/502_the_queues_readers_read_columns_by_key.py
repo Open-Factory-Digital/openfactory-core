@@ -127,18 +127,20 @@ MUTATIONS = [
      '    waiting = [t for t in tickets if t.column == "Needs Action" and t.state == "open"]\n'),
 
     # ── 3. the sentences name the board's own columns ───────────────────────────────────────────
+    # re-pinned 2026-10-04: "na coluna {backlog}" (review of #507)
     ("a filed card is said to stay in the platform's `Backlog`", VOICE,
-     '    "pt-BR": "Aberto: {where}. Fica no {backlog} até o time',
-     '    "pt-BR": "Aberto: {where}. Fica no Backlog até o time'),
+     '    "pt-BR": "Aberto: {where}. Fica na coluna {backlog} até o time',
+     '    "pt-BR": "Aberto: {where}. Fica na coluna Backlog até o time'),
 
     ("the ticket reply is handed no name for the backlog", CONFIRM,
      '                     just_asked=bool(getattr(result, "just_asked", False)),\n'
      '                     backlog=_board_word(module, "backlog")),',
      '                     just_asked=bool(getattr(result, "just_asked", False))),'),
 
+    # re-pinned 2026-10-04: "na coluna {backlog}" (review of #507)
     ("a breakdown is said to be in the platform's `Backlog` (pt-BR)", CONFIRM,
-     '"in_backlog": ("\\n\\n{where} no {backlog} — ',
-     '"in_backlog": ("\\n\\n{where} no Backlog — '),
+     '"in_backlog": ("\\n\\n{where} na coluna {backlog} — ',
+     '"in_backlog": ("\\n\\n{where} na coluna Backlog — '),
 
     ("a breakdown is said to be in the platform's `Backlog` (en)", CONFIRM,
      '"in_backlog": ("\\n\\n{where} in the {backlog} — ',

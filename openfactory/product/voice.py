@@ -229,10 +229,14 @@ _HANDBACK_CAUSE = {
     "environment": {"pt-BR": "de ambiente", "en": "environmental"},
 }
 #: `{backlog}` and `{queue}` are the columns AS THE CARD'S BOARD CALLS THEM (#502): the person
-#: reading this looks for them on their own board — see `column_said`.
+#: reading this looks for them on their own board — see `column_said`. In Portuguese the name is
+#: always introduced as "a coluna …": a preposition fused with an article (`no`, `na`, `nos`) has
+#: to agree with a name the deployment chose, and "no Pendências" is wrong where "na coluna
+#: Pendências" is right for every name (review of #507).
 _FIX_COMMENT = {
     "pt-BR": ("{sig} O impedimento aqui é do requisito, não da execução{why}.\n\n{fix}Devolvi "
-              "para o {backlog}. Promover para {queue} continua sendo decisão de uma pessoa."),
+              "para a coluna {backlog}. Promover para a coluna {queue} continua sendo decisão de "
+              "uma pessoa."),
     "en": ("{sig} The impediment here is the requirement, not the execution{why}.\n\n{fix}I have "
            "put it back in the {backlog}. Promoting it to {queue} is still a person's call."),
 }
@@ -699,9 +703,9 @@ def confirmation_request(*, title: str, must_be_true: list[str],
 #: THE CARD BEFORE THE PROMISE (ADR-0047 §2): what the requester reads right after the first yes.
 #: The second question is asked here, on the thing that will be worked.
 _CARDS_OPENED_AWAITING = {
-    "pt-BR": ("Abri {cards} para esse requisito, no {backlog}, ainda **sem aceite**. Você confirma "
-              "que é isso que o produto promete? Se sim, o aceite fica registrado no cartão, em "
-              "seu nome — e só aí vira promessa. **Nada está sendo construído ainda**."),
+    "pt-BR": ("Abri {cards} para esse requisito, na coluna {backlog}, ainda **sem aceite**. Você "
+              "confirma que é isso que o produto promete? Se sim, o aceite fica registrado no "
+              "cartão, em seu nome — e só aí vira promessa. **Nada está sendo construído ainda**."),
     "en": ("I opened {cards} for this requirement, in the {backlog}, **not yet accepted**. Do you "
            "confirm this is what the product promises? If so, the acceptance is recorded on the "
            "card in your name — and only then does it become a promise. "
@@ -1109,7 +1113,8 @@ _CARD_NOT_DRAFTED = {
 #: HONEST about the gate, like `_DEFECT_FILED`: a card lands in Backlog, and nothing leaves Backlog
 #: without a person promoting it (ADR-0019 §5) — starting work spends money.
 _TICKET_FILED = {
-    "pt-BR": "Aberto: {where}. Fica no {backlog} até o time aprovar a próxima leva — e quando "
+    "pt-BR": "Aberto: {where}. Fica na coluna {backlog} até o time aprovar a próxima leva — e "
+             "quando "
              "sair, eu aviso aqui.",
     "en": "Opened: {where}. It stays in the {backlog} until the team approves the next batch — "
           "and when it ships, I will say so here.",
@@ -3362,7 +3367,7 @@ def card_moved(notice: str, *, ref: str, title: str = "", removed: bool = False,
 
 #: Why the door refused: where the card is, and what cannot happen to it from there (D2).
 _CARD_WHERE = {
-    "pt-BR": {"backlog": "no backlog", "todo": "em {queue}, esperando a fábrica",
+    "pt-BR": {"backlog": "no backlog", "todo": "na coluna {queue}, esperando a fábrica",
               "running": "com a fábrica trabalhando nele", "waiting_on_a_person":
               "esperando uma pessoa", "merged": "já mergeado", "staged": "em um estágio",
               "delivered": "entregue", "closed": "fechado", "removed": "fora do quadro",

@@ -61,8 +61,8 @@ _SAID = {
         "already_split": ("O requisito {number} já estava dividido em **{count}** {noun}{tail} — "
                           "não criei nada novo e não mudei nada de lugar."),
         "it_is": ("Está", "Estão"), "is": ("está", "estão"),
-        "in_backlog": ("\n\n{where} no {backlog} — começar a trabalhar {them} continua sendo "
-                       "decisão de uma pessoa."),
+        "in_backlog": ("\n\n{where} na coluna {backlog} — começar a trabalhar {them} continua "
+                       "sendo decisão de uma pessoa."),
         "them": ("nela", "nelas"),
         "existed": ("\n\n{refs} já {existed} de antes — não criei de novo, e {stays} onde "
                     "{was}."),
