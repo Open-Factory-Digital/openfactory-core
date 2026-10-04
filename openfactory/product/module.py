@@ -82,7 +82,7 @@ from pathlib import Path
 
 from openfactory.adapters.board.base import stage_column
 from openfactory.contracts.document import INTERNAL
-from openfactory.contracts.refs import canonical_ref, ref_sort_key
+from openfactory.contracts.refs import canonical_ref, ref_label, ref_sort_key
 from openfactory.ops.impediment import PRODUCT_BOARD_UNREADABLE as _IMP_BOARD
 from openfactory.ops.impediment import PRODUCT_CANNOT_WRITE as _IMP_WRITE
 from openfactory.ops.impediment import PRODUCT_CORPUS_UNREADABLE as _IMP_CORPUS
@@ -730,9 +730,9 @@ _FILING = {
                             "time foi avisado e posiciona."),
         "defect_unplaced": ("registrei o problema, mas ainda não consegui posicionar o cartão no "
                             "quadro — o time foi avisado e posiciona."),
-        "queue_retried": ("não consegui colocar o #{number} na fila agora — ficou anotado, e eu "
+        "queue_retried": ("não consegui colocar o {number} na fila agora — ficou anotado, e eu "
                           "tento de novo dentro de uma hora."),
-        "queue_refused": ("não consegui colocar o #{number} na fila agora. O time foi avisado e "
+        "queue_refused": ("não consegui colocar o {number} na fila agora. O time foi avisado e "
                           "resolve."),
     },
     "en": {
@@ -751,9 +751,9 @@ _FILING = {
                             "team has been told and will place it."),
         "defect_unplaced": ("I registered the problem, but could not place the card on the board "
                             "yet — the team has been told and will place it."),
-        "queue_retried": ("I could not put #{number} in the queue just now — it is noted, and I "
+        "queue_retried": ("I could not put {number} in the queue just now — it is noted, and I "
                           "try again within the hour."),
-        "queue_refused": ("I could not put #{number} in the queue just now. The team has been "
+        "queue_refused": ("I could not put {number} in the queue just now. The team has been "
                           "told and will sort it out."),
     },
 }
@@ -4012,11 +4012,12 @@ class ProductModule:
                     out.append(WriteResult(ok=True, ref=f"#{number}"))
                     continue
                 # A PLACEMENT THE BOARD REFUSED IS A FAILED EFFECT OF A RECORDED TRANSITION: the
-                # hourly round applies it again, and the sentence says so rather than "no"
+                # hourly round applies it again, and the sentence says so rather than "no" — naming
+                # the card as its tracker spells it (#491): `DAR-10` on Jira, never `#DAR-10`
                 said = _pick(_FILING, getattr(self.project, "language", None))
                 out.append(_could_not(
                     said["queue_retried" if moved.recorded else "queue_refused"].format(
-                        number=str(number).lstrip("#")),
+                        number=ref_label(number)),
                     act="queue approved work", cause=moved.outcome("place"), ref=f"#{number}"))
             except Exception as exc:  # noqa: BLE001 — one failure must not lose the rest
                 # A CLIENT READS THIS ONE. Both branches of the reply speak it — the whole-failure

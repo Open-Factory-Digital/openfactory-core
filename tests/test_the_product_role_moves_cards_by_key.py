@@ -24,7 +24,8 @@ is the money gate, and it stays closed — and each board names the key from the
   · the REAL `AzureBoardsBoard` with nothing renamed, whose own default says `To Do`;
   · the REAL local board, default and renamed, which must keep landing where it did;
   · the gate itself: the product role names a column only through its two keys, and only
-    `promote` names the queue;
+    `promote` names the queue — through the card's door now (ADR-0055, #414), which places the
+    card by the name the role asked the board for and by no other;
   · and the seam, which is the ONE inverse of `stage_key`: the row's map, then a real column of the
     board, then the platform's word (review of #505/#506).
 """
@@ -90,6 +91,16 @@ class _Site:
             key = f"{KEY}-{len(self.status) + 1}"
             self.status[key] = OPENED
             return _Answer({"id": str(10000 + len(self.status)), "key": key})
+        # THE CARD'S DOOR READS THE CARD, AND A PROMOTION READS THE BOARD (ADR-0055, #414)
+        read = re.fullmatch(rf"issue/({KEY}-\d+)", path)
+        if read and method == "GET":
+            return _Answer({"key": read.group(1), "fields": {
+                "summary": "Exportar CSV", "description": None, "reporter": None,
+                "status": {"name": self.status[read.group(1)], "statusCategory": {"key": "new"}}}})
+        if method == "GET" and path.startswith("search/jql?"):
+            return _Answer({"isLast": True, "issues": [
+                {"key": key, "fields": {"status": {"name": status}}}
+                for key, status in self.status.items()]})
         moved = re.fullmatch(rf"issue/({KEY}-\d+)/transitions", path)
         if moved and method == "GET":
             return _Answer({"transitions": [
@@ -251,10 +262,14 @@ class _Gh:
 
 
 class _Issues:
-    """A tracker whose refs are `#N` — consulted for the card's URL, and for a filing."""
+    """A tracker whose refs are `#N` — consulted for the card's URL, for a filing, and by the card's
+    door, which reads the card before it moves it (ADR-0055, #414)."""
 
     def find_ticket(self, *, title):
         return None
+
+    def get_ticket(self, ref):
+        return SimpleNamespace(state="open", title="Exportar CSV", raw="")
 
     def create_ticket(self, *, title, body, **_):
         return "#12"
@@ -287,6 +302,8 @@ def github(tmp_path, monkeypatch):
     assert isinstance(board, gp.GitHubProjectBoard)
     # the item lookup scans the whole board; the card is on it, under its item id
     monkeypatch.setattr(board, "_item_id", lambda number, url, repo="": f"PVTI_{number}")
+    # and where the card's door reads it before a promotion (#414): in the client's own backlog
+    monkeypatch.setattr(board, "columns", lambda: {"12": PENDING})
     tracker = _Issues()
     return _module(project, tmp_path, tracker), tracker, board, gh
 
@@ -338,8 +355,13 @@ def test_a_card_queued_on_an_azure_board_nobody_renamed_lands_in_its_own_to_do(t
         {"name": "New", "stateMappings": {"Issue": "New"}},
         {"name": "To Do", "stateMappings": {"Issue": "To Do"}},
         {"name": "Done", "stateMappings": {"Issue": "Done"}}])
+    # the board as the card's door reads it before a promotion (#414): the card on none of its
+    # columns yet — what this case holds is the name the queue is written by
+    monkeypatch.setattr(board, "columns", lambda: {})
     project = Project(name="acme", repo_path=str(tmp_path), language="pt-BR", product=_product())
-    tracker = SimpleNamespace(ticket_url=lambda ref: f"https://dev.azure.com/acme/_workitems/{ref}")
+    tracker = SimpleNamespace(ticket_url=lambda ref: f"https://dev.azure.com/acme/_workitems/{ref}",
+                              get_ticket=lambda ref: SimpleNamespace(state="open", title="x",
+                                                                     raw=""))
 
     [only] = _module(project, tmp_path, tracker).promote(["412"], actor=ANA, board=board)
 
@@ -548,6 +570,14 @@ class _Naming:
         self.asked.append(key)
         return f"<{key}>"
 
+    def stage_key(self, column):
+        return column.strip("<>")
+
+    def columns(self):
+        """Where the card's door reads the card before a promotion (#414): in this board's own
+        backlog."""
+        return {"12": "<backlog>"}
+
     def add_item(self, *, issue_url):
         return None
 
@@ -587,45 +617,124 @@ def _assigned(fn: ast.AST) -> dict[str, ast.AST]:
             for t in node.targets if isinstance(t, ast.Name)}
 
 
+def _key(node: ast.AST) -> str:
+    """`FILING_KEY`/`QUEUE_KEY` when `node` is `self.<that>`, else `""`."""
+    if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+            and node.value.id == "self" and node.attr in ("FILING_KEY", "QUEUE_KEY")):
+        return node.attr
+    return ""
+
+
+def _no_board(node: ast.AST, take) -> str:
+    """`take(node)`, or — for `X if board is not None else ""`, the caller with no board placing
+    nothing (`_board_or_default`) — `take(X)`."""
+    if (isinstance(node, ast.IfExp) and isinstance(node.orelse, ast.Constant)
+            and node.orelse.value == ""):
+        return take(node.body)
+    return take(node)
+
+
 def _gate(call: ast.AST) -> str:
     """The constant a `stage_column(board, self.<X>)` call names, or `""` for anything else."""
     if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
             and call.func.id == "stage_column" and len(call.args) == 2):
         return ""
-    key = call.args[1]
-    if (isinstance(key, ast.Attribute) and isinstance(key.value, ast.Name)
-            and key.value.id == "self" and key.attr in ("FILING_KEY", "QUEUE_KEY")):
-        return key.attr
-    return ""
+    return _key(call.args[1])
+
+
+def _named(arg: ast.AST, bound: dict[str, ast.AST]) -> str:
+    """The gate a column argument comes from — itself, or the name it was bound to."""
+    arg = bound.get(arg.id, arg) if isinstance(arg, ast.Name) else arg
+    return _no_board(arg, _gate)
+
+
+#: What the table places each of the role's door events in (`table.consequences`): a promotion in
+#: the queue, a reorder in the backlog — and a filing in the key its `column` fact names.
+_PLACED_BY = {"PROMOTED": "QUEUE_KEY", "REORDERED": "FILING_KEY"}
 
 
 def test_the_product_role_names_a_column_only_through_its_two_keys():
     """THE MONEY GATE THE CONSTANT EXISTS FOR (ADR-0019 §5). A caller able to name the column is a
     gate one argument wide; so every move in the product role names its column through
     `stage_column(board, self.FILING_KEY | self.QUEUE_KEY)`, and the queue is named in `promote`
-    alone — filing, of any kind, cannot reach the column the poller pulls from."""
+    alone — filing, of any kind, cannot reach the column the poller pulls from.
+
+    THROUGH THE CARD'S DOOR (#414 on #496): filing and queueing place the card by the door's
+    `Place`, so the name reaches the board as the transition's `column_name` fact, not as a
+    `set_column` argument in this module. What is held, in `module.py`:
+
+      · every `set_column(name=…)` and `place_after(column=…)` names a gate (the reorder's rank);
+      · every `transition(…)` that hands a column — `column_name`, or the filing's `column` key —
+        is a placing event (`filed`, `promoted`, `reordered`), and every placing event hands
+        one: `column_name` from a gate, and that gate is the key the table places the event in
+        (the filing's own `column` fact, `self.FILING_KEY`, or `_PLACED_BY`);
+      · `stage_column` is asked for a gate and nothing else;
+      · the queue is named in `promote` alone; the backlog in `_filed_through_the_door` and
+        `reorder`, and the three filing writers file through `_filed_through_the_door` only.
+
+    And the door's two hops after it, so the name the role asked for is the name the board gets:
+    the executor hands a `Place` the `column_name` fact as the port's `name`, and the port's one
+    `set_column` writes that `name`."""
     from openfactory.product.module import ProductModule
 
     assert (ProductModule.FILING_KEY, ProductModule.QUEUE_KEY) == ("backlog", "todo")
     tree = ast.parse(MODULE.read_text(encoding="utf-8"))
     functions = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]
     named: dict[str, set[str]] = {}
+    filers: set[str] = set()
     for fn in functions:
         bound = _assigned(fn)
         for call in ast.walk(fn):
-            if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
-                    and call.func.attr in ("set_column", "place_after")):
+            if not isinstance(call, ast.Call):
                 continue
-            word = "name" if call.func.attr == "set_column" else "column"
-            [arg] = [k.value for k in call.keywords if k.arg == word]
-            gate = _gate(bound.get(arg.id, arg)) if isinstance(arg, ast.Name) else _gate(arg)
-            assert gate, (f"{fn.name}: `{call.func.attr}({word}=…)` names a column that is not "
-                          f"the board's answer for one of the product role's two keys")
-            named.setdefault(gate, set()).add(fn.name)
-        for call in ast.walk(fn):
-            if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) \
-                    and call.func.id == "stage_column":
+            if isinstance(call.func, ast.Attribute) and call.func.attr in ("set_column",
+                                                                           "place_after"):
+                word = "name" if call.func.attr == "set_column" else "column"
+                [arg] = [k.value for k in call.keywords if k.arg == word]
+                gate = _named(arg, bound)
+                assert gate, (f"{fn.name}: `{call.func.attr}({word}=…)` names a column that is "
+                              f"not the board's answer for one of the product role's two keys")
+                named.setdefault(gate, set()).add(fn.name)
+            if isinstance(call.func, ast.Attribute) and call.func.attr == "_filed_through_the_door":
+                filers.add(fn.name)
+            if isinstance(call.func, ast.Name) and call.func.id == "stage_column":
                 assert _gate(call), f"{fn.name}: `stage_column` asked for a key that is not a gate"
+            if not (isinstance(call.func, ast.Name) and call.func.id == "transition"):
+                continue
+            event = call.args[2].attr if isinstance(call.args[2], ast.Attribute) else ""
+            [facts] = [k.value for k in call.keywords if k.arg == "facts"] or [ast.Dict([], [])]
+            assert isinstance(facts, ast.Dict), f"{fn.name}: the door's facts are not read here"
+            said = {k.value: v for k, v in zip(facts.keys, facts.values, strict=True)
+                    if isinstance(k, ast.Constant)}
+            places = event == "FILED" or event in _PLACED_BY
+            assert places or not ({"column", "column_name"} & set(said)), (
+                f"{fn.name}: `{event or 'an event'}` hands the door a column, and places nothing")
+            if not places:
+                continue
+            assert "column_name" in said, f"{fn.name}: `{event}` places a card by no name"
+            gate = _named(said["column_name"], bound)
+            placed_in = (_no_board(said.get("column", ast.Constant("")), _key)
+                         if event == "FILED" else _PLACED_BY[event])
+            assert gate and gate == placed_in, (
+                f"{fn.name}: `{event}` hands the door a name ({gate or 'no gate'}) that is not the "
+                f"board's answer for the key it places the card in ({placed_in or 'none'})")
+            named.setdefault(gate, set()).add(fn.name)
 
     assert named["QUEUE_KEY"] == {"promote"}, named
-    assert named["FILING_KEY"] == {"file_ticket", "file_defect", "_file_one", "reorder"}, named
+    assert named["FILING_KEY"] == {"_filed_through_the_door", "reorder"}, named
+    assert filers == {"file_ticket", "file_defect", "_file_one"}, filers
+
+    executor = ast.parse((ROOT / "openfactory" / "lifecycle" / "executor.py").read_text("utf-8"))
+    [placing] = [c for c in ast.walk(executor) if isinstance(c, ast.Call)
+                 and isinstance(c.func, ast.Attribute) and c.func.attr == "place"]
+    [name] = [k.value for k in placing.keywords if k.arg == "name"]
+    words = {n.value for n in ast.walk(name) if isinstance(n, ast.Constant)}
+    assert words == {"column_name", ""}, "the door places by a name the role did not hand it"
+    ports = ast.parse((ROOT / "openfactory" / "lifecycle" / "ports.py").read_text("utf-8"))
+    writes = [(fn.name, c) for fn in ast.walk(ports) if isinstance(fn, ast.FunctionDef)
+              for c in ast.walk(fn) if isinstance(c, ast.Call)
+              and isinstance(c.func, ast.Attribute) and c.func.attr == "set_column"]
+    assert [fn for fn, _ in writes] == ["place"], writes
+    [(_fn, write)] = writes
+    [arg] = [k.value for k in write.keywords if k.arg == "name"]
+    assert isinstance(arg, ast.Name) and arg.id == "name", "the port writes a name of its own"

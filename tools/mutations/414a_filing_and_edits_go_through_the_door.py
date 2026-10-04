@@ -85,15 +85,15 @@ MUTATIONS = [
      '    parked = event is CardEvent.PROMOTED and stage.key == "needs_action"',
      "    parked = False"),
 
+    # re-pinned 2026-10-04: filing goes through the door (#458) with the board's name (#505)
     ("the product role files a card by writing its column itself again, beside the door",
      MODULE,
-     "            placed = self._filed_through_the_door(str(ref), by=reported_by, "
-     "tracker=tracker,\n"
-     "                                                  board=board)\n"
+     "            placed, column = self._filed_through_the_door(str(ref), by=reported_by,\n"
+     "                                                          tracker=tracker, board=board)\n"
      "            if not placed:\n"
      "                log.warning(\"OPENFACTORY_PRODUCT_TICKET_NOT_PLACED",
-     "            placed = bool(board.set_column(issue=str(number), issue_url=url,\n"
-     "                                           name=self.FILING_COLUMN))\n"
+     "            column = stage_column(board, self.FILING_KEY)\n"
+     "            placed = bool(board.set_column(issue=key, issue_url=url, name=column))\n"
      "            if not placed:\n"
      "                log.warning(\"OPENFACTORY_PRODUCT_TICKET_NOT_PLACED",
      GUARD_TEST),
