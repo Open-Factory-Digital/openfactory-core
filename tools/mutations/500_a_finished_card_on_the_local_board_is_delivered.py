@@ -22,8 +22,12 @@ THE CLAIMS:
   4. **The close says nothing of its own**, and a card the board does not hold is not moved.
   5. **The panel's board shows the recent cards closed as delivered** (`api/app.py::
      _delivered_cards`), in the column the board places them in, else the column THIS board calls
-     `done` (`board/base.py::column_for`) — bounded in count and age, never a card closed as not
-     delivered, and a closed read that failed leaves the open cards standing.
+     `done` (`board/base.py::stage_column`, asked for one that exists) — bounded in count and age,
+     never a card closed as not delivered, and a closed read that failed leaves the open cards
+     standing.
+  6. **That column is one the board HAS** (review of #505/#506, where `column_for` became a layer
+     of `stage_column`): the row's map only when it names a real column, else the first real
+     column that is `done`, else none — never the platform's literal on a board that lacks it.
 
 The guards are `tests/test_a_finished_card_on_the_local_board_is_delivered.py` and
 `tests/test_the_panels_board_shows_the_delivered_cards.py`.
@@ -112,13 +116,15 @@ MUTATIONS = [
 
     ("Done is the platform's literal, so a renamed board's delivered cards land in a column it "
      "does not draw", APP,
-     '            done = column_for(board, "done", names=names) if done is None else done',
-     '            done = "Done"', PANEL_TEST),
+     # re-pinned 2026-10-04: one inverse of stage_key (review of #505/#506)
+     '                done = stage_column(board, "done", existing=True, names=names)',
+     '                done = "Done"', PANEL_TEST),
 
     ("the board's own name for a stage is guessed from the platform's vocabulary instead of asked "
      "of the board", BASE,
-     '    return next((name for name in (names or []) if stage_key(board, name) == key), "")',
-     '    return {"done": "Done"}.get(key, "")', PANEL_TEST),
+     # re-pinned 2026-10-04: one inverse of stage_key (review of #505/#506)
+     '    walked = next((name for name in real if stage_key(board, name) == wanted), "")\n',
+     '    walked = {"done": "Done"}.get(wanted, "")\n', PANEL_TEST),
 
     ("a delivered card is drawn in Done whatever column its board places it in", APP,
      '        column = placed.get(s.ref, "")\n',
@@ -140,4 +146,18 @@ MUTATIONS = [
      "        closed = None",
      '    closed = tracker.list_tickets(state="closed", limit=DELIVERED_SHOWN_AT_MOST)',
      PANEL_TEST),
+
+    # ── 6. a column the board has (review of #505/#506) ────────────────────────────────────────
+    ("a name the row's map declares for `done` is drawn though the board has no such column", BASE,
+     "    if mapped and mapped in real:\n        return mapped\n",
+     "    if mapped:\n        return mapped\n", PANEL_TEST),
+
+    ("the panel asks for Done as a move does, and draws the platform's `Done` on a board without "
+     "one", APP,
+     'stage_column(board, "done", existing=True, names=names)',
+     'stage_column(board, "done", existing=False, names=names)', PANEL_TEST),
+
+    ("a caller that draws is answered by the platform's literal when no column is the stage", BASE,
+     "    if walked or existing:\n        return walked\n",
+     "    if walked:\n        return walked\n", PANEL_TEST),
 ]

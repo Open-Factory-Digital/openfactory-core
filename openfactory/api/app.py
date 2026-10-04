@@ -1828,9 +1828,10 @@ def _delivered_cards(project, board, tracker, *, placed: dict, names: list[str] 
     WHERE: the column the board places the card in, when it places it — a GitHub project keeps its
     closed items, and a delivered issue whose close landed while its move did not is drawn where
     its board says, as everywhere else on this page — and otherwise the column THIS board calls
-    `done` (`board.base.column_for`): the local board places open cards only, and a renamed Done
-    column is the board's own name, never the platform's literal. A board with no such column has
-    nowhere to show delivered work, and shows none.
+    `done` (`board.base.stage_column`, asked for a column that EXISTS): the local board places open
+    cards only, and a renamed Done column is the board's own name, never the platform's literal. A
+    board with no such column has nowhere to show delivered work, and shows none — and a name its
+    map declares for `done` that is not one of its columns is no such column either.
 
     A READ THAT FAILED IS NOT AN UNREADABLE BOARD. The open cards were read, and they are the
     board's answer; this is what is added to it. So `None` here — or a row breaking the port's
@@ -1838,7 +1839,7 @@ def _delivered_cards(project, board, tracker, *, placed: dict, names: list[str] 
     every open card where it is."""
     from datetime import UTC, datetime, timedelta
 
-    from openfactory.adapters.board.base import column_for
+    from openfactory.adapters.board.base import stage_column
     from openfactory.product.triage import Ticket
 
     name = getattr(project, "name", "") or ""
@@ -1863,7 +1864,8 @@ def _delivered_cards(project, board, tracker, *, placed: dict, names: list[str] 
             continue
         column = placed.get(s.ref, "")
         if not column:
-            done = column_for(board, "done", names=names) if done is None else done
+            if done is None:
+                done = stage_column(board, "done", existing=True, names=names)
             column = done
         if column:
             out.append({"ref": s.ref, "column": column, "title": s.title,
