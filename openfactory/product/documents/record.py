@@ -177,6 +177,20 @@ def distillate_path(*, private: bool, digest: str, name: str) -> str:
     return f"{DISTILLATES}/{DIRECT if private else ROOM}/{digest}/{name}"
 
 
+#: Where a span that KEPT NOTHING is marked read (#457, ADR-0053 D4). A HIDDEN tree that mirrors
+#: `conversations/`: ingestion never reads a hidden path as a document — no record, no index item,
+#: no Documents entry (`ingest.documents_in`, `admitted`, `_hidden`) — while `distil.distilled_in`
+#: reads the mark's `until` to advance the cursor, so a span that a model found nothing to keep in
+#: (or whose only role lines were the platform's own) is never distilled again. It is not a
+#: distillate (`distillate_of` reads only `conversations/…`), only the record that it was read.
+MARKED = ".distilled"
+
+
+def span_marker_path(*, private: bool, digest: str, name: str) -> str:
+    """Where one empty span is marked read — `.distilled/<room|direct>/<digest>/`."""
+    return f"{MARKED}/{DIRECT if private else ROOM}/{digest}/{name}"
+
+
 def distillate_of(path: str) -> tuple[bool, str] | None:
     """`(private, conversation digest)` for a distillate's path — None for every other document.
     Read off the path alone, the way the audience's folder is: what a file IS never waits for a

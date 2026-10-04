@@ -36,6 +36,7 @@ delivered` says which, and why.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 from types import SimpleNamespace
 
@@ -139,15 +140,13 @@ def door(monkeypatch):
 
 
 @pytest.fixture
-def done_reads_delivered(monkeypatch, board):
-    """THE ONE READING OF THE BOARD THAT IS STOOD IN. Every hosted row closes a card at Done (#180,
-    #195: `set_state(DONE)` closes the GitHub issue, Jira's and Azure's Done ARE closed), and a
-    closed card is what reads as delivered (`triage.Ticket.delivered`). The local row keeps a Done
-    card open, by design — so on it, measured, no delivery is announced until a person closes the
-    card, whatever this slice does (said in its report). Read here as the hosted rows read it: the
-    real local board's Done column."""
-    monkeypatch.setattr(events, "_delivered_now",
-                        lambda project: {str(r).lstrip("#") for r in board.items_in_status("Done")})
+def done_reads_delivered(board):
+    """NOTHING IS STOOD IN ANY MORE. This slice once read the local board's Done column as
+    delivered, because that row kept a Done card open and no delivery was ever announced on it
+    (filed as #500). #500 is fixed (#506): the local row closes a card at Done as delivered, as
+    every hosted row does, so the real reading (`events._delivered_now`) is the one these tests
+    walk. The fixture stays as the name the tests ask for."""
+    return board
 
 
 def _pen(project, tmp_path, monkeypatch):
@@ -180,9 +179,19 @@ def _asked_for(project, tracker, board, tmp_path, monkeypatch, *, where: str = K
 
 
 def _column(board, ref: str) -> str:
+    """Where the card is: an open card in the column the board lists it in; a card closed as
+    delivered in Done, where the local row closes it since #500 (#506), as the hosted rows do —
+    the board lists open cards only."""
     for name in ("Backlog", "To Do", "In progress", "In review", "Needs Action", "Done"):
         if ref in [str(r).lstrip("#") for r in board.items_in_status(name)]:
             return name
+    from openfactory.adapters.board_db import connect
+
+    with connect() as conn:
+        row = conn.execute("SELECT state, closed_reason, column_key FROM cards WHERE ref = ?",
+                           (int(str(ref).lstrip("#")),)).fetchone()
+    if row is not None and tuple(row) == ("closed", "completed", "done"):
+        return "Done"
     return ""
 
 
@@ -263,11 +272,35 @@ async def _notified(inp: DeployNotifyInput) -> None:
     _LOG.append(("notified", inp.status))
 
 
+#: THE TRACKER AT ITS SLOWEST, for the test that asks for it (`client`, `watch_settled`): a settle
+#: In review that finds the card's watch ALREADY RUNNING is held until the watch has settled the
+#: card. That interleaving is one the engine permits once a watch starts before the job's own
+#: settle; here it is made certain, rather than left to which activity a worker picks up first.
+_SLOW: dict = {}
+
+
 @activity.defn(name="settle_ticket")
 async def _settle(inp: HoldSyncInput) -> str:
     """The REAL settle, on the real local board — recorded on its way past."""
     _LOG.append(("settle", inp.state, inp.note))
-    return await acts.settle_ticket(inp)
+    if _SLOW and inp.state == JobState.MERGED.value and await _watch_running(inp.issue):
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(_SLOW["watch_settled"].wait(), timeout=30)
+    done = await acts.settle_ticket(inp)
+    if _SLOW and inp.state != JobState.MERGED.value:
+        _SLOW["watch_settled"].set()
+    return done
+
+
+async def _watch_running(ref: str) -> bool:
+    from temporalio.client import WorkflowExecutionStatus
+
+    try:
+        desc = await _SLOW["client"].get_workflow_handle(f"openfactory-deploy-{ROOM}-{ref}"
+                                                         ).describe()
+    except Exception:  # noqa: BLE001 — not started: the order this file expects
+        return False
+    return desc.status == WorkflowExecutionStatus.RUNNING
 
 
 @activity.defn(name="record_outcome")
@@ -320,7 +353,7 @@ async def env():
     from temporalio.contrib.pydantic import pydantic_data_converter
     from temporalio.testing import WorkflowEnvironment
 
-    _RUN.clear(), _PROBES.clear()
+    _RUN.clear(), _PROBES.clear(), _SLOW.clear()
     e = await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter)
     try:
         yield e
@@ -406,6 +439,30 @@ async def test_a_watched_deploy_is_the_last_stage_and_the_delivery_waits_for_it_
     assert _column(board, ref) == "Done"
     # …and the watch still spoke where it always spoke
     assert ("notified", "success") in _LOG
+
+
+@pytest.mark.owns_its_engine
+async def test_a_deploy_green_at_the_watchs_first_look_leaves_the_card_done(
+        env, deployment, tracker, board, door, done_reads_delivered, tmp_path, monkeypatch):
+    """THE CARD IS SETTLED IN REVIEW BEFORE ITS WATCH STARTS (#448 slice 5, the review of #503).
+    Two awaits in one workflow happen in the order they are written, and here the order is the
+    claim: a deploy already green at the watch's first look settles the card Done, and a settle In
+    review that came after the watch started would put the delivered card back. The tracker is
+    as slow as it can be (`_SLOW`), so the wrong order loses every time, not when a worker happens
+    to pick the activities that way."""
+    ref = _asked_for(deployment, tracker, board, tmp_path, monkeypatch)
+    _RUN["post_merge_deploy"] = _deploy()
+    _PROBES[:] = [{"status": "success", "run_url": "u/7"}]
+    _SLOW.update(client=env.client, watch_settled=asyncio.Event())
+
+    result, watched, _, _ = await _job(env, ref)
+
+    assert result.state is JobState.MERGED and watched == "success"
+    assert [e for e in _LOG if e[0] == "probe"] == [("probe", "success")], _LOG
+    assert _settled() == [JobState.MERGED.value, JobState.DONE.value], _LOG
+    assert _column(board, ref) == "Done", (
+        "the card went back to In review after its deploy was green — settled after its watch")
+    assert _told().count((KEY, _announced(deployment, ref))) == 1, _told()
 
 
 @pytest.mark.parametrize("probes,status,said", [

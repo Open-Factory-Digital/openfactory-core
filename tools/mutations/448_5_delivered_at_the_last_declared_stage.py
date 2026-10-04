@@ -4,6 +4,8 @@
     on the card, and the watch settles it: Done and announced when green, held for a person — and
     nothing delivered — when it failed or was never seen to finish; a watch that could not start
     leaves the card settled at the merge, as before;
+  · the card is settled In review BEFORE its watch starts, so a deploy green at the watch's first
+    look leaves it Done (the review of #503);
   · the requester hears at the merge that a stage follows;
   · a project with no stage is delivered at the merge, and a chain with production once it is
     released, exactly as before;
@@ -29,6 +31,13 @@ MODULE = "openfactory/product/module.py"
 AUTHORING = "openfactory/product/authoring.py"
 STAGING = "openfactory/product/staging.py"
 VOICE = "openfactory/product/voice.py"
+#: the job's settle In review at the merge and its watch's start — the two statements whose ORDER
+#: is a claim (the review of #503)
+_SETTLE_IN_REVIEW = ("                await self._settle(params, JobState.MERGED,\n"
+                     "                                   after_merge.delivered_when_deployed("
+                     "result.post_merge_deploy))\n")
+_START_THE_WATCH = ("            watched = await self._spawn_deploy_watch(params, result, "
+                    "delivers=deploy_is_last)\n")
 
 MUTATIONS = [
     # ── the job at the merge ─────────────────────────────────────────────────────────────────
@@ -41,6 +50,11 @@ MUTATIONS = [
     ("the card is settled Done at the merge with the deploy still ahead", WORKFLOW,
      "                await self._settle(params, JobState.MERGED,\n",
      "                await self._settle(params, JobState.DONE,\n"),
+    ("the card is settled In review after its watch has started", WORKFLOW,
+     _SETTLE_IN_REVIEW + _START_THE_WATCH,
+     "                pass\n" + _START_THE_WATCH + "            if deploy_is_last:\n"
+     + _SETTLE_IN_REVIEW,
+     TEST + "::test_a_deploy_green_at_the_watchs_first_look_leaves_the_card_done"),
     ("the merge still settles Done under the watch", WORKFLOW,
      "            if result.state == JobState.MERGED and not (deploy_is_last and watched):\n",
      "            if result.state == JobState.MERGED:\n"),

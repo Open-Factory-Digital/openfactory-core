@@ -253,6 +253,12 @@ def test_what_the_role_tells_is_recorded_with_what_it_answers(monkeypatch):
     assert door.tell(_project(), conversation="person:ana", text="A proposta abriu.",
                      in_reply_to="asked-0123456789")
     assert [r.get("in_reply_to") for r in rows] == ["asked-0123456789"], rows
+    # AN ANNOUNCEMENT IS THE PLATFORM SPEAKING, NOT THE ROLE'S ANSWER (#457): recorded with a kind
+    # that is not an answer, so the distillation never reads it as something the role said.
+    from openfactory.memory import transcript
+
+    assert [r.get("kind") for r in rows] == ["announcement"], rows
+    assert transcript.ANSWER != "announcement"
 
 
 def test_the_history_hands_the_page_which_message_each_turn_is(monkeypatch):

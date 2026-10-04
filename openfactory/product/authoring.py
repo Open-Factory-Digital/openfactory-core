@@ -1584,17 +1584,46 @@ def distilled_until(folder: Path) -> str:
     return latest
 
 
+def _distilled_until_across_trees(checkout: Path, path: str) -> str:
+    """The latest `until` a conversation already holds in `checkout`, ACROSS BOTH TREES — the
+    distillates under `conversations/` AND whatever marks an empty span under `.distilled/` (#457).
+
+    ONCE PER SPAN, WHATEVER THE OUTCOME. The model's reading runs outside the lock and is not
+    deterministic: one process can read a span as nothing-to-keep (a mark in `.distilled/`) while
+    another reads the same span as worth keeping (a distillate in `conversations/`). A compare-and-
+    swap that looked only in the tree it is about to write would let both land. So it reads the
+    conversation's folder in each tree, as `distilled_in` does, and takes the latest — the position
+    the span's `after` is checked against. `path` names the file about to be written; its kind and
+    digest name the conversation, and the folders are read in both trees."""
+    from pathlib import PurePosixPath
+
+    from openfactory.product.documents.record import DISTILLATES, MARKED
+
+    parts = PurePosixPath(path).parts
+    if len(parts) < 4:
+        return distilled_until((Path(checkout) / path).parent)
+    _tree, kind, digest = parts[0], parts[1], parts[2]
+    latest = ""
+    for tree in (DISTILLATES, MARKED):
+        latest = max(latest, distilled_until(Path(checkout) / tree / kind / digest))
+    return latest
+
+
 def record_distillate(*, docs_repo: str, clone_url: str, path: str, text: str, after: str,
                       base: str = "main") -> WriteResult:
     """Commit one conversation's distillate straight to the docs branch — ONCE PER SPAN
     (#269 slice 3, ADR-0053 D4).
 
-    The span was read as starting after `after`, the latest `until` its conversation's folder held
-    when the pass looked. This clone is the base as it is NOW, under the product's semaphore, so
-    the folder is read again here: a distillate written since whose `until` is past `after` means
-    this span, or part of it, was distilled by somebody else — and nothing is written. That is the
-    compare-and-swap that keeps a conversation from being distilled twice for one span, across
-    passes, processes and registry projects of the product alike.
+    The span was read as starting after `after`, the latest `until` its conversation held when the
+    pass looked. This clone is the base as it is NOW, under the product's semaphore, so the
+    conversation is read again here — ACROSS BOTH TREES (`_distilled_until_across_trees`): a
+    distillate under `conversations/` OR a mark of an empty span under `.distilled/` whose `until`
+    is past `after` means this span, or part of it, was read since by somebody else — and nothing
+    is written. Both trees, because the model's reading is not deterministic (#457): one process
+    marking a span empty and another distilling the same span would each miss the other's write if
+    the swap looked only in the tree it is about to touch. That is the compare-and-swap that keeps a
+    conversation from being read twice for one span, across passes, processes and registry projects
+    of the product alike.
 
     NAMES NOBODY, the commit included: the text was scrubbed before it came here, and the message
     says what the file is, never whose conversation it was."""
@@ -1605,7 +1634,7 @@ def record_distillate(*, docs_repo: str, clone_url: str, path: str, text: str, a
             return WriteResult(ok=False,
                                detail=f"could not clone {docs_repo}: {_scrub(out)[-200:]}")
         target = tmp / path
-        latest = distilled_until(target.parent)
+        latest = _distilled_until_across_trees(tmp, path)
         if target.exists() or (latest and latest > after):
             return WriteResult(ok=True, existed=True, ref=path,
                                detail="this span of the conversation is distilled already")

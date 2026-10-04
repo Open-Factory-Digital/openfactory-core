@@ -286,9 +286,13 @@ def _confirm_queue(project, entry, *, module, user, lang) -> str:
     """the action that spends money."""
     numbers = entry["numbers"]
     results = module.promote(numbers, actor=user)
-    from openfactory.contracts.refs import ref_numbers
+    from openfactory.contracts.refs import canonical_refs
 
-    landed = ref_numbers(r.ref for r in results if r.ok and r.ref)
+    # EVERY CARD THAT MOVED, AS THE TRACKER SPELLS IT (#491). `ref_numbers` kept only the refs that
+    # are numbers, and `promote` answers `#CONT-412` on Jira: every card went into the queue and
+    # the person was told nothing had. `canonical_refs` keeps them all, in the order `ref_numbers`
+    # gave a numbered board, so what a GitHub project reads does not change by a byte.
+    landed = canonical_refs(r.ref for r in results if r.ok and r.ref)
     failed = [r for r in results if not r.ok]
     if not landed:
         return (_client_detail(failed[0].detail, lang, project=project) if failed
@@ -1154,6 +1158,12 @@ def answer_staged(project, *, token: str, approved: bool, user: str, module=None
     # Slack `handle` used to supply it; without it here, a crash in a write branch would reach the
     # listener as an exception and the person who clicked would get nothing — indistinguishable
     # from being ignored, and invisible to us until they complained.
+    # THE PLATFORM'S OWN VOICE, NOT THE ROLE'S ANSWER (#457): a `confirm` result is the role's
+    # answer; the `broke` fallback below is a crash reply, recorded with the kind that keeps the
+    # distillation from ever reading it as something the role said.
+    from openfactory.memory import transcript
+
+    kind = transcript.ANSWER
     try:
         sentence = confirm(project, key=key, entry=entry, fingerprint=verified, module=module,
                            user=user, lang=lang, via=via,
@@ -1166,13 +1176,11 @@ def answer_staged(project, *, token: str, approved: bool, user: str, module=None
                   "answer", name, key)
         from openfactory.product.voice import broke
 
-        sentence = broke(language=lang)
+        sentence, kind = broke(language=lang), "broke"
     try:
-        from openfactory.memory import transcript
-
         if sentence:
             transcript.record(project, thread=where, role="agent", text=str(sentence),
-                              channel=where, in_reply_to=said_id)
+                              channel=where, in_reply_to=said_id, kind=kind)
     except Exception:  # noqa: BLE001 — the reply is already earned; the record must not eat it
         log.warning("[%s] could not record the answer to the confirmation", name, exc_info=True)
     return "done", sentence

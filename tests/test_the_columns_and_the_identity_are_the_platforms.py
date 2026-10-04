@@ -62,8 +62,9 @@ def test_every_neutral_caller_reads_the_home_rather_than_a_literal() -> None:
     from openfactory.product.module import ProductModule
     from openfactory.product.triage import triage
 
-    assert ProductModule.FILING_COLUMN == CANONICAL_COLUMNS["backlog"]
-    assert ProductModule.QUEUE_COLUMN == CANONICAL_COLUMNS["todo"]
+    # the product role's two hold KEYS since #496, and each board names them for itself
+    assert ProductModule.FILING_KEY == "backlog" and ProductModule.FILING_KEY in CANONICAL_COLUMNS
+    assert ProductModule.QUEUE_KEY == "todo" and ProductModule.QUEUE_KEY in CANONICAL_COLUMNS
 
     defaults = inspect.signature(triage).parameters
     assert defaults["active_columns"].default == (CANONICAL_COLUMNS["in_progress"],)
