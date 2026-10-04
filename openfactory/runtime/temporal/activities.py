@@ -5334,10 +5334,19 @@ async def _offer_the_release_to_the_client(project, client) -> str:
     OPENED ONLY IF THE ASK LANDED, the rule the delivery announcement already learned the hard way:
     a loop recorded for a post nobody received turns the 20h chase into the client's first-ever
     message about the release — a reminder about something they were never told.
+
+    AND THE PERSON WHO ASKED FOR IT HEARS IT WHERE THEY ASKED (#448 slice 4). The room is asked
+    exactly as before; once it was, the card's requester is told in their own conversation
+    (`events.staged_for_you`, once per run of the job), and only when they were is a second copy
+    of the question opened there (`followup.release_of(conversation=)`) — so their answer, given
+    where they asked, is read, and the room's turns never see their copy. Neither is asked again
+    while either copy is open; a verdict that counts closes both (`engine._close_release`). A
+    telling the door did not take opens no copy of theirs, and is not retried while the room's is
+    open: the room's question is visible from their conversation too, so their answer still lands.
     """
     from openfactory.memory import store as loop_store
     from openfactory.memory.ledger import waiting
-    from openfactory.product import followup, release
+    from openfactory.product import events, followup, release
 
     cfg = getattr(project, "product", None)
     if cfg is None or not getattr(cfg, "enabled", True) \
@@ -5368,7 +5377,7 @@ async def _offer_the_release_to_the_client(project, client) -> str:
     # ends up being used, because a value nobody can find is a value nobody can correct.
     fallback = str(getattr(cfg, "staging_url", "") or "")
     opened = []
-    for issue, declared in pending:
+    for issue, declared, run in pending:
         if str(issue) in asked:
             continue
         where = declared or fallback
@@ -5376,23 +5385,38 @@ async def _offer_the_release_to_the_client(project, client) -> str:
             activity.logger.info(
                 "%s#%s has no `url:` in its manifest — falling back to the deployment's "
                 "`staging_url`, which is deprecated", project.name, issue)
+        requirement = followup.requirement_behind(issue, open_now)
         text = followup.release_question(
-            requirement=followup.requirement_behind(issue, open_now),
+            requirement=requirement,
             where=where, agent_name=name,
             language=getattr(project, "language", None))
         if not await asyncio.to_thread(_product_post, channel, project, cfg, text):
             continue
         room = channel_destination(project, product=True)
-        opened.append(followup.release_of(issue, channel=room, ts=_now_iso(),
-                                          requirement=followup.requirement_behind(issue, open_now),
+        ts = _now_iso()
+        opened.append(followup.release_of(issue, channel=room, ts=ts,
+                                          requirement=requirement,
                                           where=where))
+        # THEIR COPY, ONLY IF THEY WERE TOLD (#448 slice 4) — the rule above, for the requester: a
+        # question of theirs recorded for a telling that never reached them would be chased, in
+        # their conversation, as the first they ever heard of it.
+        if await asyncio.to_thread(events.staged_for_you, project, card=str(issue), where=where,
+                                   run=run):
+            theirs, who = await asyncio.to_thread(events.requester_of, project, str(issue),
+                                                  rows=ledger)
+            if theirs:
+                opened.append(followup.release_of(issue, channel=room, ts=ts,
+                                                  requirement=requirement, where=where,
+                                                  conversation=theirs, requester=who))
+    # ONE ISSUE ASKED IN TWO PLACES IS ONE OFFER: the log and the count are of releases, not rows
+    offered = sorted({followup.is_release(x) for x in opened})
     if opened:
         await asyncio.to_thread(loop_store.write, project.name, opened)
         activity.logger.warning(
-            "OPENFACTORY_RELEASE_OFFERED project=%s issues=%s — the client was asked to try it; "
-            "their "
-            "answer is what releases", project.name, [x.subject for x in opened])
-    return f"release-asked:{len(opened)}"
+            "OPENFACTORY_RELEASE_OFFERED project=%s issues=%s requesters=%d — the client was asked "
+            "to try it; their answer is what releases", project.name, offered,
+            sum(1 for x in opened if (x.context or {}).get("conversation")))
+    return f"release-asked:{len(offered)}"
 
 
 def _repoint_product_orphans(project) -> str:

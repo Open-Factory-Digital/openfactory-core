@@ -57,8 +57,8 @@ async def _awaiting(client, project_name: str, issue: str) -> bool:
     return bool(await handle.query("awaiting_approval"))
 
 
-async def parked_for_release(client, project_name: str) -> list[tuple[str, str]]:
-    """`(issue, where a person looks)` for every job parked waiting for a production approval.
+async def parked_for_release(client, project_name: str) -> list[tuple[str, str, str]]:
+    """`(issue, where a person looks, run)` for every job parked waiting for a production approval.
 
     THE ADDRESS COMES FROM THE JOB, not from the deployment (#122). `ProductConfig.staging_url` —
     one string, on the deployment's own registry, with no command that writes it — cannot express
@@ -84,10 +84,16 @@ async def parked_for_release(client, project_name: str) -> list[tuple[str, str]]
     the sibling-project guard (`openfactory-acme-web-478` is not project `acme`) that the
     hand-rolled
     regex's own comment cited as its reason to exist.
+
+    THE RUN RIDES ALONG (#448 slice 4), as a third element rather than a sibling listing: the one
+    caller already holds each parked job here, and the listing that names the job names the run it
+    is in — so the requester's telling is keyed once per run (`events.staged_for_you`) for the
+    price of a field, where a second function would have been a second sweep of the engine every
+    hour to learn the same thing. `""` when the engine's listing does not carry one.
     """
     from openfactory.runtime.temporal.view import parse_job_id
 
-    out: list[tuple[str, str]] = []
+    out: list[tuple[str, str, str]] = []
     async for wf in client.list_workflows(
             'WorkflowType = "JobWorkflow" AND ExecutionStatus = "Running"'):
         project_of, issue = parse_job_id(str(wf.id), known_projects=[project_name])
@@ -105,7 +111,7 @@ async def parked_for_release(client, project_name: str) -> list[tuple[str, str]]
                 # NOT a reason to skip the job. The client still needs asking; they just get the
                 # sentence that admits no address rather than one carrying a wrong guess.
                 log.info("release watch: %s could not say where to look (%s)", wf.id, exc)
-            out.append((issue, where))
+            out.append((issue, where, str(getattr(wf, "run_id", "") or "")))
         except Exception as exc:  # noqa: BLE001 — one that cannot answer is not one that is ready
             log.info("release watch: %s did not answer (%s) — not offered", wf.id, exc)
     return sorted(out)

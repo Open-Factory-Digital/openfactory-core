@@ -3691,6 +3691,53 @@ def merged_for_you(*, ref: str, title: str = "", stages_follow: bool = False,
     return said[0].upper() + said[1:] if said else said
 
 
+# ── it is theirs to try before it reaches anyone (#448 slice 4) ─────────────────────────────────
+#
+# THE PERSON WHO ASKED HEARS IT IS READY TO TRY, WHERE THEY ASKED. The room's question
+# (`followup.release_question`) is the same news for whoever reads the room; this is the requester's
+# own, in their conversation (`events.staged_for_you`). The same rule as the room's: NO PIPELINE
+# VOCABULARY — never the stage's name, never the verbs that move a change between stages — and an
+# empty address changes the sentence rather than leaving a line out. What their answer does is
+# said without promising which act it is: "it decides what happens next", because who may put it
+# in front of everyone is not this sentence's to say.
+
+_STAGED_HEAD = {
+    "pt-BR": ("{sig}{card}: a mudança que você pediu está pronta para você experimentar — e ainda "
+              "não chegou a quem usa o produto."),
+    "en": ("{sig}{card}: the change you asked for is ready for you to try — and it has not reached "
+           "the people who use the product yet."),
+}
+_STAGED_TRY = {
+    "pt-BR": "Para experimentar: {where}",
+    "en": "To try it: {where}",
+}
+_STAGED_NOWHERE = {
+    "pt-BR": ("Só que eu não tenho o endereço de onde experimentar: o projeto não disse onde fica. "
+              "Se você já sabe onde olhar, confira lá; se não, peça o endereço ao time."),
+    "en": ("Except I do not have the address to try it at: the project has not said where it is. "
+           "If you already know where to look, check there; if not, ask the team for it."),
+}
+_STAGED_ASK = {
+    "pt-BR": ("Depois me diga aqui se ficou certo, ou o que ainda está errado: é a sua resposta "
+              "que decide o que acontece a seguir."),
+    "en": ("Then tell me here whether it is right, or what is still wrong: your answer is what "
+           "decides what happens next."),
+}
+
+
+def staged_for_you(*, ref: str, title: str = "", where: str = "", language: str | None = None,
+                   agent_name: str = "") -> str:
+    """A card's change is ready for the person who asked for it to try, and has reached nobody
+    else yet — said once per run of its job, where they asked."""
+    head = _pick(_STAGED_HEAD, language).format(sig=_sig(agent_name),
+                                                card=_card(ref, title, language))
+    where = str(where or "").strip()
+    middle = (_pick(_STAGED_TRY, language).format(where=where) if where
+              else _pick(_STAGED_NOWHERE, language))
+    said = "\n\n".join([head, middle, _pick(_STAGED_ASK, language)])
+    return said[0].upper() + said[1:]
+
+
 # ── the agenda, in the person's words (#401) ────────────────────────────────────────────────────
 #
 # EVERY LINE OF THE AGENDA WAS AN ENGLISH F-STRING WRITTEN IN `agenda.py`, so a pt-BR product's

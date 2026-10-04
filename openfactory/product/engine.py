@@ -2064,28 +2064,44 @@ def _waiting_release_refs(project) -> list[str]:
 
         loops = [x for x in waiting(loop_store.read(project.name), owner=OWNER)
                  if x.kind == ACCEPTANCE and is_release(x)]
-        return [is_release(x) for x in sorted(loops, key=lambda x: x.ts)]
+        # ONCE EACH (#448 slice 4): a release asked in the room AND of its requester is two loops
+        # and one release — "(#12, #12, #13)" asks the person to choose between a thing and itself
+        return list(dict.fromkeys(is_release(x) for x in sorted(loops, key=lambda x: x.ts)))
     except Exception as exc:  # noqa: BLE001 — the parenthesis is decoration; the ask is not
         log.info("could not list the waiting releases for the ambiguity reply (%s)", exc)
         return []
 
 
 def _close_release(project, loop, verdict: str) -> None:
-    """The release loop closed with a verdict the gate has let count (#273). Never raises.
+    """The release loop closed with a verdict the gate has let count (#273) — and EVERY open copy
+    of the same release with it (#448 slice 4). Never raises.
 
     `settle_acceptance` hands a release loop back OPEN: it reads what was said and cannot see who
     said it. `_maybe_release` can, and this is the close it makes once the verdict counts. The
     ledger is re-read rather than taken from the caller, because another turn may have closed the
     loop in between, and `close_by_observation` then appends nothing: a settled outcome is never
     rewritten. Best-effort and loud, like every ledger write (`memory/store.py`): the verdict was
-    heard, and recording it must never cost the reply."""
+    heard, and recording it must never cost the reply.
+
+    ONE RELEASE, ASKED IN TWO PLACES, IS ANSWERED ONCE. The room is asked, and the card's
+    requester is asked in their own conversation (`activities._offer_the_release_to_the_client`):
+    two loops, one question. Closing only the copy the answer landed on left the other one open —
+    an admin's release from the room kept chasing the requester about a change already in front
+    of everyone, and the requester's "não funcionou" left the room still being asked to release
+    it. Every open copy of the release closes in ONE write, with the one verdict that counted."""
     name = getattr(project, "name", "") or ""
     try:
         from openfactory.memory import store as loop_store
-        from openfactory.memory.ledger import ACCEPTANCE, close_by_observation
+        from openfactory.memory.ledger import ACCEPTANCE, close_by_observation, waiting
+        from openfactory.product.followup import OWNER, is_release
 
-        rows = close_by_observation(loop_store.read(name),
-                                    {(ACCEPTANCE, loop.subject, loop.about): verdict})
+        ledger = loop_store.read(name)
+        issue = is_release(loop)
+        observed = {(ACCEPTANCE, x.subject, x.about): verdict
+                    for x in waiting(ledger, owner=OWNER)
+                    if issue and x.kind == ACCEPTANCE and is_release(x) == issue}
+        observed[(ACCEPTANCE, loop.subject, loop.about)] = verdict
+        rows = close_by_observation(ledger, observed)
         if rows:
             loop_store.write(name, rows)
     except Exception:  # noqa: BLE001 — the reply is already earned; the record is best-effort

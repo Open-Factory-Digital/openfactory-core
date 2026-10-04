@@ -703,7 +703,20 @@ def _named_release(text: str, loops: list) -> object | None:
         return None
     candidates = [x for x in loops
                   if is_release(x) and canonical_ref(is_release(x)).upper() in mentioned]
-    return candidates[0] if len(candidates) == 1 else None
+    # ONE RELEASE, NOT ONE LOOP (#448 slice 4): asked in the room and of its requester, "funcionou
+    # o #12" names one release that has two loops — that is a name, not a second guess
+    return candidates[0] if len({_question_of(x) for x in candidates}) == 1 else None
+
+
+def _question_of(loop) -> object:
+    """What `loop` asks, for telling questions apart: a RELEASE is one question wherever it was
+    asked — the room's copy and the requester's (#448 slice 4) — and any other loop is its own.
+    Ambiguity is between questions; two copies of one are not a choice anybody can be asked to
+    make."""
+    from openfactory.product.followup import is_release
+
+    issue = is_release(loop)
+    return ("release", canonical_ref(issue).upper()) if issue else loop.key
 
 
 #: How the fact that nobody passed a board is told apart from a caller saying "do not place this".
@@ -2094,7 +2107,13 @@ class ProductModule:
         # here, BEFORE anything closes, so a correct reply never gets overruled by a guess.
         named = _named_release(text, open_acc)
         loop = named or max(open_acc, key=lambda x: x.ts)
-        ambiguous = named is None and len(open_acc) > 1
+        ambiguous = named is None and len({_question_of(x) for x in open_acc}) > 1
+        # THE COPY ASKED HERE (#448 slice 4). A release asked of its requester in their own
+        # conversation is also the room's question, and both are open where they answer: the
+        # question is chosen above, and the copy it settles is the one asked where they wrote.
+        here = str(conversation or "")
+        loop = next((x for x in open_acc if _question_of(x) == _question_of(loop)
+                     and here and str((x.context or {}).get("conversation") or "") == here), loop)
 
         # A RELEASE LOOP IS NEVER CLOSED HERE, and two defects taught it. The first was an
         # AMBIGUOUS "funcionou": the guess was recorded as `worked` first and the "which one?"

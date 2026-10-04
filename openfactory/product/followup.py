@@ -582,7 +582,7 @@ def acceptance_chase_text(loop: Loop, *, mention: str = "", agent_name: str = ""
 
 
 def release_of(issue: str, *, channel: str, ts: str, requirement: str = "",
-               where: str = "") -> Loop:
+               where: str = "", conversation: str = "", requester: str = "") -> Loop:
     """The loop that opens when a job parks waiting to go to production.
 
     An ACCEPTANCE loop, deliberately, rather than a kind of its own: it asks the same question
@@ -592,10 +592,23 @@ def release_of(issue: str, *, channel: str, ts: str, requirement: str = "",
     parallel machine somebody has to keep in step.
 
     `subject` is the issue, because that is what the approval names when it is delivered.
+
+    THE REQUESTER'S OWN COPY (#448 slice 4). With `conversation`, the same question asked of the
+    person who asked for the card, where they asked (`events.staged_for_you`): it lives in that
+    conversation (`agenda.audience`), so their answer there is read (`module._acceptances_here`)
+    and the room's turns never see it, and its reminder goes there too. `about` is that
+    conversation, so the two copies are two rows of the ledger and never one — the room's is keyed
+    on the room. `requester` is ALREADY A DIGEST (`speaker.sealed`), as the card's delivery holds
+    it: the round never has the person's id, and sealing a digest again would name nobody.
     """
-    return open_loop(ACCEPTANCE, f"release-{issue}", owner=OWNER, ts=ts, about=channel,
+    where_asked = str(conversation or "").strip()
+    return open_loop(ACCEPTANCE, f"release-{issue}", owner=OWNER, ts=ts,
+                     about=where_asked or channel,
                      context={"release_issue": str(issue), "requirement": requirement,
-                              "where": where, "channel": channel})
+                              "where": where, "channel": channel,
+                              **({"conversation": where_asked} if where_asked else {}),
+                              **({"requester": str(requester)}
+                                 if where_asked and str(requester or "").strip() else {})})
 
 
 def requirement_behind(issue: str, waiting: list[Loop]) -> str:

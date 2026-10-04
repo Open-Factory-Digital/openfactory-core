@@ -37,6 +37,10 @@ line on that conversation — behind the turn in progress, never inside one.
     merged              `activities.tell_the_requester_it_merged` — the job, the moment its pull
                         request merged, whoever merged it (#448 slice 3); not where the delivery
                         says it at that same moment
+    staged              the tech-lead's hourly round (`activities._offer_the_release_to_the_client`)
+                        — a job parked at the last gate before the product's users, ready for its
+                        requester to try (#448 slice 4); once per card and run of its job, and
+                        only after the room's own question landed
 
 WHERE AN EVENT IS SAID (`conversation_for`). About a card: to the conversation its REQUESTER asked
 in — recorded on the card's delivery loop when the work was filed, from what they had staged
@@ -81,14 +85,15 @@ log = logging.getLogger("openfactory.product.events")
 
 #: The kinds of event (#267 slice 3; `ready_for_you` since #401; `card_moved` since #412, in place
 #: of #384's `card_withdrawn`, which only the product role's own close could tell; `merged` since
-#: #448). A closed set: each has its sentence, its routing and its record of having been said, and
-#: a kind nobody knows how to say is one nobody should tell.
+#: #448; `staged` since #448 slice 4). A closed set: each has its sentence, its routing and its
+#: record of having been said, and a kind nobody knows how to say is one nobody should tell.
 DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED, CARD_MOVED, READY_FOR_YOU = (
     "delivered", "ci_red", "pr_waiting", "preview_up", "document_ingested", "card_moved",
     "ready_for_you")
 MERGED = "merged"
+STAGED = "staged"
 KINDS = (DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED, CARD_MOVED,
-         READY_FOR_YOU, MERGED)
+         READY_FOR_YOU, MERGED, STAGED)
 
 #: Which producer tells each kind on this branch — "" for a kind whose producer lives elsewhere.
 #: The guard reads this, so a producer claimed here is a call that exists.
@@ -101,6 +106,7 @@ PRODUCERS = {
     CARD_MOVED: "openfactory/lifecycle/ports.py::tell",
     READY_FOR_YOU: "openfactory/runtime/temporal/activities.py::tell_the_requester",
     MERGED: "openfactory/runtime/temporal/activities.py::tell_the_requester_it_merged",
+    STAGED: "openfactory/runtime/temporal/activities.py::_offer_the_release_to_the_client",
 }
 
 #: Whose loops these are.
@@ -144,6 +150,16 @@ def _deliveries_of(rows, card: str) -> list:
     return [x for x in waiting(rows, owner=OWNER) if x.kind == DELIVERY and card in issues_of(x)]
 
 
+def _the_request(rows, card: str):
+    """The open delivery of `card` that recorded where its requester asked — the newest, when two
+    requests share a card — or None. The ONE reading of it, for where they asked
+    (`requester_conversation`) and for who asked there (`requester_of`, #448 slice 4)."""
+    for loop in reversed(_deliveries_of(rows, card)):
+        if str((loop.context or {}).get("conversation") or ""):
+            return loop
+    return None
+
+
 def requester_conversation(project, card: str, *, rows=None) -> str:
     """The conversation `card`'s requester asked in, as the card's open delivery loop recorded it
     when the work was filed — the newest, when two requests share a card — or "" when nobody's
@@ -154,11 +170,8 @@ def requester_conversation(project, card: str, *, rows=None) -> str:
         from openfactory.memory import store as loop_store
 
         rows = loop_store.read(getattr(project, "name", "") or "")
-    for loop in reversed(_deliveries_of(rows, card)):
-        where = str((loop.context or {}).get("conversation") or "")
-        if where:
-            return where
-    return ""
+    asked = _the_request(rows, card)
+    return str(asked.context.get("conversation") or "") if asked is not None else ""
 
 
 def conversation_for(project, card: str = "", *, rows=None) -> str:
@@ -746,9 +759,78 @@ def merged_for_you(project, *, card: str, pr_url: str, stages_follow: bool = Fal
                              agent_name=_agent(project))))
 
 
+# ── it is theirs to try before it reaches anyone ─────────────────────────────────────────────────
+
+def requester_of(project, card: str, *, rows=None) -> tuple[str, str]:
+    """`(conversation, person)` for `card`'s requester — where they asked, and a DIGEST of who
+    (`speaker.sealed`) — or `("", "")` when nobody's conversation is known (#448 slice 4). Never
+    raises.
+
+    THE SAME TWO WAYS TO THEM AS `merged_for_you`, IN THE SAME ORDER: the newest delivery of the
+    card that recorded a conversation (`requester_conversation`'s reading), with the person it
+    sealed when the work was filed; else the conversation they accepted the change in
+    (`accept.standing`, for any pull request of the card — at the last gate the change is merged,
+    and which pull request carried it is not the question), whose person is sealed here. The
+    person is only ever a digest: what reads it compares it (`agenda`), and nothing reads it back
+    as a name."""
+    try:
+        if rows is None:
+            from openfactory.memory import store as loop_store
+
+            rows = loop_store.read(getattr(project, "name", "") or "")
+        asked = _the_request(rows, card)
+        if asked is not None:
+            return (str(asked.context.get("conversation") or ""),
+                    str(asked.context.get("requester") or ""))
+        from openfactory.product.accept import standing
+        from openfactory.product.speaker import sealed
+
+        acc = standing(getattr(project, "name", "") or "", card)
+        if acc is not None and acc.where:
+            return acc.where, sealed(acc.by)
+    except Exception:  # noqa: BLE001 — a vaguer route, never a raise: the room was asked anyway
+        log.info("could not read who asked for #%s", card, exc_info=True)
+    return "", ""
+
+
+def staged_for_you(project, *, card: str, where: str = "", run: str = "") -> bool:
+    """A CARD'S CHANGE IS READY FOR THE PERSON WHO ASKED FOR IT TO TRY, BEFORE IT REACHES ANYONE
+    ELSE, and they hear it where they asked (#448 slice 4) — once per card and per run of its job.
+    Returns whether it was told now. Never raises.
+
+    THE ROOM WAS ASKED AND THE REQUESTER WAS NOT. A job parked at the last gate before the
+    product's users (`release.parked_for_release`) was offered, hourly, to the product's ROOM and
+    nowhere else (`followup.release_question`): the person whose request it was learned it was
+    ready to try only if they happened to read the room, and their answer, given where they had
+    asked, reached nothing. The room is still asked exactly as before; this is the requester's
+    own telling, and the round opens a question of theirs beside the room's only when this says
+    it was told (`activities._offer_the_release_to_the_client`).
+
+    ONCE PER RUN, NOT ONCE PER CARD. `run` is the parked job's run: the round asks every hour,
+    and the run is what keeps the second hour silent while a LATER run of the same card — the
+    work done again, with something new to try — is told again. A job that could not say its
+    run (`""`) is told once per card.
+
+    ONLY WHERE SOMEBODY ASKED, AND NOT IN THE ROOM. A card nobody asked for in a conversation is
+    the room's question alone; and a requester whose conversation IS the room already read the
+    room's question there — the same news twice, in the same place, is noise."""
+    if not _speaks(project) or not str(card or "").strip():
+        return False
+    to, _ = requester_of(project, card)
+    if not to or to == room_of(project):
+        return False
+    from openfactory.product import voice
+
+    return _once(project, _event_id(STAGED, project, card, run), lambda: (
+        to,
+        voice.staged_for_you(ref=card, title=_title_of(project, card), where=where,
+                             language=_language(project), agent_name=_agent(project))))
+
+
 __all__ = ["CARD_MOVED", "CI_RED", "DELIVERED", "DOCUMENT_INGESTED", "KINDS", "MERGED",
-           "PREVIEW_UP", "PRODUCERS", "PR_WAITING", "PR_WAIT_HOURS", "READY_FOR_YOU",
+           "PREVIEW_UP", "PRODUCERS", "PR_WAITING", "PR_WAIT_HOURS", "READY_FOR_YOU", "STAGED",
            "card_finished", "card_moved", "ci_went_red", "conversation_for", "deliver",
            "document_ingested", "forget_record", "issues_of", "merged_for_you", "preview_up",
            "pull_requests_at_the_gate", "ready_at_the_gate", "ready_for_you",
-           "requester_conversation", "room_of", "say_to", "to_room"]
+           "requester_conversation", "requester_of", "room_of", "say_to", "staged_for_you",
+           "to_room"]
