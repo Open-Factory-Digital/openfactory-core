@@ -139,15 +139,13 @@ def door(monkeypatch):
 
 
 @pytest.fixture
-def done_reads_delivered(monkeypatch, board):
-    """THE ONE READING OF THE BOARD THAT IS STOOD IN. Every hosted row closes a card at Done (#180,
-    #195: `set_state(DONE)` closes the GitHub issue, Jira's and Azure's Done ARE closed), and a
-    closed card is what reads as delivered (`triage.Ticket.delivered`). The local row keeps a Done
-    card open, by design — so on it, measured, no delivery is announced until a person closes the
-    card, whatever this slice does (said in its report). Read here as the hosted rows read it: the
-    real local board's Done column."""
-    monkeypatch.setattr(events, "_delivered_now",
-                        lambda project: {str(r).lstrip("#") for r in board.items_in_status("Done")})
+def done_reads_delivered(board):
+    """NOTHING IS STOOD IN ANY MORE. This slice once read the local board's Done column as
+    delivered, because that row kept a Done card open and no delivery was ever announced on it
+    (filed as #500). #500 is fixed (#506): the local row closes a card at Done as delivered, as
+    every hosted row does, so the real reading (`events._delivered_now`) is the one these tests
+    walk. The fixture stays as the name the tests ask for."""
+    return board
 
 
 def _pen(project, tmp_path, monkeypatch):
@@ -180,9 +178,19 @@ def _asked_for(project, tracker, board, tmp_path, monkeypatch, *, where: str = K
 
 
 def _column(board, ref: str) -> str:
+    """Where the card is: an open card in the column the board lists it in; a card closed as
+    delivered in Done, where the local row closes it since #500 (#506), as the hosted rows do —
+    the board lists open cards only."""
     for name in ("Backlog", "To Do", "In progress", "In review", "Needs Action", "Done"):
         if ref in [str(r).lstrip("#") for r in board.items_in_status(name)]:
             return name
+    from openfactory.adapters.board_db import connect
+
+    with connect() as conn:
+        row = conn.execute("SELECT state, closed_reason, column_key FROM cards WHERE ref = ?",
+                           (int(str(ref).lstrip("#")),)).fetchone()
+    if row is not None and tuple(row) == ("closed", "completed", "done"):
+        return "Done"
     return ""
 
 
