@@ -196,7 +196,7 @@ NUMBERED_AS_BEFORE = [
     (lambda: voice.reordered(["12", "31"], language="en", agent_name=AGENT),
      "Nina: Order recorded on the board: #12, #31. The next batch follows it."),
     (lambda: voice.ticket_filed(ref="12", language="pt-BR"),
-     "Aberto: #12. Fica no Backlog até o time aprovar a próxima leva — e quando sair, eu aviso "
+     "Aberto: #12. Fica na coluna Backlog até o time aprovar a próxima leva — e quando sair, eu aviso "
      "aqui."),
     (lambda: voice.defect_filed(ref="12", violates=3, language="en", just_asked=True),
      "This has just been asked for — the card already exists: #12. I did not open another for the "
