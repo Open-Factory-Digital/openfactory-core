@@ -67,7 +67,10 @@ def test_the_release_process_and_its_agent_are_tracked():
     agent = ROOT / ".claude" / "agents" / "release-manager.md"
 
     assert agent.is_file()
-    ignored = subprocess.run(["git", "check-ignore", "-q", str(agent)], cwd=ROOT, check=False)
+    # `--no-index`: a file already tracked is never reported as ignored, so without it a rule that
+    # ignores the agent again would pass here and bite the next person who adds an agent
+    ignored = subprocess.run(["git", "check-ignore", "-q", "--no-index", str(agent)], cwd=ROOT,
+                             check=False)
     assert ignored.returncode == 1, "the release agent is ignored by git, so it can never be reviewed"
     assert "docs/RELEASING.md" in agent.read_text()
     assert (ROOT / "docs" / "RELEASING.md").is_file()
