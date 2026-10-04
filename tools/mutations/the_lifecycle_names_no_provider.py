@@ -85,14 +85,16 @@ MUTATIONS = [
      "DEFAULT_COLUMNS: dict[str, str] = dict(CANONICAL_COLUMNS)",
      "DEFAULT_COLUMNS: dict[str, str] = CANONICAL_COLUMNS", COLUMNS),
 
+    # re-pinned 2026-10-04: the two constants hold the platform's KEYS, and each board names
+    # them (#496) — the claim is unchanged: the key is the platform's backlog and its queue
     ("the product role files work into a column that is not the platform's backlog — filed work "
      "lands where readiness cannot see it", MODULE,
-     '    FILING_COLUMN = CANONICAL_COLUMNS["backlog"]',
-     '    FILING_COLUMN = CANONICAL_COLUMNS["done"]', COLUMNS),
+     '    FILING_KEY = "backlog"',
+     '    FILING_KEY = "done"', COLUMNS),
 
     ("the queue column stops being the one the poller pulls from", MODULE,
-     '    QUEUE_COLUMN = CANONICAL_COLUMNS["todo"]',
-     '    QUEUE_COLUMN = CANONICAL_COLUMNS["in_progress"]', COLUMNS),
+     '    QUEUE_KEY = "todo"',
+     '    QUEUE_KEY = "in_progress"', COLUMNS),
 
     ("the triage reads the wrong column for work in flight, so every active card reports as "
      "something else", TRIAGE,

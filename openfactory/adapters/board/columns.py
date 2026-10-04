@@ -152,11 +152,22 @@ def may_be_running(key: str) -> bool:
     return has_started(key) and not has_finished(key)
 
 
-def name_for(key: str) -> str:
-    """The platform's name for one key, or `""` for a key it does not know.
+def name_for(key: str, *, renamed: dict[str, str] | None = None) -> str:
+    """The name for one key — the deployment's when it renamed it, the platform's otherwise — or
+    `""` for a key neither knows.
 
     `""` RATHER THAN A RAISE, because every caller of this is naming a column to look for on a
     board, and a board that does not have it is an ordinary answer this platform already handles
     (`set_column` returns False, `set_status` no-ops). A traceback here would turn a board's
-    missing column into a crashed job."""
+    missing column into a crashed job.
+
+    `renamed` MAKES THIS THE TRUE INVERSE OF `key_for` (#496), and for the same reason that one
+    takes it: a client whose board says `A Fazer` declared `{"todo": "A Fazer"}`, and the product
+    role then asked its board for `TO-DO` by name — on Jira the site's workflow offers no such
+    transition, so every queueing and every filing was refused. The deployment's word wins and the
+    platform's six still answer under it, exactly as `key_for` merges them, so a row that declared
+    only half its workflow is read the same way in both directions."""
+    said = str((renamed or {}).get((key or "").strip().lower()) or "").strip()
+    if said:
+        return said
     return CANONICAL_COLUMNS.get((key or "").strip().lower(), "")

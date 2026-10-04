@@ -43,7 +43,12 @@ from openfactory.contracts.refs import canonical_ref
 from openfactory.observability import EventKind, EventSink, JobEvent, NullEventSink, now_iso
 from openfactory.orchestrator.context import build_context
 from openfactory.orchestrator.errors import SetupFailed, SpecValidationError
-from openfactory.orchestrator.merge_policy import format_review, review_event, should_auto_merge
+from openfactory.orchestrator.merge_policy import (
+    auto_but_for_the_look,
+    format_review,
+    review_event,
+    should_auto_merge,
+)
 from openfactory.orchestrator.risk import assess as risk_assess
 from openfactory.orchestrator.risk import of_attempt as risk_of_attempt
 from openfactory.orchestrator.validation import (
@@ -1418,6 +1423,11 @@ class JobRunner:
             # READ BEFORE THE BODY IS WRITTEN: the body says why a person must merge (D9).
             result.preview_required = bool(getattr(getattr(self.project, "preview", None),
                                                    "required", False))
+            # …AND WHETHER IT IS THE ONLY HOLD (#448 slice 3): `should_auto_merge` with the look
+            # taken out, so every other reason a merge goes to a person still holds it. Read here,
+            # before the body, because the body says who merges.
+            result.auto_but_for_the_look = auto_but_for_the_look(
+                self.manifest, result, profile=getattr(self, "_profile", None))
             result.preview_shape = self._preview_shape(ws)
             pr = self.forge.open_pr(
                 head=branch, base=base, title=card.title,
@@ -3441,7 +3451,14 @@ class JobRunner:
                       "factory's daemon, and open it under the preview domain — each as this pull "
                       "request leaves it:",
                       "", *[f"- `{line}`" for line in result.preview_shape]]
-        if result.preview_required:
+        if result.preview_required and result.auto_but_for_the_look:
+            # THE LOOK IS ALL THAT HOLDS IT (#448 slice 3), and "nobody merges this for you" would
+            # be false the moment the person who asked for it says it is right
+            lines += ["", "this project requires a person to look at a preview of it before a "
+                          "change merges — the person who asked for the card tries it, and when "
+                          "they accept the head they tried, the factory merges it; until then it "
+                          "waits, and a person may merge it here"]
+        elif result.preview_required:
             lines += ["", "this project requires a person to look at a preview of it before a "
                           "change merges — start one from the card, and merge when it looks "
                           "right; nobody merges this for you"]
