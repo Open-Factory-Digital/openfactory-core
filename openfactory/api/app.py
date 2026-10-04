@@ -1577,6 +1577,21 @@ def _verdict_of(read: dict, job: dict) -> dict:
     return verdict_read.headline(raw)
 
 
+async def _stamp_the_acceptances(jobs: list[dict]) -> None:
+    """THE REQUESTER'S "THAT'S IT" ON EVERY MERGE GATE A PERSON IS ASKED (#448 slice 3): `accepted`
+    on each such job — who, on which head, and the one sentence (`accept.line`) — read from the
+    platform's own store, once per project, off the event loop. Never raises: a gate shown without
+    it is the gate as it was, and the reader logs why."""
+    import asyncio
+
+    from openfactory.product.accept import at_the_gates
+
+    found = await asyncio.to_thread(at_the_gates, jobs)
+    for job, accepted in zip(jobs, found, strict=True):
+        if accepted:
+            job["accepted"] = accepted
+
+
 @app.get("/api/inbox")
 async def inbox() -> list[dict]:
     """THE single 'what needs a human right now' feed — one shape for every channel (panel,
@@ -1594,7 +1609,9 @@ async def inbox() -> list[dict]:
 
     out: list[dict] = []
     waiting: list[tuple[dict, dict]] = []  # (the job, its item's `review`), filled after the loop
-    for j in await tv.list_jobs(client, ns):
+    jobs = await tv.list_jobs(client, ns)
+    await _stamp_the_acceptances(jobs)
+    for j in jobs:
         # WHETHER IT ASKS AT ALL IS THE ENGINE'S ANSWER, read once (#339); the branches below
         # decide only what can be answered. The generic branch tested `state` alone, and a run's
         # state outlives the run: a stopped job whose ticket a later run merged kept asking here
@@ -1690,6 +1707,9 @@ async def inbox() -> list[dict]:
                 })
             out.append({**base, "kind": kind,
                         "options": options,
+                        # THE REQUESTER'S "THAT'S IT", where the person merging decides (#448 slice
+                        # 3): who accepted, on which head — absent when nobody has
+                        **({"accepted": j["accepted"]} if j.get("accepted") else {}),
                         "answer": {"method": "POST",
                                    "url": "/api/act/<merge|adjust|address|discard|review>",
                                    "body": {"params": {"project": j.get("project"),
@@ -1808,9 +1828,10 @@ def _delivered_cards(project, board, tracker, *, placed: dict, names: list[str] 
     WHERE: the column the board places the card in, when it places it — a GitHub project keeps its
     closed items, and a delivered issue whose close landed while its move did not is drawn where
     its board says, as everywhere else on this page — and otherwise the column THIS board calls
-    `done` (`board.base.column_for`): the local board places open cards only, and a renamed Done
-    column is the board's own name, never the platform's literal. A board with no such column has
-    nowhere to show delivered work, and shows none.
+    `done` (`board.base.stage_column`, asked for a column that EXISTS): the local board places open
+    cards only, and a renamed Done column is the board's own name, never the platform's literal. A
+    board with no such column has nowhere to show delivered work, and shows none — and a name its
+    map declares for `done` that is not one of its columns is no such column either.
 
     A READ THAT FAILED IS NOT AN UNREADABLE BOARD. The open cards were read, and they are the
     board's answer; this is what is added to it. So `None` here — or a row breaking the port's
@@ -1818,7 +1839,7 @@ def _delivered_cards(project, board, tracker, *, placed: dict, names: list[str] 
     every open card where it is."""
     from datetime import UTC, datetime, timedelta
 
-    from openfactory.adapters.board.base import column_for
+    from openfactory.adapters.board.base import stage_column
     from openfactory.product.triage import Ticket
 
     name = getattr(project, "name", "") or ""
@@ -1843,7 +1864,8 @@ def _delivered_cards(project, board, tracker, *, placed: dict, names: list[str] 
             continue
         column = placed.get(s.ref, "")
         if not column:
-            done = column_for(board, "done", names=names) if done is None else done
+            if done is None:
+                done = stage_column(board, "done", existing=True, names=names)
             column = done
         if column:
             out.append({"ref": s.ref, "column": column, "title": s.title,
@@ -2842,6 +2864,7 @@ async def temporal_jobs() -> dict:
     try:
         client = await tv.connect()
         jobs = await tv.list_jobs(client, ns)
+        await _stamp_the_acceptances(jobs)
         return {
             "connected": True, "address": addr, **_engine_ui(tv), "build": build,
             "jobs": jobs,

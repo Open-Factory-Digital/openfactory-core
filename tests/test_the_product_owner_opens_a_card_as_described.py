@@ -233,7 +233,7 @@ def test_the_module_opens_the_card_as_described_places_it_and_answers_with_the_u
     assert "sem requisito por trás" in body and "o relatório mensal em CSV" in body
     assert "<@U1>" in body and "#produto" in body
     assert "REQ-" not in body, "a card nobody argued into a requirement must not pretend to cite one"
-    assert board.placed == [("700", ProductModule.FILING_COLUMN)]
+    assert board.placed == [("700", "Backlog")]   # a board that names nothing: the platform's word
 
 
 def test_the_same_title_twice_is_one_card_and_the_reply_says_so(tmp_path):

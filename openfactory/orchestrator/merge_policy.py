@@ -215,6 +215,20 @@ def should_auto_merge(manifest: Manifest, result: RunResult, *,
     return True
 
 
+def auto_but_for_the_look(manifest: Manifest, result: RunResult, *,
+                          profile: ResolvedProfile | None = None) -> bool:
+    """THE LOOK IS THE ONLY THING HOLDING THIS MERGE (#448 slice 3): `preview_required` holds it,
+    and `should_auto_merge` with that one hold taken out would merge it.
+
+    ASKED OF THE SAME FUNCTION, never a second list of the holds: every other reason a merge goes to
+    a person — a rejected blocking review, nothing verified, a suppression, a protected path, the
+    class, the knowledge gate — still answers no here. The requester's recorded acceptance of the
+    head they tried then stands in for the look ADR-0050 D9 requires, and nothing else (#448, *Not
+    the fix*: "the requester's recorded acceptance is what replaces it, nothing less")."""
+    return bool(result.preview_required and should_auto_merge(
+        manifest, result.model_copy(update={"preview_required": False}), profile=profile))
+
+
 def _not_verified(review: ReviewResult) -> bool:
     """The computed stance's own answer (`review/verdict.not_verified`), on the verdict itself."""
     from openfactory.review.verdict import not_verified

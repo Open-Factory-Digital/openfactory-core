@@ -286,13 +286,14 @@ def _confirm_queue(project, entry, *, module, user, lang) -> str:
     """the action that spends money."""
     numbers = entry["numbers"]
     results = module.promote(numbers, actor=user)
-    from openfactory.contracts.refs import ref_number
+    from openfactory.contracts.refs import canonical_ref
 
-    # IN THE ORDER IT WAS APPROVED, NEVER SORTED (#497). `promote` moves the cards in the sequence
-    # the person approved, and `queued` says "nesta ordem" over what it is handed: `ref_numbers`
-    # sorted it, so "3, 1, 2" approved and moved was read back as "#1, #2, #3".
-    moved = (ref_number(r.ref) for r in results if r.ok and r.ref)
-    landed = list(dict.fromkeys(n for n in moved if n is not None))
+    # EVERY CARD THAT MOVED, AS THE TRACKER SPELLS IT (#491), IN THE ORDER IT WAS APPROVED, NEVER
+    # SORTED (#497). `ref_numbers` kept only the refs that are numbers, and `promote` answers
+    # `#CONT-412` on Jira: every card went into the queue and the person was told nothing had. And
+    # `promote` moves the cards in the sequence the person approved, while `queued` says "nesta
+    # ordem" over what it is handed: a sorted list read "3, 1, 2" back as "#1, #2, #3".
+    landed = list(dict.fromkeys(canonical_ref(r.ref) for r in results if r.ok and r.ref))
     failed = [r for r in results if not r.ok]
     if not landed:
         return (_client_detail(failed[0].detail, lang, project=project) if failed
@@ -521,6 +522,23 @@ def _confirm_adjust(project, entry, *, module, user, lang) -> str:
                          result, lang, project=project)
 
 
+def _confirm_accept_change(project, entry, *, module, user, lang) -> str:
+    """the act that records a requester's "that's it" against the head they tried — and, when the
+    look is all that holds the merge, puts the change in (#448 slice 3)."""
+    # WHERE IT WAS SAID: the conversation the staged record names (`staging.remember`), the way
+    # back to the requester when no delivery of the card names one (`events.merged_for_you`)
+    result = module.accept_change(entry["number"], actor=user, head=entry.get("head", ""),
+                                  pr_url=entry.get("pr_url", ""),
+                                  where=str(entry.get("conversation") or ""))
+    if not result.ok:
+        return _client_detail(result.detail, lang, project=project)
+    from openfactory.product.accept import headline
+
+    # WHETHER IT IS GOING IN, from the act's own facts — then whatever did not land after the
+    # record (the note on the card), through the one path
+    return _still_to_say(headline(result, language=lang), result, lang, project=project)
+
+
 def _confirm_align(project, entry, *, module, user, lang) -> str:
     """the act that changes what gets BUILT."""
     result = module.align_card(entry["number"], requirement=entry["requirement"], actor=user)
@@ -650,6 +668,7 @@ _EXECUTORS = {
     "align": _confirm_align,
     "correct": _confirm_correct,
     "adjust": _confirm_adjust,
+    "accept_change": _confirm_accept_change,
     "fact": _confirm_fact,
 }
 
@@ -657,8 +676,8 @@ _EXECUTORS = {
 #: yes here is not "may this person make the role write" but "is this their card": another pass on
 #: the change THEY asked for, judged by the one person who tried it — `withdraw_card`'s rule for the
 #: card's own controls (#384), asked of the module that reads the card (`may_send_back`). Every
-#: other kind still needs an approver.
-_THE_REQUESTERS_OWN = frozenset({"adjust"})
+#: other kind still needs an approver. Its other half since slice 3: their "that's it" on it.
+_THE_REQUESTERS_OWN = frozenset({"adjust", "accept_change"})
 
 
 def _may_say_yes(project, entry: dict, user: str, *, via: str, module=None) -> str:
@@ -676,10 +695,12 @@ def _may_say_yes(project, entry: dict, user: str, *, via: str, module=None) -> s
         asks = getattr(module, "may_send_back", None)
         if callable(asks) and asks(str(entry.get("number") or ""), user):
             return ""
-        from openfactory.product.voice import adjust_said
+        from openfactory.product.voice import accept_change_said, adjust_said
 
-        return adjust_said("not_yours", ref=str(entry.get("number") or ""),
-                           language=getattr(project, "language", None))
+        # THE REFUSAL OF THE ACT THEY TRIED, never another's: "nothing was sent back" to a yes
+        said = accept_change_said if entry.get("kind") == "accept_change" else adjust_said
+        return said("not_yours", ref=str(entry.get("number") or ""),
+                    language=getattr(project, "language", None))
     return unauthorized_message(project)
 
 

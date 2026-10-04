@@ -135,7 +135,8 @@ MUTATIONS = [
      '\n\ndef _later(n):\n    return f"card #{n}"\n'),
 
     # ── the order the person approved ───────────────────────────────────────────────────────────
+    # re-pinned 2026-10-04: one line keeps the tracker's refs in the approved order (#491 + #497)
     ("the cards that landed are sorted before the reply says \"nesta ordem\"", CONFIRM,
-     "    landed = list(dict.fromkeys(n for n in moved if n is not None))",
-     "    landed = sorted(dict.fromkeys(n for n in moved if n is not None))"),
+     "    landed = list(dict.fromkeys(canonical_ref(r.ref) for r in results if r.ok and r.ref))",
+     "    landed = sorted(dict.fromkeys(canonical_ref(r.ref) for r in results if r.ok and r.ref))"),
 ]

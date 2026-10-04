@@ -471,10 +471,8 @@ SENTENCES = ("openfactory/product/voice.py", "openfactory/product/followup.py",
              "openfactory/product/engine.py")
 
 #: `(file, the function or table it is in)` → why it may still write a `#` before a card.
-ALLOWED = {
-    ("openfactory/product/voice.py", "queued"):
-        "#491 (PR #498) rewrites this one line to `ref_label`, with the refs it is handed; it is "
-        "left alone here so the two merge cleanly. Delete this entry when that lands.",
+ALLOWED: dict[tuple[str, str], str] = {
+    # empty since #498 landed: `voice.queued` names its cards through `ref_label`
 }
 
 #: A format placeholder straight after a literal `#` — `#{number}`, `#{0}`, `#{}`, `*#{ref}*` —
@@ -568,7 +566,12 @@ def labelled(numbers):
 
 
 def test_the_allowlist_names_only_what_still_exists():
-    """An entry whose function is gone is a hole nobody opened on purpose."""
+    """An entry whose function is gone is a hole nobody opened on purpose; and an entry the scan no
+    longer needs is one, too (review of #514: the stronger form #507 uses), so an allowance whose
+    reason is gone is taken out rather than kept for ever."""
+    found = {(rel, name) for rel in SENTENCES
+             for _line, name, _what in hashed_refs((ROOT / rel).read_text(encoding="utf-8"))}
+    assert set(ALLOWED) <= found, f"an allowance no longer used — take it out: {set(ALLOWED) - found}"
     for (rel, name), why in ALLOWED.items():
         tree = ast.parse((ROOT / rel).read_text(encoding="utf-8"))
         names = {n.name for n in ast.walk(tree)

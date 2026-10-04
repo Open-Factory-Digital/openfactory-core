@@ -80,7 +80,7 @@ import threading
 import time
 from pathlib import Path
 
-from openfactory.adapters.board.columns import CANONICAL_COLUMNS
+from openfactory.adapters.board.base import stage_column
 from openfactory.contracts.document import INTERNAL
 from openfactory.contracts.refs import canonical_ref, ref_sort_key
 from openfactory.ops.impediment import PRODUCT_BOARD_UNREADABLE as _IMP_BOARD
@@ -2498,12 +2498,14 @@ class ProductModule:
     # ---- filing work ---------------------------------------------------------------------------
 
     #: Where a filed issue lands. A CONSTANT, never a parameter: TO-DO is what the poller pulls, so
-    #: a column name the caller could choose would be a money gate one argument wide. The product
-    #: role writes work down; a human decides when it starts (ADR-0019 §5).
+    #: a column the caller could choose would be a money gate one argument wide. The product role
+    #: writes work down; a human decides when it starts (ADR-0019 §5).
     #:
-    #: The NAME comes from the platform's vocabulary (`adapters/board/columns.py`); what stays
-    #: closed here is the CHOICE OF KEY, which is the half the money gate turns on.
-    FILING_COLUMN = CANONICAL_COLUMNS["backlog"]
+    #: A KEY, NOT A NAME (#496). What stays closed here is the CHOICE OF KEY, which is the half the
+    #: money gate turns on; the name is the board's (`board.base.stage_column`), because only the
+    #: deployment knows what its board calls the backlog. This held the platform's own `Backlog`
+    #: and handed it to every board, and a Jira project whose workflow says otherwise refused it.
+    FILING_KEY = "backlog"
 
     def _requirement_path(self, requirement) -> str:
         """This module's binding of `authoring.requirement_file`: the ONE renderer of a
@@ -2972,16 +2974,18 @@ class ProductModule:
         detail = ""
         if board is not None and key:
             placed = False
+            # THE BOARD'S OWN NAME FOR THE KEY (#496) — and the one the log says, because the
+            # person reading it looks for that column on their board, not for the platform's word
+            column = stage_column(board, self.FILING_KEY)
             try:
                 board.add_item(issue_url=url)
-                placed = bool(board.set_column(issue=key, issue_url=url,
-                                               name=self.FILING_COLUMN))
+                placed = bool(board.set_column(issue=key, issue_url=url, name=column))
             except Exception as exc:  # noqa: BLE001 — the card exists; placement is repairable
                 log.info("card %s opened but not placed on the board (%s)", ref, exc)
             if not placed:
                 log.warning("OPENFACTORY_PRODUCT_TICKET_NOT_PLACED ref=%s column=%s — the card "
                             "exists but has no column, so the queue cannot see it until a person "
-                            "places it", ref, self.FILING_COLUMN)
+                            "places it", ref, column)
                 detail = said["ticket_unplaced"]
         if str(conversation or "").strip():
             self._track_ticket(ref, title=name, conversation=conversation, requester=requester)
@@ -3064,11 +3068,11 @@ class ProductModule:
         detail = ""
         if board is not None and key:
             placed = False
+            column = stage_column(board, self.FILING_KEY)   # the board's name for it (#496)
             try:
                 url = self._issue_url(tracker, ref)
                 board.add_item(issue_url=url)
-                placed = bool(board.set_column(issue=key, issue_url=url,
-                                               name=self.FILING_COLUMN))
+                placed = bool(board.set_column(issue=key, issue_url=url, name=column))
             except Exception as exc:  # noqa: BLE001 — the issue exists; placement is repairable
                 log.info("defect %s filed but not placed on the board (%s)", ref, exc)
             if not placed:
@@ -3079,7 +3083,7 @@ class ProductModule:
                 log.warning("OPENFACTORY_PRODUCT_DEFECT_NOT_PLACED ref=%s column=%s — the card "
                             "exists "
                             "but has no column, so the queue cannot see it until a person places "
-                            "it", ref, self.FILING_COLUMN)
+                            "it", ref, column)
                 detail = said["defect_unplaced"]
         if key:
             self._track_defect(key, conversation=conversation, requester=requester)
@@ -3515,11 +3519,11 @@ class ProductModule:
                 return WriteResult(ok=True, ref=str(ref),
                                    detail="criado, mas o quadro não aceitou a colocação — o "
                                           "cartão está sem coluna e o time foi avisado.")
+            column = stage_column(board, self.FILING_KEY)   # the board's name for it (#496)
             try:
                 url = self._issue_url(tracker, ref)
                 board.add_item(issue_url=url)
-                placed = bool(board.set_column(issue=key, issue_url=url,
-                                               name=self.FILING_COLUMN))
+                placed = bool(board.set_column(issue=key, issue_url=url, name=column))
             except Exception as exc:  # noqa: BLE001 — the issue exists; placement is repairable
                 log.info("work %s filed but not placed on the board (%s)", ref, exc)
             if not placed:
@@ -3528,7 +3532,7 @@ class ProductModule:
                             ""
                             "but "
                             "has no column, so the queue cannot see it until a person places it",
-                            ref, self.FILING_COLUMN)
+                            ref, column)
                 return WriteResult(ok=True, ref=str(ref),
                                    detail="criado, mas o quadro recusou a colocação — o cartão "
                                           "está sem coluna e o time foi avisado.")
@@ -3864,10 +3868,12 @@ class ProductModule:
 
     # ---- keeping the factory busy --------------------------------------------------------------
 
-    #: Where approved work lands. A constant, as in `FILING_COLUMN`: this is the column the poller
-    #: pulls from, so a caller able to name it is a money gate one argument wide. The name is the
-    #: platform's own (`adapters/board/columns.py`); the key is what stays closed.
-    QUEUE_COLUMN = CANONICAL_COLUMNS["todo"]
+    #: Where approved work lands. A constant, as in `FILING_KEY`: this is the column the poller
+    #: pulls from, so a caller able to name it is a money gate one argument wide. A KEY, and the
+    #: board names it (#496) — the platform's `TO-DO` is `A Fazer` on a client's Jira and `To Do`
+    #: on an Azure board nobody renamed, and asked for by the platform's name each refused the
+    #: promotion. The key is what stays closed.
+    QUEUE_KEY = "todo"
 
     def propose_queue(self, *, limit: int = 5, token: str | None = None):
         """What should start next, in order — and why each one, and why not the others.
@@ -3960,13 +3966,16 @@ class ProductModule:
         # ONE tracker for the whole batch: it is only consulted for the card's URL, and building
         # one per number would authenticate once per card moved.
         tracker = self._tracker()
+        # THE BOARD NAMES THE QUEUE (#496): `QUEUE_KEY` is the gate, and the name is what this
+        # deployment's board calls it — the platform's `TO-DO` was refused by every board that
+        # says anything else, which on Azure Boards is every board nobody renamed
+        queue = stage_column(board, self.QUEUE_KEY)
         out: list[WriteResult] = []
         for number in numbers:
             try:
                 url = self._issue_url(tracker, number)
                 board.add_item(issue_url=url)
-                moved = board.set_column(issue=str(number), issue_url=url,
-                                         name=self.QUEUE_COLUMN)
+                moved = board.set_column(issue=str(number), issue_url=url, name=queue)
                 out.append(WriteResult(ok=bool(moved), ref=f"#{number}",
                                        detail="" if moved else refused))
             except Exception as exc:  # noqa: BLE001 — one failure must not lose the rest
@@ -4007,13 +4016,15 @@ class ProductModule:
         from openfactory.product.board import forget_board
         forget_board(getattr(self.project, "name", ""))
         tracker = self._tracker()
+        # the column a row reads the neighbours from is the backlog BY THE BOARD'S NAME (#496)
+        backlog = stage_column(board, self.FILING_KEY)
         out: list[WriteResult] = []
         previous: str | None = None
         for number in numbers:
             try:
                 url = self._issue_url(tracker, number)
                 placed = bool(board.place_after(issue=str(number), issue_url=url, after=previous,
-                                                column=self.FILING_COLUMN))
+                                                column=backlog))
                 out.append(WriteResult(ok=placed, ref=f"#{number}",
                                        detail="" if placed else refused))
                 if placed:
@@ -4027,7 +4038,7 @@ class ProductModule:
         """The board a filed card is placed on — the real one unless a caller injected something.
 
         `board=None` WAS THE DEFAULT AND PRODUCTION NEVER OVERRODE IT. Every placement sat behind
-        `if board is not None`, supplied only from tests, so `FILING_COLUMN = "Backlog"` was reached
+        `if board is not None`, supplied only from tests, so the filing column was reached
         by nothing and filed work landed on the board with NO column. It is then invisible to
         `readiness` and `propose_queue`, which match column names exactly — the role could never
         surface it again, while the reply told the client "Estão no Backlog" and the defect reply
@@ -4684,6 +4695,135 @@ class ProductModule:
                 "corrects": filed_by_the_product_role(body) in _WHAT_WAS_ASKED,
                 "criteria": criteria,
                 "words": adjust_controls(left=gate.left, passes=gate.passes, language=lang)}
+
+    # ---- "that's it": the requester accepts the change they tried (#448 slice 3) ---------------
+
+    def prepare_acceptance(self, number: str, *, actor: str, language: str | None = None):
+        """What the conversation stages when a person says the change that waits on them is right
+        — an `accept.Prepared`: the head they tried, and whether the yes puts the change in, or the
+        sentence to say instead (#448 slice 3).
+
+        READ-ONLY, like `prepare_adjustment`, and in its order — who may, then the engine's gate,
+        then what was tried — so nothing is staged that the yes could not record. No model is
+        spent: the yes is the person's word, recorded as said."""
+        from openfactory.product import accept, adjust
+        from openfactory.product.voice import accept_change_said
+
+        number = canonical_ref(number)
+        lang = language or getattr(self.project, "language", None)
+        if not self.may_send_back(number, actor):
+            return accept.Prepared(said=accept_change_said("not_yours", ref=number,
+                                                           language=lang))
+        gate = adjust.gate_of(self.project, number)
+        if gate.why in accept.NOTHING_TO_ACCEPT:
+            return accept.Prepared(said=accept_change_said(gate.why, ref=number, language=lang))
+        tried = accept.tried(self.project, number, gate.pr_url)
+        if tried.why:
+            return accept.Prepared(said=accept_change_said(tried.why, ref=number, language=lang))
+        return accept.Prepared(ok=True, head=tried.head, pr_url=gate.pr_url,
+                               merges=self._the_yes_merges(gate, tried))
+
+    @staticmethod
+    def _the_yes_merges(gate, tried) -> bool:
+        """THE THREE CONDITIONS, in one place (#448 slice 3): the job says the look is all that
+        holds its merge (`Gate.look_only`, which it publishes only while the reading standing now
+        admits it), the gate can hear an answer, and the forge says the pull request still points
+        at the head the person tried. Anything less records the yes for a person to see."""
+        from openfactory.product.adjust import DEAF
+
+        return bool(gate.look_only and gate.why != DEAF and tried.at_head is True)
+
+    def accept_change(self, number: str, *, actor: str, head: str = "", pr_url: str = "",
+                      where: str = "", vouched: bool = False) -> WriteResult:
+        """Record that the change on this card, as its requester tried it, is what they asked for —
+        and, when the look is all that holds its merge, give the gate the `merge` (#448 slice 3).
+        The hand behind the conversation's yes and the card's own control.
+
+        IN THIS ORDER, AND EACH STEP IS WHY THE NEXT IS SAFE:
+
+            who may      `may_send_back` — the requester, a product admin, a vouched operator;
+            the gate     the ENGINE's answer for this card: a person is asked, no pass running;
+            the head     what the preview was BUILT from for the pull request the gate names, and
+                         the one staged (`head`) when there is one: a preview rebuilt in between
+                         is a change the yes never saw. A pull request that moved past it refuses;
+            the record   one `card_accepted` row (`accept.record`) — refused by name when it did
+                         not land, and nothing after it runs;
+            the merge    only on `_the_yes_merges`, through the seam every answer crosses;
+            the note     on the card, saying who, on which head, and whether it is going in.
+
+        A note that failed is reported on a SUCCESS (`close_card`'s rule), never as a failure of
+        the acceptance that landed."""
+        from openfactory.adapters.board_db import now_iso
+        from openfactory.product import accept, adjust
+        from openfactory.product.voice import accept_change_said, change_accepted_note
+
+        number = canonical_ref(number)
+        lang = getattr(self.project, "language", None)
+
+        def refused(why: str) -> WriteResult:
+            return WriteResult(ok=False, ref=f"#{number}",
+                               detail=accept_change_said(why, ref=number, language=lang))
+
+        if not self.may_send_back(number, actor, vouched=vouched):
+            return refused("not_yours")
+        gate = adjust.gate_of(self.project, number)
+        if gate.why in accept.NOTHING_TO_ACCEPT:
+            return refused(gate.why)
+        if pr_url and gate.pr_url and pr_url != gate.pr_url:
+            return refused(accept.MOVED)        # another pull request since it was staged
+        tried = accept.tried(self.project, number, gate.pr_url)
+        if tried.why:
+            return refused(tried.why)
+        if head and head != tried.head:
+            return refused(accept.MOVED)        # the preview was rebuilt since it was staged
+        if not accept.record(getattr(self.project, "name", "") or "", accept.Acceptance(
+                card=number, pr_url=gate.pr_url, head=tried.head, by=actor, at=now_iso(),
+                where=where)):
+            return refused(accept.UNRECORDED)
+        merging, unmerged = False, ""
+        if self._the_yes_merges(gate, tried):
+            unmerged = accept.merge(self.project, number, by=actor)
+            merging = not unmerged
+        residue = ""
+        try:
+            self._tracker().comment(f"#{number}", change_accepted_note(
+                by=actor, head=tried.head, pr_url=gate.pr_url, merging=merging, language=lang,
+                agent_name=self._name()))
+        except Exception as exc:  # noqa: BLE001 — the acceptance landed; only its note is lost
+            log.warning("OPENFACTORY_PRODUCT_ACCEPT_UNNOTED card=#%s (%s) — the acceptance was "
+                        "recorded and the card does not say so", number, exc)
+            residue = accept_change_said("unnoted", ref=number, language=lang)
+        log.info("OPENFACTORY_PRODUCT_ACCEPTED card=#%s by=%s head=%s merging=%s unmerged=%s",
+                 number, actor, tried.head[:12], merging, unmerged)
+        return accept.Accepted(ok=True, ref=f"#{number}", detail=residue, head=tried.head,
+                               merging=merging, unmerged=unmerged)
+
+    def accept_view(self, number: str, *, actor: str, vouched: bool = False) -> dict:
+        """What the card's "this is it" control needs on the product view (#448 slice 3): whether
+        it is offered to THIS person, the head they would accept, and the words — or, when the
+        change waits on them and there is nothing to accept yet, why. `{"offered": False}` and
+        nothing else when nobody is asked anything.
+
+        ASKED ONLY OF A CARD THE FACTORY HAS TAKEN UP AND NOT FINISHED (the caller's column), like
+        `adjust_view`. The forge is asked through the preview's minute of cache: the row asks it
+        fresh at the yes."""
+        from openfactory.product import accept, adjust
+        from openfactory.product.voice import accept_change_controls, accept_change_said
+
+        number = canonical_ref(number)
+        lang = getattr(self.project, "language", None)
+        if not self.may_send_back(number, actor, vouched=vouched):
+            return {"offered": False}
+        gate = adjust.gate_of(self.project, number)
+        if gate.why in accept.NOTHING_TO_ACCEPT:
+            return {"offered": False}
+        tried = accept.tried(self.project, number, gate.pr_url, fresh=False)
+        if tried.why:
+            return {"offered": False,
+                    "note": accept_change_said(tried.why, ref=number, language=lang)}
+        return {"offered": True, "head": tried.head,
+                "words": accept_change_controls(merges=self._the_yes_merges(gate, tried),
+                                                language=lang)}
 
     def align_card(self, number: str, *, requirement: int, actor: str) -> WriteResult:
         """Make a card execute the requirement it should — citation AND what it must satisfy.

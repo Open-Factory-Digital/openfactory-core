@@ -1863,9 +1863,15 @@ def queue_proposal(readiness, proposal, *, titles: dict[str, str] | None = None,
 
 
 def queued(numbers: list[str], *, language: str | None = None, agent_name: str = "") -> str:
+    """The cards a confirmed queue moved, named AS THE TRACKER SPELLS THEM (#491).
+
+    `ref_label`, never `f"#{n}"`: `#12` on GitHub, as it always read, and `CONT-412` on Jira —
+    not `#CONT-412`, which nobody there writes and nobody can paste back."""
+    from openfactory.contracts.refs import ref_label
+
     sig = f"{agent_name.strip()}: " if agent_name.strip() else ""
     return sig + _pick(_QUEUED, language).format(
-        items=", ".join(f"#{n}" for n in numbers))
+        items=", ".join(ref_label(n) for n in numbers))
 
 
 _SITUATION = {
@@ -2946,6 +2952,167 @@ def adjust_controls(*, left: int | None = None, passes: int | None = None,
     return words
 
 
+# ── "that's it": the requester accepts the change they tried (#448 slice 3) ─────────────────────
+#
+# THE YES IS RECORDED AGAINST WHAT THEY TRIED, and these are its words: what the role stages, what
+# it says once the yes is recorded, and — never a bare refusal — why nothing was recorded. Held to
+# `CLIENT_JARGON`: "what you tried in its preview", never the commit it was built from; "goes into
+# the product", never the forge's verb. The head is named only where the team reads it: the card's
+# note and the floor (`accept.line`).
+
+_ACCEPT_CHANGE_SAID = {
+    "not_yours": {
+        "pt-BR": ("só quem pediu o {ref}, ou alguém com permissão para aprovar, pode aceitar a "
+                  "mudança dele. Nada foi registrado — peça a uma dessas pessoas."),
+        "en": ("only the person who asked for {ref}, or someone with permission to approve, can "
+               "accept its change. Nothing was recorded — ask one of them.")},
+    "not_waiting": {
+        "pt-BR": ("nenhuma mudança do {ref} está esperando por você agora — ela pode já ter "
+                  "entrado no produto, ter sido fechada, ou ainda não estar pronta para você "
+                  "experimentar — então não há o que aceitar."),
+        "en": ("no change for {ref} is waiting on you right now — it may already be in the "
+               "product, have been closed, or not be ready for you to try yet — so there is "
+               "nothing to accept.")},
+    "working": {
+        "pt-BR": ("o {ref} está numa passada agora, reescrevendo a mudança — o que você "
+                  "experimentou está sendo substituído. Quando ela terminar, experimente de novo "
+                  "e me diga."),
+        "en": ("{ref} is in a pass right now, rewriting the change — what you tried is being "
+               "replaced. When it ends, try it again and tell me then.")},
+    "unreachable": {
+        "pt-BR": ("não consegui falar com a fábrica agora, então nada foi registrado para o "
+                  "{ref}. Me diga de novo daqui a pouco."),
+        "en": ("I could not reach the factory just now, so nothing was recorded for {ref}. Tell "
+               "me again in a moment.")},
+    # THE YES STANDS FOR WHAT WAS TRIED, so with nothing tried there is nothing to record it on
+    "untried": {
+        "pt-BR": ("só consigo registrar o seu «está certo» sobre uma versão que você experimentou "
+                  "na prévia, e não há prévia da mudança do {ref} como ela está. Abra o cartão "
+                  "para experimentá-la e me diga depois."),
+        "en": ("I can only record your yes against a version you tried in its preview, and there "
+               "is no preview of {ref}'s change as it stands. Open the card to try it, and tell "
+               "me then.")},
+    # …AND A YES ON A VERSION THAT MOVED WOULD STAND FOR SOMETHING NOBODY SAW
+    "moved": {
+        "pt-BR": ("a mudança do {ref} mudou desde que a prévia que você experimentou foi montada, "
+                  "então o seu «está certo» valeria para algo que você não viu. Experimente a "
+                  "prévia montada de novo e me diga depois."),
+        "en": ("{ref}'s change moved since the preview you tried was built, so your yes would "
+               "stand for something you did not see. Try the rebuilt preview, and tell me then.")},
+    "unrecorded": {
+        "pt-BR": ("não consegui registrar o seu «está certo» para o {ref} agora, então nada "
+                  "mudou. Me diga de novo daqui a pouco."),
+        "en": ("I could not write your yes down for {ref} just now, so nothing changed. Tell me "
+               "again in a moment.")},
+    # WHAT DID NOT LAND AFTER THE YES WAS RECORDED — said on the success, never instead of it
+    "unnoted": {
+        "pt-BR": ("Não consegui deixar um comentário no cartão do {ref} dizendo isso — o seu "
+                  "«está certo» está registrado mesmo assim."),
+        "en": ("I could not leave a note on {ref}'s card saying so — your yes is recorded all "
+               "the same.")},
+}
+_ACCEPT_CHANGE_CONFIRM = {
+    "pt-BR": ("Vou registrar que o *{number}*, como você o experimentou na prévia, é o que você "
+              "pediu{then}. Confirma?"),
+    "en": ("I'll record that *{number}*, as you tried it in its preview, is what you asked "
+           "for{then}. Confirm?"),
+}
+#: What the yes does next, said BEFORE it: the look is all that holds the change, so the yes puts
+#: it in — or a person puts it in, and sees the yes.
+_ACCEPT_CHANGE_THEN = {
+    "merges": {"pt-BR": ", e com isso ela entra no produto",
+               "en": ", and with that it goes into the product"},
+    "shown": {"pt-BR": ", para quem coloca as mudanças deste projeto no produto ver quando decidir",
+              "en": ", for whoever puts this project's changes into the product to see when they "
+                    "decide"},
+}
+_ACCEPT_CHANGE_DONE = {
+    "merges": {
+        "pt-BR": ("registrado: o {ref}, como você o experimentou, é o que você pediu — e por "
+                  "isso ele entra no produto agora."),
+        "en": ("recorded: {ref}, as you tried it, is what you asked for — so it goes into the "
+               "product now.")},
+    "shown": {
+        "pt-BR": ("registrado: o {ref}, como você o experimentou, é o que você pediu. Quem coloca "
+                  "as mudanças deste projeto no produto vê o seu «está certo» quando decidir."),
+        "en": ("recorded: {ref}, as you tried it, is what you asked for. Whoever puts this "
+               "project's changes into the product sees your yes when they decide.")},
+    "unmerged": {
+        "pt-BR": ("registrado: o {ref}, como você o experimentou, é o que você pediu. Não "
+                  "consegui entregá-lo para entrar no produto agora; quem coloca as mudanças "
+                  "deste projeto no produto vê o seu «está certo»."),
+        "en": ("recorded: {ref}, as you tried it, is what you asked for. I could not hand it "
+               "over to go into the product just now; whoever puts this project's changes into "
+               "the product sees your yes.")},
+}
+#: The card's own control on the product view, and the sentence under it.
+_ACCEPT_CHANGE_CONTROLS = {
+    "pt-BR": {"accept": "Está certo — aceitar", "merges": " Com isso ela entra no produto.",
+              "note": ("Se o que você experimentou na prévia é o que você pediu, aceite — o seu "
+                       "«está certo» fica registrado sobre a versão que você experimentou.")},
+    "en": {"accept": "This is it — accept", "merges": " With that it goes into the product.",
+           "note": ("If what you tried in the preview is what you asked for, accept it — your yes "
+                    "is recorded against the version you tried.")},
+}
+#: The card's note: the TEAM reads it, so the head and the change are named.
+_CHANGE_ACCEPTED_NOTE = {
+    "pt-BR": ("{sig} {by} experimentou a mudança na prévia e a aceitou: o que experimentou — "
+              "{head} de {pr} — é o que pediu.{merging}"),
+    "en": ("{sig} {by} tried the change in its preview and accepted it: what they tried — {head} "
+           "of {pr} — is what they asked for.{merging}"),
+}
+_CHANGE_ACCEPTED_MERGING = {
+    "pt-BR": " A prévia era tudo o que segurava o merge, então a fábrica faz o merge agora.",
+    "en": " The look was all that held the merge, so the factory merges it now.",
+}
+
+
+def accept_change_said(reason: str, *, ref: str, language: str | None = None) -> str:
+    """Why nothing was recorded, in the person's language — one sentence per reason the module
+    and `product/accept.py` can give."""
+    from openfactory.contracts.refs import ref_label
+
+    return _pick(_ACCEPT_CHANGE_SAID[reason], language).format(ref=ref_label(ref))
+
+
+def accept_change_confirmation(*, number: str, merges: bool = False,
+                               language: str | None = None) -> str:
+    """The proposal the yes answers: their yes recorded against what they tried, and what follows
+    — the change goes into the product, or the person who puts it in sees the yes."""
+    from openfactory.contracts.refs import ref_label
+
+    return _pick(_ACCEPT_CHANGE_CONFIRM, language).format(
+        number=ref_label(number),
+        then=_pick(_ACCEPT_CHANGE_THEN["merges" if merges else "shown"], language))
+
+
+def accept_change_done(*, ref: str, merging: bool = False, unmerged: bool = False,
+                       language: str | None = None) -> str:
+    """What the person reads once their yes is recorded."""
+    which = "merges" if merging else "unmerged" if unmerged else "shown"
+    from openfactory.contracts.refs import ref_label
+
+    return _pick(_ACCEPT_CHANGE_DONE[which], language).format(ref=ref_label(ref))
+
+
+def accept_change_controls(*, merges: bool = False, language: str | None = None) -> dict[str, str]:
+    """The words of the card's "this is it" control on the product view."""
+    words = dict(_pick(_ACCEPT_CHANGE_CONTROLS, language))
+    tail = words.pop("merges")
+    if merges:
+        words["note"] += tail
+    return words
+
+
+def change_accepted_note(*, by: str, head: str, pr_url: str, merging: bool = False,
+                         language: str | None = None, agent_name: str = "") -> str:
+    """What the card says once its requester accepted the change: who, on which head of which
+    change — and that the factory merges it, when the look was all that held it."""
+    return _pick(_CHANGE_ACCEPTED_NOTE, language).format(
+        sig=signature(agent_name), by=by, head=f"`{head[:7]}`", pr=pr_url,
+        merging=_pick(_CHANGE_ACCEPTED_MERGING, language) if merging else "")
+
+
 #: Aligning. The confirmation has to say the thing a person would not guess: this is not tidying
 #: wording, it changes WHAT GETS BUILT. Thirteen cards citing a retired requirement is what this
 #: exists for, and each of those already carries criteria somebody may have started working from —
@@ -3571,6 +3738,33 @@ def ready_for_you(*, ref: str, title: str = "", card_url: str = "", review: str 
         try_it = _pick(_READY_TRY_PREVIEW if preview else _READY_TRY_CARD, language)
     lines += ["", _pick(_READY_NEXT, language).format(try_it=try_it)]
     return "\n".join(lines)
+
+
+# ── the change went in (#448 slice 3) ───────────────────────────────────────────────────────────
+#
+# WHOEVER PUT IT IN, THE PERSON WHO ASKED HEARS IT. A person's merge, the factory's own, or the one
+# a requester's acceptance gave: the change is now part of the product's code. Said only where the
+# delivery does not say it at the same moment (`events.merged_for_you`), and honest about what is
+# left — a project with stages still has them to pass. Never the forge's verb (`CLIENT_JARGON`).
+
+_MERGED_FOR_YOU = {
+    "pt-BR": "{sig}{card}: a mudança que você pediu agora faz parte do código do produto.",
+    "en": "{sig}{card}: the change you asked for is now part of the product's code.",
+}
+_MERGED_STAGES = {
+    "pt-BR": " Ela ainda passa pelas etapas deste projeto antes de chegar a quem usa o produto.",
+    "en": " It still goes through this project's stages before it reaches the people who use it.",
+}
+
+
+def merged_for_you(*, ref: str, title: str = "", stages_follow: bool = False,
+                   language: str | None = None, agent_name: str = "") -> str:
+    """The change a card's requester asked for went in — said once, where they asked."""
+    said = _pick(_MERGED_FOR_YOU, language).format(sig=_sig(agent_name),
+                                                   card=_card(ref, title, language))
+    if stages_follow:
+        said += _pick(_MERGED_STAGES, language)
+    return said[0].upper() + said[1:] if said else said
 
 
 # ── the agenda, in the person's words (#401) ────────────────────────────────────────────────────
