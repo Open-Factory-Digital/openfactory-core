@@ -13,6 +13,55 @@ stops before every step that cannot be undone.
 | reviewer | @hermesfelipe | reviews every pull request, the version and backport pull requests included |
 | release agent | `release-manager` | audits, prepares the pull requests, runs the rehearsals, drafts the notes. It never tags, publishes, merges or changes a setting without the release manager's explicit go |
 
+## Running it with the agent
+
+The agent is `.claude/agents/release-manager.md`. Claude Code loads it from this repository's
+checkout; `/agents` lists it.
+
+**What you need:**
+- a checkout of this repository, up to date with `origin`;
+- Claude Code;
+- `gh` logged in as the release manager, the account allowed to create release branches and tags;
+- Docker running, for the upgrade rehearsal and the fresh install;
+- the project's virtual environment, for the tests.
+
+**Start it as the session itself**, from the root of the checkout:
+
+```bash
+claude --agent release-manager
+```
+
+The whole session is then the agent:
+- It reads this page first, every time.
+- It tells you where the release stands (the milestone, the branches, the tags, the tracking issue) and what comes next.
+- It speaks to you in the language you write in, and writes everything on GitHub in English.
+
+**Ask in plain words.** For example:
+
+| phase | ask |
+|---|---|
+| before the cut | "Audit milestone 0.5.0 for the cut on Friday." / "Draft the release notes for 0.5.0." |
+| the cut | "Cut release/0.5." |
+| a candidate | "Prepare 0.5.0-rc.1." / "Verify v0.5.0-rc.1." |
+| fixes | "Backport the pull requests labelled backport-0.5." |
+| the final release | "Prepare the final 0.5.0." |
+
+**The go.** Before every step that cannot be undone (a branch, a tag, a merge, a publication, a
+setting), the agent stops. It says what it will do, on which commit or name, and which checks are
+green, and then waits.
+- **Answer "go" (or "pode seguir")** to approve that one step. Anything else is a no.
+- **A go covers one step.** The agent asks again for the next.
+
+**Picking up later.** The agent writes every result into the release tracking issue. A new session,
+yours or the next release manager's, reads the issue and continues from it.
+
+**From another session**, `@agent-release-manager <task>` runs it as a subagent. A subagent works to
+the end and returns a report; it cannot wait for an answer. Use it for the reversible work: an
+audit, the notes, the backport pull requests. For anything that needs a go, start
+`claude --agent release-manager`, or take the step by hand.
+
+**Without Claude Code,** this page is the whole process: every step has its command.
+
 ## The model, in one picture
 
 ```
