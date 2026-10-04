@@ -8,6 +8,9 @@
   · a project with no stage is delivered at the merge, and a chain with production once it is
     released, exactly as before;
   · every new command is behind its marker, so a job or a watch in flight replays as recorded;
+  · `--promote` on a manifest that declares a watched deploy and no chain takes the same path —
+    the deploy is the last stage, and no empty promotion ends the card Done first — while a
+    declared chain is still walked with the flag (#501);
   · the forge is not asked to close at the merge a card a stage still waits on;
   · a "did not work" about a delivery stages a defect linked to the cards it was about, with the
     person's words, titled from the card, citing the requirement it was owed against; the yes of
@@ -50,6 +53,20 @@ MUTATIONS = [
     ("the requester is told nothing follows a watched deploy", WORKFLOW,
      "                params, result, stages_follow=should_promote or deploy_is_last)\n",
      "                params, result, stages_follow=should_promote)\n"),
+
+    # ── `--promote` on a deploy-only manifest (#501) ─────────────────────────────────────────
+    ("--promote on a deploy-only manifest walks an empty promotion and ends Done first again",
+     WORKFLOW,
+     '                and workflow.patched("promote-on-a-deploy-only-manifest-watches-it")):\n',
+     "                and False):\n"),
+    ("--promote skips the empty promotion on a history that recorded it", WORKFLOW,
+     '                and workflow.patched("promote-on-a-deploy-only-manifest-watches-it")):\n',
+     "                and True):\n"),
+    ("--promote skips a chain the manifest declares when a deploy is watched beside it",
+     WORKFLOW,
+     "        if (should_promote and not result.environments and "
+     "result.state == JobState.MERGED\n",
+     "        if (should_promote and result.state == JobState.MERGED\n"),
 
     # ── the watch at the deploy's outcome ────────────────────────────────────────────────────
     ("the watch settles nothing", WORKFLOW,
