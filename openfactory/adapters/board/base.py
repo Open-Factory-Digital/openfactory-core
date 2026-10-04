@@ -349,6 +349,33 @@ def stage_column(board, key: str) -> str:
     return name_for(wanted)
 
 
+def column_for(board, key: str, *, names: list[str] | None = None) -> str:
+    """What `board` calls the stage `key` — one of ITS OWN column names, or `""` when none of them
+    is that stage (#500).
+
+    THE INVERSE OF `stage_key`, ASKED OF THE SAME ROW. A board renamed in `columns:`, or a Jira
+    project whose `status_map` says `Concluído`, does not call its last column `Done`, and a
+    caller placing a card there by the platform's literal would put it in a column the page does
+    not draw. Every row already answers *which stage is this column of mine*, so this walks the
+    board's own columns, in board order, and asks it — the first one that is `key` is the answer.
+    `pickup_column` is the same question for `todo`, from before this seam existed.
+
+    `names` is the caller's when it has already read `column_names()`, so one request is not two;
+    left out, the board is asked. `""` for a board that could not say, or names no such column:
+    a card is then placed nowhere, which is the answer `columns()` already gives for a card a
+    board does not place — never a column invented for it."""
+    if board is None:
+        return ""
+    if names is None:
+        try:
+            names = board.column_names()
+        except Exception:  # noqa: BLE001 — a board that cannot say has no column to name
+            log.warning("could not read which columns %s has, so no column is named for %r",
+                        type(board).__name__, key, exc_info=True)
+            names = None
+    return next((name for name in (names or []) if stage_key(board, name) == key), "")
+
+
 def stage_option(board) -> str:
     """The tracker option that declares THIS board's column names, or `""` when it declares none.
 

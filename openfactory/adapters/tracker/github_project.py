@@ -13,6 +13,7 @@ import os
 import subprocess
 
 from openfactory.adapters.board.columns import CANONICAL_COLUMNS
+from openfactory.adapters.github_cli import nothing_named, refused
 from openfactory.adapters.tracker.base import Budget, BudgetUnreadable
 from openfactory.contracts import JobState
 from openfactory.contracts.refs import qualify_ref, ref_number, split_repo_ref
@@ -98,6 +99,12 @@ def _run_gh(args: list[str], token: str | None):
     gh's own spelling for "the authenticated user", and it needs no organisation scope. It is
     tried ONLY on that one error string, so a real permission failure still surfaces as itself
     rather than being retried into a confusing second message."""
+    # NEVER A GUESSED OWNER (`adapters/github_cli.py`): an empty `--owner` is the logged-in
+    # account's projects, not the client's, and is answered as a failed call before `gh` runs
+    why = nothing_named(args)
+    if why:
+        log.warning("OPENFACTORY_GH_NOTHING_NAMED %s", why)
+        return refused(args, why)
     try:
         p = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60,
                            env=_env(token))

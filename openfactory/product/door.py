@@ -92,6 +92,13 @@ WATCH = "watch"
 #: The transport an internal event says it came through: the role itself.
 EVENT = "event"
 
+#: WHAT KIND OF REPLY A PROACTIVE ROLE LINE IS (#457): an announcement — the factory saying
+#: something happened (`announce`), or the outcome of an asynchronous task the role started
+#: (`tell`) — is the PLATFORM speaking, not the model's answer. Recorded with this kind
+#: (`transcript.KIND_MARK`), so the distillation hands it to no model and never reads it as the
+#: role's answer. Not `transcript.ANSWER`, which is the whole point.
+ANNOUNCEMENT = "announcement"
+
 #: Why `receive` refuses an event handed to it — in a sentence, because the caller says it on.
 FORGED = ("an event is the factory's own to tell — it never comes in through the door a person "
           "writes to.")
@@ -581,9 +588,11 @@ def tell(project, *, conversation: str, text: str, room: str = "", in_reply_to: 
     try:
         # WITH WHAT IT ANSWERS (#402): the reply below is published naming `in_reply_to`, and a
         # record that did not name it too was the same answer told two ways — the page's catch-up
-        # could not find in the transcript the answer it had just been handed live
+        # could not find in the transcript the answer it had just been handed live.
+        # THE PLATFORM SPEAKING, NOT THE ROLE'S ANSWER (#457): the outcome of an asynchronous task
+        # is an announcement, recorded with a kind the distillation never reads as the role's.
         transcript.record(project, thread=conversation, role="agent", text=said, channel=room,
-                          in_reply_to=in_reply_to)
+                          in_reply_to=in_reply_to, kind=ANNOUNCEMENT)
     except Exception:  # noqa: BLE001 — the record must never cost the telling
         log.warning("[%s] could not record what the role told %s", name, conversation,
                     exc_info=True)
@@ -655,8 +664,10 @@ async def announce(project, *, id: str, conversation: str, text: str, room: str 
                   conversation, ack.reason)
         return ack
     try:
+        # THE PLATFORM SPEAKING, NOT THE ROLE'S ANSWER (#457): an announcement is the factory saying
+        # something happened, recorded with a kind the distillation never reads as the role's.
         await asyncio.to_thread(transcript.record, project, thread=conversation, role="agent",
-                                text=said, channel=room, message_id=id)
+                                text=said, channel=room, message_id=id, kind=ANNOUNCEMENT)
     except Exception:  # noqa: BLE001 — the record must never cost the telling
         log.warning("[%s] could not record what the role announced to %s", name, conversation,
                     exc_info=True)

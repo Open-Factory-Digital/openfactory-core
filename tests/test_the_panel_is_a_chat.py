@@ -63,9 +63,9 @@ class Memory:
         self.n = 0
 
     def record(self, project, *, thread, role, text, actor="", channel="", message_id="",
-               in_reply_to="", addressed=True, at=""):
-        # the transcript keeps which message a turn is and what it answers (#266 slice 4), and
-        # whether it was addressed to the role (#266 slice 6)
+               in_reply_to="", addressed=True, at="", kind="answer"):
+        # the transcript keeps which message a turn is and what it answers (#266 slice 4), whether
+        # it was addressed to the role (#266 slice 6), and what kind of reply it was (#457)
         self.n += 1
         self.turns.setdefault(thread, []).append(Turn(role=role, text=text, ts=f"t{self.n}",
                                                       actor=actor, addressed=addressed))

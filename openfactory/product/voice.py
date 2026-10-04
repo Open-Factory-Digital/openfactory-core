@@ -864,6 +864,30 @@ def broke(*, language: str | None = None) -> str:
     return _pick(_BROKE, language)
 
 
+#: THE PLATFORM'S OWN FIXED SENTENCES THAT ARE NOT THE ROLE'S ANSWER (#457), by the kind each
+#: carries where it is recorded as a role line. `broke` and `unavailable` are the two that reach the
+#: transcript — a hand-off and a busy acknowledgement are presence, published and never recorded, so
+#: they need no recognition here. These take no interpolation, so a recorded line IS one of them
+#: when it ends with it: the one thing that can precede it is an agent-name prefix (`on_it` et al.).
+_OWN_VOICE = {"broke": _BROKE, "unavailable": _UNAVAILABLE}
+
+
+def own_voice_kind(text: str) -> str:
+    """The kind a recorded role line is when it is one of the platform's OWN sentences — `""` when
+    it is the model's answer (#457). The engine records it so the distillation hands no platform
+    sentence to a model. Recognised by the whole sentence, matched where `voice.py` composed both
+    sides, never by a substring: these sentences mean one thing and carry no interpolated part."""
+    said = " ".join(str(text or "").split())
+    if not said:
+        return ""
+    for kind, catalogue in _OWN_VOICE.items():
+        for sentence in catalogue.values():
+            flat = " ".join(str(sentence).split())
+            if flat and (said == flat or said.endswith(flat)):
+                return kind
+    return ""
+
+
 def heard(*, language: str | None = None, agent_name: str = "") -> str:
     """The door's acknowledgement when it could not tell where the message stands — the engine
     was slow to say — and so promises only what is certain: the message is kept."""

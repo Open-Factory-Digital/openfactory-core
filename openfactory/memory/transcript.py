@@ -88,6 +88,14 @@ PRODUCT_MARK = "product"
 #: — and every row addressed to the role — reads as addressed.
 ADDRESSED_MARK = "addressed"
 
+#: The key in a row's `extra` that marks WHAT KIND OF REPLY a role line was (#457): the model's
+#: answer, or one of the platform's own sentences — a crash reply, an unavailable, a hand-off. The
+#: distillation reads only an answer as the role's; a platform sentence is handed to no model and
+#: never becomes a distillate. Written only when it is NOT `ANSWER`, so every row written before it
+#: — and every real answer — reads as an answer.
+KIND_MARK = "kind"
+ANSWER = "answer"
+
 
 @dataclass(frozen=True)
 class Turn:
@@ -188,7 +196,8 @@ def _where(project, *, members: bool = True) -> Partition:
 
 def record(project, *, thread: str, role: str, text: str, actor: str = "",
            channel: str = "", message_id: str = "", in_reply_to: str = "",
-           addressed: bool = True, attachments: list | None = None, at: str = "") -> str:
+           addressed: bool = True, attachments: list | None = None, at: str = "",
+           kind: str = ANSWER) -> str:
     """Append one turn; returns the `ts` it was written under, or "" when nothing was.
 
     `at` is WHEN IT WAS SAID — the moment the message arrived, stamped once where it came in
@@ -207,6 +216,12 @@ def record(project, *, thread: str, role: str, text: str, actor: str = "",
     `addressed=False` is a line said in a group to somebody else (#266 slice 6, ADR-0051 D14):
     kept like every other, marked (`ADDRESSED_MARK`), and left out of every read that builds a
     prompt.
+
+    `kind` is WHAT KIND OF REPLY a role line was (#457): `ANSWER` — the default and what every row
+    written before this carries — or one of the platform's own sentences (`broke`, `unavailable`, a
+    `handoff`). Marked (`KIND_MARK`) only when it is not an answer, so the distillation hands no
+    platform sentence to a model and a span whose only role lines are platform sentences becomes no
+    distillate.
 
     `project` is the registry project the turn was said on — recorded under its PRODUCT's
     partition, with the mark (see the module's docstring) — or a partition named outright.
@@ -233,6 +248,10 @@ def record(project, *, thread: str, role: str, text: str, actor: str = "",
             extra["in_reply_to"] = str(in_reply_to)
         if not addressed:
             extra[ADDRESSED_MARK] = False
+        if kind and kind != ANSWER:
+            # THE PLATFORM'S OWN VOICE, NOT THE ROLE'S ANSWER (#457): marked only when it is not an
+            # answer, so a row written before this change reads as one.
+            extra[KIND_MARK] = kind
         if attachments:
             # WHICH FILES THE LINE CARRIED (#336) — their names and ids, never their bytes, so a
             # reload shows them where they were sent
