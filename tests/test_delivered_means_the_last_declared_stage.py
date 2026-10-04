@@ -612,7 +612,8 @@ def test_a_watch_that_only_informs_is_told_so_by_default():
 @pytest.mark.parametrize("declared,closing", [
     ({}, "Closes #12"),
     ({"post_merge_deploy": {"workflow": "deploy.yml", "env": "staging"}}, ""),
-    ({"environments": {"staging": {"url": STAGING}}}, ""),
+    # a chain stage something observes (#520 refuses one nothing would)
+    ({"environments": {"staging": {"url": STAGING, "deploy_ref": "staging"}}}, ""),
 ], ids=["nothing follows", "a watched deploy", "a chain"])
 def test_the_forge_closes_the_card_at_the_merge_only_when_nothing_follows(declared, closing):
     """`Closes #12` makes the forge close the card AT THE MERGE, and a closed card reads as

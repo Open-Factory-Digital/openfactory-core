@@ -1382,10 +1382,10 @@ def defect_after_delivery_title(*, ref: str, title: str = "", language: str | No
                                 limit: int = 80) -> str:
     """The title a defect filed after a delivery is opened under — within the board's `limit`
     (`cards.TITLE_LIMIT`), its card's ref always whole at the end."""
-    ref = str(ref).strip().lstrip("#")
+    ref = ref_label(str(ref).strip())
     title = (title or "").strip()
-    suffix = f" (#{ref})" if title else ""
-    text = _pick(_DEFECT_AFTER_DELIVERY_TITLE, language).format(what=title or f"#{ref}")
+    suffix = f" ({ref})" if title else ""
+    text = _pick(_DEFECT_AFTER_DELIVERY_TITLE, language).format(what=title or ref)
     room = limit - len(suffix)
     if len(text) > room:
         text = text[:room - 1].rstrip() + "…"
