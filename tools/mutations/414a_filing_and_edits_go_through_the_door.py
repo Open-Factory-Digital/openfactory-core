@@ -129,12 +129,13 @@ MUTATIONS = [
      "        return True",
      ROWS_TEST),
 
+    # re-pinned 2026-10-04: `set_state` ends in main's `move_card` (#506) (review of #458)
     ("the local board writes the reason too, the double comment on the one row that had none",
      LOCAL,
-     "        return bool(changed)",
-     "        if reason:\n"
-     "            self.comment(ref, reason)\n"
-     "        return bool(changed)",
+     "            return move_card(conn, self.project, _number(ref), key, closes_at_done=True)",
+     "            if reason:\n"
+     "                self.comment(ref, reason)\n"
+     "            return move_card(conn, self.project, _number(ref), key, closes_at_done=True)",
      ROWS_TEST),
 
     ("the test of the four rows stops driving one of them, and still passes for the rest",

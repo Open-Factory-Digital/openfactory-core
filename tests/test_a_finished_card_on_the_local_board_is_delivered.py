@@ -178,14 +178,16 @@ def test_the_finished_card_reads_as_the_hosted_rows_read_it(project, tracker):
 
 
 def test_the_close_writes_no_comment_of_its_own(project, tracker):
-    """The job's note is not written on this row (ADR-0055 D6: the door's comment is its own), and
-    the close that `set_state` now makes adds none — nothing on the card is said twice."""
+    """The job's note is said once, by the card's door (ADR-0055 D6: the door's comment is its
+    own, since the job's settle goes through it, #413), and the close that `set_state` now makes
+    adds none — nor does a replayed settle: nothing on the card is said twice."""
     card = _asked_for(project, tracker)
 
     _the_job_finishes(project, tracker, card)
     _activity(acts.settle_ticket, card, JobState.DONE, "settled again by a replay")
 
-    assert tracker.comments(card) == []
+    assert [c.body for c in tracker.comments(card)] == [
+        "Merged. Nothing follows the merge for this project."]
     assert _record(project, card) == ("closed", "completed", "done")
 
 
@@ -230,6 +232,11 @@ def test_a_card_closed_as_NOT_delivered_stays_not_delivered(project, tracker, to
     tracker.close_ticket(card, "asked for by mistake", delivered=False)
 
     _activity(acts.settle_ticket, card, JobState.DONE)
+    assert _record(project, card)[:2] == ("closed", "not_planned")
+    # THE BOX'S OWN WRITE, which reaches the tracker beside the door (`machine._set_state`): a card
+    # a person withdrew while its job ran is settled Done there too, and stays withdrawn (review of
+    # #458, which closed it as `completed` on this path)
+    assert tracker.set_state(card, JobState.DONE) is True
     assert _record(project, card)[:2] == ("closed", "not_planned")
     tracker.set_state(card, JobState.TODO)
     assert _record(project, card)[:2] == ("closed", "not_planned")
