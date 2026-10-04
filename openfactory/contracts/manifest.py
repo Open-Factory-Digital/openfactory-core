@@ -65,7 +65,12 @@ class Component(BaseModel):
 
 class Environment(BaseModel):
     """A deploy target the framework observes (ADR-0001 D-12). The pipeline deploys;
-    the framework only reads status + probes health."""
+    the framework only reads status + probes health.
+
+    A STAGE OF THE PROMOTION CHAIN DECLARES `deploy_ref`, `health_url`, OR BOTH — with neither
+    there is nothing to observe, and the manifest is refused when it loads (#501,
+    `Manifest._every_stage_of_the_chain_is_observed`). An environment the chain does not walk
+    may carry only a `url:`."""
 
     model_config = _STRICT
 
@@ -513,6 +518,8 @@ class Manifest(BaseModel):
     #: document instead of renaming their homologação to `staging` to satisfy ours. Empty (the
     #: default) derives the chain from the two fixed names, exactly as the tail always behaved:
     #: `staging` observed if declared, `prod` gated if declared — the default is the product.
+    #: Environments with no `promote:` and neither name are refused: that chain walks nothing,
+    #: and the delivery would be announced at the merge (#501).
     promote: list[str] = Field(default_factory=list)
     prod_tag_prefix: str = "v"  # tag = <prefix><version>; triggers the prod pipeline
     # Prod is human-authorized, always — only these logins may approve a release
@@ -540,6 +547,69 @@ class Manifest(BaseModel):
             raise ValueError(
                 f"promote: lists {dupes} more than once — the chain is an order, and a stage "
                 f"cannot come both before and after itself")
+        return self
+
+    @model_validator(mode="after")
+    def _the_derived_chain_walks_something_declared(self) -> Manifest:
+        """Environments with no `promote:` must name at least one stage the DERIVED chain walks.
+
+        WITHOUT `promote:` THE CHAIN IS DERIVED FROM TWO FIXED NAMES — `staging` observed, `prod`
+        gated — so a manifest whose only environment is `qa` (or `homologacao`, or `dev`) handed
+        the tail an empty chain: the promotion ended DONE the instant after the merge and the
+        delivery was announced then, about a stage nothing had looked at (#501). The client
+        declared an environment precisely so it would be watched, and it was the one thing that
+        never was.
+
+        REFUSED, NOT WARNED, and the line between the two is the one `loader._say_what_is_inert`
+        already draws: a SPARE environment beside a chain that walks something is a degraded
+        watch, and the work is still observed up to a stage; here the whole chain is empty, and
+        what comes out of it is an announcement. The remedy is in the message, because there are
+        exactly two and both are one line."""
+        if self.environments:
+            stages, production = self.promotion_chain()  # a declared chain always has production
+            if not stages and production is None:
+                raise ValueError(
+                    f"environments: declares {sorted(self.environments)} and there is no "
+                    f"promote:, so the chain is derived from the two fixed names — `staging` "
+                    f"observed, `prod` gated — and none of yours is either: nothing declared "
+                    f"would be observed, and the delivery would be announced at the merge. "
+                    f"Declare promote: naming your environments in order (the last one is "
+                    f"production, approved by a person), or name them staging/prod")
+        return self
+
+    @model_validator(mode="after")
+    def _every_stage_of_the_chain_is_observed(self) -> Manifest:
+        """A stage the chain walks must declare something to observe: `deploy_ref`, `health_url`,
+        or both.
+
+        WITH NEITHER, `PromotionRunner._verify` HAS NOTHING TO READ AND ANSWERS "REACHED" — the
+        stage counted as reached the moment the walk arrived at it, and the delivery was
+        announced before anything had been seen (#501). That was documented as "passed through
+        unchecked, and the ticket says so"; the ticket saying so does not make the announcement
+        true, and a stage in the chain is there BECAUSE somebody wanted it checked.
+
+        THE CONDITION IS `_verify`'s OWN — the same two fields, read the same way — so what is
+        refused here is exactly what would have been waved through there, no more.
+
+        ONLY THE CHAIN, production included: production is observed after its release the same
+        way, and a production with nothing to probe is "live" the instant its tag is cut. An
+        environment the chain does NOT walk is the other case and stays a WARNING
+        (`loader._say_what_is_inert`): nothing is announced on its behalf, so it may be a spare,
+        a sandbox, or a page somebody is sent to, and it loads."""
+        stages, production = self.promotion_chain()
+        walked = [*stages, *([production] if production else [])]
+        blind = [name for name in walked
+                 if (env := self.environments.get(name)) is not None
+                 and not (env.deploy_ref or env.health_url)]
+        if blind:
+            raise ValueError(
+                f"environments: {blind} {'is a stage' if len(blind) == 1 else 'are stages'} of "
+                f"the promotion chain ({' → '.join(walked)}) with neither deploy_ref nor "
+                f"health_url, so nothing would observe {'it' if len(blind) == 1 else 'them'}: the "
+                f"stage would count as reached the moment it was walked, and the delivery would "
+                f"be announced before anything was seen. Declare deploy_ref (the deployment "
+                f"environment's own name at your provider), health_url (a page the platform "
+                f"GETs), or both")
         return self
 
     def promotion_chain(self) -> tuple[list[str], str | None]:
@@ -619,6 +689,11 @@ class Manifest(BaseModel):
         # ONLY THE ASK IS WIDENED, never the observation: this decides who is invited to look, and
         # what the platform CHECKS is still `promotion_chain`'s answer. Production is excluded —
         # it has its own human gate and is nobody's staging.
+        #
+        # A `qa` ALONE NO LONGER REACHES HERE (#501): with nothing the derived chain walks, the
+        # manifest is refused when it loads (`_the_derived_chain_walks_something_declared`). What
+        # still does is `qa` beside a `prod` — a chain that gates production and observes no
+        # stage before it, where `qa` is still the place a person is sent.
         declared = [name for name in self.environments if name != production]
         if declared:
             return declared[-1]

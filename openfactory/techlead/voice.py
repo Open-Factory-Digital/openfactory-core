@@ -697,6 +697,16 @@ NARRATION: dict[str, dict[str, str]] = {
     "promo.env-failed-ticket": {
         "en": "❌ {env} deploy/health failed — see the pipeline.",
         "pt-BR": "❌ o deploy/saúde de {env} falhou — veja o pipeline."},
+    # NOT RED, AND NOT REACHED EITHER (#501): the deploy was still running when the wait ran out.
+    # Said as its own sentence because "failed" would send somebody looking for a failure.
+    "promo.env-not-reached": {
+        "en": "{env} not reached — its deploy was still pending after {minutes} min",
+        "pt-BR": "{env} não alcançado — o deploy ainda estava pendente depois de {minutes} min"},
+    "promo.env-not-reached-ticket": {
+        "en": "⏸️ {env} not reached: its deploy was still pending after {minutes} min, so nothing "
+              "was verified there and the change is held — see the pipeline.",
+        "pt-BR": "⏸️ {env} não alcançado: o deploy ainda estava pendente depois de {minutes} min, "
+                 "então nada foi verificado lá e a mudança está parada — veja o pipeline."},
     # ── a review finding nobody acknowledged ─────────────────────────────────────────────────────
     "finding.unacked.detail": {
         "en": "delivered with the review raising something serious: {detail}",

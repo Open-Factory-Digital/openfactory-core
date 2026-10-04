@@ -12,7 +12,10 @@ rollback flag). This is the post-merge half of the lifecycle; `run` produces the
 from __future__ import annotations
 
 import logging
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Literal
 
 from openfactory.adapters.environment.base import EnvironmentObserver
 from openfactory.adapters.forge.base import ForgeAdapter
@@ -24,6 +27,20 @@ from openfactory.observability import EventKind, EventSink, JobEvent, NullEventS
 from openfactory.techlead import voice as tl_voice
 
 log = logging.getLogger("openfactory.promotion")
+
+#: What observing one stage can come back with (#501). THREE, because "not green" was two facts
+#: wearing one value: a stage that is RED, and a stage whose deploy has not finished yet. The
+#: second used to pass as green, and the first is not what it is.
+Reach = Literal["reached", "red", "not reached"]
+
+#: How long ONE WALK waits for deploys still `pending` before the stage counts as not reached
+#: (#501). Shared by every stage of the walk rather than given to each, because the walk runs in
+#: one box launched with a 30-minute timeout (`activities._run_promotion`, under the activity's
+#: 40): a per-stage window on a three-stage chain would outlive the box that waits.
+REACH_WINDOW_SECONDS = 20 * 60
+#: Between two reads of a pending deploy — the deploy watch's own pace (`_DEPLOY_POLL`): a deploy
+#: is minutes, and every read is a request against the credential every running job shares.
+REACH_POLL_SECONDS = 60
 
 
 @dataclass
@@ -43,6 +60,11 @@ class PromotionRunner:
     #: (it is handed adapters, a manifest and a path), and giving it one to hold would be the
     #: dependency this package is shaped to avoid. Whoever builds the runner has the row.
     language: str = ""
+    #: The pending-deploy wait (#501), and the two seams a test drives it through without waiting.
+    reach_window: float = REACH_WINDOW_SECONDS
+    reach_poll: float = REACH_POLL_SECONDS
+    sleep: Callable[[float], None] = field(default=time.sleep, repr=False)
+    clock: Callable[[], float] = field(default=time.monotonic, repr=False)
 
     def _say(self, key: str, **params: object) -> str:
         """One catalogue entry, in this project's language."""
@@ -76,6 +98,7 @@ class PromotionRunner:
         # by its own name; production is human-gated whatever the client calls it, which is what
         # lets a regulated manifest agree with the change-management document it answers to.
         stages, production = self.manifest.promotion_chain()
+        deadline = self.clock() + self.reach_window
         self._state(ticket_ref, JobState.MERGED)
         for name in stages:
             # ENTERED ONLY WHEN THERE IS SOMETHING TO OBSERVE. The state means "observe
@@ -85,8 +108,9 @@ class PromotionRunner:
             # naming — so the stage's own NAME rides on the events and the ticket instead.
             self._state(ticket_ref, JobState.STAGING_VERIFYING)
             self._emit(ticket_ref, "note", f"verifying {name}")
-            if not self._verify(ref, self.manifest.environments.get(name)):
-                return self._failed_env(ticket_ref, name)
+            seen = self._verify(ref, self.manifest.environments.get(name), deadline=deadline)
+            if seen != "reached":
+                return self._failed_env(ticket_ref, name, seen)
 
         verified = ", ".join(stages)
         # WHERE A PERSON LOOKS, AND WHETHER ANYBODY IS ASKED TO (#122). Both come from the
@@ -177,10 +201,17 @@ class PromotionRunner:
         self._state(ticket_ref, JobState.PROD_VERIFYING)
         # production is the chain's LAST stage, whatever the client calls it (#109)
         _, production = self.manifest.promotion_chain()
-        if self._verify(ref, self.manifest.environments.get(production or "prod")):
+        seen = self._verify(ref, self.manifest.environments.get(production or "prod"),
+                            deadline=self.clock() + self.reach_window)
+        if seen == "reached":
             self._notify(ticket_ref, self._say("promo.live"), "info")
             self._state(ticket_ref, JobState.DONE)
             return RunResult(ticket_id=ticket_ref, state=JobState.DONE)
+        if seen == "not reached":
+            # NOT LIVE, AND NOT RED EITHER (#501). A production deploy still running when the
+            # window closed is held with that said — rolling back a release nobody has seen fail
+            # would be acting on a guess, in the one environment where a guess costs the most.
+            return self._failed_env(ticket_ref, production or "prod", seen)
         # red prod → rollback (a defined, safe pipeline action) + report
         self._state(ticket_ref, JobState.ROLLING_BACK)
         self._notify(ticket_ref, self._say("promo.verify-failed"), "error")
@@ -190,27 +221,55 @@ class PromotionRunner:
 
     # -- internals --
 
-    def _verify(self, ref: str, env: Environment | None) -> bool:
-        """Whether the declared environment looks healthy. TRUE FOR AN UNDECLARED ONE, and the
-        callers are what make that honest.
+    def _verify(self, ref: str, env: Environment | None, *, deadline: float) -> Reach:
+        """Whether the declared environment was reached: its deploy finished green and its probe
+        answers. "reached" FOR AN UNDECLARED ONE, and the callers are what make that honest.
 
         "Nothing declared" and "checked and green" are the same value here and must never be the
-        same SENTENCE. This returning True is how "✅ staging verified" was posted about a project
+        same SENTENCE. This answering yes is how "✅ staging verified" was posted about a project
         with no environments at all — the value was right and the claim built on it was not. Every
-        caller now asks whether the environment exists before saying anything about it."""
-        if env is None:
-            return True  # nothing declared to verify
-        if env.deploy_ref and self.observer.deploy_status(env=env.deploy_ref, ref=ref) == "failure":
-            return False
-        if env.health_url:
-            return self.observer.health(url=env.health_url)
-        return True
+        caller now asks whether the environment exists before saying anything about it. A stage
+        of the chain that declares neither `deploy_ref` nor `health_url` never gets here: the
+        manifest refuses it when it loads (#501).
 
-    def _failed_env(self, ticket_ref: str, env: str) -> RunResult:
-        self._notify(ticket_ref, self._say("promo.env-failed", env=env), "error")
-        self._say_on_ticket(ticket_ref, self._say("promo.env-failed-ticket", env=env))
-        self._state(ticket_ref, JobState.ON_HOLD, reason=f"{env} red")
-        return RunResult(ticket_id=ticket_ref, state=JobState.ON_HOLD, note=f"{env} red")
+        A PENDING DEPLOY IS NOT A REACHED STAGE (#501). Only `failure` used to stop the walk, so a
+        deploy still running — which is what a deploy is, read right after its merge — passed as
+        green, and the delivery was announced about a version that was not there yet. It is
+        waited for now, the way the deploy watch waits for its run: read again every
+        `reach_poll` seconds until it settles or `deadline` passes. Still pending at the deadline
+        is "not reached", and the caller holds the stage saying exactly that. `unknown` (nothing
+        recorded for this environment) is read as it always was: left to `health_url`, or passed."""
+        if env is None:
+            return "reached"  # nothing declared to verify
+        if env.deploy_ref:
+            status = self.observer.deploy_status(env=env.deploy_ref, ref=ref)
+            while status == "pending" and self.clock() < deadline:
+                self.sleep(max(0.0, min(self.reach_poll, deadline - self.clock())))
+                status = self.observer.deploy_status(env=env.deploy_ref, ref=ref)
+            if status == "failure":
+                return "red"
+            if status == "pending":
+                log.warning("OPENFACTORY_STAGE_NOT_REACHED deploy_ref=%s ref=%s — its deploy was "
+                            "still pending when the %ds window closed; the stage is held, not "
+                            "passed", env.deploy_ref, ref, int(self.reach_window))
+                return "not reached"
+        if env.health_url:
+            return "reached" if self.observer.health(url=env.health_url) else "red"
+        return "reached"
+
+    def _failed_env(self, ticket_ref: str, env: str, seen: Reach = "red") -> RunResult:
+        """Hold the walk at `env`, saying which of the two it was: red, or not reached in time."""
+        if seen == "not reached":
+            window = max(1, round(self.reach_window / 60))
+            self._notify(ticket_ref, self._say("promo.env-not-reached", env=env, minutes=window),
+                         "error")
+            self._say_on_ticket(ticket_ref, self._say("promo.env-not-reached-ticket", env=env,
+                                                      minutes=window))
+        else:
+            self._notify(ticket_ref, self._say("promo.env-failed", env=env), "error")
+            self._say_on_ticket(ticket_ref, self._say("promo.env-failed-ticket", env=env))
+        self._state(ticket_ref, JobState.ON_HOLD, reason=f"{env} {seen}")
+        return RunResult(ticket_id=ticket_ref, state=JobState.ON_HOLD, note=f"{env} {seen}")
 
     def _state(self, ticket_ref: str, state: JobState, reason: str | None = None) -> None:
         self.tracker.set_state(ticket_ref, state, reason=reason)

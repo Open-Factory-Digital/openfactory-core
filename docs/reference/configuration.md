@@ -64,7 +64,11 @@ calls it, so the manifest agrees with your change-management document instead of
 to satisfy ours. A chain step with no matching environment is refused with both sides named; an
 environment declared but absent from the chain is warned as unwatched, never silently accepted.
 Omit `promote:` and the two fixed names apply — `staging` observed if declared, `prod` gated if
-declared.
+declared; environments with neither name and no `promote:` are refused, because that chain walks
+nothing and the delivery would be announced at the merge. Every stage the chain walks, production
+included, declares `deploy_ref`, `health_url`, or both — a stage with neither is refused rather
+than counted as reached with nothing seen — and a deploy still pending is waited for, never
+passed (#501).
 
 **Measured limitation — one base branch.** `base_branch` is both where the factory's PRs land and
 where the release tag is cut. A two-branch flow (integration `develop` + release `main`) cannot be
