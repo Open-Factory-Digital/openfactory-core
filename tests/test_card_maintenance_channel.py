@@ -814,6 +814,8 @@ _WRITES_TWICE = {
     # ADR-0047: the official card(s) of a still-proposed requirement, opened at the FIRST yes — the
     # same `_file_one` as `break_down`, so the same two marks per card and the same residue.
     "open_cards_for": "files each card of a proposal, then places it on the board",
+    # #448: the card's bar corrected (and the note keeping what it said), then the pass sent
+    "send_back": "corrects the card's criteria and notes the old ones, then sends the pass",
 }
 #: Module methods that leave ONE mark, so an `ok` result has nothing left over to say.
 _WRITES_ONCE = {
