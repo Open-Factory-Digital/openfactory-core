@@ -151,6 +151,23 @@ class Staged(Protocol):
         wrong was meeting that answer on every card."""
         ...
 
+    def stage_column(self, key: str) -> str:
+        """What this board calls the column for the neutral stage `key` — the other direction of
+        `stage_key`, or `""` for a key nobody knows (#496).
+
+        THE PRODUCT ROLE MOVED CARDS BY THE PLATFORM'S OWN NAMES, `TO-DO` and `Backlog`, and only
+        a board this platform created says those. A Jira project whose deployment declared
+        `status_map: {"todo": "A Fazer"}` offered no transition called `TO-DO`, so every promotion
+        answered *"o quadro recusou a movimentação"* and every filed card was left wherever the
+        site created it; an Azure Boards board says `To Do` out of the box and refused the same
+        promotion with nobody having renamed anything. The poller had asked the row all along
+        (`pickup_column`); the product role was the caller that still spelled a name.
+
+        THE SAME MAP `stage_key` READS, so the two directions cannot come to disagree about which
+        column a stage is, and with the platform's own names answering under it for the keys a
+        deployment did not rename — `columns.name_for` merges them exactly as `key_for` does."""
+        ...
+
 
 @runtime_checkable
 class BoardAdapter(Protocol):
@@ -292,6 +309,44 @@ def stage_key(board, column: str) -> str:
                         "favour of the platform's own column names",
                         name, type(board).__name__, said, ", ".join(CANONICAL_COLUMNS))
     return key_for(name)
+
+
+def stage_column(board, key: str) -> str:
+    """What `board` calls the column for the neutral stage `key` — the ONE place generic code asks
+    (#496), and the inverse of `stage_key` above.
+
+    A CALLER PASSES A KEY AND THE ROW NAMES IT. That is the whole change: the product role's money
+    gate is the CHOICE of key (`ProductModule.QUEUE_KEY`, `FILING_KEY`) and stays closed there,
+    while the name — the half only the deployment knows — comes from the row's map, never from the
+    platform's vocabulary handed to somebody else's board.
+
+    THE DEGRADE IS `stage_key`'S, decided once. A row that does not implement the verb is a board
+    this platform created or an add-on written before the verb existed, and the platform's own
+    name is what it was asked for until now; a row that raises, or answers something that is not a
+    name, is named in the log and read the same way. Only a non-empty string is believed — a
+    `MagicMock` answers every call with another mock, and a mock passed to `set_column` as a column
+    name is a placement refused for a reason nobody can read."""
+    from openfactory.adapters.board.columns import name_for
+
+    wanted = (key or "").strip().lower()
+    if not wanted:
+        return ""
+    if board is not None and callable(getattr(board, "stage_column", None)):
+        try:
+            said = board.stage_column(wanted)
+        except Exception as exc:  # noqa: BLE001 — a board that cannot say is not a traceback
+            log.warning("OPENFACTORY_BOARD_STAGE_UNANSWERED key=%r: %s raised when asked what it "
+                        "calls that stage (%s) — moving by the platform's own name for it, which "
+                        "is right only for a board this platform created",
+                        wanted, type(board).__name__, str(exc)[:200])
+        else:
+            if isinstance(said, str) and said.strip():
+                return said.strip()
+            if not isinstance(said, str):
+                log.warning("OPENFACTORY_BOARD_STAGE_UNANSWERED key=%r: %s answered %r, which is "
+                            "not a column name — moving by the platform's own name for it",
+                            wanted, type(board).__name__, said)
+    return name_for(wanted)
 
 
 def stage_option(board) -> str:

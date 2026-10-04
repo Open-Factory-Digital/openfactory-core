@@ -610,6 +610,17 @@ class GitHubProjectBoard:
 
         return key_for(column, renamed=self._columns)
 
+    def stage_column(self, key: str) -> str:
+        """The Status option this board calls the stage `key`. See `Staged.stage_column`.
+
+        `self._columns` again — the lookup `set_status` already does, offered to a caller that
+        holds a key and no `JobState` (#496). The product role's filing and queueing are such
+        callers, and they asked `set_column` for the platform's names, which a board whose client
+        renamed `TO-DO` to `A Fazer` does not carry as an option."""
+        from openfactory.adapters.board.columns import name_for
+
+        return name_for(key, renamed=self._columns)
+
     def pickup_column(self) -> str:
         """`TO-DO` here, or whatever this client renamed it to. See `BoardAdapter.pickup_column`.
 
