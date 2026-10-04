@@ -3116,6 +3116,18 @@ class JobWorkflow:
         # the CONFIG decides (three-layer model), not a start-time flag (A2/C3). Read before the
         # merge's own steps, because the requester's telling says whether stages follow (#448).
         should_promote = params.promote or bool(result.environments)
+        # `--promote` ON A MANIFEST THAT DECLARES A DEPLOY AND NO CHAIN PROMOTES INTO NOTHING
+        # (#501). The flag asked for a promotion the manifest has no stage for, so the box walked
+        # an empty chain, wrote Done, and the job's end announced the delivery — while the deploy
+        # the factory was still watching had not happened and could still fail. The watched
+        # deploy is this card's last stage exactly as it is without the flag, so the job takes
+        # that path instead (`deploy_is_last` below), and the empty promotion never runs.
+        # PATCHED, because skipping the promotion changes the commands such a job records
+        # (TMPRL1100); asked LAST, so a job of any other shape records no marker.
+        if (should_promote and not result.environments and result.state == JobState.MERGED
+                and bool(result.post_merge_deploy) and bool(result.pr_url)
+                and workflow.patched("promote-on-a-deploy-only-manifest-watches-it")):
+            should_promote = False
         # THE WATCHED DEPLOY IS THE LAST STAGE (#448 slice 5) when the project declares one and no
         # chain: the card is Done — and its delivery announced — when that deploy is green, and the
         # watch is what says so (`DeployWatchWorkflow._the_last_stage`). Until this the card was

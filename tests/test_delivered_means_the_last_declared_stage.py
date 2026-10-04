@@ -320,7 +320,13 @@ def _the_box_writes(issue: str, state: JobState) -> None:
 
 @activity.defn(name="promote_staging")
 async def _promoted(inp: PromoteInput) -> RunResult:
+    """What the box's `PromotionRunner.promote` answers for the chain the run carried: with stages,
+    a park at the production gate; with NONE — `--promote` on a manifest that declares no chain —
+    an empty walk that writes Done at once, which is what made it announce early (#501)."""
     _LOG.append(("promoted", inp.issue))
+    if not _RUN.get("environments"):
+        _the_box_writes(inp.issue, JobState.DONE)
+        return RunResult(ticket_id=inp.issue, state=JobState.DONE)
     _the_box_writes(inp.issue, JobState.AWAITING_PROD_APPROVAL)
     return RunResult(ticket_id=inp.issue, state=JobState.AWAITING_PROD_APPROVAL,
                      look_stage="staging", look_at=STAGING)
@@ -366,15 +372,18 @@ async def _watched(env, ref: str) -> str:
         return await env.client.get_workflow_handle(f"openfactory-deploy-{ROOM}-{ref}").result()
 
 
-async def _job(env, ref: str, *, approve: bool = False, watch: bool = True):
-    """The job run to its end — and, when the project watches a deploy, the watch to its end."""
+async def _job(env, ref: str, *, approve: bool = False, watch: bool = True,
+               promote: bool = False):
+    """The job run to its end — and, when the project watches a deploy, the watch to its end.
+    `promote` is the start-time flag (`--promote`, `JobParams.promote`)."""
     from gate_answers import approve_prod
     from temporalio.worker import Worker
 
     async with Worker(env.client, task_queue=TQ, workflows=[JobWorkflow, DeployWatchWorkflow],
                       activities=_activities()):
         h = await env.client.start_workflow(
-            JobWorkflow.run, JobParams(project=ROOM, issue=ref, merge_deadline_days=3650),
+            JobWorkflow.run, JobParams(project=ROOM, issue=ref, merge_deadline_days=3650,
+                                       promote=promote),
             id=f"wf-{uuid.uuid4()}", task_queue=TQ, result_type=RunResult)
         at_the_gate = None
         if approve:
@@ -535,6 +544,46 @@ async def test_a_chain_with_production_is_delivered_once_production_is_released(
     assert _LOG.index(("released", ref)) < _LOG.index(("told", KEY, _announced(deployment, ref)))
 
 
+@pytest.mark.owns_its_engine
+async def test_promote_on_a_deploy_only_manifest_WATCHES_THE_DEPLOY_not_an_empty_promotion(
+        env, deployment, tracker, board, door, done_reads_delivered, tmp_path, monkeypatch):
+    """#501 (c). `--promote` asked for a promotion the manifest has no stage for: the box walked an
+    empty chain, wrote Done, and the job's end announced the delivery before the watched deploy.
+    The deploy is this card's last stage with the flag exactly as without it."""
+    ref = _asked_for(deployment, tracker, board, tmp_path, monkeypatch)
+    _RUN["post_merge_deploy"] = _deploy(timeout_minutes=45)
+    _PROBES[:] = [{"status": "pending", "run_url": None}, {"status": "success", "run_url": "u/7"}]
+
+    result, watched, _, _ = await _job(env, ref, promote=True)
+
+    assert ("promoted", ref) not in _LOG, "an empty promotion still ran and wrote Done"
+    assert result.state is JobState.MERGED and watched == "success"
+    assert _settled() == [JobState.MERGED.value, JobState.DONE.value], _LOG
+    assert _journalled() == [JobState.MERGED.value, JobState.DONE.value]
+    assert _told() == [(KEY, _went_in(ref, stages=True)),
+                       (KEY, _announced(deployment, ref))], _told()
+    assert _LOG.index(("probe", "success")) < _LOG.index(
+        ("told", KEY, _announced(deployment, ref))), "delivered before the deploy was green"
+    assert _column(board, ref) == "Done"
+
+
+@pytest.mark.owns_its_engine
+async def test_promote_on_a_manifest_WITH_a_chain_still_walks_it_whatever_it_watches(
+        env, deployment, tracker, board, door, done_reads_delivered, tmp_path, monkeypatch):
+    """The other side of the same line: a chain is a stage the promotion owns, and the flag
+    still sends the job down it when a deploy is watched beside it."""
+    ref = _asked_for(deployment, tracker, board, tmp_path, monkeypatch)
+    _RUN["environments"] = ["staging", "prod"]
+    _RUN["post_merge_deploy"] = _deploy()
+    _PROBES[:] = [{"status": "success", "run_url": "u/7"}]
+
+    result, _, _, _ = await _job(env, ref, approve=True, promote=True)
+
+    assert ("promoted", ref) in _LOG and ("released", ref) in _LOG, _LOG
+    assert result.state is JobState.DONE
+    assert _settled() == [], "the promotion owns this card's column, as it always did"
+
+
 # ── 2. new commands, behind their markers ───────────────────────────────────────────────────────
 
 async def _replays(history, *, workflows, marker: str, monkeypatch) -> None:
@@ -576,6 +625,27 @@ async def test_a_job_that_merged_before_this_replays_its_done_at_the_merge(
 
 
 @pytest.mark.owns_its_engine
+async def test_a_promote_job_that_merged_before_this_replays_its_empty_promotion(
+        env, deployment, tracker, board, door, done_reads_delivered, tmp_path, monkeypatch):
+    """#501 (c): a `--promote` job on a deploy-only manifest recorded before the marker walked
+    the empty promotion, and replays it; the marker's arm diverges from that history."""
+    from temporalio import workflow as tw
+
+    marker = "promote-on-a-deploy-only-manifest-watches-it"
+    ref = _asked_for(deployment, tracker, board, tmp_path, monkeypatch)
+    _RUN["post_merge_deploy"] = _deploy()
+    _PROBES[:] = [{"status": "success", "run_url": "u/7"}]
+    real = tw.patched
+    with monkeypatch.context() as m:
+        m.setattr(tw, "patched", lambda name: False if name == marker else real(name))
+        result, _, _, history = await _job(env, ref, promote=True)
+    assert ("promoted", ref) in _LOG and result.state is JobState.DONE, (
+        "the recording did not run the commands it predates")
+
+    await _replays(history, workflows=[JobWorkflow], marker=marker, monkeypatch=monkeypatch)
+
+
+@pytest.mark.owns_its_engine
 async def test_a_watch_started_before_this_replays_without_settling(env, monkeypatch):
     from temporalio import workflow as tw
     from temporalio.worker import Worker
@@ -612,7 +682,8 @@ def test_a_watch_that_only_informs_is_told_so_by_default():
 @pytest.mark.parametrize("declared,closing", [
     ({}, "Closes #12"),
     ({"post_merge_deploy": {"workflow": "deploy.yml", "env": "staging"}}, ""),
-    # a chain stage something observes (#520 refuses one nothing would)
+    # a chain stage something observes: one nothing would observe is refused when the manifest
+    # loads (#520), and this row is about the closing word, not that
     ({"environments": {"staging": {"url": STAGING, "deploy_ref": "staging"}}}, ""),
 ], ids=["nothing follows", "a watched deploy", "a chain"])
 def test_the_forge_closes_the_card_at_the_merge_only_when_nothing_follows(declared, closing):
