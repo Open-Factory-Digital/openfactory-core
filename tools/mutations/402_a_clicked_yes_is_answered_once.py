@@ -48,9 +48,11 @@ MUTATIONS = [
      "                          channel=where, message_id=said_id)\n",
      "                          channel=where)\n"),
 
+    # RE-PINNED 2026-10-04 (#457): the record now carries a `kind` too — the crash fallback is
+    # recorded as the platform's own voice, the answer as an answer
     ("the click's answer is recorded as the reply to nothing", CONFIRM,
-     "                              channel=where, in_reply_to=said_id)\n",
-     "                              channel=where)\n"),
+     "                              channel=where, in_reply_to=said_id, kind=kind)\n",
+     "                              channel=where, kind=kind)\n"),
 
     ("the page's id is ignored and a fresh one minted, so the page cannot find its answer",
      CONFIRM,
@@ -80,11 +82,13 @@ MUTATIONS = [
      "                             module=ProductModule(project, via=via), via=via)\n"),
 
     # ── the other places the class lived ──
+    # RE-PINNED 2026-10-04 (#457): the record now carries a `kind` too (announcement), kept here
     ("what the role tells is recorded without what it answers, though it is published with it",
      DOOR,
      "        transcript.record(project, thread=conversation, role=\"agent\", text=said, channel=room,\n"
-     "                          in_reply_to=in_reply_to)\n",
-     "        transcript.record(project, thread=conversation, role=\"agent\", text=said, channel=room)\n"),
+     "                          in_reply_to=in_reply_to, kind=ANNOUNCEMENT)\n",
+     "        transcript.record(project, thread=conversation, role=\"agent\", text=said, channel=room,\n"
+     "                          kind=ANNOUNCEMENT)\n"),
 
     ("the history hands the page no ids", CHAT,
      '             "text": t.text, "ts": t.ts, "id": t.id, "in_reply_to": t.in_reply_to,\n',
