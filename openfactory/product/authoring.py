@@ -835,6 +835,10 @@ _CARD_LINES = {
         "defect_broken": "o produto não está funcionando como deveria",
         "severity": "**Gravidade:**", "reported_by": "**Reportado por:**",
         "reported_where": "**Onde foi reportado:**",
+        "after_delivery": ("**Depois da entrega de:** {cards} — quem pediu disse que não "
+                           "funcionou."),
+        "defect_after_delivery": ("Defeito registrado depois da entrega deste cartão, com o que "
+                                  "quem pediu disse: {ref}"),
         "what_is_happening": "O que está acontecendo",
         "broken_promise": "A promessa violada — REQ-{number:04d}",
         "read_at": " (lido no commit `{commit}`)", "in_repo": "`{path}` em `{repo}`",
@@ -865,6 +869,10 @@ _CARD_LINES = {
         "defect_broken": "the product is not working as it should",
         "severity": "**Severity:**", "reported_by": "**Reported by:**",
         "reported_where": "**Where it was reported:**",
+        "after_delivery": ("**After the delivery of:** {cards} — the person who asked said it "
+                           "did not work."),
+        "defect_after_delivery": ("A defect was filed after this card's delivery, with what the "
+                                  "person who asked said: {ref}"),
         "what_is_happening": "What is happening",
         "broken_promise": "The broken promise — REQ-{number:04d}",
         "read_at": " (read at commit `{commit}`)", "in_repo": "`{path}` in `{repo}`",
@@ -888,6 +896,15 @@ def _said(language: str | None) -> dict[str, str]:
     from openfactory.product.voice import _pick
 
     return _pick(_CARD_LINES, language)
+
+
+def defect_after_delivery_note(ref: str, *, language: str | None = None) -> str:
+    """What a delivered card says when a defect was filed after its delivery (#448 slice 5): the
+    other half of the link, naming the defect as its tracker spells it (`ref_label`: `#12`, or
+    `CONT-412` on Jira — never `#CONT-412`)."""
+    from openfactory.contracts.refs import ref_label
+
+    return _said(language)["defect_after_delivery"].format(ref=ref_label(ref))
 
 
 def _marker(markers: dict[str, str], language: str | None) -> str:
@@ -1394,7 +1411,8 @@ def ticket_body(*, described: str, reported_by: str, source: str, docs_repo: str
 
 def defect_body(*, restated: str, reported_by: str, severity: str, source: str,
                 requirement, requirement_path: str, docs_repo: str, commit: str = "",
-                requester_forge: str = "", card: str = "", language: str | None = None) -> str:
+                requester_forge: str = "", card: str = "", language: str | None = None,
+                linked: str = "") -> str:
     """The issue body for a broken promise — classified, and citing what it breaks.
 
     The executor reads this cold, so everything it needs is HERE: what reality is doing, which
@@ -1419,6 +1437,12 @@ def defect_body(*, restated: str, reported_by: str, severity: str, source: str,
     lines.append(f"{said['reported_by']} {_named(reported_by, requester_forge, language)}")
     if source:
         lines.append(f"{said['reported_where']} {source}")
+    refs = [r.strip().lstrip("#") for r in str(linked or "").split(",") if r.strip()]
+    if refs:
+        # THE DELIVERY IT CAME FROM (#448 slice 5): the cards a person was told were ready and said
+        # did not work, as the tracker's own mentions — so whoever picks this up starts from what
+        # was delivered, and the delivered card's history shows this report
+        lines.append(said["after_delivery"].format(cards=", ".join(f"#{r}" for r in refs)))
     if card.strip():
         # THE CARD THE PERSON CONFIRMED (#392), drafted from the conversation and judged like a
         # requested card; its "O que está acontecendo" is the section a correction rewrites. The

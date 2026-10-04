@@ -107,9 +107,11 @@ MUTATIONS = [
      '    closing_keyword = ""\n',
      '    closing_keyword = "Closes"\n'),
 
+    # re-pinned 2026-10-04: the word is also withheld when a stage follows the merge (#448)
     ("the forge's declaration is ignored, so every owning forge is asked to close", MACHINE,
-     '    keyword = closing_keyword(getattr(runner, "forge", None)) if owned else ""\n',
-     '    keyword = "Closes" if owned else ""\n'),
+     '    keyword = closing_keyword(getattr(runner, "forge", None)) if owned and not staged '
+     'else ""\n',
+     '    keyword = "Closes" if owned and not staged else ""\n'),
 
     ("a phrase or a mock counts as a closing word", SPACE,
      "    if isinstance(word, str) and word.strip().isalpha():\n",

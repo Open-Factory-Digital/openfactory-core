@@ -64,10 +64,10 @@ MUTATIONS = [
     ("the telling runs on a history that never recorded it", WORKFLOW,
      '        if not workflow.patched("the-requester-hears-it-went-in"):\n            return\n',
      "        if False:\n            return\n"),
+    # re-pinned 2026-10-04: a watched deploy that is the last stage follows too (#448 slice 5)
     ("stages are said to follow when none do", WORKFLOW,
-     "            await self._tell_the_requester_it_merged(params, result, "
-     "stages_follow=should_promote)\n",
-     "            await self._tell_the_requester_it_merged(params, result, stages_follow=True)\n"),
+     "                params, result, stages_follow=should_promote or deploy_is_last)\n",
+     "                params, result, stages_follow=True)\n"),
     ("the activity is not registered on the worker", WORKER,
      "    # #448 — and told it went in, the moment it merged, whoever merged it\n"
      "    tell_the_requester_it_merged,\n",

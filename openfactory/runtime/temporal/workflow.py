@@ -470,7 +470,8 @@ class DeployWatchWorkflow:
     immediately. This durably polls the project's OWN deploy (its `deploy` CI on the merge
     commit) and NOTIFIES the outcome — it can never gate a ticket or hold the floor. Worst
     case is a late or missed notification, never a stuck pipeline (the user's rule: watch +
-    notify, don't block)."""
+    notify, don't block). When the deploy is the card's LAST stage it also settles the card,
+    after the floor is long free (#448 slice 5, `_the_last_stage`)."""
 
     @workflow.run
     async def run(self, inp: DeployWatchInput) -> str:
@@ -487,11 +488,59 @@ class DeployWatchWorkflow:
             last_url = probe.get("run_url") or last_url
             if status in ("success", "failure"):
                 await self._notify(inp, status, last_url)
+                await self._the_last_stage(inp, status)
                 return status
             # "none" (run not dispatched yet) / "pending" (still deploying) → keep watching
             await workflow.sleep(_DEPLOY_POLL)
         await self._notify(inp, "timeout", last_url)  # a stuck deploy notifies, never hangs
+        await self._the_last_stage(inp, "timeout")
         return "timeout"
+
+    async def _the_last_stage(self, inp: DeployWatchInput, status: str) -> None:
+        """THE DEPLOY WAS THE CARD'S LAST STAGE, and its outcome settles the card (#448 slice 5).
+
+        DELIVERED MEANS DELIVERED. A project that declares this watch and no chain had its card
+        settled Done at the merge, and the delivery — "what you asked for is ready, did it work?"
+        — was announced from that Done while the one stage the project declares had not happened
+        and could still fail. The job now leaves the card In review (`deploy_is_last`), and this is
+        where it ends:
+
+          green     Done, through the job's own settle; then the job's one record of an ending
+                    (`record_outcome`), which asks whether a delivery completed and announces it
+                    to whoever asked — the same path a merge with nothing after it takes;
+          failed    held for a person (`on_hold`, Needs Action) with what happened on the card,
+          or never  like a red stage of a promotion chain: nothing is delivered and nobody is
+          seen      told it is ready. `_notify` above has already said it where the watch speaks.
+
+        SETTLED, THEN RECORDED: the announcement reads the board, so the card is Done first.
+
+        Only for a watch the job said `delivers` — a watch that merely informs settles nothing —
+        and PATCHED, because these are new commands on a path watches are already sitting in
+        (TMPRL1100). Best-effort like everything here: the deploy happened or did not whatever
+        the tracker says, and a watch must never fail over its side effects (M3)."""
+        if not inp.delivers or not workflow.patched("the-watch-settles-the-last-stage"):
+            return
+        green = status == "success"
+        state = JobState.DONE if green else JobState.ON_HOLD
+        note = (after_merge.deployed(inp.env, inp.url) if green
+                else after_merge.not_deployed(inp.env, status, inp.timeout_minutes))
+        try:
+            await workflow.execute_activity(
+                settle_ticket,
+                HoldSyncInput(project=inp.project, issue=inp.issue, state=state.value, note=note),
+                start_to_close_timeout=timedelta(minutes=2), retry_policy=_ONCE)
+        except Exception:  # noqa: BLE001 — the deploy's outcome stands whatever the board says
+            workflow.logger.warning("could not settle %s#%s as %s after its %s deploy",
+                                    inp.project, inp.issue, state.value, inp.env)
+        try:
+            await workflow.execute_activity(
+                record_outcome,
+                HoldSyncInput(project=inp.project, issue=inp.issue, state=state.value,
+                              note=note[:400]),
+                start_to_close_timeout=timedelta(minutes=2), retry_policy=_RETRY)
+        except Exception:  # noqa: BLE001 — never fail a watch over its record
+            workflow.logger.warning("%s#%s reached %s and its journal does not say so",
+                                    inp.project, inp.issue, state.value)
 
     async def _notify(self, inp: DeployWatchInput, status: str, run_url: str | None) -> None:
         # Best-effort: the notification is the watch's ONLY output, but a broken channel
@@ -2448,6 +2497,10 @@ class JobWorkflow:
         PATCHED, BEST-EFFORT, AFTER THE MERGE. A job in flight when this shipped must replay
         deterministically (TMPRL1100), and nothing about recording an outcome may fail a ticket
         that has already landed.
+
+        NOT WHERE A WATCHED DEPLOY IS THE LAST STAGE (#448 slice 5): that card waits In review and
+        the watch ends it (`DeployWatchWorkflow._the_last_stage`). `watching_a_deploy` is said
+        here now only by a history recorded before that, or a merge with no pull request to watch.
         """
         if not workflow.patched("merge-is-the-end-when-nothing-follows"):
             return
@@ -2478,22 +2531,27 @@ class JobWorkflow:
         return tl_voice.say(tl_voice.NARRATION, "stage.confirm-no-url", params.language,
                             issue=params.issue, stage=stage)
 
-    async def _spawn_deploy_watch(self, params: JobParams, result: RunResult) -> None:
+    async def _spawn_deploy_watch(self, params: JobParams, result: RunResult, *,
+                                  delivers: bool = False) -> bool:
         """On merge, kick off the abandoned deploy-watch child (ADR-0005) and return at once —
-        the ticket is DONE at merge, so the floor frees immediately; the watch runs on its own.
+        the job ends at the merge, so the floor frees immediately; the watch runs on its own.
         ParentClosePolicy.ABANDON lets it outlive this workflow's completion. Best-effort: a
         failure to start the watch must NEVER fail an already-merged job (worst case: no deploy
-        notification), so we swallow errors and let the job complete."""
+        notification), so we swallow errors and let the job complete.
+
+        `delivers` says the deploy is the card's LAST stage (#448 slice 5): the card waits In
+        review, and the watch settles it — Done and announced when green, held when not. Returns
+        whether a watch was started, so a card whose watch never started is not left waiting."""
         cfg = result.post_merge_deploy
         if not (cfg and result.pr_url):
-            return
+            return False
         try:
             await workflow.start_child_workflow(
                 DeployWatchWorkflow.run,
                 DeployWatchInput(
                     project=params.project, issue=params.issue, pr_url=result.pr_url,
                     workflow=cfg.workflow, env=cfg.env, timeout_minutes=cfg.timeout_minutes,
-                    url=getattr(cfg, "url", "") or "",
+                    url=getattr(cfg, "url", "") or "", delivers=delivers,
                 ),
                 id=f"openfactory-deploy-{params.project}-{params.issue}",
                 # inherit the parent's task queue (openfactory-jobs in prod) so the same worker
@@ -2506,6 +2564,8 @@ class JobWorkflow:
             # the floor must free regardless. Never let the watch's start block the job (A3).
             workflow.logger.warning("deploy-watch not started for %s#%s", params.project,
                                     params.issue)
+            return False
+        return True
 
     async def _stamp_title(self, params: JobParams) -> None:
         """Stamp the ticket's title into the workflow memo so the panel shows it beside the
@@ -2684,7 +2744,9 @@ class JobWorkflow:
         announced by the card's door (`delivered`, `loops.announce_what_it_completes`, #414), so
         the event says nothing where that does. With stages the delivery waits for the last one,
         and a card the role opened from a request has no delivery at all — at the merge, the
-        requester heard nothing. `stages_follow` says which: it is the promotion's own condition.
+        requester heard nothing. `stages_follow` says which: it is the promotion's own condition —
+        or, since #448 slice 5, a watched deploy that is the card's last stage, which the delivery
+        waits for too.
 
         PATCHED, because it is a new command on a path every job takes (TMPRL1100): a job whose
         history reached its merge before this replays without it. Best-effort like
@@ -3054,6 +3116,18 @@ class JobWorkflow:
         # the CONFIG decides (three-layer model), not a start-time flag (A2/C3). Read before the
         # merge's own steps, because the requester's telling says whether stages follow (#448).
         should_promote = params.promote or bool(result.environments)
+        # THE WATCHED DEPLOY IS THE LAST STAGE (#448 slice 5) when the project declares one and no
+        # chain: the card is Done — and its delivery announced — when that deploy is green, and the
+        # watch is what says so (`DeployWatchWorkflow._the_last_stage`). Until this the card was
+        # settled Done right here, and Done is what a delivery is announced from: the requester
+        # was asked "did it work?" about a change the one stage they have had not received yet.
+        # PATCHED, because it changes the commands at the merge every such job takes (TMPRL1100);
+        # asked LAST, so a job with nothing to watch records no marker. No pull request means no
+        # watch (`_spawn_deploy_watch`), and a card nobody watches is settled where it always was.
+        deploy_is_last = (result.state == JobState.MERGED and not should_promote
+                          and bool(result.post_merge_deploy) and bool(result.pr_url)
+                          and workflow.patched("delivered-at-the-last-declared-stage"))
+        watched = False
         # Merged → observe the project's own dev deploy (ADR-0005). An ABANDONED child does the
         # watching; this returns immediately, so the merge frees the floor for the next ticket
         # right away and the deploy notification arrives async — watching never gates.
@@ -3061,11 +3135,19 @@ class JobWorkflow:
             await self._coord_say(tl_voice.say(tl_voice.NARRATION, "merged", params.language,
                                           issue=params.issue), "merge")  # the tech-lead
             await self._flag_review_findings(params, result)
-            await self._spawn_deploy_watch(params, result)
+            if deploy_is_last:
+                # IN REVIEW, SAID ON THE CARD, AND BEFORE THE WATCH STARTS: a deploy already green
+                # at its first probe settles Done, and a settle after it would put the card back
+                await self._settle(params, JobState.MERGED,
+                                   after_merge.delivered_when_deployed(result.post_merge_deploy))
+            watched = await self._spawn_deploy_watch(params, result, delivers=deploy_is_last)
             await self._refresh_knowledge(params)
-            await self._tell_the_requester_it_merged(params, result, stages_follow=should_promote)
+            await self._tell_the_requester_it_merged(
+                params, result, stages_follow=should_promote or deploy_is_last)
         if result.state not in (JobState.PR_OPEN, JobState.MERGED) or not should_promote:
-            if result.state == JobState.MERGED:
+            # A WATCH THAT COULD NOT START ends nothing, so the card is settled here as it always
+            # was rather than left In review for a watch that is not coming
+            if result.state == JobState.MERGED and not (deploy_is_last and watched):
                 await self._finish_at_the_merge(params, result)
             return result
         if not result.pr_url:

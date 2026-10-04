@@ -15,12 +15,14 @@ line on that conversation — behind the turn in progress, never inside one.
     kind                producer on this branch
     ─────────────────   ──────────────────────────────────────────────────────────────────────
     delivered           the card's door (`lifecycle/loops.py`, `announce_what_it_completes`,
-                        #414) — a card that reaches Done, by its job's settle, the box's
-                        hand-back at its last stage, a person's close or the vendor's own screen,
-                        announces what it completes as one of its transition's effects, recorded
-                        once per card; what the board or the conversation did not take, the
-                        door's converge applies again (hourly, and on the weekly sweep). Nothing
-                        else announces a delivery
+                        #414) — a card that reaches Done, by its job's settle, the deploy watch's
+                        settle when the deploy was the card's last stage and went green (#448
+                        slice 5), the box's hand-back at its last stage, a person's close or the
+                        vendor's own screen, announces what it completes as one of its
+                        transition's effects, recorded once per card — never at a merge a stage
+                        follows; what the board or the conversation did not take, the door's
+                        converge applies again (hourly, and on the weekly sweep). Nothing else
+                        announces a delivery
     ci_red              `activities.repair_ci` — the merge watch sends a pull request there
                         because a check that blocks it failed on the code, and the factory is
                         repairing it; said once per pull request, however many passes it takes

@@ -3003,7 +3003,8 @@ class ProductModule:
     def file_defect(self, *, restated: str, reported_by: str, violates: int | None,
                     severity: str = "", source: str = "", tracker=None,
                     board=_UNSET, seen: int | None = None, conversation: str = "",
-                    requester: str = "", card: str = "", title: str = "") -> WriteResult:
+                    requester: str = "", card: str = "", title: str = "",
+                    linked: str = "") -> WriteResult:
         """Register a broken promise as work — classified, citing the requirement it violates.
 
         A defect skips the requirement-drafting ceremony ON PURPOSE: the promise already exists;
@@ -3015,7 +3016,10 @@ class ProductModule:
         And it is FOLLOWED UP: a delivery loop opens on the filed issue, so the person who reported
         it is told — unprompted — that the fix shipped, when it ships and in the conversation they
         reported it in (`conversation`, `requester`: #267 slice 3). A bug report that vanishes into
-        a board the client cannot see is indistinguishable from being ignored."""
+        a board the client cannot see is indistinguishable from being ignored.
+
+        `linked` names the cards a delivery that did not work was about (#448 slice 5): the defect
+        says it came from them, and each of them says this defect followed it."""
         from openfactory.product.authoring import defect_body
         from openfactory.product.cards import TITLE_LIMIT
         from openfactory.product.voice import _pick
@@ -3048,6 +3052,7 @@ class ProductModule:
                 title=title,
                 body=defect_body(restated=restated, reported_by=reported_by,
                                  severity=severity, source=source, card=card, language=lang,
+                                 linked=linked,
                                  requester_forge=forge_identity_for(
                                      getattr(self, "project", None), reported_by, tracker),
                                  requirement=cited,
@@ -3090,7 +3095,23 @@ class ProductModule:
                             "but has no column, so the queue cannot see it until a person places "
                             "it", ref, column)
                 detail = said["defect_unplaced"]
+        if linked:
+            self._said_on_the_delivered_cards(tracker, linked, ref, lang)
         return WriteResult(ok=True, ref=str(ref), detail=detail)
+
+    @staticmethod
+    def _said_on_the_delivered_cards(tracker, linked: str, ref: str, lang) -> None:
+        """Each card a delivery that did not work was about says which defect followed it (#448
+        slice 5) — the other half of the link, on the card a person opens first. A comment, never a
+        state: the card stays delivered, and the defect is the work. Best-effort: the defect is
+        filed, and a card that could not be told keeps its link in the defect's own body."""
+        from openfactory.product.authoring import defect_after_delivery_note
+
+        for card in [r.strip() for r in str(linked).split(",") if r.strip()]:
+            try:
+                tracker.comment(card, defect_after_delivery_note(ref, language=lang))
+            except Exception as exc:  # noqa: BLE001 — the defect is filed; its body links back
+                log.info("the delivered card %s was not told of defect %s (%s)", card, ref, exc)
 
     def _track_defect(self, number: str, *, conversation: str = "",
                       requester: str = "") -> dict:
