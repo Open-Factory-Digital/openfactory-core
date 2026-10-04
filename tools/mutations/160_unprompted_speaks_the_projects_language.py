@@ -79,10 +79,12 @@ MUTATIONS = [
      '        head = (f"✂️ Dividi o {parent_ref} — {parent.title[:80]} em {n}: era grande demais "\n'
      '                f"({inp.reasons[:160]}).")', SPLIT),
 
+    # re-pinned 2026-10-04: the destination names the board's own column (review of #507)
     ("…and the destination it names", ACT,
      '                where=tl_voice.say(tl_voice.NARRATION,\n'
      '                                   "split.to-todo" if to_todo else '
-     '"split.to-backlog", lang))',
+     '"split.to-backlog", lang,\n'
+     '                                   queue=named["todo"], backlog=named["backlog"]))',
      '                where="TO-DO (rodam um por vez, em ordem)")', SPLIT),
 
     # ── the runners ──────────────────────────────────────────────────────────────────────────────

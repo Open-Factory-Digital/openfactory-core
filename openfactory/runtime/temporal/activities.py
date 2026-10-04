@@ -1286,12 +1286,13 @@ def _do_split(inp: SplitInput) -> str:
             body = tl_voice.say(
                 tl_voice.NARRATION,
                 "split.straggler-one" if len(stragglers) == 1 else "split.stragglers",
-                lang, n=n, stuck=", ".join(stragglers), children=kids)
+                lang, n=n, stuck=", ".join(stragglers), children=kids, queue=named["todo"])
         else:
             body = tl_voice.say(
                 tl_voice.NARRATION, "split.created", lang, children=kids,
                 where=tl_voice.say(tl_voice.NARRATION,
-                                   "split.to-todo" if to_todo else "split.to-backlog", lang))
+                                   "split.to-todo" if to_todo else "split.to-backlog", lang,
+                                   queue=named["todo"], backlog=named["backlog"]))
         notifier_for_project(project).notify(
             message=head + body, level="warning" if stragglers else "info")
     except Exception:  # noqa: BLE001 — the narration is additive; never fail the split

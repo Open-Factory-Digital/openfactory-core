@@ -514,7 +514,10 @@ def test_a_local_queue_named_after_the_board_was_made_is_refused_rather_than_los
 # ── the guard: no column is compared by the platform's literal name ─────────────────────────────
 
 #: Neutral code — where a column's NAME is the board's business and only its KEY is the platform's.
-NEUTRAL = ("openfactory/product", "openfactory/runtime", "openfactory/lifecycle")
+# `openfactory/techlead` since the review of #507: its catalogue speaks to the people who
+# queued the work, and its split rows named the platform's columns beside a note that did not
+NEUTRAL = ("openfactory/product", "openfactory/runtime", "openfactory/lifecycle",
+           "openfactory/techlead")
 
 #: `(file, literal)` → why it may stay. Short on purpose: each one is a place a person decided.
 ALLOWED = {
