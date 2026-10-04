@@ -20,6 +20,9 @@ THE CLAIMS, each with a red twin below:
   5. **The seam.** `name_for` takes the map (row 14); `stage_column` believes a row's real answer
      and only that (rows 15-16), and degrades to the platform's word for a row that says nothing
      or raises (rows 17-18).
+  6. **One inverse of `stage_key`** (review of #505/#506). A row whose map is silent is named by
+     the first real column of the board that is the stage, before the platform's word (row 19), and
+     nothing else public in `board/base.py` maps a key to a column (row 20 grows `column_for` back).
 """
 
 TEST = "tests/test_the_product_role_moves_cards_by_key.py"
@@ -136,20 +139,23 @@ MUTATIONS = [
      '    said = ""\n'),
 
     ("the seam never believes the row, so every board is asked for the platform's word", BASE,
+     # re-pinned 2026-10-04: one inverse of stage_key (review of #505/#506)
      "            if isinstance(said, str) and said.strip():\n"
-     "                return said.strip()\n",
+     "                mapped = said.strip()\n",
      "            if False:\n"
-     "                return said.strip()\n"),
+     "                mapped = said.strip()\n"),
 
     ("the seam believes a mock's answer, and a mock becomes the column a card is moved to", BASE,
+     # re-pinned 2026-10-04: one inverse of stage_key (review of #505/#506)
      "            if isinstance(said, str) and said.strip():\n"
-     "                return said.strip()\n",
+     "                mapped = said.strip()\n",
      "            if said:\n"
-     "                return said\n"),
+     "                mapped = said\n"),
 
     ("a board that says nothing is asked for no column at all", BASE,
-     "    return name_for(wanted)\n\n\ndef stage_option(board) -> str:",
-     '    return ""\n\n\ndef stage_option(board) -> str:'),
+     # re-pinned 2026-10-04: one inverse of stage_key (review of #505/#506)
+     "    if walked or existing:\n        return walked\n    return name_for(wanted)\n",
+     '    if walked or existing:\n        return walked\n    return ""\n'),
 
     ("a board that raises when asked takes the product role's write with it", BASE,
      "        except Exception as exc:  # noqa: BLE001 — a board that cannot say is not a "
@@ -157,4 +163,16 @@ MUTATIONS = [
      '            log.warning("OPENFACTORY_BOARD_STAGE_UNANSWERED key=%r: %s raised when asked',
      "        except ZeroDivisionError as exc:\n"
      '            log.warning("OPENFACTORY_BOARD_STAGE_UNANSWERED key=%r: %s raised when asked'),
+
+    # ── 6. one inverse of `stage_key` (review of #505/#506) ────────────────────────────────────
+    ("THE MIDDLE LAYER: a row whose map is silent is asked for the platform's `TO-DO`, though one "
+     "of its own columns is the queue", BASE,
+     '    walked = next((name for name in real if stage_key(board, name) == wanted), "")\n',
+     '    walked = ""\n'),
+
+    ("a second inverse of `stage_key` grows back beside the seam", BASE,
+     "def _column_names(board, key: str) -> list[str] | None:\n",
+     "def column_for(board, key: str) -> str:\n"
+     "    return stage_column(board, key, existing=True)\n\n\n"
+     "def _column_names(board, key: str) -> list[str] | None:\n"),
 ]

@@ -1140,6 +1140,12 @@ def answer_staged(project, *, token: str, approved: bool, user: str, module=None
     # Slack `handle` used to supply it; without it here, a crash in a write branch would reach the
     # listener as an exception and the person who clicked would get nothing — indistinguishable
     # from being ignored, and invisible to us until they complained.
+    # THE PLATFORM'S OWN VOICE, NOT THE ROLE'S ANSWER (#457): a `confirm` result is the role's
+    # answer; the `broke` fallback below is a crash reply, recorded with the kind that keeps the
+    # distillation from ever reading it as something the role said.
+    from openfactory.memory import transcript
+
+    kind = transcript.ANSWER
     try:
         sentence = confirm(project, key=key, entry=entry, fingerprint=verified, module=module,
                            user=user, lang=lang, via=via,
@@ -1152,13 +1158,11 @@ def answer_staged(project, *, token: str, approved: bool, user: str, module=None
                   "answer", name, key)
         from openfactory.product.voice import broke
 
-        sentence = broke(language=lang)
+        sentence, kind = broke(language=lang), "broke"
     try:
-        from openfactory.memory import transcript
-
         if sentence:
             transcript.record(project, thread=where, role="agent", text=str(sentence),
-                              channel=where, in_reply_to=said_id)
+                              channel=where, in_reply_to=said_id, kind=kind)
     except Exception:  # noqa: BLE001 — the reply is already earned; the record must not eat it
         log.warning("[%s] could not record the answer to the confirmation", name, exc_info=True)
     return "done", sentence
