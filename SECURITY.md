@@ -70,4 +70,7 @@ interesting surface is well-defined:
 
 ## Supported versions
 
-Pre-1.0: only the `main` branch receives fixes.
+Which release lines receive security fixes, and how a fix is released, is
+[docs/RELEASING.md](docs/RELEASING.md) ("Patch releases" and "A security release"): the latest
+minor line always, and the line before it when the release manager decides so. A fix lands on
+`main` and on each release branch that receives it.
