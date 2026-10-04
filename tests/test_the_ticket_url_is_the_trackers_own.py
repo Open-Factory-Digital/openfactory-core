@@ -91,7 +91,9 @@ def test_the_literal_resolved_a_bare_ref_through_the_FORGE_and_the_issue_is_not_
 
 # ── 3. the literals are gone, and stay gone ─────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("where", ["_child_to_todo", "scan_todo", "_ticket_url"])
+# the split child's move is its door's since #414 (`_file_the_child`, ADR-0055), and the shared
+# helper went with the last call site that composed a link
+@pytest.mark.parametrize("where", ["_file_the_child", "scan_todo"])
 def test_no_vendor_URL_is_composed_on_the_healing_path_any_more(where):
     """CODE, NOT PROSE. The paragraphs above and in the module explain the retirement by naming
     the host they removed, and a raw source scan is satisfied by a comment — the trap

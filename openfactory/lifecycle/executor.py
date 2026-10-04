@@ -10,6 +10,10 @@ that failed or never ran — but only while its transition is still the card's l
 of an older transition is marked `superseded` instead: applying it would move a card back to a
 column a person has since moved it out of, the defect this record exists to end, produced by its
 own repair.
+
+ONE ROW STOPS AT A FAILED WRITE (`table.STOPS_AT_A_FAILED_WRITE`, #414): a question waits only on
+a card that was parked for it. Its caller goes on without what failed, so what follows is not
+applied and the sweep leaves the row alone.
 """
 
 from __future__ import annotations
@@ -19,6 +23,8 @@ from datetime import UTC, datetime, timedelta
 
 from openfactory.lifecycle import record
 from openfactory.lifecycle.table import (
+    STOPS_AT_A_FAILED_WRITE,
+    WRITES_THE_CARD,
     CardEvent,
     Close,
     Column,
@@ -39,6 +45,11 @@ log = logging.getLogger("openfactory.lifecycle.executor")
 
 FAILED = "failed"
 SUPERSEDED = "superseded"
+#: What an effect after a failed write comes to, on a row that stops there.
+NOT_APPLIED = "not applied"
+
+#: The record's names for the effects that write the card (`name_of`'s kind).
+_WRITE_NAMES = frozenset(kind.__name__.lower() for kind in WRITES_THE_CARD)
 
 #: How long after a cancellation narrowed a delivery the sweep asks whether what remains of it is
 #: delivered already — a day of hourly rounds, each a read of the board only while one is recent.
@@ -71,14 +82,21 @@ def _one(ports, row: record.Row, effect: Effect, *, carried: bool) -> str:
         # second one here is the double comment D6 ends
         return "carried by the close" if carried else ports.comment(row.card, note)
     if isinstance(effect, Loops):
-        return ports.loops(row.card, effect.action, about=str(facts.get("about") or ""))
+        # `asked` is the loop a question opens, as its asker composed it (`_do_gather`); the
+        # title is how a delivery finds the card a split card was split from (`loops.deliver`)
+        return ports.loops(row.card, effect.action, about=str(facts.get("about") or ""),
+                           context=dict(facts.get("asked") or {}),
+                           title=str(facts.get("title") or ""))
     if isinstance(effect, Tell):
         return ports.tell(row.card, notice=effect.notice, event_id=row.event_id,
                           title=str(facts.get("title") or ""),
                           removed=row.event == CardEvent.REMOVED.value,
                           opened_by=str(facts.get("opened_by") or ""),
                           conversation=str(facts.get("conversation") or ""),
-                          pass_number=int(facts.get("pass_number") or 0))
+                          pass_number=int(facts.get("pass_number") or 0),
+                          pr_url=str(facts.get("pr_url") or ""),
+                          review=str(facts.get("review") or ""),
+                          preview_url=str(facts.get("preview_url") or ""))
     if isinstance(effect, Preview):
         return ports.preview(row.card, action=effect.action, by=row.by)
     if isinstance(effect, Forget):
@@ -86,24 +104,40 @@ def _one(ports, row: record.Row, effect: Effect, *, carried: bool) -> str:
     raise TypeError(f"no port applies {effect!r}")
 
 
+def _stops(row: record.Row) -> bool:
+    """Whether `row`'s event stops at a failed write to the card (`STOPS_AT_A_FAILED_WRITE`)."""
+    try:
+        return CardEvent(row.event) in STOPS_AT_A_FAILED_WRITE
+    except ValueError:
+        return False
+
+
 def apply(ports, row: record.Row, effects: tuple[Effect, ...], *, sink=None,
           only: set[int] | None = None) -> list[tuple[str, str]]:
     """Apply `effects` (all of them, or the indexes in `only`) in order; record and return what
     each came to. Never raises: one effect failing does not stop the next — a comment the tracker
-    refused is no reason not to tell the requester."""
+    refused is no reason not to tell the requester — EXCEPT on a row that stops at a failed write
+    (`STOPS_AT_A_FAILED_WRITE`), where what follows the failed write is recorded `not applied`."""
     carried = any(isinstance(e, Close | Remove) for e in effects)
+    stops, stopped_at = _stops(row), ""
     out: list[tuple[str, str]] = []
     for index, effect in enumerate(effects):
         if only is not None and index not in only:
             continue
-        try:
-            outcome = str(_one(ports, row, effect, carried=carried) or "done")
-        except Exception as exc:  # noqa: BLE001 — recorded, and the sweep applies it again
-            from openfactory.util.causes import first_message
+        if stopped_at:
+            outcome = f"{NOT_APPLIED}: {stopped_at} did not land"
+        else:
+            try:
+                outcome = str(_one(ports, row, effect, carried=carried) or "done")
+            except Exception as exc:  # noqa: BLE001 — recorded, and the sweep applies it again
+                from openfactory.util.causes import first_message
 
-            outcome = f"{FAILED}: {first_message(exc, limit=200)}"
-            log.warning("OPENFACTORY_CARD_EFFECT_FAILED project=%s card=%s event=%s effect=%s — %s",
-                        ports.name, row.card, row.event, name_of(effect), outcome)
+                outcome = f"{FAILED}: {first_message(exc, limit=200)}"
+                log.warning("OPENFACTORY_CARD_EFFECT_FAILED project=%s card=%s event=%s "
+                            "effect=%s — %s", ports.name, row.card, row.event, name_of(effect),
+                            outcome)
+            if stops and outcome.startswith(FAILED) and isinstance(effect, WRITES_THE_CARD):
+                stopped_at = name_of(effect)
         if sink is not None:
             record.write_outcome(sink, ports.name, row, index, outcome)
         out.append((name_of(effect), outcome))
@@ -112,6 +146,12 @@ def apply(ports, row: record.Row, effects: tuple[Effect, ...], *, sink=None,
 
 def _due(row: record.Row, *, now: datetime) -> set[int]:
     due: set[int] = set()
+    if _stops(row) and any(row.outcome(i).startswith(FAILED) for i, name in
+                           enumerate(row.effects) if name.split(":")[0] in _WRITE_NAMES):
+        # THE ROW STOPPED AT A FAILED WRITE, AND ITS CALLER WENT ON WITHOUT IT: the gather let the
+        # work proceed when the park did not land, so a park applied now would stop a card its job
+        # is working on (`STOPS_AT_A_FAILED_WRITE`)
+        return due
     try:
         recent = now - datetime.fromisoformat(row.ts) < PENDING_GRACE
     except (ValueError, TypeError):   # a time nobody can read is not recent

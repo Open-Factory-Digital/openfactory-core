@@ -1036,8 +1036,9 @@ _TELLING = {"door": {"announce", "announce_now", "report", "_admit", "tell"},
             "events": {"card_finished", "deliver", "ci_went_red", "pull_requests_at_the_gate",
                        "preview_up", "document_ingested", "card_moved", "to_room", "say_to",
                        "_tell", "_once",
-                       # #401 — the change is the requester's to try: the watch and the round
-                       "ready_for_you", "ready_at_the_gate"}}
+                       # #401 — the change is the requester's to try: the watch and the round,
+                       # through the card's door since #414 (`ready_to_try`, from its port)
+                       "ready_for_you", "ready_to_try"}}
 _PRODUCERS = {"openfactory/product/door.py", "openfactory/product/events.py",
               "openfactory/runtime/temporal/activities.py", "openfactory/product/engine.py",
               # #269: a document the ingestion READ — its name is the file's path, and the
@@ -1046,7 +1047,10 @@ _PRODUCERS = {"openfactory/product/door.py", "openfactory/product/events.py",
               # #412: what happened to a card — the card's door tells it, after the transition was
               # recorded; the sentence is the catalogue's, and a transport hands over only which
               # card, which event and why, never what is said (#384's `withdraw_card` before it)
-              "openfactory/lifecycle/ports.py"}
+              "openfactory/lifecycle/ports.py",
+              # #414: a delivery a card completed — the door's `Loops("deliver")` announces it and
+              # closes its loop where the card's other promises close (`loops.announce`)
+              "openfactory/lifecycle/loops.py"}
 
 
 def test_ONLY_the_factorys_own_producers_tell_the_door_an_event():
@@ -1074,8 +1078,13 @@ def test_the_guard_above_is_LOOKING():
     source = (ROOT / "openfactory/runtime/temporal/activities.py").read_text()
     for call in ("events.card_finished(", "events.ci_went_red(",
                  "events.pull_requests_at_the_gate(", "events.deliver(", "events.to_room(",
-                 "events.ready_for_you(", "events.ready_at_the_gate(", "door.report("):
+                 "door.report("):
         assert call in source, call
+    # #414: the ready-for-you telling and the delivery's are the card's door's — said from its port
+    # and its loops, which the guard above allows, and found there
+    ports = (ROOT / "openfactory/lifecycle/ports.py").read_text()
+    loops = (ROOT / "openfactory/lifecycle/loops.py").read_text()
+    assert "events.ready_to_try(" in ports and "events._tell(" in loops
 
 
 def test_the_product_board_is_read_again_when_the_role_speaks_and_when_it_is_opened():

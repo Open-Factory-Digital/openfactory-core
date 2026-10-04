@@ -12,11 +12,22 @@ cancellation had closed is opened anew from its context — the ledger never rev
 
 The work stopped but the card stays (`discarded`, `skipped`, `stopped`) touches nothing here: the
 promise is still possible and stays open, and the card line says the card is in the backlog.
+
+THE FACTORY ASKS (`question_asked`, #414): the question it put to the requester on the card opens,
+for the card-question sweep to close when the answer arrives (ADR-0048 §6).
+
+THE CARD IS DELIVERED (`delivered`, or closed as finished work, #414): every delivery it completes
+is announced to the conversation its requester asked in, closed, and its "did it work?" opened —
+the one place a delivery is announced (`announce`), which the weekly catch-all and the job's own
+exit still reach directly until the box hands its promotion back through the door.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
+
+log = logging.getLogger("openfactory.lifecycle.loops")
 
 #: How a cancellation that left a delivery waiting on other cards says so in the record — the
 #: hourly sweep reads it to see whether what remains is delivered already (`executor.converge`).
@@ -128,6 +139,121 @@ def restore(project, card: str) -> str:
     if loop_store.write(name, rows) < len(rows):
         raise RuntimeError("the ledger did not take every row")
     return f"{len(rows)} waiting on it again"
+
+
+def ask(project, card: str, *, about: str, context: dict) -> str:
+    """Open the question the factory just put to `card`'s requester (ADR-0048 §5): `about` is the
+    question's hash, `context` what the sweep that reads the answer needs — who was asked, by
+    whom, when, about which files. The same question already waiting is not opened twice, so the
+    sweep applying this again opens nothing. Raises when the ledger cannot be written."""
+    from openfactory.adapters.board_db import now_iso
+    from openfactory.memory import store as loop_store
+    from openfactory.memory.ledger import CARD_QUESTION, open_loop, waiting
+
+    name = getattr(project, "name", "") or ""
+    subject = _bare(card)
+    if any(x.subject == subject and x.about == about
+           for x in waiting(loop_store.read(name), kind=CARD_QUESTION)):
+        return "already waiting on an answer"
+    # THE ASKER'S CLOCK, NOT THIS ONE: the sweep reads only what was said on the card after the
+    # question was asked, and the loop's opening time is that moment
+    ts = str(context.get("asked_at") or "") or now_iso()
+    if loop_store.write(name, [open_loop(CARD_QUESTION, subject, owner="techlead", about=about,
+                                         ts=ts, context=dict(context))]) < 1:
+        raise RuntimeError("the ledger did not take the question")
+    return "1 opened"
+
+
+def deliver(project, card: str, *, title: str = "") -> str:
+    """What `card`, now delivered, completes (#414): every open delivery whose work is ALL delivered
+    is announced (`announce`). Cheap when there is nothing to say — the ledger is read first, and
+    the board only when an open delivery waits on this card or on the card it was split from (a
+    split card's delivery is its parent's, `triage.delivered_numbers`).
+
+    RAISES WHEN NOTHING COULD BE DECIDED OR SAID — the board could not be read, or the
+    conversation did not take a due announcement — so the hourly sweep applies it again, where the
+    weekly catch-all used to be the only second chance."""
+    from openfactory.contracts.refs import split_parent_of
+    from openfactory.memory import store as loop_store
+    from openfactory.memory.ledger import DELIVERY, waiting
+    from openfactory.product import events
+
+    if not events._speaks(project):
+        return "nobody to tell: the project has no product role"
+    name = getattr(project, "name", "") or ""
+    mine = {_bare(card), split_parent_of(title)} - {""}
+    if not any(x.kind == DELIVERY and events.issues_of(x) & mine
+               for x in waiting(loop_store.read(name), owner=events.OWNER)):
+        return "nothing was promised about it"
+    delivered = events._delivered_now(project)
+    if delivered is None:
+        raise RuntimeError("the board could not be read to see what it delivered")
+    written, missed = announce(project, delivered=delivered)
+    if missed:
+        raise RuntimeError(f"{missed} announcement(s) the conversation did not take")
+    closed = sum(1 for x in written if x.kind == DELIVERY)
+    return f"{closed} announced" if closed else "nothing it completes is due yet"
+
+
+def announce(project, *, delivered: set[str]) -> tuple[list, int]:
+    """ANNOUNCE EVERY OPEN DELIVERY WHOSE WORK IS ALL DELIVERED. Returns the rows written — each
+    delivery closed, and the acceptance loop its announcement opened — and how many due ones were
+    NOT announced (the conversation did not take one, or another telling held the lock).
+
+    TO ITS REQUESTER'S CONVERSATION, the one recorded on the loop (`conversation`), else the room.
+    The sentence is the one the sweep always said — the requirement's or the fix's — with the "did
+    it work?" whose answer closes the acceptance loop (ADR-0025).
+
+    UNDER THE TELLING LOCK, RE-READ INSIDE IT: whoever comes second finds the loop closed and says
+    nothing. The loop closes only once the door TOOK the announcement — one it did not take stays
+    open for the next telling (ADR-0021: closed on observation, never on self-report). Moved here
+    from `events.deliver` (#414): the delivery's loop is the card's promise, and closes with it."""
+    from datetime import UTC, datetime
+
+    from openfactory.memory import store as loop_store
+    from openfactory.memory.ledger import DELIVERY, close_by_observation, waiting
+    from openfactory.product import events, followup
+
+    if not events._speaks(project) or not delivered:
+        return [], 0
+    name = getattr(project, "name", "") or ""
+    agent, language = events._agent(project), events._language(project)
+    written: list = []
+    missed = 0
+    try:
+        with events._held(project, required=False):
+            open_now = waiting(loop_store.read(name), owner=events.OWNER)
+            # ALL OF ITS WORK, NEVER SOME — the one rule for it (`followup.delivered`)
+            due = followup.delivered(open_now, delivered)
+            for loop in [x for x in open_now if (x.kind, x.subject, x.about) in due]:
+                where = (str((loop.context or {}).get("conversation") or "")
+                         or events.room_of(project))
+                text = (followup.delivered_text(loop, agent_name=agent, language=language)
+                        + followup.acceptance_question(loop, agent_name=agent,
+                                                       language=language))
+                if not events._tell(project, id=events._event_id(events.DELIVERED, project,
+                                                                  *loop.key),
+                                    conversation=where, text=text):
+                    missed += 1
+                    continue
+                rows = close_by_observation([loop], {(DELIVERY, loop.subject, loop.about):
+                                                     "delivered"})
+                asked = followup.acceptance_of(
+                    replace(loop, context={**(loop.context or {}), "channel": where}),
+                    ts=datetime.now(UTC).isoformat())
+                # THE ACCEPTANCE LIVES WHERE IT WAS ASKED: its conversation, and whom it is for
+                # as the delivery recorded them — a digest (`agenda.audience`)
+                whom = str((loop.context or {}).get("requester") or "")
+                rows.append(replace(asked, context={
+                    **(asked.context or {}), "conversation": where,
+                    **({"requester": whom} if whom else {})}))
+                loop_store.write(name, rows)
+                written += rows
+    except TimeoutError as exc:
+        log.warning("[%s] another telling held the lock past %ss (%s) — the deliveries it did not "
+                    "announce stay open for the next", name, events._WAIT_SECONDS, exc)
+        missed = max(missed, 1)
+    return written, missed
 
 
 def _bare(ref: str) -> str:

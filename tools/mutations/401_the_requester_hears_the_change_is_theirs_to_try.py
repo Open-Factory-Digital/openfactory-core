@@ -31,9 +31,11 @@ MUTATIONS = [
      'if not result.auto_merge and workflow.patched("the-requester-hears-it-is-theirs"):',
      'if workflow.patched("the-requester-hears-it-is-theirs"):'),
 
+    # re-pinned 2026-10-04: the telling is the card door's port's (`ready_to_try`, #414), which
+    # answers with what it came to rather than a bool
     ("a card nobody asked for in a conversation is announced to the room", EV,
-     "    where = requester_conversation(project, card)\n    if not where:\n        return False\n",
-     "    where = conversation_for(project, card)\n    if not where:\n        return False\n"),
+     "    where = requester_conversation(project, card)\n    if not where:\n",
+     "    where = conversation_for(project, card)\n    if not where:\n"),
 
     ("every telling is a new event, so each poll says it again", EV,
      "_event_id(READY_FOR_YOU, project, card, pr_url)",
@@ -43,9 +45,11 @@ MUTATIONS = [
      "_event_id(READY_FOR_YOU, project, card, pr_url)",
      "_event_id(READY_FOR_YOU, project, card)"),
 
+    # re-pinned 2026-10-04: the round hands each gate to the card's door as `pr_opened` (#414)
     ("the tech-lead's round no longer tells a gate the watch never did", ACT,
-     "        events.ready_at_the_gate(project, gates)\n",
-     ""),
+     "                if _ready_to_try(project, card, pr, by=\"the tech-lead's round\", "
+     "ports=ports):\n",
+     "                if False:\n"),
 
     ("a preview that is already up is left out of the message", VO,
      '    if str(preview_url or "").strip():\n        try_it',
@@ -69,9 +73,11 @@ MUTATIONS = [
      '    if verdict is None:\n        verdict = {}\n    from openfactory.review.verdict import '
      'headline'),
 
+    # re-pinned 2026-10-04: the watch hands the gate to the card's door as `pr_opened` (#414)
     ("the activity reaches nothing", ACT,
-     "            return events.ready_for_you(project, card=inp.issue, pr_url=inp.pr_url,",
-     "            return False and events.ready_for_you(project, card=inp.issue, pr_url=inp.pr_url,"),
+     "            return _ready_to_try(project, inp.issue, inp.pr_url, by=\"the workflow\",",
+     "            return False and _ready_to_try(project, inp.issue, inp.pr_url, "
+     "by=\"the workflow\","),
 
     ("the worker does not register the activity, so every telling fails unknown",
      "openfactory/runtime/temporal/worker.py",

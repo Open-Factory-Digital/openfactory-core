@@ -1065,73 +1065,44 @@ def _link_safe(tracker, parent_ref: str, child_ref: str) -> None:
                                 child_ref, parent_ref, str(exc)[:120])
 
 
-def _ticket_url(tracker, ref: str) -> str:
-    """The provider's own ticket URL, or `""` — never an exception, never a guess.
+def _board_beside(project, tracker):
+    """The board `tracker`'s cards are placed on: the tracker's own when it holds one (the GitHub
+    row keeps its project board), else the project's, built once through the card door's port —
+    which says so in the log when none can be built, and then a card is placed nowhere."""
+    own = getattr(tracker, "board", None)
+    if own is not None:
+        return own
+    from openfactory.lifecycle.ports import Ports
 
-    ASKED, NOT COMPOSED (`TrackerAdapter.ticket_url`), because a vendor's URL shape is the
-    provider's knowledge: the literal this replaced ignored `GH_HOST`, so a GitHub Enterprise
-    deployment linked to public github.com where a same-named repository may belong to somebody
-    else.
-
-    THE COMPOSED FALLBACK RETIRED WITH ADR-0049 SLICE 3E, and it was not merely redundant. It
-    resolved a bare ref through `_ref_repo`, whose default is the FORGE's repository and only then
-    the tracker's — right for a clone and wrong for an issue address. On a project that declares
-    both, the fallback linked to the code repository for an issue that lives in the issues one.
-    `""` is the honest answer where the port cannot say, and a shape the boards already meet
-    (`conformance/adapters.py` probes with exactly it): only the GitHub Projects board reads this
-    value, to ADD a card it has not seen, and its own scan is the authority on presence.
-
-    DEFENSIVE ON PURPOSE, which the first version was not. An adapter or a test double without the
-    method, or one that raises, must not stop a move whose job is MOVING THE CARD. Measured: three
-    suites went red the moment this was called unguarded.
-    """
-    ask = getattr(tracker, "ticket_url", None)
-    if not callable(ask):
-        return ""
-    try:
-        return (ask(ref) or "").strip()
-    except Exception as exc:  # noqa: BLE001 — a link is never worth failing a board move for
-        # SWALLOWED, BUT NEVER SILENT (the house rule, enforced by test_no_silent_failures):
-        # moving the card without a link is correct here and still a fact somebody debugging a
-        # card that never appeared on the board needs to find.
-        activity.logger.info("the tracker could not give a URL for %s — the card moves without "
-                             "one (%s)", ref, exc)
-        return ""
+    return Ports(project, tracker=tracker).board
 
 
-def _child_to_todo(tracker, ref: str) -> bool:
-    """Queue one split child in TO-DO, reporting whether the move POSITIVELY happened.
+def _file_the_child(project, tracker, board, ref: str, *, column: str) -> bool:
+    """File one split child through its door (ADR-0055, #414): `filed`, placed in `column` — TO-DO,
+    in creation order, when the project sends a split's children straight to the queue (ADR-0013
+    D3), the backlog otherwise — and recorded. Returns whether the placement POSITIVELY happened.
 
-    `tracker.set_state` swallows the board adapter's bool (its base contract returns None), so a
-    rate-limited `gh project item-edit` left children column-less — invisible to the poller's
-    exact-match `items_in_status("TO-DO")` — while the parent's close comment and the Slack
-    announcement claimed they were queued. When the tracker exposes its board, ask the board
-    directly and keep the bool; a tracker without one (labels, Jira) reports no outcome, so
-    no-raise is the only success signal it has."""
-    board = getattr(tracker, "board", None)
-    repo = getattr(tracker, "repo", "")
-    num = canonical_ref(ref)
-    # `num.isdigit()` used to gate this too — a second place the platform quietly assumed GitHub.
-    # The ref now travels as the provider's own string; the URL below is still GitHub-shaped, which
-    # is honest: this whole branch only runs when the tracker HAS a `board` attribute, and today
-    # that is only the GitHub adapter.
-    if board is not None and hasattr(board, "set_status") and repo and num:
-        # ASKED OF THE TRACKER, NEVER COMPOSED HERE (ADR-0049 slice 3e). Only the GitHub Projects
-        # board consumes this (it attaches a card by URL; Jira and Azure Boards ignore it), and
-        # `ticket_url` exists on the port precisely because a vendor's URL shape is the provider's
-        # knowledge. It also honours GH_HOST, which the literal here did not: on GitHub Enterprise
-        # it pointed at public github.com, where a same-named repository may belong to somebody
-        # else.
-        #
-        # THE REF IS PASSED WHOLE, and the C-18 split that stood here went with the literal: it
-        # existed to compose the URL, and the board does its own `split_repo_ref` on the way to
-        # `_item_id`, where the repository is half of a card's identity.
-        return bool(board.set_status(
-            issue=num,
-            issue_url=_ticket_url(tracker, num),
-            state=JobState.TODO))
-    tracker.set_state(ref, JobState.TODO)
-    return True
+    THE BOARD'S OWN VERDICT, NEVER `set_state`'s SILENCE. A rate-limited `gh project item-edit`
+    once left children column-less — invisible to the poller's exact-match TO-DO scan — while the
+    parent's close comment and the announcement claimed they were queued. The door's `Place` asks
+    the board and FAILS when it did not move the card, so a refused placement is a failed effect of
+    a recorded transition, which the hourly round places again; the card's link is the port's own
+    (`Ports._url`, asked of the tracker, never composed). A deployment with no board has nowhere to
+    place a card and nothing that picks one up: that is an outcome, not a straggler, as a tracker's
+    no-raise was before.
+
+    `columns={}`: the child was written a moment ago, on no column this put it in, so no hosted
+    board is read for an answer this already has — once per child, it would be the split's cost."""
+    from openfactory.lifecycle import CardEvent, transition
+
+    moved = transition(project, ref, CardEvent.FILED, by="the workflow",
+                       facts={"column": column}, tracker=tracker, board=board, columns={},
+                       event_id=_this_activitys_event("filed"))
+    if moved.refused:
+        activity.logger.warning("split child %s: its door refused the filing (%s)", ref,
+                                moved.refused[:160])
+        return False
+    return not moved.outcome("place").startswith("failed")
 
 
 def _do_split(inp: SplitInput) -> str:
@@ -1144,7 +1115,12 @@ def _do_split(inp: SplitInput) -> str:
     Children go straight to TO-DO in ORDER (ADR-0013 D3, owner decision — keep the flow
     autonomous). Single-line strict makes this dependency-safe: the poller picks them one at a
     time in board order (creation order = 92a before 92b), and holds the floor until each MERGES
-    — so 92b only runs once 92a's code is on main. `split_to_todo: false` reverts to Backlog."""
+    — so 92b only runs once 92a's code is on main. `split_to_todo: false` reverts to Backlog.
+
+    THROUGH THE CARDS' DOOR (ADR-0055, #414): each child is `filed` where the split policy puts it,
+    and the parent is `closed` as split — not delivered, and not gone either: its promise stands
+    until its children are delivered, so nothing is cancelled and nobody is told it will not be
+    built (`table.consequences`)."""
     from openfactory.observability.registry import journal_for
 
     project = ProjectRegistry().get(inp.project)
@@ -1192,6 +1168,7 @@ def _do_split(inp: SplitInput) -> str:
                  f"resuming an interrupted split ({len(existing)} of {n} already created)")
 
     parent = tracker.get_ticket(parent_ref)
+    board = _board_beside(project, tracker)
     _pf_emit(events, inp.project, inp.issue, "state", "splitting",
              note=f"creating {n} children and closing the parent")
     refs: list[str] = []
@@ -1205,13 +1182,17 @@ def _do_split(inp: SplitInput) -> str:
         refs.append(ref)
         _link_safe(tracker, parent_ref, ref)  # native parent→child (traceability + decision idem)
         queued = False
+        # FILED WHERE THE POLICY PUTS IT — TO-DO in creation order, so the poller picks 92a before
+        # 92b; the backlog otherwise, where on a hosted board an issue is a card only once added
+        try:
+            placed = _file_the_child(project, tracker, board, ref,
+                                     column="todo" if to_todo else "backlog")
+        except Exception as exc:  # noqa: BLE001 — the split happened; the queueing did not
+            activity.logger.warning("split child %s: board move raised (%s)",
+                                    ref, str(exc)[:120])
+            placed = False
         if to_todo:
-            # Move to TO-DO in creation order so the poller picks 92a before 92b.
-            try:
-                queued = _child_to_todo(tracker, ref)
-            except Exception as exc:  # noqa: BLE001 — the split happened; the queueing did not
-                activity.logger.warning("split child %s: board move raised (%s)",
-                                        ref, str(exc)[:120])
+            queued = placed
             if not queued:
                 # A never-moved child sits column-less, unreachable by the poller's exact-match
                 # TO-DO scan — work that vanishes unless a person hears which card to drag.
@@ -1224,7 +1205,7 @@ def _do_split(inp: SplitInput) -> str:
                      else ("NOT QUEUED — move it by hand" if to_todo else "Backlog"))
         _pf_emit(events, inp.project, inp.issue, "note", f"created {title} → {dest_note}")
     links = ", ".join(refs)
-    from openfactory.adapters.tracker.base import close_ticket
+    from openfactory.lifecycle import CardEvent, transition
     from openfactory.techlead import voice as tl_voice
 
     # IN THE PROJECT'S LANGUAGE (#160), like the announcement below. These sentences were welded
@@ -1246,17 +1227,27 @@ def _do_split(inp: SplitInput) -> str:
             lang, stuck=", ".join(stragglers))
     else:
         where = tl_voice.say(tl_voice.NARRATION, "split.parent.in-todo", lang)
-    # CLOSED AS NOT DELIVERED, THROUGH THE PORT'S SEAM. This card shipped nothing — the cards split
-    # from it carry the work — and it was closed with the port's default word, `delivered`, by a
-    # call that never chose one: the sweep then told a client their requirement was ready with
-    # every child still unstarted (measured, 2026-09-19). `triage.delivered_numbers` counts it
-    # again once those cards ship. THE NOTE SAYS `SPLIT INTO` FIRST, because the vendor's own
-    # label for this close is "not planned" and a person must not read that as "rejected".
-    close_ticket(
-        tracker, parent_ref,
-        tl_voice.say(tl_voice.NARRATION, "split.parent.closed", lang, children=links,
-                     why=inp.reasons[:300], where=where),
-        delivered=False)
+    # CLOSED AS NOT DELIVERED, THROUGH THE CARD'S DOOR (#414) AND THE PORT'S SEAM BEHIND IT. This
+    # card shipped nothing — the cards split from it carry the work — and it was closed with the
+    # port's default word, `delivered`, by a call that never chose one: the sweep then told a
+    # client their requirement was ready with every child still unstarted (measured, 2026-09-19).
+    # `triage.delivered_numbers` counts it again once those cards ship. THE NOTE SAYS `SPLIT INTO`
+    # FIRST, because the vendor's own label for this close is "not planned" and a person must not
+    # read that as "rejected" — and it is the close's one comment, on every row (D6).
+    closed = transition(
+        project, parent_ref, CardEvent.CLOSED, by="the workflow", why=inp.reasons[:300],
+        facts={"delivered": False, "split_into": links,
+               "note": tl_voice.say(tl_voice.NARRATION, "split.parent.closed", lang,
+                                    children=links, why=inp.reasons[:300], where=where)},
+        # `columns={}`: whether the parent is still open is its tracker's word, which is all a
+        # split's close turns on — no hosted board is read for it
+        tracker=tracker, board=board, columns={}, event_id=_this_activitys_event("closed"))
+    if closed.refused or closed.outcome("close").startswith("failed"):
+        # A SPLIT WHOSE PARENT STAYED OPEN IS NOT DONE: the activity fails, as the close raising
+        # made it fail before, and the job parks for a person to finish it by hand. A recorded
+        # close that failed is also the hourly round's to apply again.
+        raise RuntimeError(f"{parent_ref} was split into {links} and could not be closed: "
+                           f"{closed.refused or closed.outcome('close')}")
     _pf_emit(events, inp.project, inp.issue, "state", "done",
              note=f"split complete → {links} ({where})")
     try:  # ADR-0015: announce the split in Slack — a split MODIFIES the planned sequence (new
@@ -1398,7 +1389,8 @@ def _do_gather(inp: GatherInput) -> GatherVerdict:  # noqa: C901 — one activit
     THE ORDER IS THE CONTRACT (§5): publish → post what was established → post the ONE question →
     park the card and read the park back → open the loop → return `asked`. Every fallible step
     happens before the card is moved, so a gather that dies half-way leaves a card with more
-    knowledge on it and nothing waiting."""
+    knowledge on it and nothing waiting. The last three steps are the card's door's since #414
+    (`question_asked`), in the same order, stopping at the first write that does not land."""
     from openfactory.contracts.ticket import tracker_requester_of
     from openfactory.knowledge import gather as g
     from openfactory.knowledge.gate import NO_CONCEPT, judge
@@ -1410,7 +1402,7 @@ def _do_gather(inp: GatherInput) -> GatherVerdict:  # noqa: C901 — one activit
         publish_bundle,
     )
     from openfactory.memory import store as loop_store
-    from openfactory.memory.ledger import CARD_QUESTION, open_loop, waiting
+    from openfactory.memory.ledger import CARD_QUESTION, waiting
     from openfactory.observability.registry import journal_for
     from openfactory.onboarding.cover import cover_paths
     from openfactory.techlead import voice as tl_voice
@@ -1562,24 +1554,39 @@ def _do_gather(inp: GatherInput) -> GatherVerdict:  # noqa: C901 — one activit
             return GatherVerdict(verdict="asked", note="the same question is already on the card "
                                  "and waiting", **counts)
         asked_at = _now_iso()
-        tracker.comment(ticket.id, tl_voice.say(
-            tl_voice.NARRATION, "gather.asked", lang, mention=_mention_for(tracker, requester),
-            questions=qs_text, marker=g.marker_for(qhash)))
-        landed = tracker.set_state(ticket.id, JobState.NEEDS_REFINEMENT, needs_person=True)
-        if landed is False:
-            tracker.comment(ticket.id, tl_voice.say(tl_voice.NARRATION, "gather.not-parked", lang))
-            return proceed("the park did not land on this tracker — the questions are on the card "
-                           "and the work proceeds", degraded="park: no state mapped", **counts)
         from openfactory.credentials import bot_identity
+        from openfactory.lifecycle import CardEvent, transition
 
         poster = bot_identity().login or ""
-        loop_store.write(project.name, [open_loop(
-            CARD_QUESTION, bare, owner="techlead", about=qhash, ts=asked_at,
-            context={"requester": requester, "poster": poster, "asked_at": asked_at,
-                     "paths": "\n".join(p for p, _ in questions),
-                     "question": " / ".join(q for _, q in questions)[:800],
-                     "gap_keys": "\n".join(gp.key for gp in open_qs),
-                     "repo": repo, "language": lang})])
+        # THROUGH THE CARD'S DOOR (ADR-0055, #414): `question_asked` posts the question (the
+        # comment, marker first), parks the card, and opens the loop the answer closes — in that
+        # order, §5's, and it STOPS at a failed write: a question waits only on a card parked for
+        # it, so a park that did not land opens nothing, and the sweep never parks it an hour
+        # later under a job that went on (`table.STOPS_AT_A_FAILED_WRITE`).
+        moved = transition(
+            project, ticket.id, CardEvent.QUESTION_ASKED, by="the workflow",
+            why=" / ".join(p for p, _ in questions)[:280],
+            facts={"note": tl_voice.say(tl_voice.NARRATION, "gather.asked", lang,
+                                        mention=_mention_for(tracker, requester),
+                                        questions=qs_text, marker=g.marker_for(qhash)),
+                   "about": qhash,
+                   "asked": {"requester": requester, "poster": poster, "asked_at": asked_at,
+                             "paths": "\n".join(p for p, _ in questions),
+                             "question": " / ".join(q for _, q in questions)[:800],
+                             "gap_keys": "\n".join(gp.key for gp in open_qs),
+                             "repo": repo, "language": lang}},
+            tracker=tracker, event_id=_this_activitys_event("question_asked"))
+        if moved.refused:
+            return proceed("the card's door refused the question — the work proceeds",
+                           degraded=f"door: {moved.refused[:160]}", **counts)
+        said, parked = moved.outcome("comment"), moved.outcome("column")
+        if said.startswith("failed"):
+            return proceed("the question could not be posted — the work proceeds",
+                           degraded=f"gather: {said[:160]}", **counts)
+        if parked.startswith("failed"):
+            tracker.comment(ticket.id, tl_voice.say(tl_voice.NARRATION, "gather.not-parked", lang))
+            return proceed("the park did not land on this tracker — the questions are on the card "
+                           "and the work proceeds", degraded=f"park: {parked[:160]}", **counts)
         _pf_emit(journal_for(None, live=True), inp.project, inp.issue, "note",
                  f"gather: asked {len(questions)} question(s) on the card; waiting on {requester}",
                  verdict="asked")
@@ -2645,25 +2652,65 @@ _THE_CARD_IS_DONE = frozenset({JobState.DONE.value, JobState.MERGED.value})
 _ANNOUNCE_WITHIN = 75.0
 
 
-def _pull_requests_waiting(project, gates: list[tuple[str, str]]) -> None:
+def _gate_event(pr_url: str) -> str:
+    """The id of `pr_opened` for one pull request — the watch's and the round's alike, so whichever
+    hands it to the card's door second is answered from the record, never told twice (D5)."""
+    import hashlib
+
+    return f"pr_opened-{hashlib.sha256(str(pr_url or '').encode()).hexdigest()[:20]}"
+
+
+def _ready_to_try(project, card: str, pr_url: str, *, by: str, review: str = "",
+                  tracker=None, ports=None) -> bool:
+    """`pr_opened` through the card's door (ADR-0055, #414): its requester hears the change is
+    theirs to try (`events.ready_to_try`), once per card and pull request. Returns whether they
+    were told NOW. The live preview's link travels when one is up (#405)."""
+    from openfactory.lifecycle import CardEvent, transition
+    from openfactory.preview.live import link_for
+
+    moved = transition(project, card, CardEvent.PR_OPENED, by=by,
+                       facts={"pr_url": pr_url, "review": review,
+                              "preview_url": link_for(project, card)},
+                       tracker=tracker, ports=ports, event_id=_gate_event(pr_url))
+    if moved.refused:
+        activity.logger.info("#%s: its door did not hand the pull request to its requester (%s)",
+                             card, moved.refused[:160])
+    return moved.outcome("tell") == "told" and not moved.replayed
+
+
+def _pull_requests_waiting(project, gates: list[tuple[str, str]]) -> list[str]:
     """`events.pull_requests_at_the_gate`, never raising (#267 slice 3) — and, first, the
-    catch-all of `ready_for_you` (#401): a gate the watch did not announce (a job whose history
-    predates `tell_the_requester`, a merge handed to a person later) is told to its requester on
-    the first round that sees it, and one it did announce is found told."""
+    catch-all of the ready-for-you telling (#401): a gate the watch did not announce (a job whose
+    history predates `tell_the_requester`, a merge handed to a person later) is handed to the
+    card's door as `pr_opened` on the first round that sees it, and one the watch did announce is
+    answered from the card's record (#414). Returns the cards told now.
+
+    ONE PORT FOR THE ROUND: the board is read once for every gate it holds, not once per gate."""
+    told: list[str] = []
     try:
+        from openfactory.lifecycle.ports import Ports
         from openfactory.product import events
 
-        events.ready_at_the_gate(project, gates)
+        ports = Ports(project, tracker=_tracker_for(project))
+        for card, pr in gates or []:
+            try:
+                if _ready_to_try(project, card, pr, by="the tech-lead's round", ports=ports):
+                    told.append(card)
+            except Exception as exc:  # noqa: BLE001 — one card's telling is not the round's price
+                activity.logger.warning("could not hand #%s's pull request to its requester (%s)",
+                                        card, str(exc)[:160])
         events.pull_requests_at_the_gate(project, gates)
     except Exception as exc:  # noqa: BLE001 — never the floor report's price
         activity.logger.warning("could not tell the product role which pull requests wait on a "
                                 "person (%s)", str(exc)[:160])
+    return told
 
 
 @activity.defn
 async def tell_the_requester(inp: ReadyForYouInput) -> bool:
     """A PULL REQUEST A PERSON MUST DECIDE JUST ENTERED THE MERGE WATCH, and whoever asked for the
-    card hears it in the conversation they asked in (#401, `events.ready_for_you`).
+    card hears it in the conversation they asked in (#401) — `pr_opened`, through the card's door
+    since #414 (`_ready_to_try`), whose one telling the round's catch-all shares.
 
     HERE, ON THE WORKER, AND NOT WHERE THE PULL REQUEST WAS OPENED. The machine that opens it runs
     wherever the job runs — on a remote box, another machine with no product memory — and the
@@ -2675,15 +2722,14 @@ async def tell_the_requester(inp: ReadyForYouInput) -> bool:
     be made is the tech-lead round's to make on its next pass. Returns whether it was told now."""
     def _tell() -> bool:
         try:
-            from openfactory.preview.live import link_for
-            from openfactory.product import events
+            from openfactory.product.events import _stance
 
             project = ProjectRegistry().get(inp.project)
-            # THE PREVIEW'S LINK WHEN ONE IS ALREADY UP (#405): the message then says "try it
+            # THROUGH THE CARD'S DOOR (ADR-0055, #414), as `pr_opened`, with the review's word and
+            # the preview's link when one is already up (#405): the message then says "try it
             # here" instead of "start it"; one that comes up later says so itself (`preview_up`)
-            return events.ready_for_you(project, card=inp.issue, pr_url=inp.pr_url,
-                                        verdict=inp.verdict,
-                                        preview_url=link_for(project, inp.issue))
+            return _ready_to_try(project, inp.issue, inp.pr_url, by="the workflow",
+                                 review=_stance(inp.verdict), tracker=_tracker_for(project))
         except Exception as exc:  # noqa: BLE001 — the round says it, an hour late at worst
             activity.logger.warning("could not tell %s#%s's requester it is ready for them (%s)",
                                     inp.project, inp.issue, str(exc)[:160])
@@ -2737,7 +2783,12 @@ def _a_card_was_finished(inp: HoldSyncInput) -> None:
     terminal branches — and one that ended with its card done asks whether that completed a
     delivery: the board decides, and the requester hears it in the conversation they asked in
     (`events.card_finished`). Never raises: the job has ended, and the weekly sweep still catches
-    whatever this could not say."""
+    whatever this could not say.
+
+    THE CARD'S DOOR ANNOUNCES IT FIRST since #414: a job settled Done is `delivered`, whose
+    `Loops("deliver")` says it, so this finds the delivery closed. It stays for the one ending the
+    door does not hold yet — a card the box's promotion moved to Done itself — until the box hands
+    that outcome back to the worker (`tests/card_writers_outside_the_door.py`)."""
     try:
         from openfactory.product import events
 

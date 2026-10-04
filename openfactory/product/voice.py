@@ -3293,6 +3293,8 @@ _CARD_NOTE = {
         "promoted": "_Colocado na fila por {who}._{why}",
         "reordered": "_Tirado da fila por {who}: voltou para o backlog._{why}",
         "edited": "_Editado por {who}._{why}",
+        "question_asked": "_Perguntado por {who}: o cartão espera a resposta._{why}",
+        "pr_opened": "_Pull request aberto: uma pessoa decide o merge._{why}",
     },
     "en": {
         "discarded": ("_Pull request closed without merging by {who}._{why} Nothing was "
@@ -3311,6 +3313,8 @@ _CARD_NOTE = {
         "promoted": "_Queued by {who}._{why}",
         "reordered": "_Taken out of the queue by {who}: back in the backlog._{why}",
         "edited": "_Edited by {who}._{why}",
+        "question_asked": "_Asked by {who}: the card waits on the answer._{why}",
+        "pr_opened": "_Pull request opened: a person decides the merge._{why}",
     },
 }
 _CARD_NOTE_WHY = {"pt-BR": " Motivo: {why}", "en": " Reason: {why}"}
@@ -3379,11 +3383,14 @@ _CARD_DONE_TO = {
     "pt-BR": {"discarded": "descartado", "skipped": "pulado", "stopped": "parado",
               "closed": "fechado", "withdrawn": "retirado", "removed": "removido",
               "reopened": "reaberto", "filed": "registrado", "promoted": "colocado na fila",
-              "reordered": "tirado da fila", "edited": "editado"},
+              "reordered": "tirado da fila", "edited": "editado",
+              "question_asked": "parado à espera de uma resposta",
+              "pr_opened": "entregue a uma pessoa para conferir"},
     "en": {"discarded": "discarded", "skipped": "skipped", "stopped": "stopped",
            "closed": "closed", "withdrawn": "withdrawn", "removed": "removed",
            "reopened": "reopened", "filed": "filed", "promoted": "queued",
-           "reordered": "taken out of the queue", "edited": "edited"},
+           "reordered": "taken out of the queue", "edited": "edited",
+           "question_asked": "parked on a question", "pr_opened": "handed to a person to try"},
 }
 _CARD_REFUSED = {
     "pt-BR": "O #{ref} está {where} — não pode ser {done} a partir daí. Nada foi alterado.",

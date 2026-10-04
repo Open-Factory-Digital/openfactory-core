@@ -26,6 +26,8 @@ DOOR_TEST = "tests/test_the_one_door.py"
 DOOR = "openfactory/product/door.py"
 CONVERSATION = "openfactory/runtime/temporal/conversation.py"
 EVENTS = "openfactory/product/events.py"
+#: where a delivery is announced and its loop closed since #414 — the card door's promise half
+LOOPS = "openfactory/lifecycle/loops.py"
 AGENDA = "openfactory/product/agenda.py"
 ACTIVITIES = "openfactory/runtime/temporal/activities.py"
 MODULE = "openfactory/product/module.py"
@@ -97,17 +99,19 @@ MUTATIONS = [
     ("the job's word is trusted when the board cannot be read", EVENTS,
      "        if delivered is None:\n            return []\n",
      "        if delivered is None:\n            delivered = {str(card)}\n"),
-    ("a delivery is announced in the room, not where its requester asked", EVENTS,
-     '                where = str((loop.context or {}).get("conversation") or "") '
-     "or room_of(project)\n",
-     "                where = room_of(project)\n"),
+    # re-pinned 2026-10-04: the announcement is the card door's (`loops.announce`, #414)
+    ("a delivery is announced in the room, not where its requester asked", LOOPS,
+     '                where = (str((loop.context or {}).get("conversation") or "")\n'
+     "                         or events.room_of(project))\n",
+     "                where = events.room_of(project)\n"),
     ("a requirement is announced when SOME of its work is delivered", FOLLOWUP,
      "        if issues and issues <= closed_issues:\n",
      "        if issues and issues & closed_issues:\n"),
-    ("a delivery the door did not take is closed as announced", EVENTS,
-     "                             conversation=where, text=text):\n                    continue\n",
-     "                             conversation=where, text=text):\n                    pass\n"),
-    ("the acceptance forgets where it was asked", EVENTS,
+    # re-pinned 2026-10-04: the announcement is the card door's (`loops.announce`, #414)
+    ("a delivery the door did not take is closed as announced", LOOPS,
+     "                    missed += 1\n                    continue\n",
+     "                    missed += 1\n"),
+    ("the acceptance forgets where it was asked", LOOPS,
      '                    **(asked.context or {}), "conversation": where,\n',
      "                    **(asked.context or {}),\n"),
     # RE-PINNED (#401): the loop moved into `requester_conversation`, one indent shallower
@@ -119,12 +123,15 @@ MUTATIONS = [
     ("the sweep no longer catches what an event missed", ACTIVITIES,
      "    told = events.deliver(project, delivered=_closed_issue_numbers(module))\n",
      "    told = []\n"),
-    ("the telling reads every row, and announces a closed delivery again", EVENTS,
-     "            open_now = waiting(loop_store.read(name), owner=OWNER)\n",
+    # re-pinned 2026-10-04: the announcement is the card door's (`loops.announce`, #414)
+    ("the telling reads every row, and announces a closed delivery again", LOOPS,
+     "            open_now = waiting(loop_store.read(name), owner=events.OWNER)\n",
      "            open_now = loop_store.read(name)\n"),
-    ("each telling of a delivery is a fresh event, so a retold one is two", EVENTS,
-     "                if not _tell(project, id=_event_id(DELIVERED, project, *loop.key),\n",
-     '                if not _tell(project, id=f"{DELIVERED}-{uuid.uuid4().hex}",\n'),
+    ("each telling of a delivery is a fresh event, so a retold one is two", LOOPS,
+     "                if not events._tell(project, id=events._event_id(events.DELIVERED, project,\n"
+     "                                                                  *loop.key),\n",
+     "                if not events._tell(project, id=f\"{events.DELIVERED}-\"\n"
+     "                                    f\"{__import__('uuid').uuid4().hex}\",\n"),
     ("a room post goes beside the door again", ACTIVITIES,
      "    del channel, cfg  # the product's room is read from the project, like every other gate "
      "here\n    if not events.to_room(project, text):\n",

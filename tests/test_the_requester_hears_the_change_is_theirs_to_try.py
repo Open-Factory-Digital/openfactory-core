@@ -117,6 +117,19 @@ def told(registry, ledger, monkeypatch) -> list[dict]:
     return said
 
 
+class _Card:
+    """The card the door reads before it tells (#414): open, and on no board."""
+
+    def get_ticket(self, ref):
+        return SimpleNamespace(title="Relatório mensal", raw="", state="open")
+
+
+def _round(project, gates, monkeypatch) -> list[str]:
+    """The tech-lead's round, as it hands its merge gates to the card's door (`pr_opened`)."""
+    monkeypatch.setattr(acts, "_tracker_for", lambda project: _Card())
+    return acts._pull_requests_waiting(project, gates)
+
+
 # ── 1. said once, where it was asked, with what a person can act on ────────────────────────────
 
 def test_a_change_a_person_must_decide_is_told_ONCE_in_the_requesters_conversation(
@@ -139,12 +152,12 @@ def test_a_change_a_person_must_decide_is_told_ONCE_in_the_requesters_conversati
 
 
 def test_a_repeated_poll_a_retry_or_a_resumed_merge_does_NOT_say_it_again(registry, ledger,
-                                                                         told):
+                                                                         told, monkeypatch):
     ledger.rows = [_defect()]
     assert events.ready_for_you(registry, card="500", pr_url=PR, verdict=FLAGGED)
     assert not events.ready_for_you(registry, card="500", pr_url=PR, verdict=FLAGGED)
-    assert events.ready_at_the_gate(registry, [("500", PR)]) == []
-    assert events.ready_at_the_gate(registry, [("500", PR)]) == []
+    assert _round(registry, [("500", PR)], monkeypatch) == []
+    assert _round(registry, [("500", PR)], monkeypatch) == []
     assert len(told) == 1, told
 
 
@@ -155,14 +168,15 @@ def test_a_NEW_pull_request_on_the_same_card_is_a_new_thing_to_try(registry, led
     assert len(told) == 2
 
 
-def test_a_card_NOBODY_asked_for_in_a_conversation_is_not_announced(registry, ledger, told):
+def test_a_card_NOBODY_asked_for_in_a_conversation_is_not_announced(registry, ledger, told,
+                                                                    monkeypatch):
     """No delivery loop, or one with no conversation recorded: nothing is said — not even to the
     room, which already has the card's own comment — and nothing is recorded, so a later filing
     from a conversation is still told."""
     assert not events.ready_for_you(registry, card="777", pr_url=PR, verdict=FLAGGED)
     ledger.rows = [_defect("778", where="")]
     assert not events.ready_for_you(registry, card="778", pr_url=PR, verdict=FLAGGED)
-    assert events.ready_at_the_gate(registry, [("777", PR), ("778", PR)]) == []
+    assert _round(registry, [("777", PR), ("778", PR)], monkeypatch) == []
     assert told == []
 
     ledger.rows.append(_defect("777"))
@@ -170,21 +184,25 @@ def test_a_card_NOBODY_asked_for_in_a_conversation_is_not_announced(registry, le
 
 
 def test_the_round_tells_a_gate_the_watch_never_did_and_the_watch_then_finds_it_told(
-        registry, ledger, told):
+        registry, ledger, told, monkeypatch):
     """A job whose history predates the watch's call, or a merge handed to a person later: the
     round sees the gate and not the verdict, so it says nothing about the review."""
     ledger.rows = [_defect()]
-    assert events.ready_at_the_gate(registry, [("500", PR)]) == ["500"]
+    assert _round(registry, [("500", PR)], monkeypatch) == ["500"]
     assert not events.ready_for_you(registry, card="500", pr_url=PR, verdict=FLAGGED)
     assert len(told) == 1 and "revisão" not in told[0]["text"], told
 
 
 def test_the_round_hands_its_merge_gates_to_the_event_before_the_two_day_reminder():
+    """THROUGH THE CARD'S DOOR SINCE #414: each gate is `pr_opened`, keyed by its pull request as
+    the watch's is, so whichever comes second is answered from the card's record."""
     source = (ROOT / "openfactory/runtime/temporal/activities.py").read_text()
     helper = source[source.index("def _pull_requests_waiting("):]
     helper = helper[:helper.index("\n@activity.defn")]
-    assert "events.ready_at_the_gate(project, gates)" in helper
-    assert helper.index("ready_at_the_gate") < helper.index("pull_requests_at_the_gate(")
+    assert "_ready_to_try(project, card, pr," in helper
+    assert helper.index("_ready_to_try(") < helper.index("pull_requests_at_the_gate(")
+    door = inspect.getsource(acts._ready_to_try)
+    assert "CardEvent.PR_OPENED" in door and "event_id=_gate_event(pr_url)" in door
 
 
 def test_a_preview_already_up_is_IN_the_message_instead_of_start_the_preview(registry, ledger,
@@ -315,13 +333,15 @@ async def test_the_activity_is_registered_and_reaches_the_event(registry, monkey
 
     assert acts.tell_the_requester in WORKER_ACTIVITIES
     heard: list = []
-    monkeypatch.setattr(events, "ready_for_you",
-                        lambda project, **kw: heard.append((project.name, kw)) or True)
+    monkeypatch.setattr(acts, "_tracker_for", lambda project: _Card())
+    monkeypatch.setattr(events, "ready_to_try",
+                        lambda project, **kw: heard.append((project.name, kw)) or "told")
     assert await ActivityEnvironment().run(
         acts.tell_the_requester,
         ReadyForYouInput(project=ROOM, issue="500", pr_url=PR, verdict=FLAGGED))
-    # the live preview's link travels too since #405 met #401 — none is up here
-    assert heard == [(ROOM, {"card": "500", "pr_url": PR, "verdict": FLAGGED,
+    # THROUGH THE CARD'S DOOR (#414): the review's word, and the live preview's link since #405
+    # met #401 — none is up here
+    assert heard == [(ROOM, {"card": "500", "pr_url": PR, "review": "flagged",
                              "preview_url": ""})]
     assert events.PRODUCERS[events.READY_FOR_YOU].endswith("::tell_the_requester")
 

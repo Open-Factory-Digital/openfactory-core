@@ -437,11 +437,21 @@ def test_the_link_is_found_whether_it_is_asked_for_by_the_project_or_by_its_name
     project = SimpleNamespace(name="acme")
     assert live.link_for(project, "#12") == live.link_for("acme", "#12") == "/p/acme/preview/12"
 
+    from openfactory.runtime.temporal import activities as acts
+
+    class _Card:
+        def get_ticket(self, ref):
+            return SimpleNamespace(title="", raw="", state="open")
+
     asked: list[str] = []
-    monkeypatch.setattr(events, "ready_for_you",
+    monkeypatch.setattr(events, "_speaks", lambda project: True)
+    monkeypatch.setattr(events, "ready_to_try",
                         lambda project, *, card, pr_url, preview_url="", **kw:
-                        asked.append(preview_url) or True)
-    assert events.ready_at_the_gate(project, [("12", "https://x/pr/1")]) == ["12"]
+                        asked.append(preview_url) or "told")
+    monkeypatch.setattr(acts, "_tracker_for", lambda project: _Card())
+    monkeypatch.setattr(events, "pull_requests_at_the_gate", lambda project, gates: [])
+    # the round's catch-all, through the card's door since #414 (`pr_opened`)
+    assert acts._pull_requests_waiting(project, [("12", "https://x/pr/1")]) == ["12"]
     assert asked == ["/p/acme/preview/12"], asked
 
 

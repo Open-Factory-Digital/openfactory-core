@@ -11,7 +11,7 @@ anywhere else:
     a promise about a card  `open_loop` / `close_by_observation` in a function that names the
                             loops keyed to a card (DELIVERY, CARD_QUESTION)
     a card's notice         `events.card_finished`, `deliver`, `ready_for_you`,
-                            `ready_at_the_gate`, `card_moved`
+                            `ready_to_try`, `ready_at_the_gate`, `card_moved`
 
 `events.ci_went_red`, `preview_up` and `pull_requests_at_the_gate` are not card notices in this
 sense: a red check, a live preview and a reminder of a waiting gate say how far a job is, and no
@@ -35,8 +35,8 @@ WRITES = frozenset({"set_state", "set_column", "set_status", "close_ticket", "re
                     "reopen_ticket"})
 LOOP_WRITES = frozenset({"open_loop", "close_by_observation"})
 CARD_LOOPS = frozenset({"DELIVERY", "CARD_QUESTION"})
-NOTICES = frozenset({"card_finished", "deliver", "ready_for_you", "ready_at_the_gate",
-                     "card_moved"})
+NOTICES = frozenset({"card_finished", "deliver", "ready_for_you", "ready_to_try",
+                     "ready_at_the_gate", "card_moved"})
 
 #: Where a write is not a caller's, BY RULE — each a directory or one file, with why.
 NOT_CALLERS = {
@@ -57,23 +57,16 @@ NOT_CALLERS = {
 #: THE CEILING AND THE BASELINE, committed. Slice 1 ended at 27: the writers slices 2 and 3 own;
 #: 25 since #413's first part moved the card-question sweep through the door; 23 since its
 #: second moved the job's park and settle; 16 since #414's first part moved filing, the moves
-#: between the operator's columns and the stale-pickup healer (an observed change, D8).
+#: between the operator's columns and the stale-pickup healer (an observed change, D8); 7 since
+#: #414's B1 moved a split's children and parent, the gather's question, the ready-for-you
+#: tellings, the delivery's loop and the factory's own impediment card.
 #: Each slice lowers the ceiling and drops what it moved in from both; slice 3 ends at zero, and
-#: the sixteen left are its second part's (`card_writers_outside_the_door.py`).
-CEILING = 16
+#: the seven left are its own (`card_writers_outside_the_door.py`).
+CEILING = 7
 BASELINE = frozenset({
-    ("openfactory/runtime/temporal/activities.py", "_child_to_todo", "set_state"),
-    ("openfactory/runtime/temporal/activities.py", "_child_to_todo", "set_status"),
-    ("openfactory/runtime/temporal/activities.py", "_do_split", "close_ticket"),
-    ("openfactory/runtime/temporal/activities.py", "_do_gather", "set_state"),
-    ("openfactory/runtime/temporal/activities.py", "_do_gather", "open_loop"),
     ("openfactory/runtime/temporal/activities.py", "_a_card_was_finished", "card_finished"),
     ("openfactory/runtime/temporal/activities.py", "_product_followup", "deliver"),
     ("openfactory/runtime/temporal/activities.py", "_product_followup", "close_by_observation"),
-    ("openfactory/runtime/temporal/activities.py", "_tell", "ready_for_you"),
-    ("openfactory/runtime/temporal/activities.py", "_pull_requests_waiting", "ready_at_the_gate"),
-    ("openfactory/product/events.py", "deliver", "close_by_observation"),
-    ("openfactory/ops/impediment.py", "resolved", "close_ticket"),
     ("openfactory/orchestrator/machine.py", "_set_state", "set_state"),
     ("openfactory/orchestrator/promotion.py", "_state", "set_state"),
     ("openfactory/product/module.py", "_follow_card", "open_loop"),

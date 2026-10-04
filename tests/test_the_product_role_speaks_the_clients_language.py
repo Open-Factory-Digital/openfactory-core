@@ -122,15 +122,18 @@ def _composer_calls() -> list[tuple[str, int, bool]]:
 
     THE ROUND IS TWO FILES SINCE #267 SLICE 3: the delivery's sentence is composed where the
     delivery is told (`product/events.py`), when the job that finished the work ends and when the
-    sweep catches what that missed — so the walk reads both.
+    sweep catches what that missed — so the walk reads both. AND THREE SINCE #414: the delivery
+    is announced by the card's door (`lifecycle/loops.py::announce`), which `events.deliver`
+    reaches, so the sentence is composed there.
     """
     import ast
 
+    from openfactory.lifecycle import loops
     from openfactory.product import events
     from openfactory.runtime.temporal import activities
 
     out = []
-    for module in (activities, events):
+    for module in (activities, events, loops):
         for node in ast.walk(ast.parse(inspect.getsource(module))):
             if not (isinstance(node, ast.Call) and getattr(node.func, "attr", "") in COMPOSERS):
                 continue

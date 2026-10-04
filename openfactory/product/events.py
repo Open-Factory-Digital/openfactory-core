@@ -14,9 +14,12 @@ line on that conversation — behind the turn in progress, never inside one.
 
     kind                producer on this branch
     ─────────────────   ──────────────────────────────────────────────────────────────────────
-    delivered           `activities.record_outcome` — every job ends there; one that ended with
-                        its card done asks whether that completed a delivery (`card_finished`)
-                        — and the weekly sweep, which is now only the catch-all (`deliver`)
+    delivered           the card's door (`lifecycle/loops.py::deliver`, #414) — a card closed
+                        as delivered, by its job, a person or the vendor's own screen, announces
+                        what it completes; and, until the box hands its promotion back through
+                        the door, `activities.record_outcome` — every job ends there; one that
+                        ended with its card done asks whether that completed a delivery
+                        (`card_finished`) — with the weekly sweep as the catch-all (`deliver`)
     ci_red              `activities.repair_ci` — the merge watch sends a pull request there
                         because a check that blocks it failed on the code, and the factory is
                         repairing it; said once per pull request, however many passes it takes
@@ -26,7 +29,8 @@ line on that conversation — behind the turn in progress, never inside one.
                         (`_the_preview_is_up`, #405); once per start
     ready_for_you       `activities.tell_the_requester` — the job's merge watch, the moment a
                         pull request a PERSON must decide enters it (#401); and the tech-lead's
-                        round as the catch-all, which already lists every such gate
+                        round as the catch-all, which already lists every such gate — both
+                        through the card's door as `pr_opened`, which says it (`ready_to_try`)
     document_ingested   `documents/ingest.py::announce` (#269) — a document read into the
                         product's memory, on the knowledge pipeline's tick or when somebody
                         brings it; an internal one is never said in a room (`_told_where`)
@@ -71,8 +75,6 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import replace
-from datetime import UTC, datetime
 
 log = logging.getLogger("openfactory.product.events")
 
@@ -379,52 +381,14 @@ def deliver(project, *, delivered: set[str]) -> list:
     as the catch-all for whatever an event missed. Returns the rows written: each delivery closed,
     and the acceptance loop its announcement opened.
 
-    TO ITS REQUESTER'S CONVERSATION, the one recorded on the loop (`conversation`), else the room.
-    The sentence is the one the sweep said — the requirement's or the fix's — with the "did it
-    work?" whose answer closes the acceptance loop (ADR-0025).
+    THE ANNOUNCEMENT IS THE CARD'S DOOR'S SINCE #414 (`lifecycle.loops.announce`): a card closed as
+    delivered — by its job, by a person, or on the vendor's own screen — announces what it
+    completes as one of its consequences, and the delivery's loop closes where the card's other
+    promises do. This name stays for the two producers that still reach it directly: the job's
+    one exit (`card_finished`) and the weekly catch-all, which the box's promotion still needs."""
+    from openfactory.lifecycle.loops import announce
 
-    UNDER THE TELLING LOCK, RE-READ INSIDE IT: whoever comes second finds the loop closed and says
-    nothing. The loop closes only once the door TOOK the announcement — one it did not take stays
-    open for the next telling (ADR-0021: closed on observation, never on self-report)."""
-    from openfactory.memory import store as loop_store
-    from openfactory.memory.ledger import DELIVERY, close_by_observation, waiting
-    from openfactory.product import followup
-
-    if not _speaks(project) or not delivered:
-        return []
-    name = getattr(project, "name", "") or ""
-    written: list = []
-    try:
-        with _held(project, required=False):
-            open_now = waiting(loop_store.read(name), owner=OWNER)
-            # ALL OF ITS WORK, NEVER SOME — the one rule for it (`followup.delivered`)
-            due = followup.delivered(open_now, delivered)
-            for loop in [x for x in open_now if (x.kind, x.subject, x.about) in due]:
-                where = str((loop.context or {}).get("conversation") or "") or room_of(project)
-                text = (followup.delivered_text(loop, agent_name=_agent(project),
-                                                language=_language(project))
-                        + followup.acceptance_question(loop, agent_name=_agent(project),
-                                                       language=_language(project)))
-                if not _tell(project, id=_event_id(DELIVERED, project, *loop.key),
-                             conversation=where, text=text):
-                    continue
-                rows = close_by_observation([loop], {(DELIVERY, loop.subject, loop.about):
-                                                     "delivered"})
-                asked = followup.acceptance_of(
-                    replace(loop, context={**(loop.context or {}), "channel": where}),
-                    ts=datetime.now(UTC).isoformat())
-                # THE ACCEPTANCE LIVES WHERE IT WAS ASKED: its conversation, and whom it is for
-                # as the delivery recorded them — a digest (`agenda.audience`)
-                whom = str((loop.context or {}).get("requester") or "")
-                rows.append(replace(asked, context={
-                    **(asked.context or {}), "conversation": where,
-                    **({"requester": whom} if whom else {})}))
-                loop_store.write(name, rows)
-                written += rows
-    except TimeoutError as exc:
-        log.warning("[%s] another telling held the lock past %ss (%s) — the deliveries it did not "
-                    "announce stay open for the next", name, _WAIT_SECONDS, exc)
-    return written
+    return announce(project, delivered=delivered)[0]
 
 
 # ── the others ───────────────────────────────────────────────────────────────────────────────────
@@ -624,10 +588,12 @@ def _stance(verdict) -> str:
     return str(headline(verdict if isinstance(verdict, dict) else {}).get("stance") or "")
 
 
-def ready_for_you(project, *, card: str, pr_url: str, verdict: dict | None = None,
-                  preview_url: str = "") -> bool:
+def ready_to_try(project, *, card: str, pr_url: str, review: str = "",
+                 preview_url: str = "") -> str:
     """A CARD'S CHANGE WAITS ON A PERSON, AND THE PERSON WHO ASKED FOR IT HEARS IT (#401) — in the
-    conversation they asked in, once per card and pull request. Returns whether it was told now.
+    conversation they asked in, once per card and pull request. The card's door says it, from
+    `pr_opened` (#414), and this returns what it came to, as the record's outcome — RAISING WHEN
+    THE CONVERSATION DID NOT TAKE IT, so the sweep applies it again (`_once` makes that safe).
 
     THE ROLE PROMISED "EU AVISO AQUI" AND SAID NOTHING WHILE THE CARD WAITED ON THAT PERSON. With a
     person deciding the merge, the requester's own look is the gate: the change is built, reviewed
@@ -640,8 +606,8 @@ def ready_for_you(project, *, card: str, pr_url: str, verdict: dict | None = Non
     said and nothing is recorded, and the ledger is the only read it costs.
 
     TWO PRODUCERS, ONE EVENT, like a delivery: the job's merge watch the moment it begins
-    (`activities.tell_the_requester`, with the review's verdict), and the tech-lead's round, which
-    sees every gate and not the verdict (`verdict=None`) — for a job whose history predates the
+    (`activities.tell_the_requester`, with the review's word, `review`), and the tech-lead's round,
+    which sees every gate and not the verdict (`review=""`) — for a job whose history predates the
     watch's call, or one whose merge was handed to a person later. The id is the card and the
     pull request, so whichever comes second finds it told.
 
@@ -649,38 +615,36 @@ def ready_for_you(project, *, card: str, pr_url: str, verdict: dict | None = Non
     address instead of "start the preview from the card". A preview that comes up after this was
     said is `preview_up`'s to announce."""
     if not _speaks(project) or not str(card or "").strip() or not str(pr_url or "").strip():
-        return False
+        return "nobody to tell: no product role, card or pull request"
     where = requester_conversation(project, card)
     if not where:
-        return False
+        return "nobody to tell: nobody asked for it in a conversation"
     from openfactory.product import voice
 
-    return _once(project, _event_id(READY_FOR_YOU, project, card, pr_url), lambda: (
-        where,
-        voice.ready_for_you(ref=card, title=_title_of(project, card),
-                            card_url=_card_url(project, card), review=_stance(verdict),
-                            preview=not preview_url and _preview_offered(project, card),
-                            preview_url=preview_url, language=_language(project),
-                            agent_name=_agent(project),
-                            preview_starts_itself=_preview_starts_itself(project))))
+    said = _event_id(READY_FOR_YOU, project, card, pr_url)
+    if _once(project, said, lambda: (
+            where,
+            voice.ready_for_you(ref=card, title=_title_of(project, card),
+                                card_url=_card_url(project, card), review=review,
+                                preview=not preview_url and _preview_offered(project, card),
+                                preview_url=preview_url, language=_language(project),
+                                agent_name=_agent(project),
+                                preview_starts_itself=_preview_starts_itself(project)))):
+        return "told"
+    if said in _read(_store_path(project))["told"]:
+        return "told already"
+    raise RuntimeError("the conversation's door did not take it")
 
 
-def ready_at_the_gate(project, gates: list[tuple[str, str]]) -> list[str]:
-    """THE TECH-LEAD'S ROUND SAW THESE (card, pull request) WAITING ON A PERSON — the catch-all of
-    `ready_for_you`: each is told on the first round that sees it, unless the watch already did.
-    Returns the cards told now. Never raises."""
-    told = []
-    for card, pr in gates or []:
-        try:
-            from openfactory.preview.live import link_for
-
-            if ready_for_you(project, card=card, pr_url=pr,
-                             preview_url=link_for(project, card)):
-                told.append(card)
-        except Exception:  # noqa: BLE001 — one card's telling is not the round's price
-            log.exception("[%s] could not tell #%s's requester it is ready for them",
-                          getattr(project, "name", "?"), card)
-    return told
+def ready_for_you(project, *, card: str, pr_url: str, verdict: dict | None = None,
+                  preview_url: str = "") -> bool:
+    """`ready_to_try` with the automatic review's verdict, answering only whether it was told NOW —
+    False for told already, nobody to tell, and a door that did not take it alike."""
+    try:
+        return ready_to_try(project, card=card, pr_url=pr_url, review=_stance(verdict),
+                            preview_url=preview_url) == "told"
+    except RuntimeError:
+        return False
 
 
 
@@ -689,5 +653,5 @@ __all__ = ["CARD_MOVED", "CI_RED", "DELIVERED", "DOCUMENT_INGESTED", "KINDS", "P
            "PRODUCERS", "PR_WAITING", "PR_WAIT_HOURS", "READY_FOR_YOU", "card_finished",
            "card_moved", "ci_went_red", "conversation_for", "deliver", "document_ingested",
            "forget_record", "issues_of", "preview_up", "pull_requests_at_the_gate",
-           "ready_at_the_gate", "ready_for_you", "requester_conversation", "room_of", "say_to",
+           "ready_for_you", "ready_to_try", "requester_conversation", "room_of", "say_to",
            "to_room"]

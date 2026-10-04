@@ -223,7 +223,15 @@ class _FactoryTracker(_Tracker):
         self.created.append((title, body))
         return f"#{self._next}"
 
+    def get_ticket(self, ref: str):
+        """What the card's door reads before it closes one (#414): open while it is filed here."""
+        from types import SimpleNamespace
+
+        held = f"#{str(ref).lstrip('#')}" in self.tickets.values()
+        return SimpleNamespace(title="", raw="", state="open" if held else "closed")
+
     def close_ticket(self, ref: str, reason: str, *, delivered: bool = True) -> None:
+        ref = f"#{str(ref).lstrip('#')}"        # the door names a card by its canonical ref
         self.closed.append((ref, reason))
         for title, r in list(self.tickets.items()):
             if r == ref:

@@ -337,6 +337,9 @@ class _Board:
         self.moves.append((issue, state))
         return self.ok_for is None or issue in self.ok_for
 
+    def add_item(self, *, issue_url):
+        """The door's placement adds a card first (#414) — idempotent, and nothing to record."""
+
 
 class _SplitTracker:
     repo = "o/app"
@@ -407,7 +410,7 @@ def test_a_failed_board_move_is_never_claimed_as_queued(monkeypatch):
 
     assert "not queued: #102" in out, out
     ref, reason = tracker.closed
-    assert ref == "#37"
+    assert ref == "37"
     assert "except #102" in reason, f"the close comment claims a queue the board refused: {reason}"
     slack = notifier.sent[0]
     # THE FACT, NOT THE WORDING (#160 moved this sentence into the per-language catalogue). What

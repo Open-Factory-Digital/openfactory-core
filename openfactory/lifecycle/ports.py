@@ -238,9 +238,10 @@ class Ports:
 
     def _url(self, card: str) -> str:
         """Where a person opens `card` — asked of the tracker; `""` when it cannot say, which every
-        board's `add_item` and `set_column` already tolerate."""
+        board's `add_item` and `set_column` already tolerate. STRIPPED: a row composes it from
+        configuration a person typed, and a padded URL resolves to no card on a hosted board."""
         try:
-            return str(self.tracker.ticket_url(card) or "")
+            return str(self.tracker.ticket_url(card) or "").strip()
         except Exception:  # noqa: BLE001 — a link is a courtesy; the placement is not
             log.info("the tracker could not name a URL for #%s", card, exc_info=True)
             return ""
@@ -268,11 +269,16 @@ class Ports:
 
     # ── the promise, the conversation, the preview, the snapshot ───────────────────────────────
 
-    def loops(self, card: str, action: str, *, about: str = "") -> str:
+    def loops(self, card: str, action: str, *, about: str = "", context: dict | None = None,
+              title: str = "") -> str:
         from openfactory.lifecycle import loops
 
         if action in ("answer", "moot"):
             return loops.question(self.project, card, about=about, answered=action == "answer")
+        if action == "ask":
+            return loops.ask(self.project, card, about=about, context=context or {})
+        if action == "deliver":
+            return loops.deliver(self.project, card, title=title)
         if action != "cancel":
             return loops.restore(self.project, card)
         said, _still = loops.cancel(self.project, card)
@@ -294,15 +300,25 @@ class Ports:
                           self.name)
 
     def tell(self, card: str, *, notice: str, event_id: str, title: str, removed: bool,
-             opened_by: str, conversation: str, pass_number: int = 0) -> str:
+             opened_by: str, conversation: str, pass_number: int = 0, pr_url: str = "",
+             review: str = "", preview_url: str = "") -> str:
         """Tell the conversation the card was asked in. A card nobody asked for in a conversation —
         written on the board, with no delivery recording where — has no requester to tell, and the
         product's room is not told what an operator did on the board; one the product role opened
-        is said to the room when nobody's conversation is known, as #384 said it."""
+        is said to the room when nobody's conversation is known, as #384 said it.
+
+        A CHANGE READY TO TRY (`READY_FOR_YOU`, #401) is its own sentence and its own rule: only to
+        the conversation somebody asked in — the room already has the card's own comment — and
+        once per card and pull request, whichever of the watch and the round hands it over first
+        (`events.ready_to_try`)."""
+        from openfactory.lifecycle.table import READY_FOR_YOU
         from openfactory.product import events
 
         if not events._speaks(self.project):
             return "nobody to tell: the project has no product role"
+        if notice == READY_FOR_YOU:
+            return events.ready_to_try(self.project, card=card, pr_url=pr_url, review=review,
+                                       preview_url=preview_url)
         if not opened_by and not conversation:
             return "nobody to tell: nobody asked for it in a conversation"
         return events.card_moved(self.project, card=card, notice=notice, event_id=event_id,

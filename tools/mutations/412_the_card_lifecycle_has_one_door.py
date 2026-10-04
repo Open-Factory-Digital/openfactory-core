@@ -65,10 +65,11 @@ MUTATIONS = [
      '        return (Reopen(), Comment(), Loops("restore"), Tell(BACK_ON_THE_BOARD), Forget())\n',
      '        return (Reopen(), Comment(), Tell(BACK_ON_THE_BOARD), Forget())\n'),
 
+    # re-pinned 2026-10-04: finished work closed announces what it completes (#414)
     ("closing finished work cancels its promise and tells its requester it will not be built",
      TABLE,
-     '        if facts.get("delivered"):\n            return (Close(delivered=True), Comment(), Forget())\n',
-     '        if facts.get("delivered"):\n            return (Close(delivered=True), *_GONE)\n',
+     '            return (Close(delivered=True), Comment(), Loops("deliver"), Forget())\n',
+     '            return (Close(delivered=True), *_GONE)\n',
      TABLE_TEST),
 
     # ── the rows: one refusal each ─────────────────────────────────────────────────────────────
@@ -198,7 +199,8 @@ MUTATIONS = [
 
     ("the ceiling is raised quietly, so the list can grow", GUARD_TEST,
      # RE-PINNED 2026-10-02 (#414): the ceiling is 16 since #414's first part
-     "CEILING = 16\n",
-     "CEILING = 17\n",
+     # re-pinned 2026-10-04: and 7 since its B1 (#414)
+     "CEILING = 7\n",
+     "CEILING = 8\n",
      GUARD_TEST),
 ]

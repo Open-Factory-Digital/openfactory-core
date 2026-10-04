@@ -3,7 +3,6 @@
 TEST = "tests/test_the_product_role_speaks_the_clients_language.py"
 FOLLOWUP = "openfactory/product/followup.py"
 ACT = "openfactory/runtime/temporal/activities.py"
-EVENTS = "openfactory/product/events.py"
 E2E = "tests/test_product_followup_e2e.py"
 
 MUTATIONS = [
@@ -47,10 +46,11 @@ MUTATIONS = [
 
     # RE-PINNED 2026-09-24 (#267 slice 3): the delivery is told where it happens now
     # (`events.deliver`, the event's and the sweep's catch-all alike), so its sentence moved there
-    ("…and to the delivery announcement", EVENTS,
-     "                text = (followup.delivered_text(loop, agent_name=_agent(project),\n"
-     "                                                language=_language(project))",
-     "                text = (followup.delivered_text(loop, agent_name=_agent(project))",
+    # re-pinned 2026-10-04: the announcement is the card door's (`lifecycle/loops.py::announce`,
+    # #414), which `events.deliver` reaches
+    ("…and to the delivery announcement", "openfactory/lifecycle/loops.py",
+     "                text = (followup.delivered_text(loop, agent_name=agent, language=language)",
+     "                text = (followup.delivered_text(loop, agent_name=agent)",
      E2E),
 
     ("…and to the release question", ACT,

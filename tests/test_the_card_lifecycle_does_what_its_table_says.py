@@ -41,6 +41,7 @@ from openfactory.lifecycle.table import (
     Reopen,
     State,
     Tell,
+    after,
     allowed,
     consequences,
     name_of,
@@ -102,11 +103,11 @@ class Ports:
     def comment(self, card, text):
         return self._do("comment", card, text)
 
-    def loops(self, card, action, *, about=""):
+    def loops(self, card, action, *, about="", **_):
         return self._do("loops", card, action)
 
     def tell(self, card, *, notice, event_id, title, removed, opened_by, conversation,
-             pass_number=0):
+             pass_number=0, **_):
         return self._do("tell", card, notice)
 
     def preview(self, card, *, action, by):
@@ -247,8 +248,10 @@ def test_the_five_consumers_the_defects_missed_are_each_in_the_rows():
         assert Loops("cancel") in row, "a card that is gone keeps its promise open for ever"
         assert Tell("will_not_be_built") in row and Preview("stop") in row
     delivered = consequences(CardEvent.CLOSED, {"delivered": True})
-    assert not any(isinstance(e, Loops | Tell | Preview) for e in delivered), (
-        "closing finished work cancels its promise or tells somebody it will not be built")
+    assert not any(isinstance(e, Tell | Preview) for e in delivered) and \
+        Loops("cancel") not in delivered, (
+            "closing finished work cancels its promise or tells somebody it will not be built")
+    assert Loops("deliver") in delivered, "finished work closed announces nothing it completes"
     assert Loops("restore") in consequences(CardEvent.REOPENED, {})
 
 
@@ -497,7 +500,7 @@ def test_a_closed_card_left_in_the_queue_is_filed_where_its_close_puts_it():
     gone = consequences(CardEvent.CLOSED, {"observed": True, "column": "todo"})
     assert gone[0] == Column("backlog") and Loops("cancel") in gone
     done = consequences(CardEvent.CLOSED, {"observed": True, "column": "todo", "delivered": True})
-    assert done == (Column("done"), Forget())
+    assert done == (Column("done"), Loops("deliver"), Forget())
     for elsewhere in ("backlog", "done", "in_progress", ""):
         row = consequences(CardEvent.CLOSED, {"observed": True, "column": elsewhere})
         assert not any(isinstance(e, Column) for e in row), elsewhere
@@ -537,3 +540,75 @@ def test_an_observed_reopen_is_judged_from_the_close_the_record_holds():
     assert moved.ok and moved.before is State.CLOSED, moved
     assert ("loops", "12", "restore") in ports.calls
     assert not [c for c in ports.calls if c[0] in _WRITES], ports.calls
+
+
+# ── 9. the job's tellings, splits, questions and deliveries (#414, part B1) ──────────────────
+
+def test_a_card_split_into_others_is_closed_and_keeps_its_promise():
+    """ADR-0055 is silent on a split, and D10's "the card is gone" is not what happened: the split's
+    parent ships nothing itself and its work lives in its children, so its close cancels nothing,
+    tells nobody it will not be built, and is still a close (`triage.delivered_numbers`)."""
+    row = consequences(CardEvent.CLOSED, {"delivered": False, "split_into": "#2, #3"})
+    assert row == (Close(delivered=False), Comment(), Forget())
+    assert after(CardEvent.CLOSED, {"split_into": "#2, #3"}) is State.CLOSED
+
+
+def test_a_finished_card_announces_what_it_completes_after_it_is_closed():
+    """The delivery reads the board fresh, so it follows the write that closes the card — by the
+    job (`delivered`), by a person, or on the vendor's own screen (a close of finished work)."""
+    for row in (consequences(CardEvent.DELIVERED, {}),
+                consequences(CardEvent.CLOSED, {"delivered": True})):
+        names = [name_of(e) for e in row]
+        assert "loops:deliver" in names, row
+        assert names.index("loops:deliver") > names.index(name_of(row[0])), row
+    assert Loops("deliver") in consequences(CardEvent.CLOSED, {"delivered": True,
+                                                              "observed": True})
+
+
+def test_a_question_and_a_pull_request_happen_only_where_a_job_holds_the_card():
+    """The narrowest rule ADR-0055 allows for two events it names and does not place: a question
+    before the plan on a card a job holds; a pull request a person decides on a card the factory
+    worked on. Never on a card that is gone, and never on one nobody started."""
+    for held in (State.TODO, State.RUNNING, State.WAITING_ON_A_PERSON):
+        assert allowed(held, CardEvent.QUESTION_ASKED) is None, held
+    for held in (State.RUNNING, State.WAITING_ON_A_PERSON):
+        assert allowed(held, CardEvent.PR_OPENED) is None, held
+    for gone in (State.CLOSED, State.REMOVED, State.DELIVERED):
+        for event in (CardEvent.QUESTION_ASKED, CardEvent.PR_OPENED):
+            assert allowed(gone, event, open_card=gone is State.DELIVERED) is not None, (gone,
+                                                                                         event)
+    assert allowed(State.BACKLOG, CardEvent.QUESTION_ASKED) is not None
+    for unstarted in (State.BACKLOG, State.TODO):
+        assert allowed(unstarted, CardEvent.PR_OPENED) is not None, unstarted
+    assert consequences(CardEvent.PR_OPENED, {}) == (Tell("ready_for_you"), Forget())
+    assert consequences(CardEvent.QUESTION_ASKED, {}) == (
+        Comment(), Column("needs_refinement"), Loops("ask"), Forget())
+
+
+def test_a_question_waits_only_on_a_card_parked_for_it_and_the_sweep_leaves_it_alone():
+    """ADR-0048 §5's order, and its one exception to "a failing effect does not stop the next": a
+    park that did not land opens no loop, and the hourly sweep does not park the card an hour later
+    under a job that went on without it (`STOPS_AT_A_FAILED_WRITE`)."""
+    from openfactory.lifecycle.executor import NOT_APPLIED
+
+    sink = InMemoryMetricsSink()
+    ports = Ports(Seen(state=State.TODO), sink_=sink, breaks={"column"})
+    moved, _ = _drive(CardEvent.QUESTION_ASKED, State.TODO, ports=ports,
+                      facts={"note": "what is the late fee?", "about": "h1"})
+
+    assert [c[0] for c in ports.calls] == ["comment"], ports.calls
+    assert moved.outcome("column").startswith("failed")
+    assert moved.outcome("loops").startswith(NOT_APPLIED) and moved.outcome("forget").startswith(
+        NOT_APPLIED), moved.effects
+
+    ports.breaks = set()
+    ports.calls.clear()
+    assert converge(Project(), ports=ports) == []
+    assert ports.calls == [], "the sweep parked a card its job went on with"
+
+    ports.calls.clear()
+    landed, _ = _drive(CardEvent.QUESTION_ASKED, State.TODO, ports=Ports(Seen(state=State.TODO)),
+                       facts={"note": "what is the late fee?", "about": "h1"})
+    assert [n for n, _ in landed.effects] == ["comment", "column:needs_refinement", "loops:ask",
+                                              "forget"]
+    assert not landed.failed and not any(o.startswith(NOT_APPLIED) for _, o in landed.effects)

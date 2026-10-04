@@ -144,8 +144,9 @@ MUTATIONS = [
      ROWS_TEST),
 
     # ── 4. a change made in the vendor's own interface (D8) ───────────────────────────────────
+    # re-pinned 2026-10-04: the set of writes is public since #414's B1 (the executor reads it)
     ("an observed change writes the card again, after the vendor's interface already did", TABLE,
-     "    kept = tuple(e for e in row if not isinstance(e, _WRITES_THE_CARD))",
+     "    kept = tuple(e for e in row if not isinstance(e, WRITES_THE_CARD))",
      "    kept = row",
      TABLE_TEST),
 

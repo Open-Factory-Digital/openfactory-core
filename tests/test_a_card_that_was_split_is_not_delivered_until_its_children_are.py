@@ -222,7 +222,9 @@ def test_a_row_that_cannot_say_NOT_delivered_refuses_the_parents_close_BY_NAME(b
     old._db = acts._tracker_for(None)._db
     monkeypatch.setattr(acts, "_tracker_for", lambda project: old)
 
-    with pytest.raises(port.CannotSayUndelivered, match="`delivered`"):
+    # THROUGH THE CARD'S DOOR SINCE #414: the close is its effect, and the refusal comes back as
+    # that effect's outcome, which fails the split by the same name — nothing was closed
+    with pytest.raises(RuntimeError, match="`delivered`"):
         _split(old)
 
 

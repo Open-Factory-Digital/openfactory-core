@@ -23,13 +23,22 @@ the GitHub row answers on every shape these call sites hand it lives in
 
 The property is untouched, in one sentence: **the move happens whatever the tracker says about
 links.**
+
+**BOTH MOVES ARE THE CARD'S DOOR'S SINCE #414** (ADR-0055): the healer's as an observed close, the
+split child's as its filing. So the link is asked where the move now happens — the door's port,
+`Ports._url` — and the helper the two call sites shared went with the last of them.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from openfactory.runtime.temporal.activities import _ticket_url
+from openfactory.lifecycle.ports import Ports
+
+
+def _ticket_url(tracker, ref: str) -> str:
+    """What the door's placement hands the board for `ref`, from `tracker`."""
+    return Ports(object(), tracker=tracker, board=None)._url(ref)
 
 
 class _Silent:
@@ -84,18 +93,19 @@ def test_the_two_call_sites_go_through_it_rather_than_calling_the_port_directly(
     out of its only reachability assertion, so the half of the property that lives in `scan_todo`
     was never held.
 
-    THE HEALER'S MOVE IS THE CARD DOOR'S SINCE #414 (an observed close, ADR-0055 D8), so its half
-    is held where the move now happens: the door's port asks the link the same guarded way, and
-    the healer composes nothing."""
+    THE HEALER'S MOVE IS THE CARD DOOR'S SINCE #414 (an observed close, ADR-0055 D8), and so is
+    the split child's (its filing, #414's B1): both halves are held where the move now happens —
+    the door's port asks the link the guarded way, and neither call site composes anything."""
     import inspect
 
     from openfactory.lifecycle.ports import Ports
     from openfactory.runtime.temporal import activities
 
-    src = inspect.getsource(activities._child_to_todo)
-    assert "_ticket_url(" in src, "_child_to_todo composes or calls the port directly"
-    assert "tracker.ticket_url(" not in src, "_child_to_todo calls the port unguarded"
+    child = inspect.getsource(activities._file_the_child)
+    assert "CardEvent.FILED" in child and "ticket_url" not in child, (
+        "the split child's move left its door, or composes its link again")
     healer = inspect.getsource(activities.scan_todo)
     assert "_a_closed_card_in_the_queue" in healer and "ticket_url" not in healer
+    assert "self._url(card)" in inspect.getsource(Ports.place), "the door's placement asks no link"
     for tracker in (_Silent(), _Raising(), _Empty()):
         assert Ports(object(), tracker=tracker, board=None)._url("7") == "", tracker

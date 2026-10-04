@@ -297,6 +297,19 @@ class _FakeTracker:
     def children_of(self, parent_ref):
         return list(self._children)
 
+    # THE BOARD THE CHILDREN ARE PLACED ON — the tracker's own, as the GitHub row keeps it: a
+    # split's children are filed through their door since #414, by the board's own write
+    @property
+    def board(self):
+        return self
+
+    def add_item(self, *, issue_url):
+        return None
+
+    def set_status(self, *, issue, issue_url, state, needs_person=None):
+        self.set_state(issue, state)
+        return True
+
 
 def _patch_split(monkeypatch, to_todo=True):
     fake = _FakeTracker()
@@ -316,11 +329,12 @@ def test_split_sends_children_to_todo_in_order(monkeypatch):
     ]))
     # two children, Plan 92a / 92b naming
     assert [t.split(" — ")[0] for t, _ in fake.created] == ["Plan 92a", "Plan 92b"]
-    # BOTH moved to TO-DO, in creation order (#101 before #102) → poller picks 92a first
-    assert fake.states == [("#101", JobState.TODO), ("#102", JobState.TODO)]
+    # BOTH moved to TO-DO, in creation order (#101 before #102) → poller picks 92a first — by
+    # the card's door, which names a card by its canonical ref (#414)
+    assert fake.states == [("101", JobState.TODO), ("102", JobState.TODO)]
     # each child is NATIVELY linked to the parent (traceability + decision idempotency)
     assert fake.linked == [("#37", "#101"), ("#37", "#102")]
-    assert fake.closed[0] == "#37" and "TO-DO" in fake.closed[1]
+    assert fake.closed[0] == "37" and "TO-DO" in fake.closed[1]
     assert "split into #101, #102" == out
 
 
@@ -360,7 +374,7 @@ def test_split_to_backlog_when_flag_off(monkeypatch):
     _do_split(SplitInput(project="p", issue="37", reasons="r", children=[
         {"title": "a", "objective": "o", "criteria": ["c"]},
     ]))
-    assert fake.states == []  # no TO-DO move → stays in Backlog
+    assert fake.states == [("101", JobState.SKIPPED)]  # filed in the Backlog, not TO-DO (#414)
     assert "Backlog" in fake.closed[1]
 
 
