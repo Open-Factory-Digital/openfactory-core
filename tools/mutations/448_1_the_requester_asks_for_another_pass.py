@@ -46,7 +46,8 @@ MUTATIONS = [
 
     # ── the seam every answer crosses ────────────────────────────────────────────────────────
     ("the seam delivers a pass the job would refuse", VIEW,
-     '    if answer == "adjust" and gate.get("adjusts_left") == 0:\n',
+     # re-pinned 2026-10-02: `address` (#330) spends the same budget on the same line
+     '    if answer in ("adjust", "address") and gate.get("adjusts_left") == 0:\n',
      "    if False:\n"),
     ("a job that finished is read as one still at its gate", VIEW,
      "    if described.status != WorkflowExecutionStatus.RUNNING:\n",

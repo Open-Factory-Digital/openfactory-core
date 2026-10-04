@@ -274,6 +274,12 @@ _DELIVERED_REQ = {
     "en": "{sig}What was asked for in requirement {subject} is ready — all the work that came out "
           "of it is finished.",
 }
+#: A CARD SOMEBODY ASKED FOR (#481) — named as every other event names a card (`voice._card`),
+#: because no requirement stands behind it to name instead.
+_DELIVERED_TICKET = {
+    "pt-BR": "{sig}O que foi pedido aqui está pronto — {card} já entrou no produto.",
+    "en": "{sig}What was asked for here is ready — {card} is in the product.",
+}
 
 
 _RELEASE_ABOUT = {"pt-BR": " do requisito {requirement}",
@@ -389,10 +395,14 @@ def acceptance_of(loop: Loop, *, ts: str) -> Loop:
     merging — is the factory agreeing with itself. Only this one asks the person who wanted the
     thing whether they got it, and it is the difference between a product owner and a status feed.
     """
+    ctx = loop.context or {}
     return open_loop(ACCEPTANCE, loop.subject, owner=OWNER, ts=ts,
-                     about=(loop.context or {}).get("channel", ""),
-                     context={"defect": (loop.context or {}).get("defect", ""),
-                              "asked_by": (loop.context or {}).get("person", "")})
+                     about=ctx.get("channel", ""),
+                     context={"defect": ctx.get("defect", ""),
+                              "asked_by": ctx.get("person", ""),
+                              # a card somebody asked for stays one when it is asked about (#481)
+                              **({"ticket": "1", "title": ctx.get("title", "")}
+                                 if ctx.get("ticket") else {})})
 
 
 #: A denial marker anywhere. CHECKED FIRST and deliberately broad: the honest answer to "did it
@@ -511,6 +521,11 @@ def _which(loop: Loop, *, ambiguous: bool) -> str:
     """
     if not ambiguous:
         return ""
+    if (loop.context or {}).get("ticket"):
+        # A CARD SOMEBODY ASKED FOR IS NAMED BY ITS TITLE (#481) — the words it was filed under,
+        # which tell two of the same person's cards apart, where "the card you asked for" would not
+        title = str(loop.context.get("title") or "")
+        return f" ({title})" if title else ""
     if (loop.context or {}).get("defect"):
         return " (o problema que você reportou)"
     return f" (o requisito {loop.subject})"
@@ -580,11 +595,15 @@ def requirement_behind(issue: str, waiting: list[Loop]) -> str:
     "" when nothing claims it, and that is said rather than guessed: an issue filed by hand, or one
     whose delivery loop already closed, belongs to no requirement this can name — and naming the
     wrong one to a client is worse than naming none.
+
+    NOR DOES A CARD SOMEBODY ASKED FOR, OR A DEFECT (#481): their loops' subjects are handles
+    (`cartao-12`, `defeito-88`), and the release question read one as "do requisito defeito-88".
     """
     for loop in waiting:
-        if loop.kind != DELIVERY:
+        marks = loop.context or {}
+        if loop.kind != DELIVERY or marks.get("ticket") or marks.get("defect"):
             continue
-        issues = str((loop.context or {}).get("issues") or "").split(",")
+        issues = str(marks.get("issues") or "").split(",")
         if str(issue) in [i.strip() for i in issues]:
             return loop.subject
     return ""
@@ -629,8 +648,17 @@ def delivered_text(loop: Loop, *, agent_name: str = "", language: str | None = N
     handle around a board issue number the client never sees — and the requirement template would
     have produced "o que foi pedido no requisito defeito-88 está pronto": a phrase about a number
     nobody recognises, for something nobody *asked* for (somebody complained). The person who
-    reported a problem gets the sentence that closes THAT loop: the problem is fixed."""
+    reported a problem gets the sentence that closes THAT loop: the problem is fixed.
+
+    A CARD SOMEBODY ASKED FOR is a third (#481): its subject is `cartao-12`, and the requirement
+    sentence would name a requirement that does not exist. It names the card."""
     sig = f"{agent_name}: " if agent_name else ""
+    if (loop.context or {}).get("ticket"):
+        from openfactory.product.voice import _card
+
+        return _say(_DELIVERED_TICKET, language).format(
+            sig=sig, card=_card(loop.context.get("issues", ""), loop.context.get("title", ""),
+                                language))
     if (loop.context or {}).get("defect"):
         return _say(_DELIVERED_DEFECT, language).format(sig=sig)
     return _say(_DELIVERED_REQ, language).format(sig=sig, subject=loop.subject)

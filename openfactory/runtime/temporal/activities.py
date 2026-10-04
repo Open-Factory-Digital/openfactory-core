@@ -37,6 +37,7 @@ from openfactory.registry import ProjectRegistry
 from openfactory.runtime.card_repo import _checkout_key, _ref_repo, _runner_view
 from openfactory.runtime.repairable import what_to_repair
 from openfactory.runtime.temporal.io import (
+    REVIEW_THREAD,
     AdjustInput,
     AskInput,
     CiRepairInput,
@@ -2269,7 +2270,56 @@ def _run_adjust(inp: AdjustInput, run_id: str | None = None) -> RunResult:
     by the door that says "the review comment was empty" — a briefing was never empty."""
     repair = CiRepairInput(project=inp.project, issue=inp.issue, pr_url=inp.pr_url,
                            sandbox=inp.sandbox, attempt=inp.attempt)
+    if inp.source == REVIEW_THREAD:
+        words, held = _the_review_comments(inp)
+        if held is not None:
+            return held
+        return _run_ci_repair(repair, run_id, ci_log=words)
     return _run_ci_repair(repair, run_id, ci_log=(inp.instruction or "").strip())
+
+
+def _the_review_comments(inp: AdjustInput) -> tuple[str, RunResult | None]:
+    """`(the pass's words, None)`, or `("", a hold)` when there is nothing to carry (#330).
+
+    READ HERE, WHEN THE PASS STARTS, not when the person pressed the button: the row checked a
+    moment ago, and a thread resolved since then must not be sent to an agent.
+
+    NOTHING TO CARRY LAUNCHES NOTHING. A forge that cannot list the comments, or a pull request
+    whose threads are all resolved, ends the pass before any agent runs, with the reason said on
+    the pull request, where the person who commented is. The hold carries `merge_refused` and
+    `code_changed=False`, the marks the empty-instruction hold carries: the pull request is as it
+    was, and the verdict still describes it.
+
+    WHAT THE PASS TAKES IS SAID ON THE PULL REQUEST FIRST (`threads.what_was_carried`), by author
+    and line, so a reader can tell which comments reached the agent."""
+    from openfactory.adapters.forge.base import CommentsNotListed, review_comments_of
+    from openfactory.review import threads
+
+    forge = _forge_for(ProjectRegistry().get(inp.project))
+    found = review_comments_of(forge, inp.pr_url)
+    if isinstance(found, CommentsNotListed) or not found:
+        why = (str(found) if isinstance(found, CommentsNotListed) else
+               "nothing people wrote on it still stands: every thread is resolved and no request "
+               "for changes is open")
+        _say_on_the_pull_request(forge, inp.pr_url,
+                                 f"Adjust pass {inp.attempt} did not run: {why}.")
+        return "", RunResult(
+            ticket_id=inp.issue, state=JobState.ON_HOLD, pr_url=inp.pr_url, merge_refused=True,
+            code_changed=False, note=f"no review comment was sent to an agent — {why}")
+    carried = threads.brief_of(found)
+    _say_on_the_pull_request(forge, inp.pr_url, threads.what_was_carried(
+        carried, by=inp.by, pass_number=inp.attempt))
+    return carried.words, None
+
+
+def _say_on_the_pull_request(forge, pr_url: str, body: str) -> None:
+    """A comment on the pull request, best-effort: the pass is the act, and the note about it
+    must not be what stops it."""
+    try:
+        forge.review_pr(pr=pr_url, event="comment", body=body)
+    except Exception as exc:  # noqa: BLE001 — the note is lost, the pass is not
+        activity.logger.warning("could not comment on %s (%s): %s", pr_url, str(exc)[:160],
+                                body[:160])
 
 
 @activity.defn

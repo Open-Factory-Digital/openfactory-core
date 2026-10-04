@@ -3486,6 +3486,18 @@ _READY_TRY_PREVIEW = {
     "en": ("open the card and start the preview — it takes a few minutes — to try the change "
            "before it goes into the product"),
 }
+#: THE PREVIEW STARTS ITSELF (#437): said when the deployment starts it on its own
+#: (`preview.auto_start`, a runtime named) and it is not up yet. The last clause keeps it true when
+#: the cap held the start back — the card then offers the button — and the link follows from
+#: `preview_up`.
+_READY_TRY_STARTING = {
+    "pt-BR": ("aguardar a prévia, que está subindo sozinha — leva alguns minutos, e eu mando o "
+              "link aqui assim que estiver no ar (se ela não subir, dá para iniciá-la pelo "
+              "cartão) — e experimentar a mudança antes de ela entrar no produto"),
+    "en": ("wait for the preview, which is starting on its own — it takes a few minutes, and I "
+           "will send its link here as soon as it is up (if it does not come up, you can start "
+           "it from the card) — and try the change before it goes into the product"),
+}
 _READY_TRY_CARD = {
     "pt-BR": "abra o cartão e confira a mudança",
     "en": "open the card and check the change",
@@ -3500,12 +3512,13 @@ _READY_NEXT = {
 
 def ready_for_you(*, ref: str, title: str = "", card_url: str = "", review: str = "",
                   preview: bool = False, preview_url: str = "", language: str | None = None,
-                  agent_name: str = "") -> str:
+                  agent_name: str = "", preview_starts_itself: bool = False) -> str:
     """A card's change waits on the person who asked for it (#401) — said once, where they asked.
 
     `review` is `verdict.headline(...)["stance"]`, or "" when the review is not known here (the
     tech-lead's round, which sees the gate and not the verdict). `preview_url` is a preview that
-    is already up; `preview` says one can be started from the card. Neither → "check the change"."""
+    is already up; `preview` says one can be started from the card, and `preview_starts_itself`
+    that the deployment is starting it on its own (#437). Neither → "check the change"."""
     lines = [_pick(_READY_HEAD, language).format(
         sig=_sig(agent_name), card=_card(ref, title, language),
         review=_pick(_READY_REVIEW[review], language) if review in _READY_REVIEW else "")]
@@ -3513,6 +3526,8 @@ def ready_for_you(*, ref: str, title: str = "", card_url: str = "", review: str 
         lines += ["", _pick(_READY_CARD_LINK, language).format(url=str(card_url).strip())]
     if str(preview_url or "").strip():
         try_it = _pick(_READY_TRY_LIVE, language).format(url=str(preview_url).strip().rstrip("/"))
+    elif preview and preview_starts_itself:
+        try_it = _pick(_READY_TRY_STARTING, language)
     else:
         try_it = _pick(_READY_TRY_PREVIEW if preview else _READY_TRY_CARD, language)
     lines += ["", _pick(_READY_NEXT, language).format(try_it=try_it)]
@@ -3564,10 +3579,14 @@ _AGENDA_SAID = {
                         "en": "tell {who} when the problem reported is fixed"},
     "delivery": {"pt-BR": "avisar {who} quando o requisito {subject} estiver pronto",
                  "en": "tell {who} when requirement {subject} is ready"},
+    "delivery_ticket": {"pt-BR": "avisar {who} quando o cartão pedido entrar no produto",
+                        "en": "tell {who} when the card asked for is in the product"},
     "release": {"pt-BR": "saber {from_who} se o #{issue} funciona, antes de ir para o ar",
                 "en": "hear {from_who} whether #{issue} works, before it goes live"},
     "acceptance_defect": {"pt-BR": "saber {from_who} se a correção funciona",
                           "en": "hear {from_who} whether the fix works"},
+    "acceptance_ticket": {"pt-BR": "saber {from_who} se o cartão entregue funciona",
+                          "en": "hear {from_who} whether the card delivered works"},
     "acceptance": {"pt-BR": "saber {from_who} se o requisito {subject} funciona",
                    "en": "hear {from_who} whether requirement {subject} works"},
     "decision": {"pt-BR": "uma decisão {from_who}", "en": "a decision {from_who}"},

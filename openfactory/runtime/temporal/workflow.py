@@ -100,6 +100,7 @@ with workflow.unsafe.imports_passed_through():
         verify_gate_seal,
     )
     from openfactory.runtime.temporal.io import (
+        REVIEW_THREAD,
         AdjustInput,
         AskInput,
         CiRepairInput,
@@ -1004,7 +1005,7 @@ class JobWorkflow:
     async def human_merge_gate(self, answer: str, instruction: str = "", by: str = "",
                                seal: str = "") -> None:
         """The human's answer to a PR waiting on them (#68): 'merge' | 'adjust' | 'discard' |
-        'review' (#181).
+        'review' (#181) | 'address' (#330, an adjust pass on the pull request's own comments).
 
         `adjust` carries FREE TEXT — the product owner's decision. It is deliberately NOT a
         `DecisionRequest` option key: a key is matched against a fixed list at both consumption
@@ -1022,7 +1023,7 @@ class JobWorkflow:
         signal handler cannot read a key without making replay depend on it."""
         if self._merge_wait is None:
             return
-        if answer in ("merge", "adjust", "discard", "review"):
+        if answer in ("merge", "adjust", "address", "discard", "review"):
             self._gate = {"answer": answer, "instruction": instruction, "by": by, "seal": seal}
 
     @workflow.query
@@ -1106,8 +1107,9 @@ class JobWorkflow:
         # one agent and pushes; it does not re-run the sandbox gates, so the fresh verdict carries
         # `gates: []` — which renders as nothing, and "nothing" is how a reader concludes there
         # were none. The previous run's gates are not carried forward either: they judged the diff
-        # this pass has just rewritten, which is the whole reason this method exists.
-        if self._verdict is not None:
+        # this pass has just rewritten, which is the whole reason this method exists. A person's
+        # adjust pass runs the gates since #448, and brings its own: those are the live check.
+        if self._verdict is not None and not getattr(result, "validations", None):
             self._verdict = {**self._verdict,
                              "gates_note": "the forge's own CI is the live check"}
         return True
@@ -2297,7 +2299,11 @@ class JobWorkflow:
                 }
             return None  # nothing was rewritten; the gate re-opens with the reading in hand
 
-        # adjust
+        # adjust — on a person's own words, or (`address`, #330) on what people wrote on the pull
+        # request, which the worker reads when the pass starts. One budget for both: the same
+        # pass, on the same branch, with its words from somewhere else, counted against the
+        # project's number (#448).
+        threads = answer == "address"
         if self._adjust_passes >= params.adjust_passes:
             # NEVER A BARE REFUSAL (#448). "2 adjust passes already spent" told the person what
             # they could not do and nothing about what happens instead; the wall is the project's
@@ -2314,15 +2320,18 @@ class JobWorkflow:
         # Merge and Discard, and a click would have landed or closed a PR mid-rewrite. A wait
         # nobody is being asked about is not a question (ADR-0038 D2). `working` is a FIELD, not a
         # command, so an in-flight job replaying pre-fix history stays deterministic.
+        asked = ("asked for the review comments to be addressed" if threads else
+                 "asked for a change")
         self._merge_wait = {"pr_url": pr_url, "auto": False, "working": True,
-                            "note": f"{who} asked for a change — one more pass on the same PR"}
-        self._the_reviewed_code_is_gone(f"{who} asked for a change and a pass rewrote the pull "
-                                        f"request")
+                            "note": f"{who} {asked} — one more pass on the same PR"}
+        self._the_reviewed_code_is_gone(f"{who} {asked} and a pass rewrote the pull request")
         passed = await workflow.execute_activity(
             adjust_pr,
             AdjustInput(project=params.project, issue=params.issue, pr_url=pr_url,
                         sandbox=params.sandbox, attempt=self._adjust_passes,
-                        instruction=str(gate.get("instruction") or "")[:_ADJUST_CHARS]),
+                        instruction=("" if threads else
+                                     str(gate.get("instruction") or "")[:_ADJUST_CHARS]),
+                        source=REVIEW_THREAD if threads else "", by=who),
             start_to_close_timeout=timedelta(seconds=ACTIVITY_CEILING),
             heartbeat_timeout=timedelta(seconds=120),
             retry_policy=(_RETRY_REATTACHING if params.traits().idempotent else _ONCE),

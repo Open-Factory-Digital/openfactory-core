@@ -249,9 +249,10 @@ MUTATIONS = [
      "        self._open_delivery(requirement, results, conversation=conversation,\n"
      "                            requester=requester)\n",
      "        self._open_delivery(requirement, results)\n"),
+    # RE-PINNED 2026-10-02: the defect's loop is keyed on the tracker's own ref (#479)
     ("the defect's delivery forgets where it was reported", MODULE,
-     "            self._track_defect(number, conversation=conversation, requester=requester)\n",
-     "            self._track_defect(number)\n"),
+     "            self._track_defect(key, conversation=conversation, requester=requester)\n",
+     "            self._track_defect(key)\n"),
     ("the official cards forget where the requirement was asked for", MODULE,
      "        return self.file_issues(requirement, actor=actor, tracker=tracker, board=board,\n"
      "                                conversation=conversation, requester=requester)\n",

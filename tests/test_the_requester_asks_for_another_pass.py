@@ -859,8 +859,9 @@ def test_the_floors_inbox_offers_adjust_only_while_a_pass_is_left(tmp_path, monk
         action = {"pr_url": PR, "auto": False}
         if left is not None:
             action.update(adjust_passes=2, adjusts_left=left)
+        # `attention` as `view.list_jobs` answers it for a live run at a gate (#339)
         return [{"project": "acme", "issue": "7", "title": "t", "state": "awaiting_your_merge",
-                 "action": action}]
+                 "attention": True, "action": action}]
 
     monkeypatch.setattr(tv, "connect", _connect)
     monkeypatch.setattr(tv, "temporal_config", lambda: ("localhost:7233", "default"))
@@ -869,6 +870,46 @@ def test_the_floors_inbox_offers_adjust_only_while_a_pass_is_left(tmp_path, monk
     row = next(r for r in TestClient(app).get("/api/inbox").json() if r["kind"] == "merge")
 
     assert [o["key"] for o in row["options"]] == offered
+
+
+@pytest.mark.parametrize("left,offered", [(0, ["merge", "discard"]),
+                                           (1, ["merge", "adjust", "address", "discard"])])
+def test_address_spends_the_same_budget_and_the_inbox_survives_it_spent(tmp_path, monkeypatch,
+                                                                         left, offered):
+    """`address` (#330) is the adjust pass with its words from the pull request, so it is offered
+    beside `adjust` and only while a pass is left. Measured when #330 and this slice met: the
+    inbox removed `adjust` past the budget and then looked it up to place `address` after it — a
+    `ValueError`, and an inbox that answered nothing."""
+    from fastapi.testclient import TestClient
+
+    from openfactory.api.app import app
+    from openfactory.runtime.temporal import view as tv
+
+    monkeypatch.setenv("OPENFACTORY_REGISTRY", str(tmp_path / "registry.yaml"))
+    monkeypatch.delenv("OPENFACTORY_PANEL_TOKEN", raising=False)
+
+    async def _connect():
+        return object()
+
+    async def _jobs(_client, _ns):
+        return [{"project": "acme", "issue": "7", "title": "t", "state": "awaiting_your_merge",
+                 "attention": True,
+                 "action": {"pr_url": PR, "auto": False, "can_address": True,
+                            "adjust_passes": 2, "adjusts_left": left}}]
+
+    monkeypatch.setattr(tv, "connect", _connect)
+    monkeypatch.setattr(tv, "temporal_config", lambda: ("localhost:7233", "default"))
+    monkeypatch.setattr(tv, "list_jobs", _jobs)
+
+    row = next(r for r in TestClient(app).get("/api/inbox").json() if r["kind"] == "merge")
+
+    assert [o["key"] for o in row["options"]] == offered
+
+
+def test_the_floors_address_button_reads_the_same_number():
+    gate = PANEL.split('parked.action.kind=="merge_wait"')[1].split("} else if(parked)")[0]
+    assert "(a.can_address&&a.adjusts_left!==0?" in gate, (
+        "the Address button is drawn whatever passes are left")
 
 
 def test_the_floors_own_button_reads_the_same_number():

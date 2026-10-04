@@ -486,7 +486,9 @@ async def preview_link(project: str, unit: str, request: Request):
     forge = await asyncio.to_thread(lambda: demand.forge_state(owner, unit, found))
     judged = demand.judge(found, kind=default_preview_runtime(), forge=forge,
                           required=bool(getattr(policy, "required", False)))
+    from openfactory.actions.catalog import _a_product_admin
     from openfactory.preview import live as pv_live
+    from openfactory.preview.own import short as own_short
 
     language = getattr(owner, "language", None)
     body = {"unit": unit, "state": found.state if found else "", "live": False, "services": [],
@@ -514,7 +516,14 @@ async def preview_link(project: str, unit: str, request: Request):
             "pr_urls": list(found.pr_urls) if found else [],
             "started_by": found.started_by if found else "",
             "who": pv_live.started_by_said(found, language),
-            "can_start": judged.can_start}
+            "can_start": judged.can_start,
+            # THE CHANGE'S OWN SHAPE (#348): its digest when the change edits the shape, which shape
+            # ran, and whether this viewer may allow the change's — a product admin, and only
+            # while the base's is the one running
+            "own_shape": own_short(found.own_shape) if found else "",
+            "shape_from": found.shape_from if found else "base",
+            "can_allow_shape": bool(found and found.own_shape and found.shape_from != "change"
+                                    and _a_product_admin(owner, _actor(request)))}
     if found is not None and found.shape and not found.live:
         # THE BASE DECLARES NO SHAPE (#265 slice 4): which proposal is open is the forge's answer
         # NOW — a person merges it after the job wrote this record — so the sentence naming it is
@@ -1596,13 +1605,22 @@ async def inbox() -> list[dict]:
         raise HTTPException(
             status_code=503, detail=f"durable engine unreachable: {str(exc)[:150]}"
         ) from exc
-    from openfactory.floor.ladder import need_kind
+    from openfactory.floor.ladder import need_kind, waits_on_a_person
 
     out: list[dict] = []
     waiting: list[tuple[dict, dict]] = []  # (the job, its item's `review`), filled after the loop
     jobs = await tv.list_jobs(client, ns)
     await _stamp_the_acceptances(jobs)
     for j in jobs:
+        # WHETHER IT ASKS AT ALL IS THE ENGINE'S ANSWER, read once (#339); the branches below
+        # decide only what can be answered. The generic branch tested `state` alone, and a run's
+        # state outlives the run: a stopped job whose ticket a later run merged kept asking here
+        # with `resume` and `skip`, both refused by an engine with nothing live to signal, while
+        # its own row said `attention: false` and the floor said Armed. Driven through the real
+        # `view.list_jobs` with both runs listed (2026-10-01): one such item before this line,
+        # none after, and the live run of the same ticket still listed when there is one.
+        if not waits_on_a_person(j):
+            continue
         state, act = j.get("state"), (j.get("action") or {})
         items_before = len(out)
         # WHAT THIS PLATFORM'S OWN REVIEWER FOUND, on the one screen where somebody is deciding
@@ -1677,13 +1695,23 @@ async def inbox() -> list[dict]:
                     "consequence": "reads the pull request AS IT STANDS and replaces the verdict "
                                    "on this card — it changes no code, and it costs a model pass",
                 })
+            # AND THE PULL REQUEST'S OWN COMMENTS, WHERE THE FORGE KEEPS THEM (#330). Beside
+            # `adjust`, because it is the same pass with its words taken from the forge; offered
+            # only where the forge row can list them, for `can_review`'s reason.
+            # The same budget as `adjust` (#448): past it, neither is offered.
+            if act.get("can_address") and act.get("adjusts_left") != 0:
+                options.insert([o["key"] for o in options].index("adjust") + 1, {
+                    "key": "address", "label": "Address comments",
+                    "consequence": "one more agent pass on the SAME branch and PR, against the "
+                                   "review comments people left on it that still stand",
+                })
             out.append({**base, "kind": kind,
                         "options": options,
                         # THE REQUESTER'S "THAT'S IT", where the person merging decides (#448 slice
                         # 3): who accepted, on which head — absent when nobody has
                         **({"accepted": j["accepted"]} if j.get("accepted") else {}),
                         "answer": {"method": "POST",
-                                   "url": "/api/act/<merge|adjust|discard|review>",
+                                   "url": "/api/act/<merge|adjust|address|discard|review>",
                                    "body": {"params": {"project": j.get("project"),
                                                        "issue": j.get("issue"),
                                                        "instruction": "<adjust only>"}}}})
@@ -3293,6 +3321,13 @@ async def preview_rebuild(project: str, unit: str, request: Request) -> JSONResp
     """Build this unit's preview again from its pull request's head — the `preview_rebuild` row;
     a unit with nothing up is started."""
     return await _preview_act("preview_rebuild", project, unit, request)
+
+
+@app.post("/api/preview/{project}/{unit}/own_shape", dependencies=_AUTH)
+async def preview_own_shape(project: str, unit: str, request: Request) -> JSONResponse:
+    """Let this unit's preview run its change's own shape, at the digest its card shows, and build
+    it again — the `preview_own_shape` row (#348)."""
+    return await _preview_act("preview_own_shape", project, unit, request)
 
 
 async def _preview_act(name: str, project: str, unit: str, request: Request) -> JSONResponse:

@@ -57,6 +57,8 @@ CASE_TTL_SECONDS = 24 * 60 * 60
 #: How many cases one project keeps in memory — a cap, not a policy (`staging._MAX_PENDING`).
 _MAX_CASES = 500
 CASES_FILE = "cases.json"
+#: The key in `cases.json` that says when the project's cases were last forgotten (#453).
+FORGOTTEN = "forgotten"
 #: How long a save waits for another process's save of the same file. A save is a read, a merge
 #: and a replace of one small file — milliseconds — so ten seconds means something is stuck.
 _STORE_WAIT_SECONDS = 10.0
@@ -166,15 +168,25 @@ def _save(project, cases: dict[str, Case], *, changed: str) -> None:
         return
     try:
         with lock_beside(path).held(timeout=_STORE_WAIT_SECONDS):
-            for theirs in _on_disk(path):
+            on_disk, forgotten = _on_disk(path)
+            for theirs in on_disk:
                 if theirs.id != changed:
                     cases[theirs.id] = theirs
+            # A PROCESS THAT WAS NOT RESTARTED CANNOT WRITE BACK WHAT WAS FORGOTTEN (#453). This
+            # save merges the file into the bucket and writes the whole bucket, so a worker still
+            # holding the cases it loaded before `forget_project` emptied the file put every one of
+            # them back on its next save — a deletion undone by the next turn, on disk, with
+            # nothing said. The file carries when it was forgotten; a case opened before that is
+            # dropped here, the one this call changed included.
+            for cid in [c for c, case in cases.items() if case.opened_ts < forgotten]:
+                del cases[cid]
             while len(cases) > _MAX_CASES:
                 oldest = min((c for c in cases.values() if c.id != changed),
                              key=lambda c: c.updated_ts)
                 del cases[oldest.id]
             replace_atomically(path, json.dumps(
-                {"cases": [c.model_dump() for c in cases.values()]}, ensure_ascii=False))
+                {"cases": [c.model_dump() for c in cases.values()],
+                 **({FORGOTTEN: forgotten} if forgotten else {})}, ensure_ascii=False))
     except Waited as exc:
         log.warning("could not save the cases of %s — another process held the store past %ss "
                     "(%s); kept in this process until the next save", _name(project),
@@ -183,16 +195,50 @@ def _save(project, cases: dict[str, Case], *, changed: str) -> None:
         log.info("could not save the cases of %s (%s)", _name(project), exc)
 
 
-def _on_disk(path: Path) -> list[Case]:
-    """The cases the file holds now — [] for none, and for one that cannot be read (said)."""
+def _on_disk(path: Path) -> tuple[list[Case], float]:
+    """The cases the file holds now — [] for none, and for one that cannot be read (said) — and
+    when the project's cases were last forgotten (`FORGOTTEN`), 0.0 for never."""
     if not path.is_file():
-        return []
+        return [], 0.0
     try:
-        return [Case.model_validate(raw)
-                for raw in json.loads(path.read_text(encoding="utf-8")).get("cases", [])]
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return ([Case.model_validate(one) for one in raw.get("cases", [])],
+                float(raw.get(FORGOTTEN) or 0.0))
     except (OSError, ValueError) as exc:
         log.info("could not read the cases at %s before saving (%s)", path, exc)
-        return []
+        return [], 0.0
+
+
+def forget_project(project, *, now: float | None = None) -> int:
+    """Every intake case of `project` forgotten — the file and this process's copy — and how many
+    went (#453, `openfactory project forget`). RAISES when the store cannot be had or written: "0
+    cases" from a file nobody could lock reads exactly like a project with none.
+
+    THE FILE IS EMPTIED, NOT DELETED, and it keeps WHEN: a worker or a panel that loaded these
+    cases before this ran still holds them, and its next save would write them back (`_save`
+    drops a case opened before the stamp). The stamp is how a process this command cannot reach
+    is told, through the one store it already shares."""
+    from openfactory.util.filelock import lock_beside, replace_atomically
+
+    now = time.time() if now is None else now
+    name = _name(project)
+    path = _path(project)
+    gone = 0
+    with _LOCK:
+        # `_THREAD_PROJECT` keeps its entries: it maps a conversation to this project's NAME, and
+        # the bucket that name reloads is the emptied file
+        held = _CASES.pop(name, None) or {}
+        _LOADED.pop(name, None)
+        if path is None:
+            return len(held)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_beside(path).held(timeout=_STORE_WAIT_SECONDS):
+            on_disk, _forgotten = _on_disk(path)
+            gone = len({c.id for c in on_disk} | set(held))
+            emptied = json.dumps({"cases": [], FORGOTTEN: now})
+            replace_atomically(path, emptied)
+    log.warning("OPENFACTORY_PRODUCT_CASES_FORGOTTEN project=%s cases=%d", name, gone)
+    return gone
 
 
 def _put(project, cases: dict[str, Case], case: Case, *, now: float) -> Case:
@@ -491,6 +537,7 @@ __all__ = [
     "Case",
     "block_for",
     "current",
+    "forget_project",
     "hook",
     "note_turn",
     "open_cases",

@@ -209,6 +209,7 @@ because it holds a particular installation's coordinates. It lives wherever
 | what it can do, and the locks | `openfactory/product/module.py` |
 | who may authorise | the registry → `product.admins` |
 | delete a client's conversations | `openfactory project forget-conversations <project>` |
+| forget everything the product role remembers about a project | `openfactory project forget <project>` — every layer, each through its own store; see [the CLI reference](reference/cli.md) |
 | how long a conversation is kept | `openfactory/memory/transcript.py` → `RETENTION_DAYS` (180; only conversations expire, the agents' memory never does) |
 | who is who (mentions) | the registry → `people:` (forge login → channel id) — read backwards, the same map names a card's requester in the TRACKER's namespace, which is who the gather asks before starting (ADR-0048 §5); a requester the map does not list is asked by nobody |
 | which engine serves each role | the registry → `harness:` |

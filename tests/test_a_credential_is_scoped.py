@@ -66,7 +66,9 @@ PRODUCT_ROWS = ("product_status", "product_requirements", "product_propose",
                 # half: the requester's "that's it"
                 "product_adjust", "product_accept_change",
                 # a card's preview (ADR-0050 D6): the person who asked for the change looks at it
-                "preview_start", "preview_stop", "preview_rebuild")
+                "preview_start", "preview_stop", "preview_rebuild",
+                # #348: letting a preview run its change's own shape, once a person has read it
+                "preview_own_shape")
 
 
 def _ba() -> Actor:

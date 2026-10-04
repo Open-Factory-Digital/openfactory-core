@@ -34,6 +34,7 @@ import pathlib
 import shutil
 import subprocess
 import tempfile
+import textwrap
 
 import installer_script
 import pytest
@@ -958,14 +959,23 @@ def test_the_accepted_flag_reader_answers_PER_COMMAND():
 
 # ── a test that drives the installer skips where the installer cannot run ───────────────────────
 
-def _drives_the_installer(fn) -> bool:
+def _drives_the_installer(fn, _followed: set[str] | None = None) -> bool:
     """Read off the function itself: it takes the module's run, or its compiled code names the
-    script or the helper that runs it. Not a search of the source, so a docstring that mentions
-    `INSTALLER` cannot make a test look like a driver."""
+    script, or names a function of this module whose code does. Not a search of the source, so a
+    docstring that mentions `INSTALLER` cannot make a test look like a driver.
+
+    THE HELPERS ARE FOLLOWED, NOT LISTED (#334). This read `{"INSTALLER", "_run_installer"}`, and
+    `_a_forced_run_over` runs the script too: the five tests that call it were invisible here, 22
+    drivers found of 27 on 2026-10-01. They carried the mark anyway; the next one need not."""
     import inspect
 
-    return ("install_run" in inspect.signature(fn).parameters
-            or bool({"INSTALLER", "_run_installer"} & set(fn.__code__.co_names)))
+    followed = set() if _followed is None else _followed
+    followed.add(fn.__name__)
+    if "install_run" in inspect.signature(fn).parameters or "INSTALLER" in fn.__code__.co_names:
+        return True
+    helpers = [globals().get(name) for name in fn.__code__.co_names if name not in followed]
+    return any(inspect.isfunction(helper) and helper.__module__ == __name__
+               and _drives_the_installer(helper, followed) for helper in helpers)
 
 
 def _skips_without_the_tools(fn) -> bool:
@@ -993,28 +1003,568 @@ def test_every_test_that_drives_the_installer_skips_where_its_tools_are_missing(
         f"Mark them @needs_a_posix_shell")
 
 
+# ── a driver anywhere in the suite is found by what it does: it starts the script (#334) ────────
+#
+# THE FIRST READER HERE SAW NONE OF THIS FILE'S OWN DRIVERS. It took a driver to be
+# `subprocess.run(...)` with the literal `"install.sh"` among its positional arguments, and this
+# repository writes one as `"sh", str(INSTALLER), *args`, through `_run_installer`, through a
+# fixture. Measured on the review of #321: the module guard above found 19 drivers in this file and
+# that reader 0. On 2026-10-01 it was 22 against 0, and 1 in the whole tree. A guard that sees only
+# a spelling nobody uses is the gap it was written to close, one level over — so this reads what
+# the code DOES: which values reach the argv of a call that starts a process.
+
+#: The calls that start a process from an argv. The first reader knew `run` alone (#334).
+_STARTS_A_PROCESS = frozenset({"run", "call", "check_call", "check_output", "Popen"})
+
+#: The label a value carries when it holds the script. The other labels are `param:<name>`, a
+#: parameter of the function being read: a helper handed the script drives it at the call site.
+_THE_SCRIPT = "the installer"
+
+
+def _names_the_script(value) -> bool:
+    """A string that is the script's path: `install.sh`, `./install.sh`, the tail of
+    `f"{ROOT}/install.sh"`. Not `e2e-install.sh`, which is another script."""
+    return isinstance(value, str) and (value == "install.sh" or value.endswith("/install.sh"))
+
+
+def _atoms(expr) -> tuple[bool, set[str], set[tuple[str, str]]]:
+    """What `expr` is built from, read once: whether a string in it names the script, the names it
+    reads, and the `module.name` attributes it reads."""
+    script, names, attributes = False, set(), set()
+    for node in ast.walk(expr):
+        if isinstance(node, ast.Constant):
+            script = script or _names_the_script(node.value)
+        elif isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            attributes.add((node.value.id, node.attr))
+    return script, names, attributes
+
+
+def _flows(node) -> list[tuple[set[str], ast.AST]]:
+    """The names `node` moves a value into, with the value: an assignment, `argv += …`, and
+    `argv.append/extend/insert(…)` — the ways an argv is built before it is run."""
+    if isinstance(node, ast.Assign):
+        pairs = [(target, node.value) for target in node.targets]
+    elif isinstance(node, ast.AugAssign):
+        pairs = [(node.target, node.value)]
+    elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"append", "extend", "insert"}):
+        pairs = [(node.func.value, arg) for arg in node.args]
+    else:
+        return []
+    return [({name.id for name in ast.walk(target) if isinstance(name, ast.Name)}, value)
+            for target, value in pairs]
+
+
+def _assigned(body) -> list[tuple[str, ast.AST]]:
+    """`(name, value)` for every plain `name = value` among the statements of `body`, in order."""
+    return [(target.id, node.value) for node in body if isinstance(node, ast.Assign)
+            for target in node.targets if isinstance(target, ast.Name)]
+
+
+def _is_a_fixture(fn) -> bool:
+    return any((getattr(called, "attr", None) or getattr(called, "id", None)) == "fixture"
+               for called in (mark.func if isinstance(mark, ast.Call) else mark
+                              for mark in fn.decorator_list))
+
+
+class _InstallerDrivers:
+    """The tests under one directory that start `install.sh`, read from their AST, never run.
+
+    A test drives the script when an argv it hands to a call that starts a process — `run`,
+    `check_output`, `Popen` and the rest, however `subprocess` was imported — carries the script's
+    path: as a string, as a name bound to one in its module or imported from another module under
+    the directory, as a local built from either, or through a helper or a fixture that does the
+    same. A helper handed the path by its caller counts where it is called."""
+
+    def __init__(self, directory: pathlib.Path):
+        self.directory = directory
+        self._trees: dict = {}
+        self._functions: dict = {}
+        self._bindings: dict = {}
+        self._paths: dict = {}
+        self._summaries: dict = {}
+
+    def tree(self, module: str) -> ast.Module | None:
+        if module not in self._trees:
+            path = self.directory / f"{module}.py"
+            self._trees[module] = ast.parse(path.read_text()) if path.is_file() else None
+        return self._trees[module]
+
+    def functions(self, module: str) -> dict[str, ast.AST]:
+        if module not in self._functions:
+            tree = self.tree(module)
+            self._functions[module] = {
+                node.name: node for node in (tree.body if tree else [])
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        return self._functions[module]
+
+    def bindings(self, module: str) -> dict[str, tuple[str, str | None]]:
+        """What every import in `module` binds, wherever it sits: `(module, None)` for a module,
+        `(module, name)` for a name taken from one. A `tests.` prefix is dropped, so both spellings
+        this suite uses — `import installer_script`, `from tests.test_x import _run` — land on the
+        same file."""
+        if module not in self._bindings:
+            found: dict[str, tuple[str, str | None]] = {}
+            for node in ast.walk(self.tree(module) or ast.Module(body=[], type_ignores=[])):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        found[alias.asname or alias.name.split(".")[0]] = (
+                            alias.name.removeprefix("tests.") if alias.asname
+                            else alias.name.split(".")[0], None)
+                elif isinstance(node, ast.ImportFrom):
+                    package = "" if node.module in (None, "tests") else node.module
+                    for alias in node.names:
+                        found[alias.asname or alias.name] = (
+                            (alias.name, None) if not package
+                            else (package.removeprefix("tests."), alias.name))
+            self._bindings[module] = found
+        return self._bindings[module]
+
+    def paths(self, module: str) -> set[str]:
+        """The module-level names in `module` that hold the script's path: bound to a string that
+        names it, to an expression over such a name, or imported from a module where one is."""
+        if module not in self._paths:
+            self._paths[module] = found = set()   # filled in place, so a cycle reads what is known
+            tree = self.tree(module)
+            if tree is not None:
+                found.update(name for name, (home, attr) in self.bindings(module).items()
+                             if attr is not None and attr in self.paths(home))
+                values = [(name, _atoms(value)) for name, value in _assigned(tree.body)]
+                before = None
+                while before != len(found):
+                    before = len(found)
+                    found.update(name for name, atoms in values
+                                 if _THE_SCRIPT in self.labels(module, atoms, {}))
+        return self._paths[module]
+
+    def labels(self, module: str, atoms, local: dict[str, set[str]]) -> set[str]:
+        """What an expression carries, read off its atoms: the script, and which parameters of the
+        function being read."""
+        script, names, attributes = atoms
+        found = {_THE_SCRIPT} if script else set()
+        paths, bound = self.paths(module), self.bindings(module)
+        for name in names:
+            found |= local.get(name, set())
+            if name in paths:
+                found.add(_THE_SCRIPT)
+        for base, attr in attributes:
+            home, taken = bound.get(base, ("", ""))
+            if taken is None and attr in self.paths(home):
+                found.add(_THE_SCRIPT)
+        return found
+
+    def starts_a_process(self, module: str, call: ast.Call) -> bool:
+        func, bound = call.func, self.bindings(module)
+        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+            return bound.get(func.value.id) == ("subprocess", None) and func.attr in _STARTS_A_PROCESS
+        if isinstance(func, ast.Name):
+            home, attr = bound.get(func.id, ("", None))
+            return home == "subprocess" and attr in _STARTS_A_PROCESS
+        return False
+
+    def callee(self, module: str, call: ast.Call) -> tuple[str, ast.AST] | None:
+        """The function under the directory that `call` calls, and the module it lives in."""
+        func, bound = call.func, self.bindings(module)
+        if isinstance(func, ast.Name):
+            if func.id in self.functions(module):
+                return module, self.functions(module)[func.id]
+            home, attr = bound.get(func.id, ("", None))
+            found = self.functions(home).get(attr) if attr else None
+        elif isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+            home, attr = bound.get(func.value.id, ("", ""))
+            found = self.functions(home).get(func.attr) if attr is None else None
+        else:
+            found = None
+        return (home, found) if found is not None else None
+
+    def fixture(self, module: str, name: str) -> tuple[str, ast.AST] | None:
+        for home in (module, "conftest"):
+            fn = self.functions(home).get(name)
+            if fn is not None and _is_a_fixture(fn):
+                return home, fn
+        return None
+
+    def summary(self, module: str, fn) -> tuple[bool, frozenset[str]]:
+        """Whether `fn` starts the script, and which of its parameters reach an argv that starts a
+        process — so a caller handing it the path is a driver too."""
+        key = (module, fn.name, fn.lineno)
+        if key in self._summaries:
+            return self._summaries[key]
+        self._summaries[key] = (False, frozenset())   # a helper that recurses reads as no driver
+        parameters = [a.arg for a in (*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs,
+                                      fn.args.vararg, fn.args.kwarg) if a is not None]
+        nodes = list(ast.walk(fn))
+        reached: set[str] = set()
+        carried: list[ast.AST] = []   # what reaches an argv, read once the locals are known
+        for call in (node for node in nodes if isinstance(node, ast.Call)):
+            if self.starts_a_process(module, call):
+                carried += call.args[:1] or [kw.value for kw in call.keywords if kw.arg == "args"]
+            elif (called := self.callee(module, call)) is not None:
+                runs, handed = self.summary(*called)
+                reached |= {_THE_SCRIPT} if runs else set()
+                positional = [a.arg for a in (*called[1].args.posonlyargs, *called[1].args.args)]
+                for at, arg in enumerate(call.args):
+                    if isinstance(arg, ast.Starred):
+                        break
+                    if at < len(positional) and positional[at] in handed:
+                        carried.append(arg)
+                carried += [kw.value for kw in call.keywords if kw.arg in handed]
+        if fn.name.startswith("test_") or _is_a_fixture(fn):
+            reached |= {_THE_SCRIPT for name in parameters
+                        if (taken := self.fixture(module, name)) is not None
+                        and self.summary(*taken)[0]}
+
+        if carried:
+            local = {name: {f"param:{name}"} for name in parameters}
+            flows = [(names, _atoms(value)) for node in nodes for names, value in _flows(node)]
+            grew = True
+            while grew:
+                grew = False
+                for names, atoms in flows:
+                    labels = self.labels(module, atoms, local)
+                    for name in names:
+                        if not labels <= local.setdefault(name, set()):
+                            local[name] |= labels
+                            grew = True
+            for expr in carried:
+                reached |= self.labels(module, _atoms(expr), local)
+
+        result = (_THE_SCRIPT in reached,
+                  frozenset(label.removeprefix("param:") for label in reached
+                            if label.startswith("param:")))
+        self._summaries[key] = result
+        return result
+
+    def is_a_skip(self, module: str, mark, seen: frozenset = frozenset()) -> bool:
+        """`mark` is a `skipif`: written in place, in a list, or a name bound to one here or in the
+        module it is imported from. `@needs_a_posix_shell` is the third, and the first reader took
+        it for no mark at all — it had no driver of this file to read it on."""
+        if isinstance(mark, (ast.List, ast.Tuple)):
+            return any(self.is_a_skip(module, item, seen) for item in mark.elts)
+        if isinstance(mark, ast.Call):
+            return getattr(mark.func, "attr", None) == "skipif"
+        where = None
+        if isinstance(mark, ast.Name):
+            here = dict(_assigned(self.tree(module).body))
+            where = (module, mark.id) if mark.id in here else self.bindings(module).get(mark.id)
+        elif isinstance(mark, ast.Attribute) and isinstance(mark.value, ast.Name):
+            home, attr = self.bindings(module).get(mark.value.id, ("", ""))
+            where = (home, mark.attr) if attr is None else None
+        if where is None or where[1] is None or where in seen or self.tree(where[0]) is None:
+            return False
+        value = dict(_assigned(self.tree(where[0]).body)).get(where[1])
+        return value is not None and self.is_a_skip(where[0], value, seen | {where})
+
+    def drivers(self) -> dict[str, bool]:
+        """`{"file::test": it carries a skip}` for every test under the directory that starts the
+        script. A module's `pytestmark` is a mark on each of its tests."""
+        found = {}
+        for path in sorted(self.directory.glob("test_*.py")):
+            tree = self.tree(path.stem)
+            module_marks = [value for name, value in _assigned(tree.body) if name == "pytestmark"]
+            for fn in tree.body:
+                if (isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and fn.name.startswith("test_") and self.summary(path.stem, fn)[0]):
+                    found[f"{path.name}::{fn.name}"] = any(
+                        self.is_a_skip(path.stem, mark)
+                        for mark in (*fn.decorator_list, *module_marks))
+        return found
+
+
 def test_every_direct_installer_driver_in_the_suite_names_missing_tools():
-    """The local guard above cannot see a driver in another test module."""
-    unguarded = []
-    for path in (ROOT / "tests").glob("test_*.py"):
-        tree = ast.parse(path.read_text())
-        for fn in tree.body:
-            if not isinstance(fn, ast.FunctionDef) or not fn.name.startswith("test_"):
-                continue
-            runs_installer = any(
-                isinstance(call, ast.Call)
-                and isinstance(call.func, ast.Attribute)
-                and isinstance(call.func.value, ast.Name)
-                and call.func.value.id == "subprocess" and call.func.attr == "run"
-                and any(isinstance(value, ast.Constant) and value.value == "install.sh"
-                        for arg in call.args for value in ast.walk(arg))
-                for call in ast.walk(fn))
-            if not runs_installer:
-                continue
-            guarded = any(isinstance(mark, ast.Call)
-                          and isinstance(mark.func, ast.Attribute)
-                          and mark.func.attr == "skipif"
-                          for mark in fn.decorator_list)
-            if not guarded:
-                unguarded.append(f"{path.name}::{fn.name}")
+    """The module guard above cannot see a driver in another test module, so this reads them all.
+
+    IT FINDS THEM BY WHAT THEY DO (#334), and the floor is what keeps a reader gone blind from
+    passing over an empty room: the first one here found 1 driver in the whole tree and was green,
+    while this file alone held 27. Read this way, the tree held 28 on 2026-10-01."""
+    drivers = _InstallerDrivers(ROOT / "tests").drivers()
+    assert len(drivers) >= 25, (
+        f"only {sorted(drivers)} start install.sh — the reader of what a test drives has gone "
+        f"blind, and a guard over no drivers passes whatever they do")
+
+    unguarded = sorted(test for test, marked in drivers.items() if not marked)
     assert not unguarded, f"installer drivers without a missing-tools skip: {unguarded}"
+
+
+def test_both_guards_find_the_same_drivers_in_this_file():
+    """THE TWO READERS SAID 19 AND 0 OF THIS FILE (#334). One reads compiled code objects at run
+    time, the other the AST of every module, and they were asked the same question: which tests
+    start the script. Equal, not overlapping — the module guard missed the five callers of
+    `_a_forced_run_over` until it followed helpers instead of listing them, and an inclusion would
+    have let that stand."""
+    here = pathlib.Path(__file__).name
+    by_this_module = {f"{here}::{name}" for name, fn in globals().items()
+                      if name.startswith("test_") and callable(fn) and _drives_the_installer(fn)}
+    by_the_suite = {test for test in _InstallerDrivers(ROOT / "tests").drivers()
+                    if test.startswith(f"{here}::")}
+
+    assert by_the_suite == by_this_module, (
+        f"only the suite guard sees {sorted(by_the_suite - by_this_module)}; only this module's "
+        f"sees {sorted(by_this_module - by_the_suite)}")
+    assert len(by_this_module) >= 25, sorted(by_this_module)
+
+
+#: Each way this repository writes a driver, planted where only the suite guard can see it. The
+#: first reader saw none of them (#334). Every form holds one test, `test_planted`, that runs the
+#: script with no skip mark — so each must be reported, and reported unmarked.
+_PLANTED_DRIVERS = {
+    "an argv built into a variable first": {"test_planted.py": """
+        import subprocess
+
+        def test_planted(tmp_path):
+            argv = ["sh", "install.sh", "--dry-run"]
+            subprocess.run(argv, cwd=tmp_path, check=False)
+        """},
+    "an argv grown with +=": {"test_planted.py": """
+        import subprocess
+
+        def test_planted():
+            argv = ["sh"]
+            argv += ["install.sh", "--dry-run"]
+            subprocess.run(argv)
+        """},
+    "an argv grown with append": {"test_planted.py": """
+        import subprocess
+
+        def test_planted():
+            argv = ["sh"]
+            argv.append("./install.sh")
+            subprocess.run(argv)
+        """},
+    "check_output instead of run": {"test_planted.py": """
+        import subprocess
+
+        def test_planted():
+            assert subprocess.check_output(["sh", "install.sh", "--help"])
+        """},
+    "Popen instead of run": {"test_planted.py": """
+        import subprocess
+
+        def test_planted():
+            with subprocess.Popen(["sh", "install.sh"]) as started:
+                assert started.wait() == 0
+        """},
+    "a runner imported under a name of its own": {"test_planted.py": """
+        from subprocess import run as start
+
+        def test_planted():
+            start(["sh", "install.sh"])
+        """},
+    "a path constant instead of the literal": {"test_planted.py": """
+        import pathlib
+        import subprocess
+
+        ROOT = pathlib.Path(__file__).resolve().parent.parent
+        INSTALLER = ROOT / "install.sh"
+
+        def test_planted(tmp_path):
+            subprocess.run(["sh", str(INSTALLER), "--dry-run"], cwd=tmp_path)
+        """},
+    "the shared module's path, read as an attribute": {
+        "installer_script.py": """
+            import pathlib
+
+            INSTALLER = pathlib.Path(__file__).resolve().parent.parent / "install.sh"
+            """,
+        "test_planted.py": """
+            import subprocess
+
+            import installer_script
+
+            def test_planted():
+                subprocess.run(["sh", str(installer_script.INSTALLER)])
+            """},
+    "the shared module's path, imported by name": {
+        "installer_script.py": """
+            import pathlib
+
+            INSTALLER = pathlib.Path(__file__).resolve().parent.parent / "install.sh"
+            """,
+        "test_planted.py": """
+            import subprocess
+
+            from installer_script import INSTALLER
+
+            def test_planted():
+                subprocess.run(["sh", str(INSTALLER)])
+            """},
+    "a helper in the same module": {"test_planted.py": """
+        import subprocess
+
+        def _run_installer(tmp_path, *args):
+            return subprocess.run(["sh", "install.sh", *args], cwd=tmp_path)
+
+        def test_planted(tmp_path):
+            assert _run_installer(tmp_path, "--dry-run").returncode == 0
+        """},
+    "a helper imported from another test module": {
+        "test_elsewhere.py": """
+            import subprocess
+
+            def _run_installer(*args):
+                return subprocess.run(["sh", "install.sh", *args])
+            """,
+        "test_planted.py": """
+            from tests.test_elsewhere import _run_installer
+
+            def test_planted():
+                _run_installer("--dry-run")
+            """},
+    "a helper handed the script by position": {"test_planted.py": """
+        import pathlib
+        import subprocess
+
+        def _sh(script, *args):
+            return subprocess.run(["sh", str(script), *args])
+
+        def test_planted():
+            _sh(pathlib.Path("install.sh"), "--dry-run")
+        """},
+    "a helper handed the script by name": {"test_planted.py": """
+        import pathlib
+        import subprocess
+
+        def _sh(*args, script):
+            return subprocess.run(["sh", str(script), *args])
+
+        def test_planted():
+            _sh("--dry-run", script=pathlib.Path("install.sh"))
+        """},
+    "a fixture the test takes": {"test_planted.py": """
+        import subprocess
+
+        import pytest
+
+        @pytest.fixture(scope="module")
+        def install_run():
+            return subprocess.run(["sh", "install.sh"])
+
+        def test_planted(install_run):
+            assert install_run.returncode == 0
+        """},
+    "a fixture from conftest": {
+        "conftest.py": """
+            import subprocess
+
+            import pytest
+
+            @pytest.fixture
+            def install_run():
+                return subprocess.run(["sh", "install.sh"])
+            """,
+        "test_planted.py": """
+            def test_planted(install_run):
+                assert install_run.returncode == 0
+            """},
+}
+
+
+def _plant(directory: pathlib.Path, files: dict[str, str]) -> pathlib.Path:
+    for name, source in files.items():
+        (directory / name).write_text(textwrap.dedent(source))
+    return directory
+
+
+@pytest.mark.parametrize("form", sorted(_PLANTED_DRIVERS))
+def test_the_suite_guard_sees_a_driver_written_in_each_form_this_repository_uses(tmp_path, form):
+    """A driver written the way this repository writes them would have run install.sh with no
+    skip and nothing saying so (#334). Each is planted alone, so a form the reader cannot follow
+    is named by the form."""
+    drivers = _InstallerDrivers(_plant(tmp_path, _PLANTED_DRIVERS[form])).drivers()
+
+    assert drivers == {"test_planted.py::test_planted": False}, (
+        f"a driver written as {form!r} reads as {drivers}")
+
+
+def test_the_suite_guard_takes_nothing_but_a_started_script_for_a_driver(tmp_path):
+    """The other side of reading what the code does. Naming the script, reading its text, starting
+    a script whose name ends the same, handing the same helper another script, running the suite
+    over the installer's tests, describing a driver in a docstring: none starts install.sh, and a
+    guard that asked them all for a skip would be argued with until it was switched off."""
+    _plant(tmp_path, {"test_planted.py": '''
+        import pathlib
+        import subprocess
+        import sys
+
+        ROOT = pathlib.Path(__file__).resolve().parent.parent
+        INSTALLER = ROOT / "install.sh"
+
+        def _sh(script, *args):
+            return subprocess.run(["sh", str(script), *args])
+
+        def test_reads_the_script_and_starts_nothing():
+            assert "set -eu" in INSTALLER.read_text()
+
+        def test_starts_another_script_whose_name_ends_the_same():
+            subprocess.run(["sh", str(ROOT / "scripts" / "e2e-install.sh")])
+
+        def test_hands_the_same_helper_another_script():
+            _sh(ROOT / "scripts" / "collect-release-assets.sh")
+
+        def test_runs_the_suite_over_the_installer_tests():
+            subprocess.run([sys.executable, "-m", "pytest",
+                            str(ROOT / "tests" / "test_the_installer_builds_the_commands.py")])
+
+        def test_only_describes_a_driver():
+            """subprocess.run(["sh", "install.sh"]) is what one looks like."""
+            subprocess.run(["git", "status"])
+        '''})
+
+    assert _InstallerDrivers(tmp_path).drivers() == {}
+
+
+def test_the_suite_guard_takes_a_skip_mark_in_each_form_it_is_written(tmp_path):
+    """`@needs_a_posix_shell` is a NAME bound to a `skipif`, and the first reader read only a
+    `skipif` written in place — it had no driver of this file to be wrong about. Once it has, a
+    name, an imported name and a module's `pytestmark` are marks; a `parametrize` is not."""
+    _plant(tmp_path, {
+        "test_planted.py": """
+            import shutil
+            import subprocess
+
+            import pytest
+
+            needs_sh = pytest.mark.skipif(shutil.which("sh") is None, reason="no sh here")
+
+            @needs_sh
+            def test_marked_by_a_name():
+                subprocess.run(["sh", "install.sh"])
+
+            @pytest.mark.skipif(shutil.which("sh") is None, reason="no sh here")
+            def test_marked_in_place():
+                subprocess.run(["sh", "install.sh"])
+
+            @pytest.mark.parametrize("flag", ["--dry-run"])
+            def test_marked_with_something_else(flag):
+                subprocess.run(["sh", "install.sh", flag])
+            """,
+        "test_planted_by_import.py": """
+            import subprocess
+
+            from tests.test_planted import needs_sh
+
+            @needs_sh
+            def test_marked_by_an_imported_name():
+                subprocess.run(["sh", "install.sh"])
+            """,
+        "test_planted_by_module.py": """
+            import shutil
+            import subprocess
+
+            import pytest
+
+            pytestmark = pytest.mark.skipif(shutil.which("sh") is None, reason="no sh here")
+
+            def test_marked_by_the_module():
+                subprocess.run(["sh", "install.sh"])
+            """})
+
+    assert _InstallerDrivers(tmp_path).drivers() == {
+        "test_planted.py::test_marked_by_a_name": True,
+        "test_planted.py::test_marked_in_place": True,
+        "test_planted.py::test_marked_with_something_else": False,
+        "test_planted_by_import.py::test_marked_by_an_imported_name": True,
+        "test_planted_by_module.py::test_marked_by_the_module": True,
+    }

@@ -579,6 +579,77 @@ async def _preview_rebuild(*, project: str, unit: str, by: Actor) -> Outcome:
     return await _preview_start(project=project, unit=unit, by=by)
 
 
+def _a_product_admin(project, by: Actor) -> bool:
+    """A person on the product's own admin list (`product.admins`, `module.may_act`), or the CLI —
+    a shell on the host outranks every row here.
+
+    NARROWER THAN `needs_admin` ON PURPOSE. On the panel every credential that got in is `admin`,
+    a product-scoped one included, which is right for starting a preview of somebody's change and
+    wrong for letting a preview run what that change declares (#348)."""
+    from openfactory.product.module import may_act
+
+    if getattr(by, "via", "") == "cli":
+        return True
+    return may_act(project, str(getattr(by, "id", "") or ""), via=str(getattr(by, "via", "") or
+                                                                     "api"))
+
+
+async def _preview_own_shape(*, project: str, unit: str, by: Actor) -> Outcome:
+    """Allow a unit's preview to run its change's OWN shape — the digest its last start read — and
+    build it again with it (#348, ADR-0050 D3 amended).
+
+    A PERSON UNLOCKS IT, AFTER READING IT. The shape is read from the base branch because the
+    compose file is in the repository the agent edits; a change whose point is a new service was
+    previewed without its point. The pull request lists every file a preview would read with a
+    hash, and the card says the digest of the change's shape. This row allows exactly that digest:
+    a push that changes the shape is a different one, and the preview goes back to the base's.
+
+    ONLY WHAT A START HAS MEASURED. The digest comes from the unit's record, never from a
+    parameter, so what is allowed is what the platform read, not what somebody typed."""
+    import asyncio
+
+    from openfactory import preview
+    from openfactory.preview import own
+
+    found, token, was, bad = _preview_target(project, unit)
+    if bad:
+        return bad
+    if not _a_product_admin(found, by):
+        return refused(DENIED, f"only a product admin of {found.name} (`product.admins`) may let a "
+                               f"preview run a change's own shape: it runs what the change "
+                               f"declares.")
+    if was is None or not was.own_shape:
+        return refused(CONFLICT, f"the change of {token} does not edit the product's shape — or no "
+                                 f"preview of it has read it yet. Start its preview first; its "
+                                 f"card then says whether it does.")
+    if was.shape_from == "change" and (own.allowed(found.name, token) or ("",))[0] == \
+            was.own_shape:
+        return done(f"{token}'s preview already runs its change's own shape "
+                    f"({own.short(was.own_shape)}).", project=found.name, unit=token,
+                    state=was.state)
+    if not own.allow_shape(found.name, token, was.own_shape, _who(by)):
+        return refused(UNAVAILABLE, "the allowance could not be recorded — nothing changed, and "
+                                    "this is safe to repeat.")
+    said = (f"{_who(by)} allowed this pull request's own preview shape "
+            f"({own.short(was.own_shape)}). The next preview runs it, admitted key by key as the "
+            f"base's is; a push that changes the shape goes back to the base's until somebody "
+            f"looks again.")
+    try:
+        _, _, forge = await asyncio.to_thread(_forge_and_manifest, found.name)
+        for url in was.pr_urls:
+            await asyncio.to_thread(forge.review_pr, pr=url, event="comment", body=said)
+    except Exception as exc:  # noqa: BLE001 — the allowance stands; the pull request was not told
+        log.warning("[%s] could not tell the pull request of %s about its shape (%s)",
+                    found.name, token, str(exc)[:160])
+    # AND IT IS BUILT AGAIN NOW, with what was allowed: a rebuild of a unit with nothing running
+    # is a start. Its own refusal (no runtime named, an engine that is down) is said beside the
+    # allowance, which stands either way.
+    rebuilt = await _preview_rebuild(project=project, unit=unit, by=by)
+    return done(f"{token}: {said} {rebuilt.message}", project=found.name, unit=token,
+                digest=was.own_shape,
+                state=str((rebuilt.data or {}).get("state") or was.state or preview.STARTING))
+
+
 # ── enable — is this project picked up at all ───────────────────────────────────────────────────
 
 async def _enable(*, project: str, by: Actor, enabled: bool = True) -> Outcome:
@@ -936,6 +1007,59 @@ async def _adjust(*, project: str, issue: str, instruction: str, by: Actor) -> O
         f"re-opens when the pass is done.",
         project=project, issue=issue, answer="adjust", pr_url=(gate or {}).get("pr_url"),
         by=str(by), instruction=text[:280], length=len(text))
+
+
+async def _address(*, project: str, issue: str, by: Actor) -> Outcome:
+    """Send the PR back for ONE pass against what people wrote on it (#330) — same branch, same PR.
+
+    `adjust` with its words taken from the forge rather than typed. The comments existed, written
+    against the lines they are about, and the only way to act on them was to read the threads,
+    compress them into one paragraph and paste it into `adjust`: a lossy copy nobody could audit.
+
+    THE PULL REQUEST IS READ FIRST. A forge that cannot list its comments, or a pull request with
+    nothing standing on it, is refused here by name, before the gate is answered and before a pass
+    is spent. The pass reads them again when it starts, because a thread can be resolved in
+    between, and says on the pull request which ones it took."""
+    import asyncio
+
+    from openfactory.adapters.forge.base import CommentsNotListed, review_comments_of
+    from openfactory.runtime.temporal import view as tv
+
+    found, bad = _project(project)
+    if bad:
+        return bad
+    client, bad = await _connected()
+    if bad:
+        return bad
+    try:
+        waiting = await tv.merge_gate_of(client, found.name, issue)
+    except Exception as exc:  # noqa: BLE001
+        if _looks_missing(exc):
+            return refused(NOT_FOUND, f"no job has ever run for #{issue} on {found.name}.")
+        raise
+    pr_url = str((waiting or {}).get("pr_url") or "")
+    if not pr_url:
+        return refused(CONFLICT, f"#{issue} is not waiting on a merge — there is no pull request "
+                                 f"whose comments a pass could take.")
+    _, _, forge = await asyncio.to_thread(_forge_and_manifest, found.name)
+    comments = await asyncio.to_thread(review_comments_of, forge, pr_url)
+    if isinstance(comments, CommentsNotListed):
+        return refused(CONFLICT, f"#{issue}: {comments}. Say what needs changing with 'adjust' "
+                                 f"instead.")
+    if not comments:
+        return refused(CONFLICT, f"#{issue}: nothing people wrote on the pull request still "
+                                 f"stands — every thread is resolved and no request for changes "
+                                 f"is open, so there is nothing for a pass to address.")
+    gate, bad = await _answer_gate(project=project, issue=issue, by=by, answer="address")
+    if bad:
+        return bad
+    return done(
+        f"#{issue}: sent back for one pass on the {len(comments)} review comment"
+        f"{'s' if len(comments) != 1 else ''} standing on the pull request. The pass lists the "
+        f"ones it takes on the pull request, pushes to the same PR, and the gate re-opens when it "
+        f"is done.",
+        project=project, issue=issue, answer="address", pr_url=(gate or {}).get("pr_url"),
+        by=str(by), comments=len(comments))
 
 
 async def _review(*, project: str, issue: str, by: Actor) -> Outcome:
@@ -2132,21 +2256,44 @@ async def _product_answer(*, project: str, token: str, answer: str, by: Actor,
     client, bad_engine = await _connected()
     if bad_engine:
         return bad_engine
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
     from openfactory.runtime.temporal import TASK_QUEUE
     from openfactory.runtime.temporal.io import ProductAnswerInput
 
+    # KEYED BY THE TOKEN, which already carries the conversation AND the fingerprint of exactly
+    # what was staged. Two people answering the same proposal collide on purpose — the second gets
+    # the first one's result rather than performing it twice — while a replacement, having a
+    # different fingerprint, is a different workflow.
+    answering = f"openfactory-product-answer-{proj.name}-{_workflow_safe(tok)}"
     try:
         raw = await client.execute_workflow(
             "ProductAnswerWorkflow",
             ProductAnswerInput(project=proj.name, token=tok, approved=(said == "approve"),
                                actor=by.id, via=getattr(by, "via", "") or "",
                                message_id=minted),
-            # KEYED BY THE TOKEN, which already carries the conversation AND the fingerprint of
-            # exactly what was staged. Two people answering the same proposal collide on purpose —
-            # the second gets the first one's result rather than performing it twice — while a
-            # replacement, having a different fingerprint, is a different workflow.
-            id=f"openfactory-product-answer-{proj.name}-{_workflow_safe(tok)}",
-            task_queue=TASK_QUEUE)
+            id=answering, task_queue=TASK_QUEUE)
+    except WorkflowAlreadyStartedError:
+        # THE COLLISION ABOVE WAS PROMISED AND NEVER KEPT (#456). The engine does not hand a second
+        # start the running execution's result: it refuses the start. That refusal fell into the
+        # generic branch below, so a second answer while the first was still running — a double
+        # click, two tabs, the CLI beside the page, for up to the answer's 12-minute bound — was
+        # told "nothing was performed" as an HTTP 500, while the first answer was performing it
+        # (measured on the live bed, 2026-10-01). Waiting on THE SAME execution makes the second
+        # answer read exactly what the first one reads, and performs nothing a second time.
+        try:
+            raw = await client.get_workflow_handle(answering).result()
+        except Exception as exc:  # noqa: BLE001 — a write path must report, never raise
+            # STILL NOT "NOTHING WAS PERFORMED": the earlier answer holds the proposal and may
+            # have performed it. A conflict with an answer already given, and where to look.
+            log.warning("a second answer to %s could not read the first one's outcome (%s)",
+                        answering, exc)
+            return refused(
+                CONFLICT,
+                "That proposal was already being answered when this answer arrived, so this one "
+                "was not performed a second time. The earlier answer's reply goes to whoever gave "
+                "it, and `product_pending` stops listing the proposal once it is taken; one still "
+                "listed can be answered again.", project=proj.name)
     except Exception as exc:  # noqa: BLE001 — a write path must report, never raise
         # THE EXCEPTION DOES NOT GO IN THE SENTENCE: a Temporal timeout rendered to a client is
         # the same leak a repo slug would be.
@@ -6278,6 +6425,18 @@ CATALOG: dict[str, ActionSpec] = {
                         "ticket starts again from nothing",
         ),
         ActionSpec(
+            name="address",
+            summary="send the PR back for one repair pass against the review comments people "
+                    "left on it — same PR",
+            run=_address,
+            required=("project", "issue"),
+            choose_when="when people reviewed the pull request on the forge and their comments "
+                        "say what to change: unresolved threads, a request for changes. Prefer "
+                        "it over `adjust` when the words are already written there — it carries "
+                        "them as they were written, attached to their lines, where retyping "
+                        "loses some. It spends one adjust pass and refuses when nothing stands",
+        ),
+        ActionSpec(
             name="review",
             summary="read the open PR again with the independent reviewer — same PR, no change "
                     "to the code, and the verdict on the card is replaced",
@@ -6764,6 +6923,19 @@ CATALOG: dict[str, ActionSpec] = {
             summary="take a card's preview down now — its logs are kept",
             run=_preview_stop,
             required=("project", "unit"),
+        ),
+        ActionSpec(
+            name="preview_own_shape",
+            scope=PRODUCT,
+            summary="let a card's preview run its change's own shape — the compose files and "
+                    "`preview:` block its pull request edits, at the digest its card shows — and "
+                    "build it again with it",
+            run=_preview_own_shape,
+            required=("project", "unit"),
+            choose_when="only after a person has READ the change's shape on the pull request: "
+                        "the compose files and the block it edits. A preview runs the base's "
+                        "shape because the change's is the agent's; this lets one unit run the "
+                        "change's, admitted like the base's, until a push changes it",
         ),
         ActionSpec(
             name="preview_rebuild",
