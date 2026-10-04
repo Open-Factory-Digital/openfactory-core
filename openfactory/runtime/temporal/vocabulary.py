@@ -62,3 +62,14 @@ def merge_wait_note(auto: bool) -> str:
     wrong blocker is worse than naming none — it sends somebody to wait out a build that already
     finished. Pure, so the guard can read it straight rather than driving the engine."""
     return "waiting for CI / the merge" if auto else "waiting for your review and merge"
+
+
+def adjusts_spent_note(passes: int) -> str:
+    """What a gate whose passes are spent says to the floor: WHAT HAPPENS NEXT, never only what is
+    refused (#448). "2 adjust passes already spent" was the whole sentence, and it named a wall and
+    no door. ONE definition: the job's standing note, its refusal of an answer that raced the seam,
+    and the floor row's refusal at the seam read it. The requester hears their own version, in the
+    project's language (`product/voice.py::adjust_said`)."""
+    return (f"the {passes} extra passes this project allows for one change are spent "
+            f"(`adjust_passes` in the registry) — a person decides now: merge it as it is, or "
+            f"discard it and the card goes back to the backlog")

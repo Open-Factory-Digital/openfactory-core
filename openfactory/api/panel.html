@@ -2008,7 +2008,7 @@ let _prod={project:"",status:null,reqs:null,reqMessage:"",reqFindings:[],busy:fa
 //: server keeps.
 let _pv={sessions:null,roomLast:null,sessMsg:"",side:true,tab:"reqs",menu:null,editing:null,
          files:[],limits:null,thumbs:{},here:[],docQ:"",
-         board:undefined,boardMsg:"",card:null,ask:null,said:null};
+         board:undefined,boardMsg:"",card:null,ask:null,said:null,adjusting:null};
 
 async function bootProduct(){
   // THE FLOOR'S OWN CHROME COMES OFF, and looking at the page is what found this: the status
@@ -2302,7 +2302,7 @@ async function pvBoardLoad(){
   paintPvBoard();
 }
 async function pvCardOpen(ref){
-  _pv.ask=null;_pv.said=null;
+  _pv.ask=null;_pv.said=null;_pv.adjusting=null;
   await pvCardRead(ref);
 }
 async function pvCardRead(ref){
@@ -2311,7 +2311,49 @@ async function pvCardRead(ref){
   if(out&&out.ok&&out.data)_pv.board=out.data.cards;
   paintPvBoard();
 }
-function pvCardBack(){_pv.card=null;_pv.ask=null;_pv.said=null;paintPvBoard()}
+function pvCardBack(){_pv.card=null;_pv.ask=null;_pv.said=null;_pv.adjusting=null;paintPvBoard()}
+// ANOTHER PASS, FROM THE CARD (#448). The person who asked for the card tried its change and says
+// what is still wrong, where they are looking. Drawn only when the SERVER says this viewer may send
+// it back (`c.adjust.offered`, `ProductModule.adjust_view`); the card's own criteria come to edit
+// only where the product role may move them (`c.adjust.corrects`); the words are the project's
+// language. No pass left, or one running: the server's sentence of what happens next, and no button.
+function pvAdjustBlock(c){
+  const a=c.adjust||{};
+  if(!a.offered)return a.note?`<p class="pv-note" data-adjust>${esc(a.note)}</p>`:"";
+  const w=a.words||{},ask=_pv.adjusting;
+  if(!ask)return `<div data-adjust style="margin-top:9px"><p class="pv-note">${esc(w.note||"")}</p>
+      <button class="btn" onclick="pvAdjustAsk()">${esc(w.adjust||"Send back for another pass")}</button></div>`;
+  return `<div class="cm" data-adjust style="margin-top:9px;flex-direction:column;gap:8px">
+      <div class="md">${esc(w.ask||"")}</div>
+      <textarea id="pv_instruction" rows="3" maxlength="2000" placeholder="${esc(w.instruction||"")}"
+        aria-label="${esc(w.instruction||"")}" oninput="_pv.adjusting.instruction=this.value">${esc(ask.instruction||"")}</textarea>
+      ${a.corrects?`<textarea id="pv_criteria" rows="4" placeholder="${esc(w.criteria||"")}"
+        aria-label="${esc(w.criteria||"")}" oninput="_pv.adjusting.criteria=this.value">${esc(ask.criteria||"")}</textarea>`:""}
+      <div style="display:flex;gap:8px">
+        <button class="btn" onclick="pvAdjustSend()">${esc(w.send||"Send")}</button>
+        <button class="btn ghost" onclick="pvAdjustCancel()">${esc(w.cancel||"Cancel")}</button></div>
+    </div>`;
+}
+function pvAdjustAsk(){
+  const c=_pv.card;if(!c)return;
+  _pv.adjusting={instruction:"",criteria:((c.adjust||{}).criteria||[]).join("\n")};_pv.said=null;
+  paintPvBoard();const b=$("#pv_instruction");if(b)b.focus();
+}
+function pvAdjustCancel(){_pv.adjusting=null;paintPvBoard()}
+async function pvAdjustSend(){
+  const ask=_pv.adjusting,c=_pv.card;if(!ask||!c)return;
+  const instruction=(ask.instruction||"").trim();
+  if(!instruction){const b=$("#pv_instruction");if(b)b.focus();return}
+  // THE BAR TRAVELS ONLY WHERE IT MAY MOVE: a card whose criteria the role may not correct is sent
+  // back with its bar as it is, never with a correction the server would refuse
+  const params={project:_prod.project,number:c.ref,instruction};
+  if((c.adjust||{}).corrects)params.criteria=ask.criteria||"";
+  const out=await act("product_adjust",params).catch(()=>null);
+  const ok=!!(out&&out.ok);
+  _pv.adjusting=ok?null:ask;
+  _pv.said={ok,how:"adjust",message:(out&&out.message)||"I could not do that just now."};
+  await pvCardRead(c.ref);
+}
 function pvCardAsk(how){_pv.ask={how,reason:""};_pv.said=null;paintPvBoard();const b=$("#pv_reason");if(b)b.focus()}
 function pvCardCancel(){_pv.ask=null;paintPvBoard()}
 async function pvCardClose(){
@@ -3873,9 +3915,11 @@ function refreshProject(){
           // page's own belief: a re-review offered on a deployment with no reviewer is advice
           // nobody can take, which is the rule the tech-lead already lives under.
           (a.can_review?` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="review" title="reads the pull request AS IT STANDS and replaces the verdict on this card — it changes no code, and it costs a model pass">Re-review</button>`:"")+
-          ` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="adjust" title="one more agent pass on the SAME branch and PR, against your own words">✏️ Adjust…</button>`+
+          // ADJUST WHILE A PASS IS LEFT (#448): the budget is the project's and the job says how
+          // much is left; past it the note says a person decides, and the seam refuses anyway.
+          (a.adjusts_left===0?"":` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="adjust" title="one more agent pass on the SAME branch and PR, against your own words">✏️ Adjust…</button>`)+
           // THE PULL REQUEST'S OWN COMMENTS (#330), where the forge keeps them — the server says.
-          (a.can_address?` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="address" title="one more agent pass on the SAME branch and PR, against the review comments people left on it that still stand">Address comments</button>`:"")+
+          (a.can_address&&a.adjusts_left!==0?` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="address" title="one more agent pass on the SAME branch and PR, against the review comments people left on it that still stand">Address comments</button>`:"")+
           ` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="discard" title="close the PR without merging and free the floor — the branch and its commits stay">Discard</button>`+
           gatePreviewLine(name, parked.issue));
     } else if(parked){
@@ -5423,7 +5467,7 @@ function _bcontrols(c, where){
   return `<div style="margin-top:9px;display:flex;gap:8px;flex-wrap:wrap">${edit}
       <button class="btn" onclick="${on.ask}('close')">${esc(w.close||"Close card")}</button>
       ${c.started ? "" : `<button class="btn" onclick="${on.ask}('remove')">${esc(w.remove||"Remove from the board")}</button>`}
-    </div>${note}${confirm}`;
+    </div>${note}${confirm}${where === "product" ? pvAdjustBlock(c) : ""}`;
 }
 
 function _bthread(c){

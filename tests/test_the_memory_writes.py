@@ -911,7 +911,9 @@ class _Writes:
 WRITES = {"queue": "promote", "defect": "file_defect", "ticket": "file_ticket",
           "reorder": "reorder", "accept": "accept", "drop": "drop",
           "decision": "record_decision", "close": "close_card", "align": "align_card",
-          "correct": "correct_card", "fact": "note_fact", "draft": "propose"}
+          "correct": "correct_card", "fact": "note_fact", "draft": "propose",
+          # #448: another pass, the card's bar corrected with it
+          "adjust": "send_back"}
 
 
 def _entry(kind: str) -> dict:

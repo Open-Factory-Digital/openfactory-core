@@ -873,6 +873,7 @@ _SUMMARY_LABELS = {
         "in_favour_of": "em favor de", "requirement": "requisito", "reason": "motivo",
         "term": "termo", "decision": "decisão", "text": "texto", "new_title": "novo título",
         "items": "itens", "content": "conteúdo", "criteria": "critérios",
+        "instruction": "instrução",
         "waiting": "proposta aguardando confirmação",
     },
     "en": {
@@ -880,6 +881,7 @@ _SUMMARY_LABELS = {
         "in_favour_of": "in favour of", "requirement": "requirement", "reason": "reason",
         "term": "term", "decision": "decision", "text": "text", "new_title": "new title",
         "items": "items", "content": "content", "criteria": "criteria",
+        "instruction": "instruction",
         "waiting": "proposal waiting for confirmation",
     },
 }
@@ -945,6 +947,13 @@ def _proposal_summary(entry: dict, *, language: str = "pt-BR") -> str:
     criteria = list(getattr(draft, "must_be_true", None) or [])
     if criteria:
         parts.append(f"{said['criteria']}: " + "; ".join(str(c) for c in criteria[:8]))
+    # ANOTHER PASS IS ITS WORDS AND ITS BAR (#448): two passes asked of one card with different
+    # instructions, or different criteria, are different acts — the button posted for one must not
+    # send the other. EVERY criterion, not the first eight: the one left out is the one that moved.
+    if entry.get("instruction"):
+        parts.append(f"{said['instruction']}: {entry['instruction']}")
+    if entry.get("criteria"):
+        parts.append(f"{said['criteria']}: " + "; ".join(str(c) for c in entry["criteria"]))
     return "\n".join(parts)
 
 
