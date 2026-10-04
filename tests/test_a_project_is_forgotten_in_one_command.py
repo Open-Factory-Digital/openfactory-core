@@ -72,7 +72,7 @@ def _remember_everything(project: Project, *, thread: str = "sala") -> None:
     from openfactory.observability.registry import deployment_metrics_sink
     from openfactory.paths import project_memory_dir
     from openfactory.preview import own
-    from openfactory.product import attachments, case, sessions
+    from openfactory.product import accept, attachments, case, sessions
 
     now = datetime.now(UTC).isoformat()
     transcript.record(project, thread=thread, role="person", text=f"{project.name}: o saldo",
@@ -83,6 +83,8 @@ def _remember_everything(project: Project, *, thread: str = "sala") -> None:
         assert sink.record(MetricRecord(project=project.name, ticket="7", ts=now, kind=kind,
                                         role=kind))
     assert own.allow_shape(project.name, "7", "3f9a1c2b4d5e", by="ana")
+    assert accept.record(project.name, accept.Acceptance(
+        card="7", pr_url="https://github.com/acme/x/pull/7", head="3f9a1c2", by="ana", where=thread))
     assert messages.say(project.name, "staged: a monthly report", channel=project.name)
     case.note_turn(project, thread, "ana", "o saldo vem errado", SimpleNamespace(text="Qual tela?"))
     told = Path(project_memory_dir(project)) / "events.json"
@@ -105,7 +107,7 @@ def _what_is_remembered(project: Project, *, thread: str = "sala") -> dict:
     from openfactory.observability.query import records_of_kind
     from openfactory.paths import project_memory_dir
     from openfactory.preview import own
-    from openfactory.product import attachments, case, sessions
+    from openfactory.product import accept, attachments, case, sessions
 
     key = product_key(project)
     tracker = build_tracker(project)
@@ -115,6 +117,7 @@ def _what_is_remembered(project: Project, *, thread: str = "sala") -> dict:
         "verdicts": len(records_of_kind(project.name, "card_verdict")),
         "previews": len(records_of_kind(project.name, "preview")),
         "allowed": own.allowed(project.name, "7"),
+        "accepted": getattr(accept.standing(project.name, "7"), "by", None),
         "messages": len(messages.read(project.name)),
         "cases": len(case.open_cases(project, thread)),
         "told": (Path(project_memory_dir(project)) / "events.json").is_file(),
@@ -168,13 +171,14 @@ def test_every_layer_the_role_remembers_goes_and_nothing_of_another_project_does
     assert done.exit_code == 0, done.output
     books = _what_is_remembered(remembered["books"])
     assert books == {"said": [], "loops": 0, "verdicts": 0, "previews": 0, "allowed": None,
-                     "messages": 0, "cases": 0, "told": False, "files": 0, "names": {},
+                     "accepted": None, "messages": 0, "cases": 0, "told": False, "files": 0, "names": {},
                      "closed": [], "open": ["books: still open"]}, books
     assert not _bytes_kept(remembered["books"]), "a file's bytes outlived its claims"
     assert _what_is_remembered(remembered["shop"]) == shop_before, "another product's went"
     assert _bytes_kept(remembered["shop"]), "another product's files went"
     assert shop_before["said"] and shop_before["closed"] and shop_before["files"], shop_before
     assert shop_before["allowed"] == ("3f9a1c2b4d5e", "ana"), shop_before
+    assert shop_before["accepted"] == "ana", shop_before
     assert _people() == people_before == ["ana@acme.example"], "the deployment's people went"
 
 
