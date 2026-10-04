@@ -457,7 +457,7 @@ MUTATIONS = [
      '        change=_a_count(env.get("OPENFACTORY_CHANGE")),\n',
      "", REMOTE),
     ("a remote box hands its runner no change number", BOXED,
-     '    return {"change": cfg.change} if cfg.change else {}\n',
+     '    return {"change": change} if change else {}\n',
      "    return {}\n", REMOTE),
     ("a CI repair on a later change is asked for the first change's branch", WORKFLOW,
      "                        change=params.change,  # #448 slice 4: the branch of this change\n",

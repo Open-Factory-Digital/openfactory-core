@@ -190,7 +190,8 @@ def config_from_env(env: dict[str, str]) -> BoxConfig:
 def _of_the_change(cfg: BoxConfig) -> dict:
     """`build_runner`'s change number, ONLY for a later change of the card (#448 slice 4): a box
     building a card's first change calls the runner exactly as every box before it did."""
-    return {"change": cfg.change} if cfg.change else {}
+    change = getattr(cfg, "change", 0)
+    return {"change": change} if change else {}
 
 
 def _a_count(raw: str | None) -> int:

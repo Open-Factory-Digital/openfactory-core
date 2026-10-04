@@ -2337,6 +2337,8 @@ def _name_of(user: str) -> str:
 
         person = PeopleStore().snapshot().people.get(str(user or ""))
     except Exception:  # noqa: BLE001 — a vaguer sentence, never a lost one
+        log.info("could not read the people store for a display name — the room hears \"the "
+                 "person who asked for it\"", exc_info=True)
         return ""
     display = str(getattr(person, "display", "") or "").strip()
     return display if display and display != str(user) else ""
