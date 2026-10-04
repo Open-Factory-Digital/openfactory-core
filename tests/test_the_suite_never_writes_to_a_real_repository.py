@@ -25,31 +25,40 @@ from pathlib import Path
 
 import pytest
 
-from openfactory.adapters.github_cli import no_repository_named
+from openfactory.adapters.github_cli import nothing_named
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 # ═══ the rule ═══════════════════════════════════════════════════════════════════════════════════
 
-@pytest.mark.parametrize("args", [
-    ["issue", "comment", "12", "--repo", "", "--body", "x"],
-    ["issue", "view", "12", "--repo", "  "],
-    ["pr", "view", "12", "-R", ""],
-    ["issue", "edit", "12", "--repo="],
-    ["issue", "comment", "12", "--repo"],
+@pytest.mark.parametrize("args, flag", [
+    (["issue", "comment", "12", "--repo", "", "--body", "x"], "--repo"),
+    (["issue", "view", "12", "--repo", "  "], "--repo"),
+    (["pr", "view", "12", "-R", ""], "-R"),
+    (["issue", "edit", "12", "--repo="], "--repo"),
+    (["issue", "comment", "12", "--repo"], "--repo"),
+    # THE SAME TRAP ON EVERY FLAG `gh` FILLS IN BY GUESSING (review of #489)
+    (["project", "view", "3", "--owner", "", "--format", "json"], "--owner"),
+    (["pr", "create", "--repo", "acme/shop", "--head", "", "--base", "main"], "--head"),
+    (["pr", "create", "--repo", "acme/shop", "--head", "openfactory/12", "--base", ""], "--base"),
+    (["pr", "list", "--repo", "acme/shop", "-H", " "], "-H"),
+    (["pr", "create", "--repo", "acme/shop", "--head", "x", "-B", ""], "-B"),
 ])
-def test_an_empty_repository_is_refused_by_name(args):
-    assert "names no repository" in no_repository_named(args)
+def test_an_empty_flag_gh_would_guess_is_refused_by_name(args, flag):
+    said = nothing_named(args)
+    assert f"`{flag}` with nothing in it" in said, said
 
 
 @pytest.mark.parametrize("args", [
     ["issue", "comment", "12", "--repo", "acme/shop", "--body", "x"],
     ["issue", "edit", "12", "--repo=acme/shop"],
     ["api", "graphql", "-f", "query=…"],
+    ["pr", "create", "--repo", "acme/shop", "--head", "openfactory/12", "--base", "main"],
+    ["project", "view", "3", "--owner", "acme", "--format", "json"],
 ])
-def test_a_named_repository_or_none_asked_for_passes(args):
-    assert no_repository_named(args) == ""
+def test_named_values_or_none_asked_for_pass(args):
+    assert nothing_named(args) == ""
 
 
 # ═══ the rows: refused before `gh` runs ═════════════════════════════════════════════════════════
@@ -69,7 +78,7 @@ def no_gh(monkeypatch):
 def test_the_tracker_with_no_repository_writes_nothing_and_says_why(no_gh):
     from openfactory.adapters.tracker.github import GitHubIssuesTracker
 
-    with pytest.raises(RuntimeError, match="names no repository"):
+    with pytest.raises(RuntimeError, match="with nothing in it"):
         GitHubIssuesTracker(repo="").comment("12", "Preview up: …")
     assert no_gh == []
 
@@ -81,7 +90,7 @@ def test_a_bare_project_builds_that_tracker_and_it_cannot_reach_the_working_dire
     from openfactory.contracts.project import Project
 
     tracker = build_tracker(Project(name="acme", repo_path="/src/acme"), token=None)
-    with pytest.raises(RuntimeError, match="names no repository"):
+    with pytest.raises(RuntimeError, match="with nothing in it"):
         tracker.comment("12", "Preview up: /p/acme/preview/12")
     assert no_gh == []
 
@@ -90,6 +99,24 @@ def test_the_forge_with_no_repository_reads_nothing_from_the_working_directory(n
     from openfactory.adapters.forge.github import GitHubForge
 
     assert GitHubForge("").pr_body(pr="12") is None
+    assert no_gh == []
+
+
+def test_the_board_with_no_owner_reads_nothing_of_the_logged_in_account(no_gh):
+    """An empty `--owner` is the logged-in account's projects, not the client's."""
+    from openfactory.adapters.tracker.github_project import _run_gh
+
+    got = _run_gh(["project", "view", "3", "--owner", "", "--format", "json"], None)
+    assert got.returncode != 0 and "`--owner` with nothing in it" in got.stderr
+    assert no_gh == []
+
+
+def test_a_pull_request_is_never_opened_from_a_guessed_branch(no_gh):
+    """An empty `--head` is the branch checked out where the process runs."""
+    from openfactory.adapters.forge.github import GitHubForge
+
+    with pytest.raises(RuntimeError):
+        GitHubForge("acme/shop").open_pr(head="", base="main", title="t", body="b")
     assert no_gh == []
 
 
