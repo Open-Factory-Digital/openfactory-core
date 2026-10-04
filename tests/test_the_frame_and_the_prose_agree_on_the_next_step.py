@@ -52,6 +52,8 @@ def test_the_markers_that_stage_are_the_ones_the_engine_stages():
         role_module.ORDER_MARKER, role_module.QUEUE_MARKER,
         # #448: another pass on a change that waits on its requester, drafted after the reply
         role_module.ADJUST_MARKER,
+        # #448 slice 3: and the requester's "that's it" on it, recorded against the head tried
+        role_module.ACCEPT_MARKER,
     }
 
 

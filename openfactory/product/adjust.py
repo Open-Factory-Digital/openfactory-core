@@ -9,9 +9,11 @@ floor row an operator alone could press (`actions/base.py`, FLOOR and admin), `c
 refused every card the factory had taken up, and the third pass was refused by a constant.
 
 WHAT THIS MODULE IS: the product side's two words with the job at its merge gate — what the gate
-says (`gate_of`) and the answer `adjust` (`send_back`) — through the one seam every surface's
-answer crosses (`view.answer_merge_gate`), on the process's standing loop with the client the
-release path keeps (`release._client`, #201: one client per process, not one per answer). And
+says (`gate_of`) and the answer `adjust` (`send_back`), and the `merge` a requester's acceptance
+gives when the look is all that holds it (`answer_gate`, #448 slice 3) — through the one seam
+every surface's answer crosses (`view.answer_merge_gate`), on the process's standing loop with the
+client the release path keeps (`release._client`, #201: one client per process, not one per
+answer). And
 the pure half of drafting the pass from the conversation (`draft_prompt`, `floor`), for the
 module to run.
 
@@ -63,6 +65,11 @@ class Gate:
     #: whose binary predates the numbers (#448); it is sent the answer, and its own branch decides
     passes: int | None = None
     left: int | None = None
+    #: THE LOOK IS THE ONLY THING HOLDING THIS MERGE (#448 slice 3): the job's own word
+    #: (`auto_but_for_the_look` on its merge wait), so the requester's acceptance of the head they
+    #: tried may answer this gate with `merge` (`product/accept.py`). False for a job that does
+    #: not say, which a person merges.
+    look_only: bool = False
 
     @property
     def open(self) -> bool:
@@ -82,7 +89,8 @@ def read(gate: dict | None, *, card: str, deaf: str = "") -> Gate:
     if gate.get("working"):
         return Gate(card=card, why=WORKING, pr_url=str(gate.get("pr_url") or ""))
     passes, left = _count(gate.get("adjust_passes")), _count(gate.get("adjusts_left"))
-    said = dict(card=card, pr_url=str(gate.get("pr_url") or ""), passes=passes, left=left)
+    said = dict(card=card, pr_url=str(gate.get("pr_url") or ""), passes=passes, left=left,
+                look_only=gate.get("auto_but_for_the_look") is True)
     if deaf:
         return Gate(why=DEAF, **said)
     if left == 0:
@@ -137,9 +145,18 @@ def send_back(project, card: str, *, instruction: str, by: str) -> str:
     before signalling, so a stale answer is refused rather than swallowed, it refuses a pass the
     job would refuse (`AdjustsSpent`), and it seals the answer as the panel's (`gate_seal`) — the
     worker refuses an unsealed one."""
+    return answer_gate(project, card, answer="adjust", instruction=instruction, by=by)
+
+
+def answer_gate(project, card: str, *, answer: str, instruction: str = "", by: str) -> str:
+    """Deliver one of the merge gate's answers to the job on `card` — `""` when it was delivered,
+    else the reason it was not (one of `WHY`). NEVER RAISES. `send_back`'s seam, for every answer
+    the product side gives: `adjust` (#448 slice 1) and the `merge` a requester's acceptance gives
+    when the look is all that holds it (slice 3, `product/accept.py`)."""
     from openfactory.contracts.refs import canonical_ref
 
     name, card = str(getattr(project, "name", "") or ""), canonical_ref(card)
+    said = answer
 
     async def _run() -> str:
         from openfactory.product.release import _client
@@ -147,7 +164,7 @@ def send_back(project, card: str, *, instruction: str, by: str) -> str:
 
         client = await _client()
         try:
-            await tv.answer_merge_gate(client, name, card, answer="adjust",
+            await tv.answer_merge_gate(client, name, card, answer=said,
                                        instruction=instruction, by=by)
         except tv.AdjustsSpent:
             return SPENT
@@ -164,8 +181,8 @@ def send_back(project, card: str, *, instruction: str, by: str) -> str:
     except Exception as exc:  # noqa: BLE001 — a person's yes must never see a traceback
         if _missing(exc):
             return NOT_WAITING
-        log.error("OPENFACTORY_ADJUST_NOT_DELIVERED project=%s card=#%s by=%s (%s) — a person "
-                  "asked for another pass and the job was not told", name, card, by,
+        log.error("OPENFACTORY_ADJUST_NOT_DELIVERED project=%s card=#%s answer=%s by=%s (%s) — a "
+                  "person answered the merge gate and the job was not told", name, card, said, by,
                   str(exc)[:200])
         return UNREACHABLE
 

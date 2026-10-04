@@ -160,7 +160,7 @@ def test_a_card_filed_on_jira_is_placed_in_the_filing_column(site, pen):
     assert (result.ok, result.ref, result.detail) == (True, "DAR-1", "")
     assert result.url == "https://acme-team.atlassian.net/browse/DAR-1"
     assert site.moves() == [("DAR-1", TO_BACKLOG)]
-    assert site.status["DAR-1"] == BACKLOG == module.FILING_COLUMN
+    assert site.status["DAR-1"] == BACKLOG
 
 
 # ── the defect a person reported ────────────────────────────────────────────────────────────────
@@ -265,4 +265,4 @@ def test_a_numbered_ref_is_placed_and_followed_under_the_same_key_as_before(pen,
                                     acceptance_criteria=["c"]),
                          _corpus().requirements[0], both, both)
 
-    assert both.placed == [("12", module.FILING_COLUMN)]
+    assert both.placed == [("12", BACKLOG)]

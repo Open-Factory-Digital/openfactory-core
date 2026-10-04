@@ -55,6 +55,7 @@ from openfactory.runtime.temporal.io import (
     JobParams,
     KnowledgeRefreshInput,
     MergeCheckInput,
+    MergedInput,
     OverheardInput,
     PreflightInput,
     PreflightVerdict,
@@ -2729,6 +2730,35 @@ async def card_adjusted(inp: AdjustedInput) -> str:
         activity.logger.warning("the adjust pass of %s#%s was not recorded as such (%s)",
                                 inp.project, inp.issue, str(exc)[:160])
         return "unrecorded"
+
+
+@activity.defn
+async def tell_the_requester_it_merged(inp: MergedInput) -> bool:
+    """A CARD'S PULL REQUEST MERGED, and whoever asked for the card hears it went in (#448 slice 3,
+    `events.merged_for_you`) — whoever merged it: a person, the factory on its own, or the merge a
+    requester's acceptance gave when the look was all that held it.
+
+    HERE, ON THE WORKER, for `tell_the_requester`'s reason: the ledger that says whose conversation
+    a card came from, and the store that says where it was accepted, live here, never in the box.
+
+    NEVER RAISES, AND BOUNDED: the change is in either way. Returns whether it was told now."""
+    def _tell() -> bool:
+        try:
+            from openfactory.product import events
+
+            return events.merged_for_you(ProjectRegistry().get(inp.project), card=inp.issue,
+                                         pr_url=inp.pr_url, stages_follow=inp.stages_follow)
+        except Exception as exc:  # noqa: BLE001 — the merge stands; only the telling is lost
+            activity.logger.warning("could not tell %s#%s's requester it went in (%s)",
+                                    inp.project, inp.issue, str(exc)[:160])
+            return False
+
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_tell), timeout=_ANNOUNCE_WITHIN)
+    except TimeoutError:
+        activity.logger.warning("telling %s#%s's requester it went in outlived %ss — nothing else "
+                                "says it", inp.project, inp.issue, _ANNOUNCE_WITHIN)
+        return False
 
 
 def _a_card_was_finished(inp: HoldSyncInput) -> None:

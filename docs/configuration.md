@@ -888,6 +888,29 @@ to match. Confirm?"* The yes corrects the card first, then sends one more pass o
   started again — and the floor's gate says the same and stops offering **Adjust**.
 - The draft is metered as `product_adjust_draft`, and every draft logs `OPENFACTORY_ADJUST_DRAFTED`.
 
+### "That's it": accepting the change you tried (#448)
+
+The other half of the loop. When the person who asked for the card tried its preview and says it is
+right — in the conversation, or with **This is it — accept** on the card — the role asks: *"I'll
+record that #N, as you tried it in its preview, is what you asked for. Confirm?"* The yes is
+recorded against the head the preview was **built** from, never the pull request's head at that
+moment, as one `card_accepted` row in the platform's metrics store, and the card gets a note naming
+who and which head.
+
+- **Who may:** the same three as another pass — the card's requester, a product admin, or an
+  operator.
+- **Nothing tried, nothing to accept.** With no preview of the change, or a pull request that moved
+  past the head the preview was built from, the yes is refused by name and nothing is recorded.
+- **With a human merge**, the person merging sees *"accepted by <requester> on <head>"* on the floor
+  bar, in the inbox, and in what the tech-lead is told.
+- **With `merge_policy: auto` and `preview.required`**, when the look is the only thing holding the
+  merge (every other hold of the auto-merge passes), the yes gives the gate its merge, sealed in the
+  requester's name. A pass the requester asked for since the pull request opened must have been
+  read again, and verified, for that to stand; otherwise a person merges, shown the acceptance.
+- **The requester hears the change went in**, once per card and pull request, whoever merged it —
+  except where, with no stage declared, the delivery's own "it is ready, did it work?" says it at
+  the same moment.
+
 ### What it never does
 
 It does not write to a code repo, does not review a diff, does not promote to TO-DO, and does not

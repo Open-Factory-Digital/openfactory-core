@@ -14,15 +14,17 @@ WHAT IS HELD, on the real local board through the real route (`app.board_view`):
   · a card closed as NOT delivered stays off the board, as it always has;
   · the read is bounded — the most recent `DELIVERED_SHOWN_AT_MOST`, within
     `DELIVERED_SHOWN_DAYS`;
-  · Done is the board's OWN name for the stage, never the platform's literal (C-14);
+  · Done is the board's OWN name for the stage, never the platform's literal (C-14), and one the
+    board HAS — the row's map, then a real column of the board, else nowhere;
   · a closed read that failed leaves the open cards standing — never an unreadable board;
   · a person dragging a delivered card out of Done reopens it, through the same `card_move`, and a
     card dragged INTO Done stays the open card it was.
 
 THE GITHUB ROW IS NOT DRIVEN HERE: no neighbour drives `/api/board` over a faked `gh`, and the
 rule this adds compares no provider kind — the closed read is the port's `list_tickets`, and the
-column is the row's own `stage_key`, which `test_the_board_row_says_which_stage_its_column_is.py`
-holds for every row.
+column is the row's own `stage_column` and `stage_key`, held for every row by
+`test_the_product_role_moves_cards_by_key.py` and
+`test_the_board_row_says_which_stage_its_column_is.py`.
 """
 
 from __future__ import annotations
@@ -216,17 +218,52 @@ def test_a_RENAMED_done_column_is_the_one_used(tmp_path, monkeypatch):
     assert _where(got) == {shipped: "Concluído"}
 
 
-def test_a_board_that_names_no_Done_column_shows_no_delivered_card(deployment, tracker,
-                                                                    monkeypatch):
+def test_a_board_that_has_no_Done_column_shows_no_delivered_card(deployment, tracker):
     """Nowhere to show it is not a column to invent: the card is left off, never placed by the
-    platform's literal on a board that does not draw it."""
-    from openfactory.adapters.board.local import LocalBoard
+    platform's literal on a board that does not draw it — though the row's map, which answers the
+    platform's word for a stage nobody renamed, still says `Done` (review of #505/#506)."""
+    from openfactory.adapters.board import build_board
+    from openfactory.adapters.board_db import connect
 
     _finished(deployment, tracker, "Shipped")
-    monkeypatch.setattr(LocalBoard, "stage_key",
-                        lambda self, column: "" if column == "Done" else "todo")
+    with connect(write=True) as conn:
+        conn.execute("DELETE FROM columns WHERE project = ? AND key = 'done'", (deployment.name,))
+    board = build_board(deployment)
+    assert "Done" not in board.column_names() and board.stage_column("done") == "Done"
 
     assert _board()["cards"] == []
+
+
+def test_a_Done_the_map_names_that_the_board_does_not_have_is_not_drawn(deployment, tracker,
+                                                                         monkeypatch):
+    """THE MAP IS BELIEVED FOR A COLUMN THE BOARD HAS (review of #505/#506). A name a deployment
+    declared for `done` that is none of the board's columns is a card the page never draws, so the
+    board's own column for that stage is the one used."""
+    from openfactory.adapters.board.local import LocalBoard
+
+    shipped = _finished(deployment, tracker, "Shipped")
+    monkeypatch.setattr(LocalBoard, "stage_column",
+                        lambda self, key: "Finalizado" if key == "done" else "")
+
+    got = _board()
+
+    assert "Finalizado" not in got["columns"]
+    assert _where(got) == {shipped: "Done"}
+
+
+def test_a_board_whose_map_is_silent_is_read_off_its_own_columns(tmp_path, monkeypatch):
+    """THE MIDDLE LAYER: a row that declares no map still knows which stage each of its columns is,
+    so a renamed Done is found among the board's own columns — never the platform's `Done`."""
+    from openfactory.adapters.board.local import LocalBoard
+    from openfactory.adapters.tracker.registry import build_tracker
+
+    project = _deployment(tmp_path, monkeypatch,
+                          {"columns": json.dumps({"done": "Concluído"})})
+    tracker = build_tracker(project)
+    shipped = _finished(project, tracker, "Entregue")
+    monkeypatch.setattr(LocalBoard, "stage_column", lambda self, key: "")
+
+    assert _where(_board()) == {shipped: "Concluído"}
 
 
 # ── 4. a closed read that failed is not an unreadable board ─────────────────────────────────────

@@ -46,6 +46,25 @@ _LIST_FIELDS = "number,title,body,state,stateReason,labels,assignees,updatedAt"
 _LIST_CEILING = 1000
 
 
+def _summary(row: dict, *, ref: str) -> TicketSummary:
+    """One issue as `gh` answered it (`_LIST_FIELDS`), in the port's vocabulary — the one fold for
+    the board's list and for a card read by itself (#492), so the two never disagree on a field."""
+    return TicketSummary(
+        ref=ref,
+        title=str(row.get("title") or ""),
+        body=str(row.get("body") or ""),
+        # GitHub's GraphQL enums arrive SHOUTING — `"CLOSED"`, `"NOT_PLANNED"` (verified live). The
+        # port's vocabulary is lowercase, and `triage.Ticket.delivered` compares against the
+        # literal `"not_planned"`, so the fold happens here rather than in each of the readers that
+        # would otherwise each have to remember.
+        state=str(row.get("state") or "open").lower(),
+        state_reason=str(row.get("stateReason") or "").lower(),
+        labels=[str(x.get("name") or "") for x in (row.get("labels") or [])],
+        assignees=[str(x.get("login") or "") for x in (row.get("assignees") or [])],
+        updated_at=str(row.get("updatedAt") or ""),
+    )
+
+
 class GitHubIssuesTracker(TrackerAdapter):
     #: WHAT THIS ROW CAN REPORT OF A CHANGE MADE ON GITHUB ITSELF (ADR-0055 D8,
     #: `tracker/base.py::observes`): a close and why (`stateReason`, on every summary), a reopen,
@@ -359,27 +378,46 @@ class GitHubIssuesTracker(TrackerAdapter):
                         "board is larger than what the caller is about to judge",
                         self.repo, ceiling)
 
-        found = [
-            TicketSummary(
-                # `canonical_ref`, so `142` and `#142` are one ticket and not two. `get_ticket`
-                # renders `#142` for a human; a key does not get to be decorated.
-                ref=canonical_ref(row.get("number")),
-                title=str(row.get("title") or ""),
-                body=str(row.get("body") or ""),
-                # GitHub's GraphQL enums arrive SHOUTING — `"CLOSED"`, `"NOT_PLANNED"` (verified
-                # live). The port's vocabulary is lowercase, and `triage.Ticket.delivered` compares
-                # against the literal `"not_planned"`, so the fold happens here rather than in each
-                # of the readers that would otherwise each have to remember.
-                state=str(row.get("state") or "open").lower(),
-                state_reason=str(row.get("stateReason") or "").lower(),
-                labels=[str(x.get("name") or "") for x in (row.get("labels") or [])],
-                assignees=[str(x.get("login") or "") for x in (row.get("assignees") or [])],
-                updated_at=str(row.get("updatedAt") or ""),
-            )
-            for row in rows
-        ]
+        # `canonical_ref`, so `142` and `#142` are one ticket and not two. `get_ticket` renders
+        # `#142` for a human; a key does not get to be decorated.
+        found = [_summary(row, ref=canonical_ref(row.get("number"))) for row in rows]
         found.sort(key=lambda t: t.updated_at, reverse=True)
         return found
+
+    def ticket_summary(self, ref: str) -> TicketSummary | None:
+        """ONE card as `list_tickets` answers it — the same fields, folded the same way — read by
+        its ref, in the repository the ref names (C-18); `None` when it could not be read (#492).
+
+        WHY A CARD IS READ BY ITSELF. `list_tickets` lists THIS adapter's repository, and the board
+        the product role reads is that list: a card filed in another repository of the product
+        (`acme/web#1`, `create_ticket(repo=…)`) is on no list this row makes, so a delivery that
+        waits on one never saw it delivered. This reads the cards a waiting delivery names there,
+        one `gh issue view` each, instead of listing the whole other repository to find them
+        (`product/events.py::_delivered_elsewhere`).
+
+        `stateReason` IS THE POINT: `get_ticket` reads `state` alone, and closed is not delivered
+        (`triage.Ticket.delivered`) — a card in another repository closed as not planned must not
+        be the one that tells somebody their requirement is ready.
+
+        The ref answered is the one asked, qualified as C-18 spells it (`qualify_ref`), so the
+        caller compares it with the loop that named it."""
+        from openfactory.contracts.refs import qualify_ref
+
+        repo, num = self._locate(ref)
+        p = self._gh(["issue", "view", num, "--repo", repo, "--json", _LIST_FIELDS])
+        if p.returncode != 0:
+            log.warning("could not read %s#%s (%s) — the caller is being told UNREADABLE, not "
+                        "open", repo, num, (p.stderr or "")[-200:])
+            return None
+        try:
+            row = json.loads(p.stdout or "{}")
+        except ValueError:
+            log.warning("gh answered unparseable JSON reading %s#%s", repo, num)
+            return None
+        if not isinstance(row, dict) or not row.get("state"):
+            # a 200 without the field is a shape this adapter does not know — never an open card
+            return None
+        return _summary(row, ref=qualify_ref(repo, row.get("number") or num, self.repo))
 
     def ticket_url(self, ref: str) -> str:
         """The web URL for this issue, honouring the ref's own repository (C-18) and the host.

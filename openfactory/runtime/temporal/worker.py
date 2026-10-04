@@ -99,6 +99,7 @@ from openfactory.runtime.temporal.activities import (
     techlead_ask,
     techlead_watch,
     tell_the_requester,
+    tell_the_requester_it_merged,
     tracker_budgets,
     update_pr_branch,
     verify_gate_seal,
@@ -175,6 +176,8 @@ WORKER_ACTIVITIES = [
     # merge-gate answers' reason: a person presses Adjust hours later, and an unknown activity
     # type fails at exactly that moment
     card_adjusted,
+    # #448 — and told it went in, the moment it merged, whoever merged it
+    tell_the_requester_it_merged,
     refresh_knowledge, product_sweep, techlead_watch, open_review_loop,
     # #269 — the product's documents, read on the knowledge refresh's own tick, and its quiet
     # conversations distilled just before them (slice 3)

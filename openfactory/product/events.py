@@ -34,6 +34,9 @@ line on that conversation — behind the turn in progress, never inside one.
                         ended the work on a card (discarded, skipped, stopped: it is back in the
                         backlog), took it off the table (closed, withdrawn, removed: it will not
                         be built), or put it back (reopened); once per transition (#384, #412)
+    merged              `activities.tell_the_requester_it_merged` — the job, the moment its pull
+                        request merged, whoever merged it (#448 slice 3); not where the delivery
+                        says it at that same moment
 
 WHERE AN EVENT IS SAID (`conversation_for`). About a card: to the conversation its REQUESTER asked
 in — recorded on the card's delivery loop when the work was filed, from what they had staged
@@ -77,14 +80,15 @@ from datetime import UTC, datetime
 log = logging.getLogger("openfactory.product.events")
 
 #: The kinds of event (#267 slice 3; `ready_for_you` since #401; `card_moved` since #412, in place
-#: of #384's `card_withdrawn`, which only the product role's own close could tell). A closed set:
-#: each has its sentence, its routing and its record of having been said, and a kind nobody knows
-#: how to say is one nobody should tell.
+#: of #384's `card_withdrawn`, which only the product role's own close could tell; `merged` since
+#: #448). A closed set: each has its sentence, its routing and its record of having been said, and
+#: a kind nobody knows how to say is one nobody should tell.
 DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED, CARD_MOVED, READY_FOR_YOU = (
     "delivered", "ci_red", "pr_waiting", "preview_up", "document_ingested", "card_moved",
     "ready_for_you")
+MERGED = "merged"
 KINDS = (DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED, CARD_MOVED,
-         READY_FOR_YOU)
+         READY_FOR_YOU, MERGED)
 
 #: Which producer tells each kind on this branch — "" for a kind whose producer lives elsewhere.
 #: The guard reads this, so a producer claimed here is a call that exists.
@@ -96,6 +100,7 @@ PRODUCERS = {
     DOCUMENT_INGESTED: "openfactory/product/documents/ingest.py::announce",
     CARD_MOVED: "openfactory/lifecycle/ports.py::tell",
     READY_FOR_YOU: "openfactory/runtime/temporal/activities.py::tell_the_requester",
+    MERGED: "openfactory/runtime/temporal/activities.py::tell_the_requester_it_merged",
 }
 
 #: Whose loops these are.
@@ -349,6 +354,66 @@ def _delivered_now(project) -> set[str] | None:
     return delivered_numbers(list(tickets or []))
 
 
+def _delivered_elsewhere(project, delivered: set[str]) -> set[str]:
+    """The cards an open delivery names in ANOTHER REPOSITORY OF THE PRODUCT that were delivered —
+    each asked of the tracker by its own ref (#492). Never raises.
+
+    THE BOARD IS THE TRACKER'S OWN REPOSITORY. What is delivered is read from the board
+    (`_delivered_now`, the sweep's `_closed_issue_numbers`), and the board is `list_tickets` of the
+    project's repository. A requirement whose breakdown filed a card in another of the product's
+    `sources:` waits on it qualified (`acme/web#1`, C-18, kept since #485) — a ref no board read
+    ever holds. So the loop never closed, and the person who asked was never told it was ready.
+
+    ASKED PER REF, NEVER LISTED PER REPOSITORY. The other choice was a tracker per source, each
+    listing its closed cards (up to a thousand issues with their bodies, per source, per telling)
+    to answer a question about the one or two cards a loop names there. This reads only those:
+    the qualified refs of a waiting delivery the board did not already answer — and only for a
+    loop whose every other card IS delivered, because a loop with work still open in its own
+    repository cannot close this round whatever the other repository says. No such loop, no read
+    and no tracker built. The refs are bounded already: only the breakdown writes them, and it
+    files only into the product's `sources:` (`module._filing_repo`). The tracker addresses the
+    repository each ref names, on the credential the card was filed with (`board.read_cards`).
+
+    DELIVERED AS THE BOARD MEANS IT (`triage.Ticket.delivered`): closed, and not as not planned. A
+    card split in another repository reads its parent's own close — not delivered, since the
+    splitter records a split as not delivered (2026-09-19), which predates filing elsewhere — so
+    such a delivery is announced late, by a person closing it, never early: following a split's
+    children in another repository is not done here.
+
+    A READ THAT FAILS IS NOT DELIVERED, AND IS SAID ONCE: one line per telling, naming every ref
+    it could not read. Never a false "it is ready", and never an exception into the round that
+    asked — the next telling asks again."""
+    from openfactory.contracts.refs import split_repo_ref
+    from openfactory.memory import store as loop_store
+    from openfactory.memory.ledger import DELIVERY, waiting
+
+    name = getattr(project, "name", "") or ""
+    try:
+        ask: set[str] = set()
+        for loop in waiting(loop_store.read(name), owner=OWNER):
+            if loop.kind != DELIVERY:
+                continue
+            cards = issues_of(loop)
+            elsewhere = {c for c in cards if split_repo_ref(c)[0] and c not in delivered}
+            if elsewhere and cards - elsewhere <= delivered:
+                ask |= elsewhere
+        if not ask:
+            return set()
+        from openfactory.product.board import read_cards
+
+        read, unread = read_cards(project, sorted(ask))
+    except Exception:  # noqa: BLE001 — not seen is not delivered; the board's answer stands
+        log.warning("[%s] could not ask another repository of the product what was delivered — "
+                    "its cards are counted as not delivered", name, exc_info=True)
+        return set()
+    if unread:
+        log.warning("OPENFACTORY_DELIVERY_UNREAD project=%s refs=%s — these cards of another "
+                    "repository of the product could not be read, so they are counted as NOT "
+                    "delivered and nothing waiting on them is announced; the next telling asks "
+                    "again", name, ",".join(unread))
+    return {t.number for t in read if t.delivered}
+
+
 def card_finished(project, *, card: str) -> list:
     """A JOB ENDED WITH ITS CARD DONE (`activities.record_outcome`): every delivery that completes
     is announced NOW, to its requester's conversation. Returns the ledger rows it wrote.
@@ -385,12 +450,19 @@ def deliver(project, *, delivered: set[str]) -> list:
 
     UNDER THE TELLING LOCK, RE-READ INSIDE IT: whoever comes second finds the loop closed and says
     nothing. The loop closes only once the door TOOK the announcement — one it did not take stays
-    open for the next telling (ADR-0021: closed on observation, never on self-report)."""
+    open for the next telling (ADR-0021: closed on observation, never on self-report).
+
+    `delivered` IS THE BOARD'S ANSWER, and the board is one repository: what a waiting delivery
+    names in another repository of the product is asked here, for both callers, BEFORE the lock —
+    a read of the forge is seconds, and the lock is what every other telling waits on (#492)."""
     from openfactory.memory import store as loop_store
     from openfactory.memory.ledger import DELIVERY, close_by_observation, waiting
     from openfactory.product import followup
 
-    if not _speaks(project) or not delivered:
+    if not _speaks(project):
+        return []
+    delivered = set(delivered or ()) | _delivered_elsewhere(project, set(delivered or ()))
+    if not delivered:
         return []
     name = getattr(project, "name", "") or ""
     written: list = []
@@ -684,10 +756,82 @@ def ready_at_the_gate(project, gates: list[tuple[str, str]]) -> list[str]:
 
 
 
+# ── the change went in ───────────────────────────────────────────────────────────────────────────
 
-__all__ = ["CARD_MOVED", "CI_RED", "DELIVERED", "DOCUMENT_INGESTED", "KINDS", "PREVIEW_UP",
-           "PRODUCERS", "PR_WAITING", "PR_WAIT_HOURS", "READY_FOR_YOU", "card_finished",
-           "card_moved", "ci_went_red", "conversation_for", "deliver", "document_ingested",
-           "forget_record", "issues_of", "preview_up", "pull_requests_at_the_gate",
-           "ready_at_the_gate", "ready_for_you", "requester_conversation", "room_of", "say_to",
-           "to_room"]
+def _accepted_where(project, card: str, pr_url: str) -> str:
+    """The conversation the requester accepted this pull request in (`accept.standing`), or "" —
+    the way to them when no delivery of the card names one: a card the role opened from a request
+    opens no delivery loop. Best-effort: an unread store is a vaguer route, never a raise."""
+    try:
+        from openfactory.product.accept import standing
+
+        acc = standing(getattr(project, "name", "") or "", card, pr_url)
+        return acc.where if acc is not None else ""
+    except Exception:  # noqa: BLE001 — the delivery's conversation is still asked first
+        log.info("could not read #%s's acceptance to find its requester's conversation", card,
+                 exc_info=True)
+        return ""
+
+
+def _the_delivery_says_it(project, card: str, rows) -> bool:
+    """Whether a delivery of `card` completes with this merge, and so says "it is ready" at the
+    job's end (`card_finished`, #267) — the requester then hears THAT, not a second message. The
+    board as read now plus this card: the job has not moved it to Done yet, and an unreadable
+    board counts this card alone, so a single-card delivery is never told twice."""
+    from openfactory.contracts.refs import canonical_ref
+    from openfactory.product import followup
+
+    loops = _deliveries_of(rows, card)
+    if not loops:
+        return False
+    return bool(followup.delivered(loops, (_delivered_now(project) or set())
+                                   | {canonical_ref(card)}))
+
+
+def merged_for_you(project, *, card: str, pr_url: str, stages_follow: bool = False) -> bool:
+    """THE CHANGE A CARD'S REQUESTER ASKED FOR WENT IN, and they hear it (#448 slice 3) — in the
+    conversation they asked in, once per card and pull request, WHOEVER MERGED IT: a person on the
+    floor or the forge, the factory on its own, or the requester's acceptance when the look was all
+    that held it. Returns whether it was told now. Never raises.
+
+    MEASURED BEFORE IT WAS ADDED. With no stage declared, the job ends Done at the merge and
+    `card_finished` announces every delivery that completes — "what you asked for is ready, did it
+    work?" — to the same conversation, so this says nothing where that does (`_the_delivery_says_
+    it`). Everywhere else the requester heard nothing at the merge: a project with stages announces
+    its delivery only once the last one is through, a card of a requirement whose other cards are
+    still open completes no delivery, and a card the role opened from a request opens none.
+
+    ONLY WHERE SOMEBODY ASKED: the delivery's conversation, else the one the requester accepted it
+    in. A card nobody asked for in a conversation is the room's card comment, as for
+    `ready_for_you`."""
+    if not _speaks(project) or not str(card or "").strip() or not str(pr_url or "").strip():
+        return False
+    try:
+        from openfactory.memory import store as loop_store
+
+        rows = loop_store.read(getattr(project, "name", "") or "")
+        where = requester_conversation(project, card, rows=rows) or _accepted_where(
+            project, card, pr_url)
+        if not where:
+            return False
+        if not stages_follow and _the_delivery_says_it(project, card, rows):
+            return False
+    except Exception:  # noqa: BLE001 — the merge stands; only its telling is lost
+        log.exception("[%s] could not tell #%s's requester it went in",
+                      getattr(project, "name", "?"), card)
+        return False
+    from openfactory.product import voice
+
+    return _once(project, _event_id(MERGED, project, card, pr_url), lambda: (
+        where,
+        voice.merged_for_you(ref=card, title=_title_of(project, card),
+                             stages_follow=stages_follow, language=_language(project),
+                             agent_name=_agent(project))))
+
+
+__all__ = ["CARD_MOVED", "CI_RED", "DELIVERED", "DOCUMENT_INGESTED", "KINDS", "MERGED",
+           "PREVIEW_UP", "PRODUCERS", "PR_WAITING", "PR_WAIT_HOURS", "READY_FOR_YOU",
+           "card_finished", "card_moved", "ci_went_red", "conversation_for", "deliver",
+           "document_ingested", "forget_record", "issues_of", "merged_for_you", "preview_up",
+           "pull_requests_at_the_gate", "ready_at_the_gate", "ready_for_you",
+           "requester_conversation", "room_of", "say_to", "to_room"]

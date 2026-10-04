@@ -151,6 +151,27 @@ class Staged(Protocol):
         wrong was meeting that answer on every card."""
         ...
 
+    def stage_column(self, key: str) -> str:
+        """What this board calls the column for the neutral stage `key` — the other direction of
+        `stage_key`, or `""` for a key nobody knows (#496).
+
+        THE PRODUCT ROLE MOVED CARDS BY THE PLATFORM'S OWN NAMES, `TO-DO` and `Backlog`, and only
+        a board this platform created says those. A Jira project whose deployment declared
+        `status_map: {"todo": "A Fazer"}` offered no transition called `TO-DO`, so every promotion
+        answered *"o quadro recusou a movimentação"* and every filed card was left wherever the
+        site created it; an Azure Boards board says `To Do` out of the box and refused the same
+        promotion with nobody having renamed anything. The poller had asked the row all along
+        (`pickup_column`); the product role was the caller that still spelled a name.
+
+        THE SAME MAP `stage_key` READS, so the two directions cannot come to disagree about which
+        column a stage is, and with the platform's own names answering under it for the keys a
+        deployment did not rename — `columns.name_for` merges them exactly as `key_for` does.
+
+        THE FIRST OF THREE ANSWERS, NEVER THE ONLY ONE: generic code asks through the module's
+        `stage_column`, which reads this, then a real column of the board, then the platform's
+        literal — so a row that does not implement it is still named by its own columns."""
+        ...
+
 
 @runtime_checkable
 class BoardAdapter(Protocol):
@@ -294,31 +315,95 @@ def stage_key(board, column: str) -> str:
     return key_for(name)
 
 
-def column_for(board, key: str, *, names: list[str] | None = None) -> str:
-    """What `board` calls the stage `key` — one of ITS OWN column names, or `""` when none of them
-    is that stage (#500).
+def stage_column(board, key: str, *, existing: bool = False,
+                 names: list[str] | None = None) -> str:
+    """What `board` calls the column for the neutral stage `key` — the ONE place generic code asks
+    (#496), and the ONE inverse of `stage_key` above.
 
-    THE INVERSE OF `stage_key`, ASKED OF THE SAME ROW. A board renamed in `columns:`, or a Jira
-    project whose `status_map` says `Concluído`, does not call its last column `Done`, and a
-    caller placing a card there by the platform's literal would put it in a column the page does
-    not draw. Every row already answers *which stage is this column of mine*, so this walks the
-    board's own columns, in board order, and asks it — the first one that is `key` is the answer.
-    `pickup_column` is the same question for `todo`, from before this seam existed.
+    A CALLER PASSES A KEY AND THE ROW NAMES IT. That is the whole change: the product role's money
+    gate is the CHOICE of key (`ProductModule.QUEUE_KEY`, `FILING_KEY`) and stays closed there,
+    while the name — the half only the deployment knows — comes from the board, never from the
+    platform's vocabulary handed to somebody else's board.
+
+    THREE ANSWERS, ASKED IN ORDER, and the first real one wins:
+
+      1. THE ROW'S MAP (`Staged.stage_column`) — the name the deployment declared, the one
+         `set_column` matches. Only a non-empty string is believed: a `MagicMock` answers every
+         call with another mock, and a mock passed to `set_column` as a column name is a placement
+         refused for a reason nobody can read.
+      2. A REAL COLUMN OF THE BOARD — when the board can list its columns (`column_names()`), the
+         first one, in board order, whose `stage_key` is `key`. A board whose row declares no map
+         still knows which stage each of its own columns is; `pickup_column` is the same question
+         for `todo`, from before this seam existed.
+      3. THE PLATFORM'S LITERAL (`columns.name_for`) — what every caller asked for until the board
+         could be asked, and right for a board this platform created.
+
+    ONE FUNCTION, BECAUSE TWO WERE WRITTEN (review of #505/#506). The product role's moves (#496)
+    and the panel's Done (#500) each grew an inverse of `stage_key` in this file, one walking the
+    row's map and one walking the board's columns — two answers to one question, free to come apart
+    on the first board that disagreed with itself. They are the layers above, in that order.
+
+    `existing=True` IS FOR A CALLER THAT DRAWS, NOT ONE THAT MOVES. `/api/board` places a delivered
+    card in Done, and a column the board does not have is a card the page never draws: so the
+    map's name is believed only when it is among `column_names()`, the walk answers next, and the
+    literal never does — `""` is the answer for a board with no such column, and the card is placed
+    nowhere, which is what `columns()` already says of a card a board does not place. A move needs
+    no such guard: `set_column` answers False for a column that does not exist, and says so.
 
     `names` is the caller's when it has already read `column_names()`, so one request is not two;
-    left out, the board is asked. `""` for a board that could not say, or names no such column:
-    a card is then placed nowhere, which is the answer `columns()` already gives for a card a
-    board does not place — never a column invented for it."""
-    if board is None:
+    left out, the board is asked — and only when the map has not already answered a move.
+
+    THE DEGRADE IS `stage_key`'S, decided once. A row that does not implement the verb is a board
+    this platform created or an add-on written before the verb existed; a row that raises, or
+    answers something that is not a name, is named in the log; each is read by the next layer."""
+    from openfactory.adapters.board.columns import name_for
+
+    wanted = (key or "").strip().lower()
+    if not wanted:
         return ""
-    if names is None:
+    # 1. THE ROW'S MAP — the answer for a move; for a caller that draws, only if the board has it.
+    mapped = ""
+    if board is not None and callable(getattr(board, "stage_column", None)):
         try:
-            names = board.column_names()
-        except Exception:  # noqa: BLE001 — a board that cannot say has no column to name
-            log.warning("could not read which columns %s has, so no column is named for %r",
-                        type(board).__name__, key, exc_info=True)
-            names = None
-    return next((name for name in (names or []) if stage_key(board, name) == key), "")
+            said = board.stage_column(wanted)
+        except Exception as exc:  # noqa: BLE001 — a board that cannot say is not a traceback
+            log.warning("OPENFACTORY_BOARD_STAGE_UNANSWERED key=%r: %s raised when asked what it "
+                        "calls that stage (%s) — naming it by the board's own columns, else by the "
+                        "platform's own name for it, which is right only for a board this "
+                        "platform created", wanted, type(board).__name__, str(exc)[:200])
+        else:
+            if isinstance(said, str) and said.strip():
+                mapped = said.strip()
+            elif not isinstance(said, str):
+                log.warning("OPENFACTORY_BOARD_STAGE_UNANSWERED key=%r: %s answered %r, which is "
+                            "not a column name — naming it by the board's own columns, else by "
+                            "the platform's own name for it", wanted, type(board).__name__, said)
+    if mapped and not existing:
+        return mapped
+
+    # 2. A REAL COLUMN. A board that cannot list its columns (or answers something that is not a
+    # list — a mock again) has none to offer, and the walk is simply empty.
+    if names is None:
+        names = _column_names(board, wanted)
+    real = list(names) if isinstance(names, list | tuple) else []
+    if mapped and mapped in real:
+        return mapped
+    walked = next((name for name in real if stage_key(board, name) == wanted), "")
+    if walked or existing:
+        return walked
+    return name_for(wanted)
+
+
+def _column_names(board, key: str) -> list[str] | None:
+    """The board's `column_names()`, or None when it has no such verb or could not say."""
+    if board is None or not callable(getattr(board, "column_names", None)):
+        return None
+    try:
+        return board.column_names()
+    except Exception:  # noqa: BLE001 — a board that cannot say has no column to name
+        log.warning("could not read which columns %s has, so none of them is named for %r",
+                    type(board).__name__, key, exc_info=True)
+        return None
 
 
 def stage_option(board) -> str:

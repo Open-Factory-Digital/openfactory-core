@@ -816,6 +816,9 @@ _WRITES_TWICE = {
     "open_cards_for": "files each card of a proposal, then places it on the board",
     # #448: the card's bar corrected (and the note keeping what it said), then the pass sent
     "send_back": "corrects the card's criteria and notes the old ones, then sends the pass",
+    # #448 slice 3: the acceptance recorded, the gate answered when the look is all that holds it,
+    # then the note on the card saying so
+    "accept_change": "records the acceptance, then notes it on the card",
 }
 #: Module methods that leave ONE mark, so an `ok` result has nothing left over to say.
 _WRITES_ONCE = {
