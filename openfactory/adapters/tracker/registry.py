@@ -67,6 +67,12 @@ def _jira(project, **kw):
         except (ValueError, AttributeError) as exc:
             log.error("jira status_map for %s is not valid JSON (%s) — issues will NOT be "
                       "transitioned until it is fixed", getattr(project, "name", "?"), exc)
+    # THE QUEUE A DEPLOYMENT NAMED WITH `pickup_status` IS THIS MAP'S `todo` (#502): the poller
+    # pulls from it, and the board names every stage — the product role's queue among them — off
+    # this map. See `board/factory.py::with_the_queue`.
+    from openfactory.adapters.board.factory import with_the_queue
+
+    status_map = with_the_queue(project, options, status_map, option="status_map") or {}
     # THE VENDOR'S OWN CREDENTIAL, NEVER THE CALLER'S PROVIDER — the same refusal the forge
     # registry's Azure row makes, and it was missing here. `token_provider` on this axis is
     # ALWAYS `factory._bot_token_provider`, the GitHub App minter: every caller that has no

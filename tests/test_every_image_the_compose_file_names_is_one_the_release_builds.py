@@ -268,6 +268,11 @@ def test_the_release_never_publishes_a_moving_tag_a_user_could_pin_to():
         assert "latest" not in str(meta["with"]["tags"]), (
             f"release.yml publishes a `latest` tag for {meta['with']['images']} — the one tag a "
             f"user can pin to and still be moved")
+        # LEFT OUT IS NOT SWITCHED OFF: `flavor.latest` defaults to `auto`, which pushed `latest`
+        # on every final tag while this assertion stayed green (review of #510)
+        assert "latest=false" in str(meta["with"].get("flavor", "")), (
+            f"release.yml leaves `flavor.latest` at its default for {meta['with']['images']}, "
+            f"which publishes `latest` on every final tag")
 
 
 def test_a_push_to_main_publishes_images_but_cuts_no_release():

@@ -59,12 +59,13 @@ MUTATIONS = [
      "                if placed:\n                    previous = str(number)",
      "                if placed:\n                    pass"),
 
+    # re-pinned 2026-10-04: the refusal is the voice's now, in the conversation's language (#497)
     ("a board that cannot rank is not refused with a sentence — it raises inside the listener",
      "openfactory/product/module.py",
      "        if not isinstance(board, Rankable):\n"
-     "            return [WriteResult(ok=False, detail=\"este quadro ainda não aceita reordenação por \"",
+     "            return [WriteResult(ok=False, detail=board_move_said(\"unrankable\", language=lang))]",
      "        if False:\n"
-     "            return [WriteResult(ok=False, detail=\"este quadro ainda não aceita reordenação por \""),
+     "            return [WriteResult(ok=False, detail=board_move_said(\"unrankable\", language=lang))]"),
 
     ("the row rewrites the order without a yes",
      "openfactory/actions/catalog.py",

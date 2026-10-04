@@ -116,10 +116,11 @@ MUTATIONS = [
      "        return name_for(key, renamed=self._names)\n",
      "        return name_for(key)\n"),
 
+    # re-pinned 2026-10-04: the row's map is built once, in `_renamed` (#502) — the claim is
+    # unchanged: the local row names a stage off its own rows
     ("the local row names a stage by the platform's word, ignoring its own rows",
      "openfactory/adapters/board/local.py",
-     '        return name_for(key, renamed={r["key"]: r["name"] for r in rows\n'
-     '                                      if r["name"] and r["key"] in CANONICAL_COLUMNS})\n',
+     "        return name_for(key, renamed=self._renamed(rows))\n",
      "        return name_for(key)\n"),
 
     # ── 5. the seam ─────────────────────────────────────────────────────────────────────────────

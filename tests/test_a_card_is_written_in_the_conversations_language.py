@@ -248,7 +248,7 @@ def test_the_reply_after_a_requirements_yes_is_english_in_english():
                                                                         detail="refused")], []):
         _english(_breakdown_reply(results, 7, "", "en"))
     pt = _breakdown_reply([result("#1"), result("#2")], 7, "", "pt-BR")
-    assert "O requisito 7 virou **2** tarefas" in pt and "Estão no Backlog" in pt
+    assert "O requisito 7 virou **2** tarefas" in pt and "Estão na coluna Backlog" in pt
 
 
 def test_the_pen_answers_in_the_projects_language(tmp_path):

@@ -32,6 +32,9 @@ class Seen:
     opened_by: str = ""
     #: whether the tracker says the card is open — a finished card can be either (`delivered`)
     open: bool = True
+    #: the column the card sits in AS ITS BOARD CALLS IT, `""` when no board places it — what a
+    #: refusal names, so the person looks for `A Fazer` on their board rather than `TO-DO` (#502)
+    column: str = ""
 
 
 #: How a tracker says a card was closed as NOT delivered, in its own word (`Ticket.state_reason`).
@@ -155,7 +158,7 @@ class Ports:
                 f"#{card.lstrip('#')} is in {column!r}, which is not a column this platform "
                 f"maps, so it cannot tell where the card is in its life. Map it in the "
                 f"project's tracker options. Nothing was changed."))
-        return Seen(state=state, title=title, opened_by=opened_by)
+        return Seen(state=state, title=title, opened_by=opened_by, column=column)
 
     def _closed_as(self, card: str, ticket) -> State:
         """A closed card is `delivered` when it was closed as finished work — the tracker's own

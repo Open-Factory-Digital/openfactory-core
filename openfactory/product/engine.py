@@ -73,9 +73,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from openfactory.contracts.refs import canonical_ref
+from openfactory.contracts.refs import canonical_ref, ref_label
 from openfactory.product import progress as _progress
 from openfactory.product.confirm import (
+    _board_word,
     _breakdown_reply,
     _client_detail,
     _is_requester,
@@ -1700,7 +1701,8 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         # the file cannot show that, and a person saying so can (#182).
         _progress.stage("breaking_down")
         results = module.break_down(number, actor=user, asked_for=True)
-        return _breakdown_reply(results, number, name, lang, project)
+        return _breakdown_reply(results, number, name, lang, project,
+                                backlog=_board_word(module, "backlog"))
 
     if intent == "accept":
         number = int(captures.get("number") or 0)
@@ -2164,7 +2166,7 @@ def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, l
         # reply no code path could read — an unfollowable instruction from the platform's own
         # mouth.
         listed = _waiting_release_refs(project)
-        which = f" ({', '.join(f'#{r}' for r in listed)})" if listed else ""
+        which = f" ({', '.join(ref_label(r) for r in listed)})" if listed else ""
         return head + engine_said("release_ambiguous", language=lang, which=which)
     if not may_act(project, user, via=via):
         # THE QUESTION STAYS OPEN FOR SOMEBODY WHO MAY ANSWER IT (#273). Nothing has closed the

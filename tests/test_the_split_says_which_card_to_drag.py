@@ -38,6 +38,8 @@ CHILDREN = "  • #119 — part (a)\n  • #120 — part (b)\n  ⚠ #121 — par
 
 
 def _say(key: str, language: str, **params) -> str:
+    # the queue as the project's board calls it (#502); the platform's word on a default board
+    params.setdefault("queue", "TO-DO")
     return voice.say(voice.NARRATION, key, language, **params)
 
 

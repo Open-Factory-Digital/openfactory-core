@@ -24,6 +24,7 @@ page — and a reader had to guess which one was current. There is now exactly o
 | [reference/product-role-evaluation.md](reference/product-role-evaluation.md) | the product role's evaluation battery: writing its questions, running it, reading a score |
 | [project.yaml.example](project.yaml.example) | the annotated manifest |
 | the `openfactory-aws` add-on package | putting this on a cloud: the reference deployment and its walkthrough ship with that package, outside this tree — [STATUS.md](STATUS.md) lists what it carries |
+| [RELEASING.md](RELEASING.md) | how a version is cut, verified and published: the release branch per minor line, candidates, backports, security releases, and the agent that runs it |
 | [agents.md](agents.md) | the agent roles the platform runs — what each one can do, what it cannot, and where to change it |
 | [adr/](adr/) | why it is built this way — 55 decision records |
 
