@@ -173,10 +173,14 @@ def test_on_jira_the_loop_names_every_card_and_closes_only_when_every_one_is_del
 
 class _GH:
     """`gh`, answering the two calls the filer makes: no issue of that title yet, and a new issue
-    in the repository named — numbered per repository, as GitHub numbers them."""
+    in the repository named — numbered per repository, as GitHub numbers them. And the one read a
+    waiting delivery makes of a card in another repository (#492): every card it filed is still
+    OPEN, so the loop waits on it for the right reason — never because the read failed, which is
+    what an unexpected call raising here used to look like (review of #499)."""
 
     def __init__(self) -> None:
         self.created: list[tuple[str, str]] = []
+        self.viewed: list[tuple[str, str]] = []
 
     def __call__(self, argv, **_kw):
         args = list(argv)
@@ -189,6 +193,11 @@ class _GH:
             number = sum(1 for where, _ in self.created if where == repo)
             return subprocess.CompletedProcess(
                 argv, 0, stdout=f"https://github.com/{repo}/issues/{number}\n", stderr="")
+        if args[1:3] == ["issue", "view"]:
+            self.viewed.append((repo, args[3]))
+            card = {"number": int(args[3]), "title": "", "body": "", "state": "OPEN",
+                    "stateReason": None, "labels": [], "assignees": [], "updatedAt": ""}
+            return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(card), stderr="")
         raise AssertionError(f"the tracker ran `{' '.join(args)}`, a call this forge never had")
 
 
@@ -231,9 +240,10 @@ def test_on_a_product_of_two_repositories_the_loop_waits_for_the_card_in_the_oth
     assert (loop.subject, loop.context["issues"]) == ("7", "1,acme/web#1")
     assert events.requester_conversation(project, "acme/web#1") == ANAS
 
-    # THE API'S #1 IS NOT THE WEB'S
+    # THE API'S #1 IS NOT THE WEB'S — and the web's #1 was asked, and is still open
     assert _finished(project, monkeypatch, "1", delivered={"1"}) == []
     assert told == [] and _deliveries(project) == [loop]
+    assert gh.viewed == [("acme/web", "1")], gh.viewed
 
     written = _finished(project, monkeypatch, "acme/web#1", delivered={"1", "acme/web#1"})
 

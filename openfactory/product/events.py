@@ -354,6 +354,66 @@ def _delivered_now(project) -> set[str] | None:
     return delivered_numbers(list(tickets or []))
 
 
+def _delivered_elsewhere(project, delivered: set[str]) -> set[str]:
+    """The cards an open delivery names in ANOTHER REPOSITORY OF THE PRODUCT that were delivered —
+    each asked of the tracker by its own ref (#492). Never raises.
+
+    THE BOARD IS THE TRACKER'S OWN REPOSITORY. What is delivered is read from the board
+    (`_delivered_now`, the sweep's `_closed_issue_numbers`), and the board is `list_tickets` of the
+    project's repository. A requirement whose breakdown filed a card in another of the product's
+    `sources:` waits on it qualified (`acme/web#1`, C-18, kept since #485) — a ref no board read
+    ever holds. So the loop never closed, and the person who asked was never told it was ready.
+
+    ASKED PER REF, NEVER LISTED PER REPOSITORY. The other choice was a tracker per source, each
+    listing its closed cards (up to a thousand issues with their bodies, per source, per telling)
+    to answer a question about the one or two cards a loop names there. This reads only those:
+    the qualified refs of a waiting delivery the board did not already answer — and only for a
+    loop whose every other card IS delivered, because a loop with work still open in its own
+    repository cannot close this round whatever the other repository says. No such loop, no read
+    and no tracker built. The refs are bounded already: only the breakdown writes them, and it
+    files only into the product's `sources:` (`module._filing_repo`). The tracker addresses the
+    repository each ref names, on the credential the card was filed with (`board.read_cards`).
+
+    DELIVERED AS THE BOARD MEANS IT (`triage.Ticket.delivered`): closed, and not as not planned. A
+    card split in another repository reads its parent's own close — not delivered, since the
+    splitter records a split as not delivered (2026-09-19), which predates filing elsewhere — so
+    such a delivery is announced late, by a person closing it, never early: following a split's
+    children in another repository is not done here.
+
+    A READ THAT FAILS IS NOT DELIVERED, AND IS SAID ONCE: one line per telling, naming every ref
+    it could not read. Never a false "it is ready", and never an exception into the round that
+    asked — the next telling asks again."""
+    from openfactory.contracts.refs import split_repo_ref
+    from openfactory.memory import store as loop_store
+    from openfactory.memory.ledger import DELIVERY, waiting
+
+    name = getattr(project, "name", "") or ""
+    try:
+        ask: set[str] = set()
+        for loop in waiting(loop_store.read(name), owner=OWNER):
+            if loop.kind != DELIVERY:
+                continue
+            cards = issues_of(loop)
+            elsewhere = {c for c in cards if split_repo_ref(c)[0] and c not in delivered}
+            if elsewhere and cards - elsewhere <= delivered:
+                ask |= elsewhere
+        if not ask:
+            return set()
+        from openfactory.product.board import read_cards
+
+        read, unread = read_cards(project, sorted(ask))
+    except Exception:  # noqa: BLE001 — not seen is not delivered; the board's answer stands
+        log.warning("[%s] could not ask another repository of the product what was delivered — "
+                    "its cards are counted as not delivered", name, exc_info=True)
+        return set()
+    if unread:
+        log.warning("OPENFACTORY_DELIVERY_UNREAD project=%s refs=%s — these cards of another "
+                    "repository of the product could not be read, so they are counted as NOT "
+                    "delivered and nothing waiting on them is announced; the next telling asks "
+                    "again", name, ",".join(unread))
+    return {t.number for t in read if t.delivered}
+
+
 def card_finished(project, *, card: str) -> list:
     """A JOB ENDED WITH ITS CARD DONE (`activities.record_outcome`): every delivery that completes
     is announced NOW, to its requester's conversation. Returns the ledger rows it wrote.
@@ -390,12 +450,19 @@ def deliver(project, *, delivered: set[str]) -> list:
 
     UNDER THE TELLING LOCK, RE-READ INSIDE IT: whoever comes second finds the loop closed and says
     nothing. The loop closes only once the door TOOK the announcement — one it did not take stays
-    open for the next telling (ADR-0021: closed on observation, never on self-report)."""
+    open for the next telling (ADR-0021: closed on observation, never on self-report).
+
+    `delivered` IS THE BOARD'S ANSWER, and the board is one repository: what a waiting delivery
+    names in another repository of the product is asked here, for both callers, BEFORE the lock —
+    a read of the forge is seconds, and the lock is what every other telling waits on (#492)."""
     from openfactory.memory import store as loop_store
     from openfactory.memory.ledger import DELIVERY, close_by_observation, waiting
     from openfactory.product import followup
 
-    if not _speaks(project) or not delivered:
+    if not _speaks(project):
+        return []
+    delivered = set(delivered or ()) | _delivered_elsewhere(project, set(delivered or ()))
+    if not delivered:
         return []
     name = getattr(project, "name", "") or ""
     written: list = []
