@@ -132,10 +132,11 @@ release/0.5          ●───●─────●────●───�
 
 ## The cycle
 
-A cycle is **three weeks** by default. The release manager sets the cut date as the **due date of
-the milestone** when the milestone opens, so the date is visible next to the scope. What is merged
-on `main` by the cut ships; what is not moves to the next milestone and ships in the next train,
-without holding this one. A `release-blocker` label marks the few issues the cut waits for; the
+A cycle is **three weeks** by default. The release manager sets the **release date** as the **due
+date of the milestone** when the milestone opens, so the date is visible next to the scope. The cut
+comes before it, **two days before by default**, so the first candidate is tested for that long
+before the final (section 4). What is merged on `main` by the cut ships; what is not moves to the
+next milestone and ships in the next train, without holding this one. A `release-blocker` label marks the few issues the cut waits for; the
 release manager decides what earns it.
 
 ### 1. Before the cut (the last days of the cycle)
@@ -175,6 +176,31 @@ release manager decides what earns it.
    - the wheel, as version `x.y.zrcN` on PyPI, with its provenance (the workflow publishes it with
      attestations: the file's page on PyPI shows them);
    - the GitHub release, **marked as a pre-release and not as Latest**, with its assets and `SHA256SUMS`.
+4. **Tell whoever will test it how to install it**, with the commands below. The install line the
+   workflow writes on the release page installs the latest *final* release, not the candidate.
+
+#### Installing a candidate
+
+Only somebody who names the candidate gets it:
+
+- **A new installation:**
+  ```bash
+  curl -fsSL https://github.com/Open-Factory-Digital/openfactory-core/releases/download/vx.y.z-rc.N/install.sh -o install.sh
+  sh install.sh --version vx.y.z-rc.N
+  ```
+  This is the candidate's own installer, the one `SHA256SUMS` lists.
+- **Upgrading an existing installation**, such as a staging box:
+  ```bash
+  sh install.sh --version vx.y.z-rc.N --dir <the installation's directory> --force
+  ```
+  - `--force` keeps every value in the installation's `.env.compose` and moves only its pinned
+    version.
+  - Without `--no-run`, the installer starts the stack on the candidate's images.
+- **The wheel:** `pip install openfactory==x.y.zrcN`, PyPI's spelling of the candidate. A plain
+  `pip install openfactory` keeps resolving the last final release.
+- **Back to the last final release:** the same upgrade command with that release's tag. This
+  direction is **not rehearsed**: what the candidate wrote stays where it is. Take a backup of the
+  installation before trying a candidate on it.
 
 ### 4. Verifying a candidate
 
@@ -196,9 +222,15 @@ tracking issue.
 - **A real deployment**, when one is available for it (a staging box), at the release manager's
   call.
 
+**How long a candidate is tested.** The first candidate is tested at least until the milestone's
+due date, the release date. A later candidate (`rc.N+1`) is tested for at least two days, or until
+the due date when that is later. The release manager may lengthen this, and records why in the
+tracking issue.
+
 A defect found here is fixed on `main`, backported, and becomes the next candidate (`rc.N+1`).
-Nothing is tagged final while a defect found in a candidate is open, unless the release manager
-records in the tracking issue why it ships anyway and what the workaround is.
+Nothing is tagged final before the candidate's testing time is over, nor while a defect found in a
+candidate is open, unless the release manager records in the tracking issue why it ships anyway
+and what the workaround is.
 
 ### 5. The final release
 
@@ -283,6 +315,7 @@ labelled (`Release x.y.z`), on the release's milestone:
 - [ ] Upgrade rehearsal from v<previous>: <result>
 - [ ] Fresh install of the candidate: <result>
 - [ ] End-to-end bed against the candidate: <result>
+- [ ] Candidate tested until <date>, and no defect found in a candidate is open
 - [ ] Final version declared (#…) with the release notes
 - [ ] vx.y.z tagged, published, Latest; curated notes on the release page
 - [ ] Milestone closed; next milestone open with its due date
