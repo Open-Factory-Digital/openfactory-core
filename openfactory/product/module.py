@@ -5724,7 +5724,8 @@ def _with_criteria(body: str, answer: dict, *, agent: str = "",
         parts += ["", "## Out of scope", ""] + [f"- {c}" for c in answer["out_of_scope"]]
     if answer.get("questions"):
         parts += ["", "## Open questions", ""] + [f"- {q}" for q in answer["questions"]]
-    parts += ["", f"_{signature(agent)} {_pick(_CRITERIA_FROM_WHAT_WAS_THERE, language)}_"]
+    parts += ["", f"_{signature(agent, language=language)} "
+                  f"{_pick(_CRITERIA_FROM_WHAT_WAS_THERE, language)}_"]
     return "\n".join(parts)
 
 

@@ -13,7 +13,7 @@ The claims:
   2. **The voice picks the note in the language it is handed, and names the card with
      `ref_label`.** Rows 8-14: a closing note, a survivor note, the questions' heading and the
      re-point's "at the request of" pinned to one language; the closing note naming the surviving
-     card bare; nobody named as "o time" in every language; the refine's count composed as
+     card bare; who asked said in Portuguese everywhere; the refine's count composed as
      "N critérios" again.
   3. **The capability write answers in the language its caller passes.** Row 15: the module
      stops handing it the project's; row 16: the retired capability ignores it; row 17: the name
@@ -21,6 +21,12 @@ The claims:
   4. **The guard reads the notes and `capabilities.py`.** Rows 18-19 compose a note in the
      module — the refine's comment, the removal's `"note"` for the card's door; row 20 puts git's
      output back into the capability write's detail. Only the guard sees those as such.
+  5. **Portuguese contracts the preposition with the article it is handed** (review of the first
+     cut). Rows 21-22 put the composition back: "a pedido de o time", "registrado em o cartão".
+  6. **The signature is in the card's language** (the same review). Rows 23-24 pin `signature` to
+     one language each way; rows 25-28 drop the language at a call site — the hand-back's, the
+     criteria line's, the correction's and the stamp's — which the call-site guard sees whatever
+     the default is.
 """
 
 TEST = "tests/test_the_card_notes_speak_the_projects_language.py"
@@ -77,8 +83,8 @@ MUTATIONS = [
 
     # ── the voice picks the language it is handed, and names the card ──────────────────────────
     ("the closing note is Portuguese whatever the project speaks", VOICE,
-     '    note = _pick(catalogue, language).format(sig=signature(agent_name),',
-     '    note = _pick(catalogue, "pt-BR").format(sig=signature(agent_name),'),
+     '    note = _pick(catalogue, language).format(sig=signature(agent_name, language=language),',
+     '    note = _pick(catalogue, "pt-BR").format(sig=signature(agent_name, language=language),'),
 
     ("the survivor note is Portuguese whatever the project speaks", VOICE,
      '    return _pick(_SURVIVOR_NOTE, language).format(',
@@ -96,13 +102,13 @@ MUTATIONS = [
      '                                             ref=ref_label(in_favour_of))',
      '                                             ref=in_favour_of)'),
 
-    ("a close nobody named is \"o time\" in every language", VOICE,
-     '                                             who=actor or _pick(_THE_TEAM, language),\n',
-     '                                             who=actor or "o time",\n'),
+    ("who asked is said in Portuguese whatever the project speaks", VOICE,
+     '    said = _pick(_REQUESTED_BY, language)\n',
+     '    said = _pick(_REQUESTED_BY, "pt-BR")\n'),
 
     ("the refine note counts \"N critérios\" again, in every language and for one", VOICE,
-     '        sig=signature(agent_name), criteria=criteria_counted(criteria, language=language))',
-     '        sig=signature(agent_name), criteria=f"{criteria} critérios")'),
+     '        criteria=criteria_counted(criteria, language=language))',
+     '        criteria=f"{criteria} critérios")'),
 
     # ── the capability write ───────────────────────────────────────────────────────────────────
     ("the module stops handing the capability write the project's language", MOD,
@@ -141,4 +147,37 @@ MUTATIONS = [
      '            return WriteResult(ok=False,\n'
      '                               detail=f"could not clone {docs_repo}: {_scrub(out)[-200:]}")',
      GUARD),
+
+    # ── second commit: the contraction, and the signature in the card's language ─────────────
+    ("nobody named is \"de o time\" again — the preposition composed with the article", VOICE,
+     '    "pt-BR": {"person": "de {actor}", "nobody": "do time"},',
+     '    "pt-BR": {"person": "de {actor}", "nobody": "de o time"},'),
+
+    ("an acceptance is \"registrado em o cartão\" again", VOICE,
+     '        cards=_named_cards(cards, language, _ON_CARDS))',
+     '        cards="em " + _named_cards(cards, language))'),
+
+    ("the signature is Portuguese whatever the card speaks", VOICE,
+     '    said = _pick(_SIGNATURE, language)\n',
+     '    said = _pick(_SIGNATURE, "pt-BR")\n'),
+
+    ("the signature is English whatever the card speaks", VOICE,
+     '    said = _pick(_SIGNATURE, language)\n',
+     '    said = _pick(_SIGNATURE, "en")\n'),
+
+    ("the hand-back's signature is handed no language", "openfactory/product/needs_action.py",
+     '    return signature(agent_name, language=language)',
+     '    return signature(agent_name)'),
+
+    ("the criteria's signature line is handed no language", MOD,
+     '    parts += ["", f"_{signature(agent, language=language)} "',
+     '    parts += ["", f"_{signature(agent)} "'),
+
+    ("the correction note's signature is handed no language", VOICE,
+     '        sig=signature(agent_name, language=language), what=words["and"].join(parts),',
+     '        sig=signature(agent_name), what=words["and"].join(parts),'),
+
+    ("the stamp's signature is handed no language", VOICE,
+     '        sig=signature(agent_name, language=language), actor=bare_actor, day=day,',
+     '        sig=signature(agent_name), actor=bare_actor, day=day,'),
 ]

@@ -354,10 +354,11 @@ def confirm_in_repository(*, docs_repo: str, clone_url: str, slug: str, flow: Fl
     THE SENTENCE IS THE VOICE'S, IN THE CONVERSATION'S LANGUAGE (#538). `language` is what the
     caller speaks — `ProductModule.confirm_capability` passes the project's, as every other write
     of the product's record does (#513) — and every detail below is a `record_said` entry. They
-    were Portuguese literals here, so an English conversation read "esse nome não é o de uma
-    capacidade" beside the module's own English for the same refusal. A clone, a commit or a push
-    that failed is the team's to read, not the person's: its output goes to the log, and the person
-    reads that nothing changed — what `confirm_capability` already says when the write raises."""
+    were Portuguese literals here, so an English conversation read, in Portuguese, "that name is
+    not the name of a capability" beside the module's own English for the same refusal. A clone, a
+    commit or a push that failed is the team's to read, not the person's: its output goes to the
+    log, and the person reads that nothing changed — what `confirm_capability` already says when
+    the write raises."""
     import shutil
 
     from openfactory.product.authoring import WriteResult, _git, _scrub

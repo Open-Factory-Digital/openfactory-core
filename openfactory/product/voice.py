@@ -745,8 +745,8 @@ _ONLY_THE_REQUESTER_CONFIRMS = {
            "yours."),
 }
 _ACCEPTANCE_STAMPED = {
-    "pt-BR": "O aceite ficou registrado em {cards}, em seu nome.",
-    "en": "The acceptance is recorded on {cards}, in your name.",
+    "pt-BR": "O aceite ficou registrado {cards}, em seu nome.",
+    "en": "The acceptance is recorded {cards}, in your name.",
 }
 _ACCEPTANCE_NOT_STAMPED = {
     "pt-BR": ("O acordo vale. Só não consegui registrá-lo no cartão agora — o time foi avisado e "
@@ -756,11 +756,16 @@ _ACCEPTANCE_NOT_STAMPED = {
 }
 _CARDS_WORD = {"pt-BR": ("o cartão {one}", "os cartões {many}"),
                "en": ("card {one}", "cards {many}")}
+#: The same cards after "em", as two entries and never "em" + `_CARDS_WORD`: Portuguese contracts
+#: the preposition with the article ("no cartão", "nos cartões"), and composed it read "registrado
+#: em o cartão #12" (#538, the rule `_AGENDA_WHO` states).
+_ON_CARDS = {"pt-BR": ("no cartão {one}", "nos cartões {many}"),
+             "en": ("on card {one}", "on cards {many}")}
 _AND = {"pt-BR": " e ", "en": " and "}
 
 
-def _named_cards(cards: list[str], language: str | None) -> str:
-    one, many = _pick(_CARDS_WORD, language)
+def _named_cards(cards: list[str], language: str | None, words=None) -> str:
+    one, many = _pick(words or _CARDS_WORD, language)
     refs = [ref_label(c) for c in cards]
     if len(refs) == 1:
         return one.format(one=refs[0])
@@ -790,7 +795,7 @@ def acceptance_stamp(*, number: int, actor: str, day: str, where: str, requester
     if bare_requester and bare_requester != bare_actor:
         behalf = _pick(_ON_BEHALF, language).format(requester=bare_requester)
     return _pick(_ACCEPTANCE_STAMP, language).format(
-        sig=signature(agent_name), actor=bare_actor, day=day,
+        sig=signature(agent_name, language=language), actor=bare_actor, day=day,
         where=where or "", behalf=behalf, number=number).replace(" ,", ",").replace("  ", " ")
 
 
@@ -804,7 +809,8 @@ def only_the_requester_confirms(*, language: str | None = None) -> str:
 
 
 def acceptance_stamped(*, cards: list[str], language: str | None = None) -> str:
-    return _pick(_ACCEPTANCE_STAMPED, language).format(cards=_named_cards(cards, language))
+    return _pick(_ACCEPTANCE_STAMPED, language).format(
+        cards=_named_cards(cards, language, _ON_CARDS))
 
 
 def acceptance_not_stamped(*, language: str | None = None) -> str:
@@ -1641,13 +1647,27 @@ def question_for(kind: str, language: str | None = None) -> str:
         language)
 
 
-def signature(agent_name: str = "") -> str:
+#: How the agent signs what it writes on a ticket — the role's name is prose, in the language of
+#: the card it heads (#538). It was "(produto)" on every project, so an English project's card read
+#: an English note under a Portuguese signature once the notes themselves were translated.
+_SIGNATURE = {
+    "pt-BR": {"named": "**{name} (produto):**", "role": "**Produto:**"},
+    "en": {"named": "**{name} (product):**", "role": "**Product:**"},
+}
+
+
+def signature(agent_name: str = "", *, language: str | None = None) -> str:
     """How the agent signs what it writes on a ticket.
 
     Names the ROLE as well as the person: the team reads these, and "Nina" alone tells a new joiner
-    nothing about why the comment exists."""
+    nothing about why the comment exists.
+
+    `language` IS THE CARD'S, which is the project's: every caller writes on a card and hands its
+    own (`tests/test_the_card_notes_speak_the_projects_language.py` holds each one to it). It
+    defaults like every entry here, to English, rather than to the Portuguese it used to be."""
     name = (agent_name or "").strip()
-    return f"**{name} (produto):**" if name else "**Produto:**"
+    said = _pick(_SIGNATURE, language)
+    return said["named"].format(name=name) if name else said["role"]
 
 
 #: How each triage finding reads to someone who does not run the board. The kinds are the platform's
@@ -3039,26 +3059,39 @@ def survivor_unclear(*, number: str, other: str, language: str | None = None) ->
 # Portuguese, #513 having fixed only their `#`: an English project's card said "fechado a pedido
 # de …" about its own closing. `{sig}` is `signature`, `{ref}` a card named by `ref_label`.
 
-#: Who asked, when nobody is named — a caller that passed no actor.
-_THE_TEAM = {"pt-BR": "o time", "en": "the team"}
+#: Who asked, AFTER "a pedido" — the preposition is the entry's, never the template's, because
+#: Portuguese contracts it with the article of what follows (the rule `_AGENDA_WHO` states): a
+#: person is "de U0ADMIN", and nobody named is the team, "do time". Composed as "de {who}" it read
+#: "a pedido de o time" on every close a caller made without an actor.
+_REQUESTED_BY = {
+    "pt-BR": {"person": "de {actor}", "nobody": "do time"},
+    "en": {"person": "of {actor}", "nobody": "of the team"},
+}
+
+
+def _requested_by(actor: str, language: str | None) -> str:
+    said = _pick(_REQUESTED_BY, language)
+    return said["person"].format(actor=actor) if actor else said["nobody"]
+
+
 #: What the closed card is left saying. Written for whoever opens it in six months and asks why the
 #: work disappeared — so it names the decision, the person, and, when it moved, where it went.
 _CLOSING_NOTE = {
-    "pt-BR": "{sig} fechado a pedido de {who}.",
-    "en": "{sig} closed at the request of {who}.",
+    "pt-BR": "{sig} Fechado a pedido {by}.",
+    "en": "{sig} Closed at the request {by}.",
 }
 _CLOSING_NOTE_IN_FAVOUR = {
-    "pt-BR": ("{sig} fechado a pedido de {who}, em favor do {ref}: o trabalho passa a ser "
+    "pt-BR": ("{sig} Fechado a pedido {by}, em favor do {ref}: o trabalho passa a ser "
               "acompanhado lá."),
-    "en": ("{sig} closed at the request of {who}, in favour of {ref}: the work is followed there "
+    "en": ("{sig} Closed at the request {by}, in favour of {ref}: the work is followed there "
            "now."),
 }
 #: The other half of the link. Without it the surviving card never learns it absorbed something,
 #: and whoever picks it up works from half the conversation.
 _SURVIVOR_NOTE = {
-    "pt-BR": ("{sig} o {ref} foi fechado em favor deste, a pedido de {who}. Se havia algo escrito "
+    "pt-BR": ("{sig} O {ref} foi fechado em favor deste, a pedido {by}. Se havia algo escrito "
               "lá que não está aqui, vale trazer antes de começar."),
-    "en": ("{sig} {ref} was closed in favour of this one, at the request of {who}. If something "
+    "en": ("{sig} {ref} was closed in favour of this one, at the request {by}. If something "
            "was written there that is not here, bring it over before starting."),
 }
 
@@ -3068,8 +3101,8 @@ def closing_note(*, in_favour_of: str | None, actor: str, reason: str = "",
     """What the closed card is left saying: who asked, where the work went when it moved, and the
     reason in the words it was given — never translated, because it is somebody's."""
     catalogue = _CLOSING_NOTE_IN_FAVOUR if in_favour_of else _CLOSING_NOTE
-    note = _pick(catalogue, language).format(sig=signature(agent_name),
-                                             who=actor or _pick(_THE_TEAM, language),
+    note = _pick(catalogue, language).format(sig=signature(agent_name, language=language),
+                                             by=_requested_by(actor, language),
                                              ref=ref_label(in_favour_of))
     if reason:
         note += f"\n\n{reason.strip()}"
@@ -3079,8 +3112,9 @@ def closing_note(*, in_favour_of: str | None, actor: str, reason: str = "",
 def survivor_note(*, closed: str, actor: str, language: str | None = None,
                   agent_name: str = "") -> str:
     """What the surviving card is told about the card closed in its favour (`closed`, a ref)."""
-    return _pick(_SURVIVOR_NOTE, language).format(sig=signature(agent_name), ref=ref_label(closed),
-                                                  who=actor or _pick(_THE_TEAM, language))
+    return _pick(_SURVIVOR_NOTE, language).format(sig=signature(agent_name, language=language),
+                                                  ref=ref_label(closed),
+                                                  by=_requested_by(actor, language))
 
 
 # ── correcting a card this role opened (#156) ───────────────────────────────────────────────────
@@ -3257,7 +3291,8 @@ def correction_note(*, kind: str, actor: str, old_text: str = "", old_title: str
              + ([words["bar"]] if bar_changed else []))
     before = _pick(_CORRECTION_BEFORE, language)
     note = _pick(_CORRECTION_NOTE, language).format(
-        sig=signature(agent_name), what=words["and"].join(parts), actor=actor)
+        sig=signature(agent_name, language=language), what=words["and"].join(parts),
+        actor=actor)
     if bar_changed and with_a_pass:
         note += before["with_a_pass"]
     if title_changed and old_title.strip():
@@ -3655,7 +3690,7 @@ def change_accepted_note(*, by: str, head: str, pr_url: str, merging: bool = Fal
     """What the card says once its requester accepted the change: who, on which head of which
     change — and that the factory merges it, when the look was all that held it."""
     return _pick(_CHANGE_ACCEPTED_NOTE, language).format(
-        sig=signature(agent_name), by=by, head=f"`{head[:7]}`", pr=pr_url,
+        sig=signature(agent_name, language=language), by=by, head=f"`{head[:7]}`", pr=pr_url,
         merging=_pick(_CHANGE_ACCEPTED_MERGING, language) if merging else "")
 
 
@@ -3833,10 +3868,10 @@ def align_to_dropped_replacement(*, number: str, requirement: int, successor: in
 #: rewritten from that text, and — under `_COULD_NOT_DETERMINE` — what this pass could not answer,
 #: kept in the comment where nothing orders an executor to meet it.
 _ALIGN_NOTE = {
-    "pt-BR": ("{sig} este cartão passou a executar o requisito {requirement}, e reescrevi o que "
+    "pt-BR": ("{sig} Este cartão passou a executar o requisito {requirement}, e reescrevi o que "
               "precisa ser verdade para dá-lo por pronto a partir dele — o texto que ele seguia "
               "antes foi substituído. Corrijam se eu entendi errado."),
-    "en": ("{sig} this card now carries out requirement {requirement}, and I rewrote what has to "
+    "en": ("{sig} This card now carries out requirement {requirement}, and I rewrote what has to "
            "be true to call it done from that text — the one it followed before was replaced. "
            "Correct me if I got it wrong."),
 }
@@ -3849,12 +3884,12 @@ _COULD_NOT_DETERMINE = {
 #: not: whoever picks this card up has to know that what it asks for was written against the older
 #: text, or they will read the new citation and assume somebody checked.
 _REPOINT_NOTE = {
-    "pt-BR": ("{sig} este cartão passou a executar o requisito {successor}{who}: o requisito "
+    "pt-BR": ("{sig} Este cartão passou a executar o requisito {successor}{who}: o requisito "
               "{cited}, que ele citava, foi substituído por aquele.\n\n**O que está escrito aqui "
               "como \"pronto\" continua igual, e foi escrito a partir do texto antigo.** Não "
               "revisei nada disso: rever pode mudar o que vai ser construído, e essa é uma "
               "decisão de vocês, não uma arrumação minha."),
-    "en": ("{sig} this card now carries out requirement {successor}{who}: requirement {cited}, "
+    "en": ("{sig} This card now carries out requirement {successor}{who}: requirement {cited}, "
            "which it cited, was replaced by that one.\n\n**What is written here as \"done\" is "
            "unchanged, and it was written from the older text.** I revised none of it: revising "
            "it can change what gets built, and that is your decision, not tidying of mine."),
@@ -3869,7 +3904,8 @@ def _undetermined(questions, language: str | None) -> str:
 
 def align_note(*, requirement: int, questions=(), language: str | None = None,
                agent_name: str = "") -> str:
-    return (_pick(_ALIGN_NOTE, language).format(sig=signature(agent_name), requirement=requirement)
+    return (_pick(_ALIGN_NOTE, language).format(sig=signature(agent_name, language=language),
+                                                requirement=requirement)
             + _undetermined(questions, language))
 
 
@@ -3877,8 +3913,8 @@ def repoint_note(*, cited: int, successor: int, actor: str = "", language: str |
                  agent_name: str = "") -> str:
     """Re-pointed by the platform, nobody is named; at somebody's request, they are."""
     who = _pick(_REPOINT_WHO, language).format(actor=actor) if actor else ""
-    return _pick(_REPOINT_NOTE, language).format(sig=signature(agent_name), successor=successor,
-                                                 who=who, cited=cited)
+    return _pick(_REPOINT_NOTE, language).format(sig=signature(agent_name, language=language),
+                                                 successor=successor, who=who, cited=cited)
 
 
 #: What `refine` says when the card already states what must be true. THE REFUSAL IS RIGHT — it
@@ -3976,10 +4012,10 @@ def criteria_written(*, number: str, measure: str = "", noted: bool = True,
 #: from what, and what it could not determine. `{criteria}` is `criteria_counted`, so one is "1
 #: critério" and "1 criterion" rather than the "1 critérios" this said when it was module prose.
 _REFINE_NOTE = {
-    "pt-BR": ("{sig} este item não dizia quando estaria pronto, então seria recusado na entrada. "
+    "pt-BR": ("{sig} Este item não dizia quando estaria pronto, então seria recusado na entrada. "
               "Escrevi {criteria} a partir do que já estava descrito — corrijam se eu entendi "
               "errado."),
-    "en": ("{sig} this item did not say when it would be done, so pickup would have refused it. "
+    "en": ("{sig} This item did not say when it would be done, so pickup would have refused it. "
            "I wrote {criteria} from what was already described — correct me if I got it wrong."),
 }
 
@@ -3987,7 +4023,8 @@ _REFINE_NOTE = {
 def refine_note(*, criteria: int, questions=(), language: str | None = None,
                 agent_name: str = "") -> str:
     return (_pick(_REFINE_NOTE, language).format(
-        sig=signature(agent_name), criteria=criteria_counted(criteria, language=language))
+        sig=signature(agent_name, language=language),
+        criteria=criteria_counted(criteria, language=language))
         + _undetermined(questions, language))
 
 

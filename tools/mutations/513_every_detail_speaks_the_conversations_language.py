@@ -68,12 +68,11 @@ MUTATIONS = [
      '            return False, release_said("not_waiting", ref=issue, language=lang)',
      '            return False, f"o #{issue} não está mais esperando essa liberação."'),
 
-    # re-pinned 2026-10-05: the survivor note moved from the module into the voice (#538)
+    # re-pinned 2026-10-05: the survivor note moved from the module into the voice, and its
+    # signature takes the card's language (#538)
     ("the note on the surviving card says `o #DAR-9` — no detail reaches it, only the guard", VOICE,
-     '    return _pick(_SURVIVOR_NOTE, language).format(sig=signature(agent_name), '
-     'ref=ref_label(closed),',
-     '    return _pick(_SURVIVOR_NOTE, language).format(sig=signature(agent_name), '
-     'ref=f"#{closed}",'),
+     '                                                  ref=ref_label(closed),\n',
+     '                                                  ref=f"#{closed}",\n'),
 
     ("the cards a batch boundary left are joined with `#` in the module again", MOD,
      '            trailer = queue_said("left_for_later", cards=[i.ticket for i in cut], '
