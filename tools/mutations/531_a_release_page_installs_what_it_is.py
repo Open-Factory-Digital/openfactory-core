@@ -11,10 +11,11 @@ SCRIPT = "scripts/release-page-body.sh"
 WORKFLOW = ".github/workflows/release.yml"
 
 MUTATIONS = [
+    # re-pinned 2026-10-05: the candidate branch now opens by naming its tracking issue's version
     ("THE DEFECT: a candidate's page prints the one-line install, which installs the last final",
      SCRIPT,
-     "    *-*)\n        cat <<EOF\n### Install this release candidate\n",
-     "    *-never-*)\n        cat <<EOF\n### Install this release candidate\n"),
+     "    *-*)\n        # the version this candidate leads to",
+     "    *-never-*)\n        # the version this candidate leads to"),
 
     ("a candidate's page installs it without naming it", SCRIPT,
      "sh install.sh --version ${tag}\n${fence}\n",
@@ -27,6 +28,11 @@ MUTATIONS = [
     ("the page is written for a tag the workflow did not push", WORKFLOW,
      "          TAG: ${{ github.ref_name }}\n          # the page names the wheel",
      "          TAG: v0.0.0\n          # the page names the wheel"),
+
+    # review of #530: a candidate's page points its testers at the release's tracking issue
+    ("a candidate's page points at the tracking issue of the version before it", SCRIPT,
+     "        final=${final%%-*}\n",
+     "        final=${final%.*}\n"),
 
     ("a paragraph on the page is wrapped, and renders as broken lines", SCRIPT,
      "**This is a pre-release, for testing.** The one-line install keeps installing the latest "

@@ -44,6 +44,9 @@ def test_a_candidates_page_installs_the_candidate_by_name(tag, wheel):
     assert f"sh install.sh --version {tag} --dir <the installation's directory> --force" in page
     assert f"pip install openfactory=={wheel}" in page, page
     assert "pre-release" in page and "not rehearsed" in page, page
+    version = tag[1:].split("-", 1)[0]
+    assert f"the tracking issue **Release {version}**" in page, page
+    assert f"%22Release+{version}%22" in page, "the link does not search for its tracking issue"
     assert ONE_LINE not in page, "a candidate's page tells its testers to install the last final"
 
 

@@ -213,7 +213,9 @@ release manager decides what earns it.
    The workflow writes them (`scripts/release-page-body.sh`, #531). A release line cut before
    that change, such as 0.5, prints the one-line install on a candidate's page, which installs the
    last *final* release. On such a line, the release manager replaces the page's install block by
-   hand with the commands below, as was done for `v0.5.0-rc.1`.
+   hand with the commands below, as was done for `v0.5.0-rc.1`, or backports
+   `scripts/release-page-body.sh` and its workflow step with the fixes of the line's next
+   candidate.
 5. **Tell whoever will test it** where the release page is, and to report what they find in the
    tracking issue.
 
@@ -245,11 +247,20 @@ Only somebody who names the candidate gets it:
 
 Going back from a candidate is not rehearsed, so a test on an installation somebody relies on
 starts with a backup, and an installation that misbehaves goes back by restoring it. An
-installation is two files and five Docker volumes:
+installation is everything `docker-compose.yml` mounts that the stack writes, and the two files
+beside it:
 - **the files**, `.env.compose` and `docker-compose.yml`. The installer replaces
   `docker-compose.yml` with the candidate's, so both are kept;
-- **the volumes**, which Compose names `openfactory_<volume>` because `docker-compose.yml` says
-  `name: openfactory`.
+- **the Docker volumes**, which Compose names `openfactory_<volume>` because `docker-compose.yml`
+  says `name: openfactory` (so the volume `openfactory_state` is `openfactory_openfactory_state`);
+- **two directories of the host**, which `.env.compose` names:
+  - `OPENFACTORY_WORK_DIR`, a job's files while it runs (unset: `/var/lib/openfactory-work`);
+  - `OPENFACTORY_REPOS_DIR`, the working clones the worker and the panel share (unset:
+    `$HOME/openfactory/repos`).
+
+`OPENFACTORY_GUIDELINES_DIR` is mounted read-only: the stack never writes it, so it needs no
+backup. `tests/test_a_backup_covers_everything_the_stack_writes.py` holds this list to
+`docker-compose.yml`, so a mount added there fails the suite until this section names it.
 
 **The backup**, from the installation's directory:
 
@@ -260,6 +271,11 @@ cp -p docker-compose.yml docker-compose.yml.backup
 for v in temporal_db openfactory_state openfactory_toolbox openfactory_repos openfactory_logs; do
   docker run --rm -v "openfactory_$v:/v:ro" -v "$PWD:/b" busybox tar czf "/b/backup-$v.tgz" -C /v .
 done
+setting() { v=$(sed -n "s/^$1=//p" .env.compose | tail -n 1 | tr -d "\"'"); echo "${v:-$2}"; }
+WORK=$(setting OPENFACTORY_WORK_DIR /var/lib/openfactory-work)
+REPOS=$(setting OPENFACTORY_REPOS_DIR "$HOME/openfactory/repos")
+tar czf backup-work-dir.tgz -C "$WORK" .
+tar czf backup-repos-dir.tgz -C "$REPOS" .
 docker compose --env-file .env.compose start
 ```
 
@@ -273,12 +289,21 @@ for v in temporal_db openfactory_state openfactory_toolbox openfactory_repos ope
   docker run --rm -v "openfactory_$v:/v" -v "$PWD:/b" busybox \
     sh -c "cd /v && find . -mindepth 1 -delete && tar xzf /b/backup-$v.tgz"
 done
+setting() { v=$(sed -n "s/^$1=//p" .env.compose | tail -n 1 | tr -d "\"'"); echo "${v:-$2}"; }
+WORK=$(setting OPENFACTORY_WORK_DIR /var/lib/openfactory-work)
+REPOS=$(setting OPENFACTORY_REPOS_DIR "$HOME/openfactory/repos")
+(cd "$WORK" && find . -mindepth 1 -delete) && tar xzf backup-work-dir.tgz -C "$WORK"
+(cd "$REPOS" && find . -mindepth 1 -delete) && tar xzf backup-repos-dir.tgz -C "$REPOS"
 docker compose --env-file .env.compose up -d
 ```
 
-The restored files pin the previous release and describe its stack, so `up -d` runs it again.
-The round trip was checked on a scratch volume on 2026-10-05, including a hidden file, a changed
-file and a new file. It has not been run on a whole installation.
+- The restored files pin the previous release and describe its stack, so `up -d` runs it again.
+- A directory created by root (the old `/var/lib/openfactory-work` default) is read and written
+  with `sudo`.
+- The commands were checked on 2026-10-05 on scratch copies: a volume, and the two directories
+  read from an `.env.compose` that sets one and leaves the other to its default. The checks
+  covered a hidden file, a changed file and a new file. They have not been run on a whole
+  installation.
 
 ### 4. Verifying a candidate
 

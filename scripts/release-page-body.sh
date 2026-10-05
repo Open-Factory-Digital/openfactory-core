@@ -35,6 +35,9 @@ esac
 
 case "$tag" in
     *-*)
+        # the version this candidate leads to, `v0.5.0-rc.1` → `0.5.0`, which names its tracking issue
+        final=${tag#v}
+        final=${final%%-*}
         cat <<EOF
 ### Install this release candidate
 
@@ -52,6 +55,8 @@ sh install.sh --version ${tag} --dir <the installation's directory> --force
 ${fence}
 
 Going back to the last final release is the same command with its tag, and it is not rehearsed: take a backup of the installation first.
+
+What to test, and where to report it: the tracking issue **Release ${final}** in [this repository's issues](${repo}/issues?q=is%3Aissue+in%3Atitle+%22Release+${final}%22).
 EOF
         # PyPI's spelling of a candidate: `v0.5.0-rc.1` is published as `0.5.0rc1`
         wheel=$(printf '%s\n' "${tag#v}" | sed -n 's/^\([0-9][0-9.]*\)-rc\.\([0-9][0-9]*\)$/\1rc\2/p')
