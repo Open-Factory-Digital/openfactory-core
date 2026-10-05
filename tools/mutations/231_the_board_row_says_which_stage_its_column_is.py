@@ -76,9 +76,12 @@ MUTATIONS = [
      "    if board is not None and callable(getattr(board, \"stage_key\", None)):"),
 
     # ── 4. the refusal that stays ──────────────────────────────────────────────────────────────
+    # re-pinned 2026-10-06: since #521 the door says the same refusal, so the test through
+    # `card_edit` passes with this gate gone; the gate is asked directly (review of #539)
     ("a column nobody maps is judged anyway, as if it were the operator's", CATALOG,
      "    key = stage_key(board, column)\n    if not key:",
-     "    key = stage_key(board, column)\n    if False:"),
+     "    key = stage_key(board, column)\n    if False:",
+     "tests/test_an_azure_stock_board_queues_its_cards.py"),
 
     ("the refusal goes back to naming one option, which on a Jira board is a remedy that changes "
      "nothing", CATALOG,

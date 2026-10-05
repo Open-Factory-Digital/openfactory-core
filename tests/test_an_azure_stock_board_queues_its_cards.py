@@ -212,6 +212,22 @@ def test_the_panels_move_refuses_with_the_same_sentence(azure, monkeypatch):
     assert site.patched == []
 
 
+def test_card_moves_own_gate_refuses_an_unmapped_column_before_the_door_is_asked(azure):
+    """The review of #539: since #521 the door says the same sentence, so a test through
+    `card_move` passes whether `_stage`'s gate refuses or the door does. Asked directly, the gate
+    must answer the refusal itself, with no key, before any transition is attempted."""
+    from openfactory.actions.catalog import _stage
+    from openfactory.product.voice import card_unmapped
+
+    project, board, _site = azure(MAPPED)
+
+    stage = _stage(project, board, "412")
+
+    assert stage.key == "" and stage.column == "New", stage
+    assert stage.cannot_tell == card_unmapped(ref="412", column="New", option="columns",
+                                              language=project.language), stage
+
+
 def test_and_with_the_line_the_panel_queues_it_too(azure, monkeypatch):
     _project, _board, site = azure(REPAIRED)
     monkeypatch.setattr("openfactory.adapters.tracker.registry.build_tracker",
