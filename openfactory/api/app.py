@@ -2634,10 +2634,27 @@ def cost_metrics(project: str | None = None) -> dict:
     """The PER-PROJECT cost dashboard payload — spend by period / model / harness / role + a
     per-task table, from the metrics table (observability.metrics). `project` scopes it (defaults
     to the first project). Best-effort: empty series when the table is unset/unreadable, so the
-    Costs view renders 'no data yet' instead of erroring."""
+    Costs view renders 'no data yet' instead of erroring.
+
+    AND THE PROJECT'S AUTONOMY (#85), under `autonomy`, its sentences in the project's language —
+    a block of this route rather than a route of its own: what it measures is the operator's, like
+    the spend beside it, and this route is already withheld from the product role whole
+    (`product/model.py`, `EXCLUDED`)."""
     from openfactory.api.metrics_view import cost_dashboard
 
-    return cost_dashboard(project=project)
+    return cost_dashboard(project=project, language_of=_project_language)
+
+
+def _project_language(name: str) -> str | None:
+    """The language `name` speaks first, or `None` (English) for a project this registry does not
+    hold — the dashboard lists every project the store has rows for, de-registered ones among
+    them, and a sentence in the default language is better than no dashboard."""
+    try:
+        return getattr(ProjectRegistry().get(name), "language", None)
+    except Exception:  # noqa: BLE001 — an unknown or unreadable registry entry speaks the default
+        log.info("no registered project %r to take a language from — the dashboard speaks the "
+                 "default", name, exc_info=True)
+        return None
 
 
 @app.get("/api/jobs/{project}/{issue}/events")
