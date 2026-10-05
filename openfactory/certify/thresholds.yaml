@@ -1,0 +1,61 @@
+# The thresholds `openfactory certify verify` holds an evidence pack to (#356).
+#
+# SHIPPED WITH THE CORE, so a partner rehearsing on a laptop and the submissions bot read the same
+# numbers from the same version. `--thresholds <file>` REPLACES this file whole — it is how the
+# program publishes a change before a release carries it — and the bot runs with this file or
+# the program's, never a partner's.
+#
+# Each threshold has an id (what the result line says), a `check` (one of the checks
+# `openfactory/certify/verify.py` implements, in its `CHECKS` table) and that check's parameters.
+# A check this build does not implement, a parameter it does not take, or a value of the wrong
+# kind is refused before any pack is read: a threshold nothing enforces must not read as met.
+#
+# What none of them can be told, whatever this file says: an `unknown` control is never a pass,
+# and an outcome that was not measured fails its threshold as "not measured", never as a zero.
+
+schema: openfactory.certify.thresholds/1
+
+thresholds:
+  # Every C-* control the profile requires is `pass`. `info` is accepted because it is what
+  # C-CONCURRENCY answers above one job at a time — recorded, never a failure. Which controls a
+  # profile requires is the core's table (`controls.PROFILES`), never the pack's own `required`.
+  - id: T-CONTROLS
+    check: required_controls
+    accept: [pass, info]
+
+  # The security controls never `fail`, on any profile.
+  - id: T-SECURITY
+    check: never_fail
+    controls: [C-PANEL, C-ENVFILE, C-WORKFLOWS, C-BOX-ENV]
+
+  # At least 20 jobs ended in the window...
+  - id: T-JOBS
+    check: min_jobs
+    min: 20
+
+  # ...and at least half of them reached the merge.
+  - id: T-MERGED
+    check: min_merged_share
+    min: 0.5
+
+  # Parks the tech-lead could not classify are under 10% of the jobs.
+  - id: T-UNKNOWN-PARKS
+    check: unknown_parks_below
+    share: 0.1
+
+  # No card has waited in Needs Action for more than 7 days.
+  - id: T-NEEDS-ACTION
+    check: needs_action_within
+    days: 7
+
+  # Every repository's box proof is current.
+  - id: T-PROOFS
+    check: proofs_current
+
+  # The running version is the latest release or the one before (C-VERSION).
+  - id: T-VERSION
+    check: version_current
+
+  # The pack names the partner's engineer who answers for the deployment.
+  - id: T-PRACTITIONER
+    check: practitioner_named

@@ -45,6 +45,9 @@ UNSIGNED_BECAUSE = ("minisign signing is not built yet: this pack carries no pac
 OUTCOMES_UNREAD = ("the outcome aggregates were not read for this pack: nothing bound the "
                    "deployment's journals and metrics store to it")
 
+#: The file that lists the SHA-256 of every other file in the pack, in `sha256sum`'s own format.
+SUMS_FILE = "SHA256SUMS"
+
 #: What a reader must not look for in this pack, said in the pack.
 NOT_YET = (
     "a signature: minisign signing is not built yet, so there is no pack.sig",
@@ -504,8 +507,25 @@ def assemble(reading: c.Reading, *, profile: str, partner: str, practitioner: st
     leaked = _survivors(redactor, ordered)
     if leaked:
         raise Unsafe("the pack would carry what it must not — " + "; ".join(leaked))
+    # LAST, AND OUTSIDE THE CHECK ABOVE ON PURPOSE: it holds nothing but the digests of the files
+    # just checked and their names — which `pack.json` already carries as its `checksums` keys,
+    # read above — and a 64-character digest is exactly the shape the long-token rule drops.
+    ordered[SUMS_FILE] = sha256sums(ordered)
     return Pack(files=ordered, document=document, controls=results, salt_id=redactor.salt_id,
                 when=when, notes=notes)
+
+
+def sha256sums(files: dict[str, str]) -> str:
+    """`SHA256SUMS`: every other file's SHA-256 and its name, one per line, in `sha256sum`'s own
+    format — so an extracted pack checks with `sha256sum -c SHA256SUMS` and nothing of ours.
+
+    WHY A SECOND LIST BESIDE `pack.json`'s `checksums`. That one cannot hold `pack.json` itself —
+    a file cannot carry its own digest — so a `pack.json` edited after it was written was invisible
+    to it. This one covers every file in the pack, `pack.json` among them, and it is the one file a
+    signature will sign when signing is built: one signature over it attests every byte of the
+    pack (`certify verify` checks both lists, and that they agree)."""
+    return "".join(f"{hashlib.sha256(text.encode('utf-8')).hexdigest()}  {path}\n"
+                   for path, text in sorted(files.items()) if path != SUMS_FILE)
 
 
 def _measured(reading: c.Reading, since: datetime, until: datetime) -> dict:

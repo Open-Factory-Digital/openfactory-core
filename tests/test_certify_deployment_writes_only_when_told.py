@@ -92,7 +92,7 @@ def test_dry_run_prints_the_entire_pack_and_writes_nothing(tmp_path, monkeypatch
     assert _listing(tmp_path) == before, "a dry run wrote something"
     files = bed.files_of(result.output)
     document = bed.pack_json(files)
-    assert set(document["checksums"]) | {"pack.json"} == set(files), (
+    assert set(document["checksums"]) | {"pack.json", pack.SUMS_FILE} == set(files), (
         "the dry run did not print every file the pack holds")
     assert "nothing was written" in result.output
     assert not list(deploy.glob("*.tgz"))
@@ -126,7 +126,14 @@ def test_yes_writes_a_tarball_that_validates_and_whose_checksums_hold(tmp_path, 
                               f"{document['generated_at'][:10]}.tgz"
     for name, digest in document["checksums"].items():
         assert digest == "sha256:" + hashlib.sha256(files[name]).hexdigest(), name
-    assert set(files) == set(document["checksums"]) | {"pack.json"}
+    assert set(files) == set(document["checksums"]) | {"pack.json", pack.SUMS_FILE}
+    # SHA256SUMS COVERS WHAT pack.json's LIST CANNOT: pack.json itself, and every other file —
+    # in `sha256sum -c`'s own format.
+    sums = dict(reversed(line.split("  ", 1))
+                for line in files[pack.SUMS_FILE].decode().splitlines())
+    assert set(sums) == set(files) - {pack.SUMS_FILE}
+    for name, digest in sums.items():
+        assert digest == hashlib.sha256(files[name]).hexdigest(), name
     assert "pack.sig" not in files, "a signature this slice cannot make"
 
 

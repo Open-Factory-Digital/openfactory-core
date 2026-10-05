@@ -158,8 +158,19 @@ Needs Action, the platform versions the jobs ran on, and the `box prove` runs. C
 only; a measure that cannot be read (no metrics store, no journals where certify ran, a card
 record that began inside the window) is `null`, and `outcomes.not_measured` says why.
 
-Not built yet, and said in every pack: the signature, the forge reads (C-WORKFLOWS, C-BRANCH), the
-releases read (C-VERSION), and offline verification of a pack.
+`openfactory certify verify <pack.tgz> [--profile <p>] [--thresholds <file>]` checks a pack
+offline, the way the submissions bot does: every member a regular file, `pack.json` against its
+schema, `SHA256SUMS` and `pack.json`'s own checksums against the files, the signature, and every
+threshold in `openfactory/certify/thresholds.yaml` (or the `--thresholds` file, which replaces it
+whole), each reported by id. Exit 0 when everything holds, 1 with one finding per failure, 2 when
+the pack or the thresholds file cannot be read. An `unknown` control is never a pass, and an
+outcome the pack did not measure fails its threshold as "not measured", never as zero.
+`--allow-unsigned` stops an unsigned pack being a finding, for a rehearsal; the submissions bot
+never passes it.
+
+Not built yet, and said in every pack: the signature (so every pack is a `signature` finding
+without `--allow-unsigned`), the forge reads (C-WORKFLOWS, C-BRANCH) and the releases read
+(C-VERSION).
 
 ---
 
