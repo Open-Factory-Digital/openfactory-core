@@ -466,7 +466,7 @@ def test_a_split_that_stopped_halfway_is_finished_rather_than_reported_done(monk
 
     assert fake.created == ["#103", "#104"], "the interrupted split was never finished"
     assert out == "split into #101, #102, #103, #104", out
-    assert fake.closed is not None and fake.closed[0] == "#37", "the parent stayed open"
+    assert fake.closed is not None and fake.closed[0] == "37", "the parent stayed open"
     assert "OPENFACTORY_SPLIT_RESUMED" in caplog.text
 
 

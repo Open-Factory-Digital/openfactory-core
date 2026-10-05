@@ -35,6 +35,7 @@ from typer.testing import CliRunner
 
 from openfactory import actions
 from openfactory.actions import base, catalog
+from tests.the_card_at_its_last_gate import at_its_last_gate
 
 
 @pytest.fixture
@@ -201,7 +202,10 @@ FRONT_ENDS = ("openfactory/api/app.py", "openfactory/runtime/slack/bot.py", "ope
 OWNED = {
     "act_job": "resume/skip",                # the durable signal to a parked job
     "create_ticket": "card_create",          # opening a card on the client's board
-    "set_column": "card_move",               # queueing — the gesture that authorises spending
+    # queueing — the gesture that authorises spending. #414 moved the move itself (`set_column`)
+    # into the card's door, whose guard fails on it anywhere outside; what this row owns is the
+    # judgement of WHERE a person may move a card: the queue or the backlog, never the factory's
+    "_operators_column": "card_move",
     # `comment` CANNOT BE A MARKER (`body.comment` is a legitimate read in the panel) and neither
     # can `build_board`, which both front ends call. `say` is this port's own name for a comment
     # written in a PERSON's name rather than the platform's, and nothing else uses it.
@@ -1172,6 +1176,7 @@ def _release_manifest(**kw):
 async def test_approve_prod_signals_the_parked_workflow(monkeypatch, _start_env):
     from openfactory.actions import catalog
 
+    at_its_last_gate(monkeypatch)      # the card's door reads it first (#448 slice 6)
     monkeypatch.setattr(catalog, "_prod_allowlist", lambda project: ["alice"])
     monkeypatch.setattr("openfactory.approvals.verify_approver", lambda *a, **kw: True)
     signalled = []
@@ -1194,6 +1199,7 @@ async def test_approve_prod_signals_the_parked_workflow(monkeypatch, _start_env)
 async def test_approve_prod_reports_not_parked_as_conflict(monkeypatch, _start_env):
     from openfactory.actions import catalog
 
+    at_its_last_gate(monkeypatch)      # the card's door reads it first (#448 slice 6)
     monkeypatch.setattr(catalog, "_prod_allowlist", lambda project: ["alice"])
     monkeypatch.setattr("openfactory.approvals.verify_approver", lambda *a, **kw: True)
     monkeypatch.setattr("openfactory.runtime.temporal.view.connect", lambda: _AsyncReturns(object()))
@@ -1302,6 +1308,7 @@ def test_the_panel_approve_route_maps_to_approve_prod(client, monkeypatch):
     from openfactory.actions import catalog
     from openfactory.registry import ProjectRegistry
 
+    at_its_last_gate(monkeypatch)      # the card's door reads it first (#448 slice 6)
     monkeypatch.setattr(ProjectRegistry, "get", lambda self, name: _start_project())
     monkeypatch.setattr(catalog, "_prod_allowlist", lambda project: ["alice"])
     monkeypatch.setattr("openfactory.approvals.verify_approver", lambda *a, **kw: True)

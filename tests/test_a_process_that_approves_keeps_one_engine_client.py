@@ -36,6 +36,7 @@ import pytest
 from openfactory.product import release as rel
 from openfactory.runtime.temporal import connection, standing
 from openfactory.runtime.temporal import view as tv
+from tests.the_card_at_its_last_gate import at_its_last_gate
 
 FAILED = "OPENFACTORY_RELEASE_SIGNAL_FAILED"
 
@@ -92,6 +93,7 @@ class _Counter:
 
 @pytest.fixture
 def engine(monkeypatch) -> _Counter:
+    at_its_last_gate(monkeypatch)      # the card's door reads it first (#448 slice 6)
     monkeypatch.setenv("TEMPORAL_ADDRESS", "engine.example:7233")
     monkeypatch.delenv("TEMPORAL_ENDPOINT", raising=False)
     monkeypatch.delenv("TEMPORAL_API_KEY", raising=False)

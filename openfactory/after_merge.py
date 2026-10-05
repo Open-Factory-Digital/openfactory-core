@@ -72,10 +72,52 @@ def no_local_promotion(box: str, step: str = "staging") -> tuple[str, str]:
 
 def watching_a_deploy(cfg) -> str:
     """What a project that DOES declare a post-merge deploy is told — said only by a
-    driver that really watches it."""
+    driver that really watches it.
+
+    SAID NOW ONLY BY A JOB WHOSE HISTORY PREDATES #448 SLICE 5, which settled its card Done at the
+    merge and replays that way. A job merging today says `delivered_when_deployed` instead: the
+    deploy is the card's last stage, and the card is Done when it is green, not before."""
     return (
         f"Merged — and this job is done. This project's own `{cfg.workflow}` deploys it; "
         f"the factory is watching that run for up to {cfg.timeout_minutes} minutes and "
         f"will report the {cfg.env} outcome here. Nothing is promoted past it: the "
         f"manifest declares no `environments:`, so there is no chain to walk and no "
         f"approval to ask for.")
+
+
+# ── the deploy is the last stage (#448 slice 5) ─────────────────────────────────────────────────
+#
+# DELIVERED MEANS DELIVERED. A project that declares `post_merge_deploy:` and no `environments:`
+# was settled Done at the merge, and Done is what a delivery is announced from — so the person who
+# asked heard "it is ready, did it work?" while the one stage the project declares had not happened
+# and could still fail. The card now waits In review for the watched deploy, and these are what the
+# card says at each end of that wait. Team-facing, like the two sentences above.
+
+
+def delivered_when_deployed(cfg) -> str:
+    """What the card says at the merge when the watched deploy is its last stage: why it is still
+    In review, what the factory is watching, and what makes it Done."""
+    return (
+        f"Merged — the job is done, and the delivery is not yet. This project's own "
+        f"`{cfg.workflow}` deploys it to {cfg.env}, the last stage the manifest declares; the "
+        f"factory is watching that run for up to {cfg.timeout_minutes} minutes, and this card is "
+        f"Done — and announced to whoever asked for it — when it is green, not before. Nothing is "
+        f"promoted past it: the manifest declares no `environments:`, so there is no chain to "
+        f"walk and no approval to ask for.")
+
+
+def deployed(env: str, url: str = "") -> str:
+    """What the card says when the watched deploy is green: it reached its last stage."""
+    where = f" — {url}" if str(url or "").strip() else ""
+    return (f"The {env} deploy is green{where}: the change reached the last stage this project "
+            f"declares, and this card is Done.")
+
+
+def not_deployed(env: str, status: str, minutes: int) -> str:
+    """What the card says when the watched deploy failed or was never seen to finish: nothing is
+    delivered, and a person is who moves it on."""
+    what = ("failed" if status == "failure"
+            else f"was not seen to finish within {minutes} minutes")
+    return (f"The {env} deploy {what}: the change has not reached the last stage this project "
+            f"declares, so nothing is delivered and nobody is told it is ready. Once the deploy "
+            f"is green, moving this card to Done is what delivers it.")

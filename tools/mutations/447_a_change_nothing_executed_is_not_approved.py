@@ -6,7 +6,6 @@ VERDICT = "openfactory/review/verdict.py"
 POLICY = "openfactory/orchestrator/merge_policy.py"
 MACHINE = "openfactory/orchestrator/machine.py"
 VOICE = "openfactory/product/voice.py"
-WF = "openfactory/runtime/temporal/workflow.py"
 HARNESS = "openfactory/adapters/reviewer/harness.py"
 
 MUTATIONS = [
@@ -52,9 +51,10 @@ MUTATIONS = [
      'executou o "\n',
      '    "_not_verified": {"pt-BR": " — a revisão automática não conseguiu verificar: nada '
      'executou o "\n'),
-    ("the verdict query drops whether the evidence was checked", WF,
-     '            "evidence_checked": bool(getattr(review, "evidence_checked", False)),\n',
-     '            "evidence_checked": False,\n'),
+    # re-pinned 2026-10-04: the verdict query's projection is `verdict.of_result` (#414)
+    ("the verdict query drops whether the evidence was checked", VERDICT,
+     '        "evidence_checked": bool(getattr(review, "evidence_checked", False)),\n',
+     '        "evidence_checked": False,\n'),
     ("the reviewer is never told how to cite a gate", HARNESS,
      '        _INSTRUCTIONS + " " + EVIDENCE_RULE,\n',
      "        _INSTRUCTIONS,\n"),

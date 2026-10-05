@@ -276,8 +276,13 @@ class TrackerAdapter(Protocol):
 
     def set_state(self, ref: str, state: JobState, reason: str | None = None, *,
                   needs_person: bool | None = None) -> bool | None:
-        """Reflect the job's lifecycle state back (label/column/status), with a
-        reason when moving to NEEDS_REFINEMENT.
+        """Reflect the job's lifecycle state back (label/column/status).
+
+        `reason` IS ACCEPTED AND NOT WRITTEN, ON EVERY ROW (ADR-0055 D6, #414). A transition's
+        comment is the card's door's — its `Comment` effect, the one writer of it — and the same
+        on every row. Written here it existed on GitHub and Azure DevOps, on Jira for one state,
+        on the local board never, and doubled wherever the caller also commented. The parameter
+        stays so no caller and no add-on breaks; a row that writes it is the defect this ends.
 
         RETURNS WHETHER THE MOVE LANDED, when the adapter can tell: `False` means the card is
         where it was (no state mapped, no transition, the board refused), `True` that it moved,
@@ -614,6 +619,31 @@ def whole_read_is_cheap(tracker) -> bool:
 
 class CannotSayUndelivered(RuntimeError):
     """This row's `close_ticket` has no `delivered`, and the close it was asked for needs it."""
+
+
+#: The changes a person can make to a card in the vendor's own interface, named by the card's
+#: events (ADR-0055 D8): closed (and why), reopened, deleted, and moved between the operator's two
+#: columns — into the queue, or back out of it.
+OBSERVABLE = frozenset({"closed", "reopened", "removed", "promoted", "reordered"})
+
+
+def observes(tracker) -> frozenset[str]:
+    """Which changes made OUTSIDE the platform `tracker` can report — the board sweep hands each
+    one it finds to the card's door as an observed event (ADR-0055 D8, #414).
+
+    A ROW CAPABILITY, NOT A PORT METHOD, asked with `getattr` like `forge.merge_gates`: a row that
+    declares nothing observes nothing, and widening the Protocol would make every add-on and every
+    double claim an answer. ONLY A SET COUNTS — a test double's attribute is not a declaration —
+    and only the changes this platform knows how to follow (`OBSERVABLE`).
+
+    WHAT A ROW CANNOT SEE IT LEAVES OUT, and the record says no more than the row could: a
+    deletion on a hosted tracker reads as a failed read, not as an absence, so no hosted row
+    declares `removed`; a close is observed only where the row reports WHY it was closed, since a
+    close read without its reason is taken for finished work (`lifecycle.ports.withdrawn`)."""
+    said = getattr(tracker, "observes", None)
+    if not isinstance(said, set | frozenset):
+        return frozenset()
+    return frozenset(str(x) for x in said) & OBSERVABLE
 
 
 def files_elsewhere(tracker) -> bool:

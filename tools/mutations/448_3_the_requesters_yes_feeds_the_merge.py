@@ -64,19 +64,19 @@ MUTATIONS = [
     ("the telling runs on a history that never recorded it", WORKFLOW,
      '        if not workflow.patched("the-requester-hears-it-went-in"):\n            return\n',
      "        if False:\n            return\n"),
+    # re-pinned 2026-10-04: a watched deploy that is the last stage follows too (#448 slice 5)
     ("stages are said to follow when none do", WORKFLOW,
-     "            await self._tell_the_requester_it_merged(params, result, "
-     "stages_follow=should_promote)\n",
-     "            await self._tell_the_requester_it_merged(params, result, stages_follow=True)\n"),
+     "                params, result, stages_follow=should_promote or deploy_is_last)\n",
+     "                params, result, stages_follow=True)\n"),
     ("the activity is not registered on the worker", WORKER,
      "    # #448 — and told it went in, the moment it merged, whoever merged it\n"
      "    tell_the_requester_it_merged,\n",
      ""),
+    # re-pinned 2026-10-05: #448 slice 6 — the activity hands the job's `merged` to the card's door
     ("the activity reaches no event", ACTIVITIES,
-     "            return events.merged_for_you(ProjectRegistry().get(inp.project), "
-     "card=inp.issue,\n",
-     "            return (lambda *a, **k: False)(ProjectRegistry().get(inp.project), "
-     "card=inp.issue,\n"),
+     '            moved = transition(project, inp.issue, CardEvent.MERGED, by="the workflow",\n',
+     '            moved = (lambda *a, **k: None)(project, inp.issue, CardEvent.MERGED, '
+     'by="the workflow",\n'),
 
     # ── the head they tried, and nothing else ────────────────────────────────────────────────
     ("the gate's word on the look is never read", ADJUST,
@@ -115,9 +115,11 @@ MUTATIONS = [
      '            return refused("not_yours")\n',
      "        if False:\n"
      '            return refused("not_yours")\n'),
+    # re-pinned 2026-10-05: #448 slice 6 — the note is the door's comment on `accepted`
     ("the card says nothing of the yes", MODULE,
-     '            self._tracker().comment(f"#{number}", change_accepted_note(\n',
-     '            (lambda *a: None)(f"#{number}", change_accepted_note(\n'),
+     '"head": tried.head,\n                                  "note": change_accepted_note(\n',
+     '"head": tried.head,\n                                  "note": "" and change_accepted_note('
+     '\n'),
     ("the store refuses the row the yes is", METRICS,
      '                     "card_accepted",\n',
      ""),
@@ -196,20 +198,22 @@ MUTATIONS = [
      "        if False:\n"),
 
     # ── the requester hears it went in ───────────────────────────────────────────────────────
+    # re-pinned 2026-10-05: #448 slice 6 — the telling is the door's `went_in` now
     ("with no stage the requester hears it twice", EVENTS,
-     "        if not stages_follow and _the_delivery_says_it(project, card, rows):\n",
-     "        if False:\n"),
+     "    if not stages_follow and _the_delivery_says_it(project, card, rows):\n",
+     "    if False:\n"),
     ("a delivery waiting on other cards reads as complete", EVENTS,
      "    loops = _deliveries_of(rows, card)\n    if not loops:\n        return False\n",
      "    loops = _deliveries_of(rows, card)\n    if loops:\n        return True\n"),
+    # re-pinned 2026-10-05: #448 slice 6 — the telling is the door's `went_in` now
     ("a card with no delivery is told nowhere", EVENTS,
-     "        where = requester_conversation(project, card, rows=rows) or _accepted_where(\n"
-     "            project, card, pr_url)\n",
-     "        where = requester_conversation(project, card, rows=rows)\n"),
+     "    where = requester_conversation(project, card, rows=rows) or _accepted_where(\n"
+     "        project, card, pr_url)\n",
+     "    where = requester_conversation(project, card, rows=rows)\n"),
+    # re-pinned 2026-10-05: #448 slice 6 — the telling is the door's `went_in` now
     ("it is told again on every merge of the same pull request", EVENTS,
-     "    return _once(project, _event_id(MERGED, project, card, pr_url), lambda: (\n",
-     "    return _once(project, _event_id(MERGED, project, card, pr_url, str(time.time())), "
-     "lambda: (\n"),
+     "    said = _event_id(MERGED, project, card, pr_url)\n",
+     "    said = _event_id(MERGED, project, card, pr_url, str(time.time()))\n"),
     ("a project with stages hears nothing of them", "openfactory/product/voice.py",
      "    if stages_follow:\n        said += _pick(_MERGED_STAGES, language)\n",
      ""),

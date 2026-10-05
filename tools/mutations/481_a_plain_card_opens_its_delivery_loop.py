@@ -22,9 +22,11 @@ AGENDA = "openfactory/product/agenda.py"
 
 MUTATIONS = [
     ("TODAY'S DEFECT: a card filed from a conversation opens no delivery loop", MOD,
-     "            self._track_ticket(ref, title=name, conversation=conversation, "
-     "requester=requester)\n",
-     "            pass\n"),
+     # re-pinned 2026-10-04: the promise travels with the card's filing through its door (#414)
+     "            owed = (self._track_ticket(ref, title=name, conversation=conversation,\n"
+     "                                       requester=requester)\n"
+     "                    if str(conversation or \"\").strip() else None)\n",
+     "            owed = None\n"),
 
     ("the yes stops handing where the card was asked, and by whom, to the pen", CONFIRM,
      "        **_whose(module.file_ticket, entry))",
@@ -32,28 +34,29 @@ MUTATIONS = [
 
     ("a card filed with no conversation opens a loop anyway — the room is owed a card nobody "
      "asked for there", MOD,
-     '        if str(conversation or "").strip():\n'
-     "            self._track_ticket(ref, title=name, conversation=conversation, "
-     "requester=requester)\n",
-     "        if True:\n"
-     "            self._track_ticket(ref, title=name, conversation=conversation, "
-     "requester=requester)\n"),
+     # re-pinned 2026-10-04: the promise travels with the card's filing through its door (#414)
+     '                    if str(conversation or "").strip() else None)\n',
+     "                    if True else None)\n"),
 
-    ("the same card is followed twice", MOD,
-     "        if subject in already:\n            return\n",
-     "        if False:\n            return\n"),
+    ("the same card is followed twice", "openfactory/lifecycle/loops.py",
+     # re-pinned 2026-10-04: one card's promise is opened by its door's `filed`, in `loops.owe` (#414)
+     "    if subject in {x.subject for x in waiting(loop_store.read(name)) if x.kind == DELIVERY}:\n",
+     "    if False:\n"),
 
     ("the card's loop is keyed on the ref as typed, so #12 and 12 are two cards", MOD,
-     "        ref = canonical_ref(ref)\n        _follow_card(self.project, f\"cartao-{ref}\", ref,",
-     "        ref = str(ref)\n        _follow_card(self.project, f\"cartao-{ref}\", ref,"),
+     # re-pinned 2026-10-04: the helper returns the promise its filing carries to the door (#414)
+     "        ref = canonical_ref(ref)\n        return _owed(f\"cartao-{ref}\",",
+     "        ref = str(ref)\n        return _owed(f\"cartao-{ref}\","),
 
     ("the card's title is not carried, so nothing on the loop says what the card is", MOD,
-     '                     {"ticket": "1", "title": str(title or "")[:120]},',
-     '                     {"ticket": "1", "title": ""},'),
+     # re-pinned 2026-10-04: the helper returns the promise its filing carries to the door (#414)
+     '{"ticket": "1", "title": str(title or "")[:120]},',
+     '{"ticket": "1", "title": ""},'),
 
     ("the loop forgets it is a card, and every sentence it leads to names a requirement", MOD,
-     '                     {"ticket": "1", "title": str(title or "")[:120]},',
-     '                     {"title": str(title or "")[:120]},'),
+     # re-pinned 2026-10-04: the helper returns the promise its filing carries to the door (#414)
+     '{"ticket": "1", "title": str(title or "")[:120]},',
+     '{"title": str(title or "")[:120]},'),
 
     ("the delivery of a card is announced as a requirement's", FOLLOWUP,
      '    if (loop.context or {}).get("ticket"):\n        from openfactory.product.voice import '

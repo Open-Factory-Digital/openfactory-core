@@ -1179,9 +1179,17 @@ post_merge_deploy:
 ```
 
 The factory finds that workflow's run **on the merge commit**, follows it, and reports
-`success` / `failure` / `timeout` on the panel and to your notifier. It never blocks: the ticket
-is done at the merge and the report arrives after. Use this when you deploy on push to main and
+`success` / `failure` / `timeout` on the panel and to your notifier. It never blocks the floor:
+the job ends at the merge and the next card starts. Use this when you deploy on push to main and
 you only want to know.
+
+**The card, though, waits for the deploy** when this is the only stage you declare (no
+`environments:`): that deploy is the last stage the change has to reach, so the card stays *In
+review* after the merge and becomes Done — and whoever asked for it hears it is ready and is asked
+whether it worked — only when the deploy is green. A deploy that fails, or is never seen to finish
+within `timeout_minutes`, delivers nothing: the card goes to *Needs Action* saying so, and moving
+it to Done once the deploy is fixed is what delivers it. (On GitHub, the pull request then names
+its card without `Closes #N`, so the forge does not close it at the merge either.)
 
 **`url:` is what turns the report into a request.** With it, a green deploy asks somebody to look
 — on the panel, and, if the project has a product channel (§9), in the client's own words and

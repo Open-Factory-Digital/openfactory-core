@@ -20,7 +20,7 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError
+from temporalio.exceptions import ActivityError, WorkflowAlreadyStartedError
 from temporalio.workflow import ParentClosePolicy
 
 with workflow.unsafe.imports_passed_through():
@@ -37,12 +37,14 @@ with workflow.unsafe.imports_passed_through():
         nothing_ran_note,
     )
     from openfactory.contracts.project import ADJUST_PASSES
+    from openfactory.lifecycle.handed_back import recorded_park
 
     # #448 slice 3: whether the reading standing now still admits a merge nobody presses — pure,
     # on the `verdict` query's own shape, so replay reads the same answer it recorded
-    from openfactory.review.verdict import still_admits_the_merge
+    from openfactory.review.verdict import of_result, still_admits_the_merge
     from openfactory.runtime.temporal.activities import (
         adjust_pr,
+        card_adjusted,
         card_question_sweep,
         check_ci_status,
         check_deploy_status,
@@ -101,6 +103,7 @@ with workflow.unsafe.imports_passed_through():
     )
     from openfactory.runtime.temporal.io import (
         REVIEW_THREAD,
+        AdjustedInput,
         AdjustInput,
         AskInput,
         CiRepairInput,
@@ -147,7 +150,11 @@ with workflow.unsafe.imports_passed_through():
     # which prints the sentence, answered 500 on an install without the `runtime` extra. Imported
     # HERE, inside the sandbox pass-through, like the phrasebook below: a pure function of one
     # bool, so replay reads the same words it recorded. `workflow.merge_wait_note` stays a name.
-    from openfactory.runtime.temporal.vocabulary import adjusts_spent_note, merge_wait_note
+    from openfactory.runtime.temporal.vocabulary import (
+        adjusts_spent_note,
+        merge_wait_note,
+        release_passes_spent_note,
+    )
     from openfactory.techlead import CODE as CAUSE_CODE
     from openfactory.techlead import classify, remedy_for
 
@@ -219,6 +226,13 @@ _CI_SLOW_POLL = timedelta(minutes=15)
 #: a panel, and it lands in an agent's context at the same trust level as the ticket body — so it
 #: is bounded here, at the boundary, rather than trusted to be short.
 _ADJUST_CHARS = 2000
+#: The patch a run's last gate is asked under, once, whether it hears "not yet" (#448 slice 4). A
+#: run parked there before it existed replays without it — deaf, and saying so.
+_NOT_YET_AT_THE_LAST_GATE = "a-not-yet-at-the-last-gate-is-another-change"
+#: The patch a LATER change of a card is asked under before it starts its deploy watch (#448 slice
+#: 4, from the review of #503): the change's number is in the watch's id from then on. Asked only
+#: for a change past the first, so a first change records no marker and keeps the id it always had.
+_A_LATER_CHANGE_WATCHES_ITS_OWN_DEPLOY = "a-later-change-watches-its-own-deploy"
 # Post-merge deploy watch (ADR-0005): a project's own CI deploys on push to main; we observe
 # that run on the merge commit and notify its outcome. Poll gently — a deploy is minutes.
 _DEPLOY_POLL = timedelta(minutes=1)
@@ -467,7 +481,8 @@ class DeployWatchWorkflow:
     immediately. This durably polls the project's OWN deploy (its `deploy` CI on the merge
     commit) and NOTIFIES the outcome — it can never gate a ticket or hold the floor. Worst
     case is a late or missed notification, never a stuck pipeline (the user's rule: watch +
-    notify, don't block)."""
+    notify, don't block). When the deploy is the card's LAST stage it also settles the card,
+    after the floor is long free (#448 slice 5, `_the_last_stage`)."""
 
     @workflow.run
     async def run(self, inp: DeployWatchInput) -> str:
@@ -484,11 +499,61 @@ class DeployWatchWorkflow:
             last_url = probe.get("run_url") or last_url
             if status in ("success", "failure"):
                 await self._notify(inp, status, last_url)
+                await self._the_last_stage(inp, status)
                 return status
             # "none" (run not dispatched yet) / "pending" (still deploying) → keep watching
             await workflow.sleep(_DEPLOY_POLL)
         await self._notify(inp, "timeout", last_url)  # a stuck deploy notifies, never hangs
+        await self._the_last_stage(inp, "timeout")
         return "timeout"
+
+    async def _the_last_stage(self, inp: DeployWatchInput, status: str) -> None:
+        """THE DEPLOY WAS THE CARD'S LAST STAGE, and its outcome settles the card (#448 slice 5).
+
+        DELIVERED MEANS DELIVERED. A project that declares this watch and no chain had its card
+        settled Done at the merge, and the delivery — "what you asked for is ready, did it work?"
+        — was announced from that Done while the one stage the project declares had not happened
+        and could still fail. The job now leaves the card In review (`deploy_is_last`), and this is
+        where it ends:
+
+          green     Done, through the job's own settle — the card's door's `delivered`, whose
+                    `Loops("deliver")` announces what the card completes to whoever asked (#414),
+                    the same path a merge with nothing after it takes; then the job's one record
+                    of an ending (`record_outcome`), which writes the journal and announces nothing;
+          failed    held for a person (`on_hold`, Needs Action: the door's `parked`) with what
+          or never  happened on the card, like a red stage of a promotion chain: nothing is
+          seen      delivered and nobody is told it is ready. `_notify` above has already said it
+                    where the watch speaks.
+
+        SETTLED, THEN RECORDED: the journal says what the card became, so the card is moved first.
+
+        Only for a watch the job said `delivers` — a watch that merely informs settles nothing —
+        and PATCHED, because these are new commands on a path watches are already sitting in
+        (TMPRL1100). Best-effort like everything here: the deploy happened or did not whatever
+        the tracker says, and a watch must never fail over its side effects (M3)."""
+        if not inp.delivers or not workflow.patched("the-watch-settles-the-last-stage"):
+            return
+        green = status == "success"
+        state = JobState.DONE if green else JobState.ON_HOLD
+        note = (after_merge.deployed(inp.env, inp.url) if green
+                else after_merge.not_deployed(inp.env, status, inp.timeout_minutes))
+        try:
+            await workflow.execute_activity(
+                settle_ticket,
+                HoldSyncInput(project=inp.project, issue=inp.issue, state=state.value, note=note),
+                start_to_close_timeout=timedelta(minutes=2), retry_policy=_ONCE)
+        except Exception:  # noqa: BLE001 — the deploy's outcome stands whatever the board says
+            workflow.logger.warning("could not settle %s#%s as %s after its %s deploy",
+                                    inp.project, inp.issue, state.value, inp.env)
+        try:
+            await workflow.execute_activity(
+                record_outcome,
+                HoldSyncInput(project=inp.project, issue=inp.issue, state=state.value,
+                              note=note[:400]),
+                start_to_close_timeout=timedelta(minutes=2), retry_policy=_RETRY)
+        except Exception:  # noqa: BLE001 — never fail a watch over its record
+            workflow.logger.warning("%s#%s reached %s and its journal does not say so",
+                                    inp.project, inp.issue, state.value)
 
     async def _notify(self, inp: DeployWatchInput, status: str, run_url: str | None) -> None:
         # Best-effort: the notification is the watch's ONLY output, but a broken channel
@@ -978,6 +1043,15 @@ class JobWorkflow:
         # WHERE A PERSON IS SENT to confirm this change, once the promotion has read the client's
         # manifest in the box (#122). Display-only and replay-safe, like `_merge_wait`.
         self._look: dict | None = None
+        # "NOT YET" AT THE LAST GATE (#448 slice 4) — {instruction, by, seal}, the requester's
+        # answer that sends a MERGED change back for another pass as a new change of the card.
+        # `_hears_not_yet` is whether THIS run's gate can act on one (`workflow.patched` at the
+        # gate, so a run parked there before the code existed stays deaf, and says so), and
+        # `_release_wait` is what the gate publishes about it (`release_wait`): the budget,
+        # and what is left of it. Workflow state, not commands — replay rebuilds them.
+        self._not_yet: dict | None = None
+        self._hears_not_yet = False
+        self._release_wait: dict | None = None
 
     @workflow.signal
     async def advise_decision(self, advice: dict) -> None:
@@ -1163,45 +1237,15 @@ class JobWorkflow:
         TRIMMED HERE, not by the reader. A query response crosses the wire on every panel refresh
         that asks for it, and a reviewer's `summary` plus a dozen findings is prose measured in
         kilobytes; the caller that wants all of it reads the closed job's result, which has always
-        carried the whole thing."""
-        review = getattr(result, "review", None)
-        gates = [{"name": v.name, "passed": bool(v.passed), "advisory": bool(v.advisory)}
-                 for v in (result.validations or [])]
-        # SUPPRESSIONS TRAVEL AS THEIR KINDS. They are the single commonest reason a green PR is
-        # handed to a person (`_why` says so in as many words), so a merge gate that did not
-        # mention them would be answering the question with the one fact left out.
-        kinds = sorted({str(k) for k in (result.added_suppressions or [])})
-        if review is None and not gates and not kinds:
+        carried the whole thing.
+
+        THE PROJECTION IS `verdict.of_result` since #414: the worker that applies the pull request
+        the box handed back tells its requester the review's word from the same result, and two
+        hand-listed copies of it would come to disagree. Pure — no command, replay-safe."""
+        projected = of_result(result)
+        if projected is None:
             return  # nothing was measured — say nothing rather than an empty verdict
-        self._verdict = {
-            "decision": getattr(review, "decision", "") or "",
-            "score": getattr(review, "score", None),
-            "summary": (getattr(review, "summary", "") or "")[:600],
-            "findings": [{"severity": f.severity, "description": (f.description or "")[:300],
-                          "file": f.file or ""}
-                         for f in (getattr(review, "findings", None) or [])[:8]],
-            "gates": gates,
-            "suppressions": kinds,
-            # WHAT THE REVIEWER SAID ABOUT EACH CRITERION (#184). This projection is hand-listed,
-            # and the field was simply never added to it — so the map reached the tech-lead's
-            # channel, which reads the whole `ReviewResult`, and died at the merge gate, which
-            # reads this query. #184 taught the renderer to show it and the data never arrived:
-            # the fix worked on one surface and was invisible on the one where somebody decides.
-            #
-            # TRIMMED LIKE ITS NEIGHBOURS, for the reason the docstring above gives — this crosses
-            # the wire on every panel refresh. The criterion text is what identifies it to a
-            # reader; the evidence is prose and belongs to the closed job's result.
-            #
-            # AND WHAT EXECUTED IT (#447): `executed_by` is the gate the platform confirmed ran the
-            # evidence, `would_verify` the check no gate runs, `evidence_checked` whether the
-            # platform looked at all — the three the stance is computed from. Fields, not a
-            # command: replay-safe for the reason `verdict` states.
-            "acceptance": [{"criterion": (c.criterion or "")[:200], "status": c.status,
-                            "executed_by": getattr(c, "executed_by", None) or "",
-                            "would_verify": (getattr(c, "would_verify", None) or "")[:160]}
-                           for c in (getattr(review, "acceptance", None) or [])[:12]],
-            "evidence_checked": bool(getattr(review, "evidence_checked", False)),
-        }
+        self._verdict = projected
 
     async def _flag_review_findings(self, params: JobParams, result: RunResult) -> None:
         """Something just merged. If the independent review REJECTED it or raised anything
@@ -1320,6 +1364,38 @@ class JobWorkflow:
         this before sending an approval, so a signal is never silently dropped (M6)."""
         return self._awaiting_approval
 
+    @workflow.signal
+    async def not_yet(self, instruction: str, by: str = "", seal: str = "") -> None:
+        """THE OTHER ANSWER THE LAST GATE TAKES (#448 slice 4): the person who asked for the card
+        tried the merged change before it reached anybody else and said what is still wrong. With
+        a pass of the project's budget left, the job leaves the gate for a NEW change of the card
+        (`_another_change`) instead of waiting out the window and holding.
+
+        DROPPED WHEN THE GATE IS NOT OPEN, or cannot hear it, exactly as `approve_prod` drops a
+        premature or replayed approval (M6). `seal` is the product role's proof that it checked who
+        may send the card back (`gate_seal.NOT_YET`), verified where the answer is consumed, in an
+        activity — a signal handler cannot read a key without making replay depend on it."""
+        if not (self._awaiting_approval and self._hears_not_yet):
+            return
+        self._not_yet = {"instruction": instruction, "by": by, "seal": seal}
+
+    @workflow.query
+    def release_wait(self) -> dict | None:
+        """While the job waits at the last gate: `{adjust_passes, adjusts_left, hears}` and, when
+        the passes are spent or the last "not yet" was refused, a `note` saying what happens next
+        (#448 slice 4). None anywhere else. `hears` False is a run that parked here before it
+        could act on a "not yet" — the seam refuses one by name (`view.another_change`).
+
+        NOT AN `awaiting_*` QUERY, because it is no gate of its own: `awaiting_approval` is the
+        gate every reader asks (`view.HUMAN_GATES`), and this is what it publishes about a "not
+        yet" while it waits."""
+        if not self._awaiting_approval:
+            return None
+        wait = dict(self._release_wait or {"hears": False})
+        if self._gate_refused and wait.get("hears"):
+            wait["refused"] = self._gate_refused
+        return wait
+
     async def _cleanup(self, params: JobParams, *, shield: bool) -> None:
         """Best-effort: stop any lingering Fargate task when the job ends abnormally,
         so nothing is left orphaned. Shielded from cancellation when the workflow itself
@@ -1359,6 +1435,10 @@ class JobWorkflow:
                 attempt=attempt,  # discriminates loop iterations for launcher idempotency
                 spent_turns=spent_turns,  # the ticket-wide effort budget's running total (D4)
                 decision=decision,  # a resolved human choice injected into the resumed agent
+                # #448 slice 4: a NEW change of a card whose last one merged — what is still
+                # wrong with it, on every attempt of this run, and which change it is (the branch)
+                another_pass=params.another_pass,
+                change=params.change,
             ),
             # strictly MORE than the agent's own wall, so the wall fires first and the
             # stop arrives as a diagnosis rather than a silent cancel — see timeouts.py
@@ -1879,6 +1959,7 @@ class JobWorkflow:
                     CiRepairInput(
                         project=params.project, issue=params.issue,
                         pr_url=pr_url, sandbox=params.sandbox, attempt=attempts,
+                        change=params.change,  # #448 slice 4: the branch of this change
                     ),
                     start_to_close_timeout=timedelta(seconds=ACTIVITY_CEILING),
                     heartbeat_timeout=timedelta(seconds=120),
@@ -2280,7 +2361,8 @@ class JobWorkflow:
             read = await workflow.execute_activity(
                 review_pr,
                 ReviewPassInput(project=params.project, issue=params.issue, pr_url=pr_url,
-                                sandbox=params.sandbox, attempt=self._review_passes),
+                                sandbox=params.sandbox, attempt=self._review_passes,
+                                change=params.change),
                 start_to_close_timeout=timedelta(seconds=ACTIVITY_CEILING),
                 heartbeat_timeout=timedelta(seconds=120),
                 retry_policy=(_RETRY_REATTACHING
@@ -2331,7 +2413,8 @@ class JobWorkflow:
                         sandbox=params.sandbox, attempt=self._adjust_passes,
                         instruction=("" if threads else
                                      str(gate.get("instruction") or "")[:_ADJUST_CHARS]),
-                        source=REVIEW_THREAD if threads else "", by=who),
+                        source=REVIEW_THREAD if threads else "", by=who,
+                        change=params.change),
             start_to_close_timeout=timedelta(seconds=ACTIVITY_CEILING),
             heartbeat_timeout=timedelta(seconds=120),
             retry_policy=(_RETRY_REATTACHING if params.traits().idempotent else _ONCE),
@@ -2344,7 +2427,32 @@ class JobWorkflow:
         # act on the instruction (#178) is the commonest way to get here having changed nothing,
         # and it must not cost the person the verdict they came to the gate to read.
         self._the_reviewed_code_is_still_here(passed)
+        # …AND A PASS THAT REWROTE THE PULL REQUEST ENDS THE WAY THE FIRST ONE DID (#413, #448):
+        # the card's door records `adjusted`, the live preview is rebuilt from the new head, and
+        # the requester hears that this pass is theirs to try. PATCHED: a new command on a path
+        # jobs are already sitting in (TMPRL1100); a job whose history predates it carries on as
+        # it recorded, and its requester hears nothing new — as before.
+        if passed.code_changed is True and workflow.patched("an-adjust-pass-ends-like-the-first"):
+            await self._the_pass_is_ready(params, pr_url, who,
+                                          str(gate.get("instruction") or ""))
         return None  # the pass pushed to the same PR; keep watching, the gate re-opens
+
+    async def _the_pass_is_ready(self, params: JobParams, pr_url: str, who: str,
+                                 instruction: str) -> None:
+        """`card_adjusted`, best-effort: the pass is pushed and the gate re-opens whatever is said;
+        a telling that failed is the door's record, which the hourly round applies again."""
+        try:
+            await workflow.execute_activity(
+                card_adjusted,
+                AdjustedInput(project=params.project, issue=params.issue, pr_url=pr_url,
+                              pass_number=self._adjust_passes, by=who,
+                              instruction=instruction[:_ADJUST_CHARS]),
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=_ONCE,
+            )
+        except Exception:  # noqa: BLE001 — never block the watch on a courtesy
+            workflow.logger.warning("#%s: adjust pass %s was not recorded as such — the round "
+                                    "applies it", params.issue, self._adjust_passes)
 
     async def _refresh_knowledge(self, params: JobParams) -> None:
         """Post-merge Knowledge Pipeline (§11): reality changed, so regenerate the project's
@@ -2450,6 +2558,10 @@ class JobWorkflow:
         PATCHED, BEST-EFFORT, AFTER THE MERGE. A job in flight when this shipped must replay
         deterministically (TMPRL1100), and nothing about recording an outcome may fail a ticket
         that has already landed.
+
+        NOT WHERE A WATCHED DEPLOY IS THE LAST STAGE (#448 slice 5): that card waits In review and
+        the watch ends it (`DeployWatchWorkflow._the_last_stage`). `watching_a_deploy` is said
+        here now only by a history recorded before that, or a merge with no pull request to watch.
         """
         if not workflow.patched("merge-is-the-end-when-nothing-follows"):
             return
@@ -2480,34 +2592,70 @@ class JobWorkflow:
         return tl_voice.say(tl_voice.NARRATION, "stage.confirm-no-url", params.language,
                             issue=params.issue, stage=stage)
 
-    async def _spawn_deploy_watch(self, params: JobParams, result: RunResult) -> None:
+    async def _spawn_deploy_watch(self, params: JobParams, result: RunResult, *,
+                                  delivers: bool = False) -> bool:
         """On merge, kick off the abandoned deploy-watch child (ADR-0005) and return at once —
-        the ticket is DONE at merge, so the floor frees immediately; the watch runs on its own.
+        the job ends at the merge, so the floor frees immediately; the watch runs on its own.
         ParentClosePolicy.ABANDON lets it outlive this workflow's completion. Best-effort: a
         failure to start the watch must NEVER fail an already-merged job (worst case: no deploy
-        notification), so we swallow errors and let the job complete."""
+        notification), so we swallow errors and let the job complete.
+
+        `delivers` says the deploy is the card's LAST stage (#448 slice 5): the card waits In
+        review, and the watch settles it — Done and announced when green, held when not. Returns
+        whether a watch is on this change, so a card whose watch never started is not left waiting.
+
+        ONE WATCH PER CHANGE OF THE CARD (#448 slice 4, from the review of #503). The id was the
+        project and the card, and a card has more than one change since its requester can say "not
+        yet" at the last gate: the first change's watch can still be running when the second
+        merges, the engine refuses a second workflow under a running one's id, and the refusal was
+        read as a re-run — so the second change's deploy was never watched. A later change's watch
+        carries its number, the one its branch carries (`namespace.job_branch`: `-2` for the
+        second change), so the two are told apart on the engine as they are on the forge. The first
+        change keeps the id it always had, byte for byte: the panel reads it (`view._deploy_state`)
+        and every history recorded before this replays it.
+
+        PATCHED, because an id is the shape of a command (TMPRL1100) — and asked only for a later
+        change, so a first change records no marker. A later change whose history predates it
+        replays the id it had.
+
+        AND A REFUSAL SAYS WHICH IT IS. "Already started" is the engine saying this very watch is
+        running — a re-run of the same change; anything else is the engine refusing to start it at
+        all, and the log says so rather than passing it off as the harmless case. Either way this
+        job started no watch, and one it did not start was not told what this card's last stage is
+        (`delivers`): the card is settled at the merge rather than left In review for it."""
         cfg = result.post_merge_deploy
         if not (cfg and result.pr_url):
-            return
+            return False
+        watch_id = f"openfactory-deploy-{params.project}-{params.issue}"
+        if params.change and workflow.patched(_A_LATER_CHANGE_WATCHES_ITS_OWN_DEPLOY):
+            watch_id = f"{watch_id}-{params.change + 1}"
         try:
             await workflow.start_child_workflow(
                 DeployWatchWorkflow.run,
                 DeployWatchInput(
                     project=params.project, issue=params.issue, pr_url=result.pr_url,
                     workflow=cfg.workflow, env=cfg.env, timeout_minutes=cfg.timeout_minutes,
-                    url=getattr(cfg, "url", "") or "",
+                    url=getattr(cfg, "url", "") or "", delivers=delivers,
                 ),
-                id=f"openfactory-deploy-{params.project}-{params.issue}",
+                id=watch_id,
                 # inherit the parent's task queue (openfactory-jobs in prod) so the same worker
                 # fleet
                 # runs the watch — no separate deployment, and tests run it on their own queue.
                 parent_close_policy=ParentClosePolicy.ABANDON,
             )
-        except Exception:
-            # already-watching (a re-run) or a transient start error — the merge stands and
-            # the floor must free regardless. Never let the watch's start block the job (A3).
-            workflow.logger.warning("deploy-watch not started for %s#%s", params.project,
-                                    params.issue)
+        except WorkflowAlreadyStartedError:
+            # ALREADY WATCHING THIS CHANGE — a re-run of it. The merge stands and the floor must
+            # free regardless. Never let the watch's start block the job (A3).
+            workflow.logger.warning("deploy-watch %s is already running — a re-run of %s#%s; it "
+                                    "goes on watching", watch_id, params.project, params.issue)
+            return False
+        except Exception as exc:  # noqa: BLE001 — the merge stands whatever the engine says
+            # THE ENGINE REFUSED TO START IT — not a re-run, and nothing is watching this deploy.
+            workflow.logger.warning("the engine refused to start deploy-watch %s for %s#%s (%s) — "
+                                    "the merge stands, and this deploy will not be reported",
+                                    watch_id, params.project, params.issue, exc)
+            return False
+        return True
 
     async def _stamp_title(self, params: JobParams) -> None:
         """Stamp the ticket's title into the workflow memo so the panel shows it beside the
@@ -2683,10 +2831,12 @@ class JobWorkflow:
         """THE PERSON WHO ASKED FOR THE CARD HEARS IT WENT IN (#448 slice 3), whoever merged it.
 
         MEASURED FIRST: with no stage declared the job ends Done at this merge and the delivery is
-        announced from its one exit (`record_outcome` → `events.card_finished`), so the event says
-        nothing where that does. With stages the delivery waits for the last one, and a card the
-        role opened from a request has no delivery at all — at the merge, the requester heard
-        nothing. `stages_follow` says which: it is the promotion's own condition.
+        announced by the card's door (`delivered`, `loops.announce_what_it_completes`, #414), so
+        the event says nothing where that does. With stages the delivery waits for the last one,
+        and a card the role opened from a request has no delivery at all — at the merge, the
+        requester heard nothing. `stages_follow` says which: it is the promotion's own condition —
+        or, since #448 slice 5, a watched deploy that is the card's last stage, which the delivery
+        waits for too.
 
         PATCHED, because it is a new command on a path every job takes (TMPRL1100): a job whose
         history reached its merge before this replays without it. Best-effort like
@@ -2705,8 +2855,44 @@ class JobWorkflow:
             workflow.logger.warning("#%s: the requester was not told the change went in",
                                     params.issue)
 
+    def _the_release_wait(self, params: JobParams) -> dict:
+        """What the last gate publishes about "not yet" (#448 slice 4): whether this run hears
+        one, the project's budget and what is left of it — the merge gate's numbers, ONE budget —
+        and, with none left, what happens next, said where the floor reads it."""
+        left = max(0, params.adjust_passes - self._adjust_passes)
+        wait: dict = {"adjust_passes": params.adjust_passes, "adjusts_left": left,
+                      "hears": self._hears_not_yet}
+        if self._hears_not_yet and not left:
+            wait["note"] = release_passes_spent_note(params.adjust_passes)
+        return wait
+
+    async def _another_change(self, params: JobParams, asked: dict) -> None:
+        """LEAVE THE LAST GATE FOR A NEW CHANGE OF THE CARD (#448 slice 4) — the run continues as
+        new, under the same workflow id, so the card's one job builds it and holds the floor.
+
+        A NEW CHANGE, NOT ANOTHER PASS ON THE OLD ONE: that pull request MERGED, so what is wrong
+        is built from the base, on a branch of its own (`JobParams.change` names it — the old one
+        is never pushed over), with the person's words in the brief (`another_pass`) beside the
+        card, whose criteria were corrected before this was sent. The pass is counted here, on
+        the project's one budget, and carried (`passes_spent`): the next run starts where this one
+        stopped, never at zero. Nothing was released, and the tech-lead says so."""
+        self._adjust_passes += 1
+        await self._coord_say(
+            tl_voice.say(tl_voice.NARRATION, "prod.another-change", params.language,
+                         issue=params.issue, n=self._adjust_passes, of=params.adjust_passes),
+            "pickup")
+        workflow.continue_as_new(params.model_copy(update={
+            "another_pass": str(asked.get("instruction") or "")[:_ADJUST_CHARS],
+            "passes_spent": self._adjust_passes,
+            "change": params.change + 1}))
+
     async def _lifecycle(self, params: JobParams) -> RunResult:
         self._params = params  # so _wait_operator can reach the project's coordinator
+        # ONE BUDGET ACROSS THE CARD'S CHANGES (#448 slice 4): a run that continued as new from
+        # the last gate starts with the passes its job had spent, so `adjust_passes` bounds the
+        # card and never starts again. State from the input, not a command — a history that
+        # predates the field reads 0, the count it always started from.
+        self._adjust_passes = params.passes_spent
         await self._coord_say(tl_voice.say(tl_voice.NARRATION, "pickup", params.language,
                                           issue=params.issue), "pickup")  # the tech-lead narrates
         await self._stamp_title(params)
@@ -2726,7 +2912,11 @@ class JobWorkflow:
         # the human clarifies re-arms the gate to judge the improved ticket. Re-armed ONLY for
         # preflight's own parks: a mid-run resumable hold must never be re-gated (a late `split`
         # would orphan preserved partial work). fit/degraded/error → run exactly as before.
-        pre_pending = True
+        # NOT FOR A LATER CHANGE OF THE CARD (#448 slice 4): it was sized when it was first taken
+        # up, it is merged, and the sizer's `split` would close it and open children over a change
+        # its requester is waiting on. Read from the input, so a history that predates it — which
+        # never carries one — sizes the card exactly as it did.
+        pre_pending = not params.another_pass
         spent_turns = 0  # ticket-wide effort total, carried across every attempt (D4)
         decision = ""  # a resolved human choice to inject into the NEXT run (a resumed blocker)
         result: RunResult | None = None
@@ -2892,12 +3082,17 @@ class JobWorkflow:
                 # it). patched(): an in-flight job replaying its pre-fix history must skip this new
                 # command to stay deterministic; new runs and their live tail set it.
                 author = ""
+                #
+                # A PARK THE BOX REACHED WAS APPLIED BY THE WORKER ALREADY (#414): its id goes with
+                # the reconcile, which the door answers from the card's record. Only the input
+                # changes, which replay records rather than compares — no new command.
                 if workflow.patched("park-marks-needs-action"):
                     try:
                         author = await workflow.execute_activity(
                             mark_needs_action,
                             HoldSyncInput(project=params.project, issue=params.issue,
-                                          state=parked.state.value, note=parked.note or ""),
+                                          state=parked.state.value, note=parked.note or "",
+                                          event_id=recorded_park(parked)),
                             start_to_close_timeout=timedelta(minutes=1), retry_policy=_ONCE)
                     except Exception:  # noqa: BLE001 — reconciliation must never block the park
                         # The board now LIES: the card still reads "In progress" while the ticket
@@ -3051,6 +3246,30 @@ class JobWorkflow:
         # the CONFIG decides (three-layer model), not a start-time flag (A2/C3). Read before the
         # merge's own steps, because the requester's telling says whether stages follow (#448).
         should_promote = params.promote or bool(result.environments)
+        # `--promote` ON A MANIFEST THAT DECLARES A DEPLOY AND NO CHAIN PROMOTES INTO NOTHING
+        # (#501). The flag asked for a promotion the manifest has no stage for, so the box walked
+        # an empty chain, wrote Done, and the job's end announced the delivery — while the deploy
+        # the factory was still watching had not happened and could still fail. The watched
+        # deploy is this card's last stage exactly as it is without the flag, so the job takes
+        # that path instead (`deploy_is_last` below), and the empty promotion never runs.
+        # PATCHED, because skipping the promotion changes the commands such a job records
+        # (TMPRL1100); asked LAST, so a job of any other shape records no marker.
+        if (should_promote and not result.environments and result.state == JobState.MERGED
+                and bool(result.post_merge_deploy) and bool(result.pr_url)
+                and workflow.patched("promote-on-a-deploy-only-manifest-watches-it")):
+            should_promote = False
+        # THE WATCHED DEPLOY IS THE LAST STAGE (#448 slice 5) when the project declares one and no
+        # chain: the card is Done — and its delivery announced — when that deploy is green, and the
+        # watch is what says so (`DeployWatchWorkflow._the_last_stage`). Until this the card was
+        # settled Done right here, and Done is what a delivery is announced from: the requester
+        # was asked "did it work?" about a change the one stage they have had not received yet.
+        # PATCHED, because it changes the commands at the merge every such job takes (TMPRL1100);
+        # asked LAST, so a job with nothing to watch records no marker. No pull request means no
+        # watch (`_spawn_deploy_watch`), and a card nobody watches is settled where it always was.
+        deploy_is_last = (result.state == JobState.MERGED and not should_promote
+                          and bool(result.post_merge_deploy) and bool(result.pr_url)
+                          and workflow.patched("delivered-at-the-last-declared-stage"))
+        watched = False
         # Merged → observe the project's own dev deploy (ADR-0005). An ABANDONED child does the
         # watching; this returns immediately, so the merge frees the floor for the next ticket
         # right away and the deploy notification arrives async — watching never gates.
@@ -3058,11 +3277,19 @@ class JobWorkflow:
             await self._coord_say(tl_voice.say(tl_voice.NARRATION, "merged", params.language,
                                           issue=params.issue), "merge")  # the tech-lead
             await self._flag_review_findings(params, result)
-            await self._spawn_deploy_watch(params, result)
+            if deploy_is_last:
+                # IN REVIEW, SAID ON THE CARD, AND BEFORE THE WATCH STARTS: a deploy already green
+                # at its first probe settles Done, and a settle after it would put the card back
+                await self._settle(params, JobState.MERGED,
+                                   after_merge.delivered_when_deployed(result.post_merge_deploy))
+            watched = await self._spawn_deploy_watch(params, result, delivers=deploy_is_last)
             await self._refresh_knowledge(params)
-            await self._tell_the_requester_it_merged(params, result, stages_follow=should_promote)
+            await self._tell_the_requester_it_merged(
+                params, result, stages_follow=should_promote or deploy_is_last)
         if result.state not in (JobState.PR_OPEN, JobState.MERGED) or not should_promote:
-            if result.state == JobState.MERGED:
+            # A WATCH THAT COULD NOT START ends nothing, so the card is settled here as it always
+            # was rather than left In review for a watch that is not coming
+            if result.state == JobState.MERGED and not (deploy_is_last and watched):
                 await self._finish_at_the_merge(params, result)
             return result
         if not result.pr_url:
@@ -3123,24 +3350,50 @@ class JobWorkflow:
         # approval. No compute burned, no polling, nothing lost if we crash. The gate
         # flag makes the signal only count while we're actually parked here (M6).
         self._awaiting_approval = True
+        # "NOT YET" IS HEARD AT THIS GATE TOO (#448 slice 4). Its requester's "não funcionou"
+        # was answered "I'll take this back to the team and come back when it is fixed", and
+        # nothing took anything anywhere: the job waited out the window here and held. Asked
+        # ONCE, at the gate, so a run that parked here before the code existed replays deaf —
+        # and publishes that it is (`release_wait`), so the seam refuses one by name.
+        self._hears_not_yet = workflow.patched(_NOT_YET_AT_THE_LAST_GATE)
+        self._release_wait = self._the_release_wait(params)
+        another: dict | None = None
         try:
             deadline = workflow.now() + timedelta(days=params.approval_deadline_days)
             window = timedelta(days=params.approval_deadline_days)
             while True:
-                await workflow.wait_condition(lambda: self._approval is not None, timeout=window)
-                # AN APPROVAL IS ACTED ON ONLY WITH THE PANEL'S SEAL (`gate_seal`). One without
-                # it — sent straight to the engine — is dropped and the gate waits on, for what
-                # is left of the SAME window: a forged answer must not buy the job more time.
-                # The answer is taken as it stands NOW: another signal can land while the seal is
-                # checked, and it must not ride out on this one's verdict.
-                approval, seal = self._approval, self._approval_seal
-                if not workflow.patched("signed-gates") or await self._gate_sealed(
-                        "approve_prod",
-                        [approval["version"], approval["approver"], approval["comment"]], seal):
-                    self._approval = approval
-                    break
-                if self._approval is approval:
-                    self._approval, self._approval_seal = None, ""
+                await workflow.wait_condition(
+                    lambda: self._approval is not None or self._not_yet is not None,
+                    timeout=window)
+                if self._approval is not None:
+                    # AN APPROVAL IS ACTED ON ONLY WITH THE PANEL'S SEAL (`gate_seal`). One
+                    # without it — sent straight to the engine — is dropped and the gate waits
+                    # on, for what is left of the SAME window: a forged answer must not buy the
+                    # job more time. The answer is taken as it stands NOW: another signal can land
+                    # while the seal is checked, and it must not ride out on this one's verdict.
+                    approval, seal = self._approval, self._approval_seal
+                    if not workflow.patched("signed-gates") or await self._gate_sealed(
+                            "approve_prod",
+                            [approval["version"], approval["approver"], approval["comment"]],
+                            seal):
+                        self._approval = approval
+                        break
+                    if self._approval is approval:
+                        self._approval, self._approval_seal = None, ""
+                else:
+                    # A "NOT YET" (#448 slice 4), consumed first, whatever happens next — the seal
+                    # checked like every answer a gate acts on, and the budget the merge gate
+                    # spends: with a pass left the job leaves for a new change; with none it stays
+                    # here, saying a person decides, for what is left of the same window.
+                    asked, self._not_yet = self._not_yet, None
+                    if await self._gate_sealed(
+                            "not_yet", [str(asked.get("instruction") or ""),
+                                        str(asked.get("by") or "")],
+                            str(asked.get("seal") or "")):
+                        if self._adjust_passes < params.adjust_passes:
+                            another = asked
+                            break
+                    self._release_wait = self._the_release_wait(params)
                 window = deadline - workflow.now()
                 if window <= timedelta(0):
                     raise TimeoutError("prod approval window elapsed")
@@ -3161,6 +3414,8 @@ class JobWorkflow:
         finally:
             self._awaiting_approval = False  # gate is closed; further signals are ignored
 
+        if another is not None:
+            await self._another_change(params, another)    # continues as new; never returns
         assert self._approval is not None
         released = await workflow.execute_activity(
             release_prod,

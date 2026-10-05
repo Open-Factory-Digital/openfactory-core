@@ -307,19 +307,28 @@ def test_an_unreadable_board_is_still_unreadable(deployment, tracker, monkeypatc
 
 # ── 5. moving a delivered card ──────────────────────────────────────────────────────────────────
 
-def test_a_delivered_card_dragged_out_of_Done_is_open_work_again(deployment, tracker):
-    """The page's drag is the catalogue's `card_move` (`boardMove`): the board moves the card by
-    the tracker's rule, so leaving Done opens it, in the column it was dropped in."""
+def test_a_delivered_card_dragged_out_of_Done_is_refused_by_its_door(deployment, tracker):
+    """The page's drag is the catalogue's `card_move` (`boardMove`), and a person's move goes
+    through the card's door (#414): a delivered card is not queued from Done by a drag — it is
+    reopened, which is the door's own act (`reopened`). The drag changes nothing, and the card is
+    still drawn in Done as delivered work."""
     from openfactory.adapters.board import build_board
 
     shipped = _finished(deployment, tracker, "Shipped")
 
     out = _act("card_move", project="acme", issue=shipped, column="TO-DO")
 
-    assert out.ok, out.message
+    assert not out.ok and "delivered" in out.message, out.message
+    assert tracker.get_ticket(shipped).state == "closed"
+    assert _where(_board()) == {shipped: "Done"}
+    assert build_board(deployment).items_in_status("TO-DO") == []
+
+    # THE BOARD'S OWN MOVE, which the door's effects use, keeps the tracker's rule: leaving Done
+    # opens a delivered card, in the column it was put in, never closed in a column it claims
+    board = build_board(deployment)
+    assert board.set_column(issue=shipped, issue_url="", name="TO-DO")
     assert tracker.get_ticket(shipped).state == "open"
     assert _where(_board()) == {shipped: "TO-DO"}
-    assert build_board(deployment).items_in_status("TO-DO") == [shipped]
 
 
 def test_a_withdrawn_card_moved_on_the_board_stays_withdrawn(deployment, tracker):
@@ -334,14 +343,24 @@ def test_a_withdrawn_card_moved_on_the_board_stays_withdrawn(deployment, tracker
     assert _board()["cards"] == []
 
 
-def test_a_card_dragged_INTO_Done_stays_open_and_is_drawn_once(deployment, tracker):
-    """Recording a delivery is the close's (`card_close`, which the door comments on), not a drag's:
-    the card stays open where the person put it — triage's `done-but-open`, which asks them."""
+def test_a_card_dragged_INTO_Done_is_refused_by_its_door(deployment, tracker):
+    """Recording a delivery is the close's (`card_close`, which the door comments on), not a
+    drag's: Done is the factory's column, and a person's move into it is refused by the card's
+    door (#414). The card stays open and queued, and is drawn once, where it was."""
     waiting = _queued(deployment, tracker, "Done by hand")
 
     out = _act("card_move", project="acme", issue=waiting, column="Done")
 
-    assert out.ok, out.message
+    assert not out.ok and "factory's column" in out.message, out.message
+    assert tracker.get_ticket(waiting).state == "open"
+    assert [c["ref"] for c in _board()["cards"]] == [waiting]
+    assert _where(_board()) == {waiting: "TO-DO"}
+
+    # THE BOARD'S OWN MOVE into Done records no delivery either: that is the close's, which the
+    # door comments on — the card stays open, drawn once, in Done
+    from openfactory.adapters.board import build_board
+
+    assert build_board(deployment).set_column(issue=waiting, issue_url="", name="Done")
     assert tracker.get_ticket(waiting).state == "open"
     assert [c["ref"] for c in _board()["cards"]] == [waiting]
     assert _where(_board()) == {waiting: "Done"}

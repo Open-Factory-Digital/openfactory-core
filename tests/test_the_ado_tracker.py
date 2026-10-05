@@ -462,15 +462,15 @@ def test_nothing_is_invented_when_no_state_answers(caplog):
     assert "state_map" in caplog.text, "the warning does not say what to configure"
 
 
-def test_the_reason_still_lands_when_the_card_could_not_be_moved():
-    """The positive twin of the no-op: a caller's explanation dropped because the move failed is the
-    silent half of a failure, and the park it explains is the one a human is meant to act on."""
-    tracker = _tracker({("GET", "wit/workitemtypes/Issue/states"): SCRUM_STATES,
-                        ("POST", "wit/workItems/1/comments"): COMMENT_MADE})
+def test_a_move_that_could_not_be_made_writes_no_comment_of_its_own():
+    """The reason used to be posted here, landed or not. It is the card's door's comment now — the
+    same on every row, applied whether or not the move landed (ADR-0055 D6, #414) — so the row
+    writes nothing for a move it could not make, and nothing for one it could
+    (`test_every_row_writes_only_the_doors_comment.py`)."""
+    tracker = _tracker({("GET", "wit/workitemtypes/Issue/states"): SCRUM_STATES})
     tracker.set_state("1", JobState.REVIEWING, reason="the reviewer asked for a rebase")
 
-    (comment,) = tracker.recorded.writes()
-    assert "the reviewer asked for a rebase" in comment["body"]["text"]
+    assert tracker.recorded.writes() == [], "the row wrote a transition's comment of its own"
 
 
 def test_a_refused_write_raises_instead_of_reporting_success():

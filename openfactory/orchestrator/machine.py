@@ -40,6 +40,8 @@ from openfactory.contracts import (
 from openfactory.contracts.bot import BotIdentity
 from openfactory.contracts.item_space import closing_keyword, forge_owns_the_card
 from openfactory.contracts.refs import canonical_ref
+from openfactory.contracts.run import HandedBack
+from openfactory.contracts.state import PROGRESS_MARKS
 from openfactory.observability import EventKind, EventSink, JobEvent, NullEventSink, now_iso
 from openfactory.orchestrator.context import build_context
 from openfactory.orchestrator.errors import SetupFailed, SpecValidationError
@@ -49,6 +51,7 @@ from openfactory.orchestrator.merge_policy import (
     review_event,
     should_auto_merge,
 )
+from openfactory.orchestrator.outcomes import hands_back
 from openfactory.orchestrator.risk import assess as risk_assess
 from openfactory.orchestrator.risk import of_attempt as risk_of_attempt
 from openfactory.orchestrator.validation import (
@@ -344,7 +347,18 @@ def card_reference_for(runner: object, ticket: Ticket) -> CardReference:
             log.info("no URL for %s (%s) — the pull request names it without one",
                      ticket.id, str(exc)[:120])
     board = str(getattr(getattr(runner, "project", None), "name", "") or "").strip()
-    keyword = closing_keyword(getattr(runner, "forge", None)) if owned else ""
+    # NO CLOSING WORD WHEN A STAGE FOLLOWS THE MERGE (#448 slice 5). `Closes #12` has the forge
+    # close the card AT THE MERGE, and a closed card is what reads as delivered
+    # (`triage.Ticket.delivered`): on the one pairing that writes it, a project whose deploy or
+    # chain had not happened yet was announced "ready, did it work?" by the next look at the board.
+    # The tracker row closes a delivered card at Done on every pairing (#180), so the word only ever
+    # bought the close one step early — exactly the step a declared stage is. The mention stays,
+    # and links the change to the card natively.
+    manifest = getattr(runner, "manifest", None)
+    staged = isinstance(manifest, Manifest) and not after_merge.nothing_follows(
+        deploy=getattr(manifest, "post_merge_deploy", None),
+        environments=getattr(manifest, "environments", None) or ())
+    keyword = closing_keyword(getattr(runner, "forge", None)) if owned and not staged else ""
     return card_reference(ticket, owned=owned, url=url, board=board, keyword=keyword)
 
 
@@ -712,6 +726,15 @@ class JobRunner:
     #: (the ONE place production assembles a runner) passes it, which is what makes the gate real
     #: rather than decorative. Absent → no gate, and the test that pins the wiring says so.
     project: object | None = None
+    #: The outcomes this call reached on the card and did not write, in order — stamped on the
+    #: result its public method returns (`outcomes.hands_back`, ADR-0055 D7, #414).
+    _handed_back: list[HandedBack] = field(default_factory=list, init=False, repr=False)
+    #: WHICH CHANGE OF ITS CARD THIS RUNNER BUILDS (#448 slice 4): 0 the first, one more for each
+    #: "not yet" its requester said at the last gate, after the change before it had merged. It
+    #: names the branch (`namespace.job_branch`), so a new change never pushes over a merged one —
+    #: and every runner of the same job (the run, a repair, an adjust, a re-review) is built with
+    #: the same number, so they all find the branch the open pull request tracks.
+    change: int = 0
 
     def _review(self, *, sandbox, workspace, review_input: ReviewInput) -> ReviewResult:
         """The reviewer's verdict with its evidence checked against the gates that ran (#447).
@@ -735,8 +758,10 @@ class JobRunner:
         rename of this prefix has to preserve: while the platform carried two spellings, a repair
         that recalculated the new name for a PR opened under the old one pushed its fix to a
         branch nobody watched — an agent ran, money was spent, and the repair appeared to have
-        done nothing. The second spelling left on 2026-08-25; the property stays, in one place."""
-        return namespace.job_branch(ticket.id)
+        done nothing. The second spelling left on 2026-08-25; the property stays, in one place.
+
+        A LATER CHANGE OF THE SAME CARD HAS A NAME OF ITS OWN (#448 slice 4, `self.change`)."""
+        return namespace.job_branch(ticket.id, change=self.change)
 
     def _already_delivered(self, ticket: Ticket, owner: str | None,
                            branch: str) -> RunResult | None:
@@ -810,7 +835,7 @@ class JobRunner:
 
     def run(
         self, ticket_ref: str, resume_handle: str | None = None, spent_turns: int = 0,
-        decision: str = "",
+        decision: str = "", another_pass: str = "",
     ) -> RunResult:
         """Drive one ticket to a PR. `resume_handle` (C2) is an OPAQUE token from a prior
         rate-limit PAUSE: when set, we RESTORE the paused attempt's partial worktree from its
@@ -819,10 +844,14 @@ class JobRunner:
         `spent_turns` carries the ticket's cumulative agent-turn count across resumes — the
         effort budget (ADR-0013 D4) governs the TICKET, not one attempt. `decision` is a human's
         resolved answer to a DecisionRequest this ticket parked on (a planner blocker): injected
-        into the agent so it proceeds with that choice instead of re-asking."""
+        into the agent so it proceeds with that choice instead of re-asking. `another_pass` is what
+        the card's requester said is still wrong with the change before this one, which merged
+        (#448 slice 4): this run builds a NEW change of the card, and its brief carries those words
+        beside the card, whose criteria were corrected before the run was asked for."""
         self._turns = spent_turns  # cumulative effort; bumped by _count() after each agent call
         self._agent_runs: list[AgentRunMetric] = []  # per-invocation cost telemetry (metrics sink)
         self._decision = decision  # a resolved human choice to feed the planner/executor (once)
+        self._another_pass = another_pass  # what is still wrong with the last change (#448)
         self._assumptions: list[str] = []  # planner `assume` notes → surfaced in the PR
         ticket = self.tracker.get_ticket(ticket_ref)
 
@@ -1007,6 +1036,7 @@ class JobRunner:
             ctx = self._build_context(ticket, ws)
             ctx.resume_handle = resume_handle or ""  # the agent resumes its session if it can
             ctx.decision = self._decision  # a resolved human choice, injected into the agents
+            ctx.another_pass = self._another_pass  # what the last change still got wrong (#448)
 
             # PLAN → the planner investigates (read-only) and drafts a testable plan. Optional:
             # an adapter that doesn't split roles simply has no plan() and we go straight to
@@ -2055,13 +2085,24 @@ class JobRunner:
         # with a revoked token stopped jobs from parking at all, and the panel went on showing them
         # as running. So a mirror that cannot be updated is an ERROR somebody must act on, never a
         # reason to abandon the transition itself.
-        try:
-            self.tracker.set_state(ticket.id, state, reason=reason, needs_person=needs_person)
-        except Exception as exc:  # noqa: BLE001 — the job still transitions; the board lags
-            log.error("OPENFACTORY_TICKET_STATE_UNRECORDED ticket=%s -> %s (%s) — the platform "
-                      "moved on "
-                      "and the board still shows the old state", ticket.id, state.value,
-                      str(exc)[:160])
+        #
+        # ONLY A PROGRESS MARK IS WRITTEN HERE (ADR-0055 D7, #414). An outcome — a pull request
+        # opened, a merge, a delivery, a refusal, a park — is handed back in the result, and the
+        # worker applies it through the card's door, which tells every consumer of it: this box
+        # may run on a machine with no ledger, no conversation and no record of the card's life.
+        # The guard admits this `set_state` by rule, and only under this test.
+        if state in PROGRESS_MARKS:
+            try:
+                self.tracker.set_state(ticket.id, state, needs_person=needs_person)
+            except Exception as exc:  # noqa: BLE001 — the job still transitions; the board lags
+                log.error("OPENFACTORY_TICKET_STATE_UNRECORDED ticket=%s -> %s (%s) — the platform "
+                          "moved on "
+                          "and the board still shows the old state", ticket.id, state.value,
+                          str(exc)[:160])
+        else:
+            # `vars(...)`: a runner built without its constructor starts its list here
+            vars(self).setdefault("_handed_back", []).append(
+                HandedBack(state=state, needs_person=needs_person, reason=reason or ""))
         self._emit(ticket, "state", state.value, reason=reason)
         # The bot stopped actively working (parked / done / handed to a human) → drop the working
         # label so it never lingers on a ticket the bot has let go. Best-effort.
@@ -3465,3 +3506,14 @@ class JobRunner:
         if result.total_cost_usd is not None:
             lines += ["", f"{_COST_LINE}{result.total_cost_usd:.4f}"]
         return "\n".join(lines)
+
+
+# THE PUBLIC ENTRIES HAND THEIR OUTCOMES BACK (ADR-0055 D7, #414): each call's result carries what
+# it reached on the card and did not write (`outcomes.hands_back`). WRAPPED HERE, AFTER THE CLASS,
+# AND NOT DECORATED: guards across the suite parse these methods' source with
+# `ast.parse(src.lstrip())`, which a decorator line turns into an `IndentationError`
+# (`test_one_cost_for_a_ticket_on_every_surface.py`); `inspect.getsource` unwraps, so they still
+# read each method as it is written.
+for _entry in ("run", "repair_ci", "review_pr"):
+    setattr(JobRunner, _entry, hands_back(getattr(JobRunner, _entry)))
+del _entry

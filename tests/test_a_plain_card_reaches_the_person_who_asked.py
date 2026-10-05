@@ -161,11 +161,16 @@ def test_a_card_asked_for_in_a_conversation_is_offered_and_delivered_THERE(proje
     assert [t["conversation"] for t in told] == [ANAS]
     assert f"#{card} ({TITLE})" in told[0]["text"], told[0]["text"]
 
-    # it is delivered: she hears it is in the product, where she asked, and is asked if it works
-    from openfactory.adapters.tracker.registry import build_tracker
+    # it is delivered — closed as finished work through its door, whose `Loops("deliver")` is the
+    # one announcer (#414): she hears it is in the product, where she asked, and is asked if it
+    # works
+    from openfactory.lifecycle import CardEvent, transition
+    from openfactory.memory.ledger import fold
 
-    build_tracker(project).close_ticket(f"#{card}", "shipped in !3", delivered=True)
-    written = events.card_finished(project, card=card)
+    moved = transition(project, card, CardEvent.CLOSED, by=ANA,
+                       facts={"delivered": True, "note": "shipped in !3"})
+    assert moved.outcome("loops") == "1 announced", moved.effects
+    written = fold(loop_store.read(project.name))
 
     assert [t["conversation"] for t in told] == [ANAS, ANAS]
     [delivery] = [x for x in written if x.kind == DELIVERY]
@@ -203,11 +208,16 @@ def test_a_card_filed_with_NO_conversation_opens_nothing_as_before(project, tmp_
 
 
 def test_the_same_card_is_followed_ONCE(project, tmp_path):
-    """Deduplicated as a defect's is: an open loop on the card is not opened again."""
+    """Deduplicated as a defect's is: an open loop on the card is not opened again — the promise
+    the card's filing carries, opened by its door (#414), applied twice and spelled both ways."""
+    from openfactory.lifecycle import loops
+
     pen = _pen(project, tmp_path)
 
-    pen._track_ticket("12", title=TITLE, conversation=ANAS, requester=ANA)
-    pen._track_ticket("#12", title=TITLE, conversation=ANAS, requester=ANA)
+    loops.owe(project, "12", pen._track_ticket("12", title=TITLE, conversation=ANAS,
+                                               requester=ANA))
+    loops.owe(project, "12", pen._track_ticket("#12", title=TITLE, conversation=ANAS,
+                                               requester=ANA))
 
     assert [x.subject for x in _deliveries(project)] == ["cartao-12"]
 

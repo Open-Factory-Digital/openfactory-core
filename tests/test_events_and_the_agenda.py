@@ -3,16 +3,18 @@ happens, says it in the conversation it concerns, and what it owes to whom is vi
 
 WHAT IS PINNED HERE, in the order of the slice's acceptance:
 
-  - a delivered card is announced to its REQUESTER'S conversation when the job that delivered it
-    ends — through the job's one exit (`activities.record_outcome`) and the one door — not at the
-    next sweep, and not in the project's room; with nobody's conversation known, the room hears
-    it, naming nobody;
+  - a delivered card is announced to its REQUESTER'S conversation when it is delivered — by the
+    card's door since #414 (`Loops("deliver")`, the effect of every transition that brings a card
+    to Done), where the job's one exit announced it before — and the one conversation door; not at
+    the next sweep, and not in the project's room; with nobody's conversation known, the room
+    hears it, naming nobody;
   - a proactive message waits its turn in the conversation's line: never published while a turn
     is being answered, never ahead of a message sent before it, and never counted as somebody's
     place in the queue;
   - the agenda is on the panel and each person sees their own items and the room's — never
     another person's private ones — and the role reads the same agenda, as its conversation may;
-  - the weekly sweep catches what an event missed, and nothing is ever said twice;
+  - the weekly sweep announces nothing of its own — its second chance is the card door's
+    converge — and nothing is ever said twice;
   - nobody is named across conversations;
   - and an event cannot be forged from outside: the door every transport reaches refuses one,
     and only the factory's own producers tell it one.
@@ -230,13 +232,27 @@ def _job_ended(issue: str = "500", state: str = "done"):
                                      HoldSyncInput(project=ROOM, issue=issue, state=state))
 
 
+def _the_door_delivered(project, issue: str = "500"):
+    """What the card's `delivered` transition applies for its promises (#414): `Loops("deliver")`,
+    from a thread, as the worker's activity applies it. The board is what the test says
+    (`events._delivered_now`)."""
+    from openfactory.lifecycle import loops
+
+    def _apply() -> str:
+        try:
+            return loops.announce_what_it_completes(project, issue)
+        except Exception as exc:  # noqa: BLE001 — recorded as the door records it
+            return f"failed: {exc}"
+    return asyncio.to_thread(_apply)
+
+
 # ── 1. a delivered card is announced to its requester's conversation, when it is delivered ─────
 
 @engine_of_its_own
-async def test_a_delivered_card_is_announced_in_its_REQUESTERS_conversation_WHEN_the_job_ends(
+async def test_a_delivered_card_is_announced_in_its_REQUESTERS_conversation_WHEN_it_is_delivered(
         env, registry, ledger, memory, the_door_reaches, monkeypatch):
-    """The job that finished the work ends; the board says the card was delivered; the requester
-    hears it in the conversation they asked in — now, from the job's own exit, with no sweep run
+    """The card's door delivers it; the board says the card was delivered; the requester hears it
+    in the conversation they asked in — now, from the transition's own effect, with no sweep run
     at all. The room hears nothing, and the ledger moves: the delivery closes, and the "did it
     work?" it asked opens, where it was asked."""
     ledger.rows = [_delivery(where=ANAS, who=ANA)]
@@ -244,7 +260,7 @@ async def test_a_delivered_card_is_announced_in_its_REQUESTERS_conversation_WHEN
     swept: list = []
     monkeypatch.setattr(acts, "_product_followup", lambda *a, **k: swept.append(a) or "")
     async with _worker(env, _Worker()):
-        await _job_ended()
+        assert await _the_door_delivered(registry) == "1 announced"
         await _until(lambda: bool(ledger.rows[1:]))
         texts: list[str] = []
         for _ in range(100):
@@ -277,31 +293,38 @@ async def test_a_card_that_is_done_but_NOT_delivered_announces_nothing(
     ledger.rows = [_delivery(issues="500,501", where=ANAS, who=ANA)]
     monkeypatch.setattr(events, "_delivered_now", lambda project: {"500"})
     async with _worker(env, _Worker()):
-        await _job_ended("500")
+        assert await _the_door_delivered(registry, "500") == "nothing it completes is due yet"
         await asyncio.sleep(0.3)
         assert await _published(env, registry, ANAS) == []
     assert all(x.state != CLOSED for x in ledger.rows)
 
 
-def test_a_job_that_ended_ANY_other_way_asks_nothing(registry, ledger, monkeypatch):
-    """Parked, failed, skipped: no card was finished, so the ledger is not even read."""
+def test_the_jobs_exit_asks_nothing_however_it_ended(registry, ledger, monkeypatch):
+    """THE JOB'S EXIT IS NO ANNOUNCER SINCE #414: a job that ended with its card done delivered it
+    through the card's door (its settle, or the box's hand-back), whose effect said it. The exit
+    reads no board and no ledger — done, merged, parked, failed or skipped."""
+    from openfactory.lifecycle import loops
+
     asked: list = []
-    monkeypatch.setattr(events, "card_finished", lambda project, **kw: asked.append(kw) or [])
-    for state in ("on_hold", "failed", "skipped", "pr_open"):
+    monkeypatch.setattr(loops, "announce_what_it_completes",
+                        lambda project, card, **kw: asked.append(card) or "")
+    monkeypatch.setattr(events, "_delivered_now", lambda project: asked.append("board") or set())
+    ledger.rows = [_delivery(where=ANAS, who=ANA)]
+    for state in ("on_hold", "failed", "skipped", "pr_open", "done", "merged"):
         asyncio.run(_job_ended(state=state))
     assert asked == []
-    for state in ("done", "merged"):
-        asyncio.run(_job_ended(state=state))
-    assert [kw["card"] for kw in asked] == ["500", "500"]
+    assert [x.state for x in waiting(ledger.rows)] == ["open"]
 
 
 def test_with_NOBODYS_conversation_known_the_room_hears_it_and_nobody_is_named(
         registry, ledger, monkeypatch):
+    from openfactory.lifecycle.loops import announce
+
     told: list[dict] = []
     monkeypatch.setattr(events, "_tell", lambda project, **kw: told.append(kw) or True)
     ledger.rows = [_delivery(who=ANA)]
 
-    events.deliver(registry, delivered={"500"})
+    announce(registry, delivered={"500"})
 
     assert [t["conversation"] for t in told] == [ROOM]
     assert ANA not in told[0]["text"] and "ana" not in told[0]["text"].lower()
@@ -434,21 +457,26 @@ class _BoardModule:
 
 
 @engine_of_its_own
-async def test_the_sweep_catches_a_delivery_the_event_MISSED_and_never_announces_it_twice(
+async def test_a_delivery_the_door_could_not_say_is_said_once_when_it_is_applied_again(
         env, registry, ledger, memory, the_door_reaches, monkeypatch):
-    """The job ended while the board could not be read, so the event said nothing; the weekly
-    sweep, as the catch-all, announces it — to the requester's conversation, once. Then the
-    event is told again and the sweep runs again, and nothing more is said."""
+    """The card's door delivered it while the board could not be read, so its effect FAILED and
+    said nothing — and the weekly sweep, which reads the same board, does not say it beside the
+    door: it is no announcer since #414. The effect applied again (the door's converge, hourly
+    and on the sweep) says it — to the requester's conversation, once; applied again after that,
+    and with the sweep run again, nothing more is said."""
     ledger.rows = [_delivery(where=ANAS, who=ANA)]
     monkeypatch.setattr(acts, "_land_product_proposals", lambda project, **kw: [])
     monkeypatch.setattr(events, "_delivered_now", lambda project: None)   # the board was down
     async with _worker(env, _Worker()):
-        await _job_ended()
-        await asyncio.sleep(0.3)
-        assert await _published(env, registry, ANAS) == [], "an unreadable board announced"
-
+        assert (await _the_door_delivered(registry)).startswith("failed")
         swept = await asyncio.to_thread(acts._product_followup, registry, _BoardModule("500"),
                                         TriageReport(), registry.product)
+        await asyncio.sleep(0.3)
+        assert await _published(env, registry, ANAS) == [], "an unreadable board announced"
+        assert "accepting:0" in swept, swept
+
+        monkeypatch.setattr(events, "_delivered_now", lambda project: {"500"})
+        assert await _the_door_delivered(registry) == "1 announced"
         texts: list[str] = []
         for _ in range(100):
             texts = await _published(env, registry, ANAS)
@@ -456,10 +484,8 @@ async def test_the_sweep_catches_a_delivery_the_event_MISSED_and_never_announces
                 break
             await asyncio.sleep(0.05)
         assert texts == [_announcement()]
-        assert "closed:1" in swept and "accepting:1" in swept, swept
 
-        monkeypatch.setattr(events, "_delivered_now", lambda project: {"500"})
-        await _job_ended()
+        assert await _the_door_delivered(registry) == "nothing was promised about it"
         again = await asyncio.to_thread(acts._product_followup, registry, _BoardModule("500"),
                                         TriageReport(), registry.product)
         await asyncio.sleep(0.5)
@@ -482,20 +508,24 @@ async def test_the_same_happening_told_twice_is_ONE_item_in_the_conversation(
 
 def test_a_delivery_the_door_did_NOT_take_stays_open_for_the_next_telling(registry, ledger,
                                                                            monkeypatch):
+    from openfactory.lifecycle.loops import announce
+
     monkeypatch.setattr(events, "_tell", lambda project, **kw: False)
     ledger.rows = [_delivery(where=ANAS, who=ANA)]
 
-    assert events.deliver(registry, delivered={"500"}) == []
+    assert announce(registry, delivered={"500"}) == ([], 1)
     assert [x.state for x in waiting(ledger.rows)] == ["open"]
 
 
 def test_a_delivery_is_told_under_a_DETERMINISTIC_id_so_a_retold_one_is_dropped(
         registry, ledger, monkeypatch):
+    from openfactory.lifecycle.loops import announce
+
     told: list[dict] = []
     monkeypatch.setattr(events, "_tell", lambda project, **kw: told.append(kw) or False)
     ledger.rows = [_delivery(where=ANAS, who=ANA)]
-    events.deliver(registry, delivered={"500"})
-    events.deliver(registry, delivered={"500"})
+    announce(registry, delivered={"500"})
+    announce(registry, delivered={"500"})
     assert len(told) == 2 and told[0]["id"] == told[1]["id"]
     assert told[0]["id"].startswith(f"{events.DELIVERED}-")
 
@@ -845,9 +875,12 @@ def test_a_project_with_NO_product_role_is_told_nothing(tmp_path, ledger, monkey
     said: list = []
     monkeypatch.setattr(events, "_tell", lambda project, **kw: said.append(kw) or True)
     bare = Project(name="floor-only", repo_path=str(tmp_path / "w" / "f"))
+    from openfactory.lifecycle import loops
+
     assert not events.ci_went_red(bare, card="1", pr_url="x")
-    assert events.card_finished(bare, card="1") == []
-    assert events.deliver(bare, delivered={"1"}) == []
+    assert loops.announce_what_it_completes(bare, "1") == (
+        "nobody to tell: the project has no product role")
+    assert loops.announce(bare, delivered={"1"}) == ([], 0)
     assert said == []
 
 
@@ -861,8 +894,7 @@ def test_every_WIRED_producer_calls_its_event_and_the_unwired_ones_say_so():
         return source[start:source.index("\ndef ", start + 10)
                       if "\ndef " in source[start + 10:] else len(source)]
 
-    reaches = {events.DELIVERED: ("record_outcome", "_a_card_was_finished", "card_finished"),
-               events.CI_RED: ("repair_ci", "_the_checks_went_red", "ci_went_red"),
+    reaches = {events.CI_RED: ("repair_ci", "_the_checks_went_red", "ci_went_red"),
                events.PR_WAITING: ("techlead_watch", "_pull_requests_waiting",
                                    "pull_requests_at_the_gate"),
                # #405 wired the preview's: its own `up` step, once the preview is live
@@ -883,20 +915,35 @@ def test_every_WIRED_producer_calls_its_event_and_the_unwired_ones_say_so():
     start = ports.index("    def tell(")
     assert events.PRODUCERS[events.CARD_MOVED] == "openfactory/lifecycle/ports.py::tell"
     assert "events.card_moved(" in ports[start:ports.index("\n    def ", start + 10)]
+    # #414 wired the delivery's to the card's door: every transition that brings a card to Done
+    # carries `Loops("deliver")`, whose port reaches `loops.announce_what_it_completes`, which
+    # announces through `announce` — the job's exit and the weekly sweep, its producers before,
+    # announce nothing
+    loops = (ROOT / "openfactory/lifecycle/loops.py").read_text()
+    assert events.PRODUCERS[events.DELIVERED] == (
+        "openfactory/lifecycle/loops.py::announce_what_it_completes")
+    start = loops.index("def announce_what_it_completes(")
+    deliver = loops[start:loops.index("\ndef ", start)]
+    assert "announce(project, delivered=delivered, cards=mine)" in deliver
+    assert 'if action == "deliver":' in ports and "loops.announce_what_it_completes(self.project" in ports
+    assert "events._tell(project, id=events._event_id(events.DELIVERED" in loops
     assert set(events.PRODUCERS) == set(events.KINDS)
 
 
 # ── where a delivery's conversation comes from: the staged record ──────────────────────────────
 
 def test_filing_the_work_records_WHERE_it_was_asked_and_a_digest_of_WHO(ledger):
-    from openfactory.product.authoring import WriteResult
     from openfactory.product.module import ProductModule
 
     fake = SimpleNamespace(project=SimpleNamespace(name=ROOM))
-    ProductModule._open_delivery(fake, SimpleNamespace(number=7),
-                                 [WriteResult(ok=True, ref="#500")], conversation=ANAS,
-                                 requester=ANA)
-    ProductModule._track_defect(fake, "88", conversation=ANAS, requester=ANA)
+    # a requirement's promise is carried through each of its cards' doors as `promised`, and a
+    # defect's with its filing — both opened by the door's one effect, `loops.owe` (#414)
+    from openfactory.lifecycle import loops
+
+    loops.owe(fake.project, "500", ProductModule._track_requirement(
+        fake, 7, [500], conversation=ANAS, requester=ANA))
+    loops.owe(fake.project, "88",
+              ProductModule._track_defect(fake, "88", conversation=ANAS, requester=ANA))
 
     assert [(x.subject, x.context.get("conversation"), x.context.get("requester"))
             for x in ledger.rows] == [("7", ANAS, sealed(ANA)), ("defeito-88", ANAS, sealed(ANA))]
@@ -950,8 +997,15 @@ def _filing(registry, **overrides) -> SimpleNamespace:
         _file_one=lambda *a, **k: WriteResult(ok=True, ref="#500"),
         # the check each card of a requirement passes (#392), stood in like every other seam
         _vetter=lambda requirement, tracker: None,
-        _open_delivery=lambda req, results, **kw: handed.setdefault("_open_delivery", kw),
+        # where it was asked — what this case is about; who confirmed it and the tracker travel
+        # beside it to the card's door (#414)
+        _open_delivery=lambda req, results, *, conversation="", requester="", **_kw:
+            handed.setdefault("_open_delivery", {"conversation": conversation,
+                                                 "requester": requester}),
         _track_defect=lambda number, **kw: handed.setdefault("_track_defect", kw),
+        # the card's door, which files it (#414) and names the column as the board does (#496)
+        # — not this case's subject
+        _filed_through_the_door=lambda ref, **kw: (True, "Backlog"),
         _track_ticket=lambda ref, **kw: handed.setdefault("_track_ticket", kw),
         _checked_write=lambda **_k: WriteResult(ok=True, ref="#88"), _same_as=None,
         _cannot_see_the_product=lambda: None)
@@ -1034,13 +1088,22 @@ def test_a_chat_add_on_claiming_to_be_the_EVENT_transport_is_refused(registry, m
 #: call them. Nothing a transport runs is in the list: the panel, the API, the chat add-on's
 #: adapter and the action rows reach `receive`, which refuses an event.
 _TELLING = {"door": {"announce", "announce_now", "report", "_admit", "tell"},
-            "events": {"card_finished", "deliver", "ci_went_red", "pull_requests_at_the_gate",
+            # #414: `card_finished` and `deliver` left with the job's exit and the weekly sweep
+            # as announcers — a delivery is the card door's (`lifecycle/loops.py`, below)
+            "events": {"ci_went_red", "pull_requests_at_the_gate",
                        "preview_up", "document_ingested", "card_moved", "to_room", "say_to",
                        "_tell", "_once",
-                       # #401 — the change is the requester's to try: the watch and the round
-                       "ready_for_you", "ready_at_the_gate",
+                       # #401 — the change is the requester's to try: the watch and the round,
+                       # through the card's door since #414 (`ready_to_try`, from its port)
+                       "ready_for_you", "ready_to_try",
                        # #448 slice 3 — the change went in: the job, the moment it merged
-                       "merged_for_you"}}
+                       "merged_for_you",
+                       # #448 slice 4 — it is theirs to try: the tech-lead's hourly round
+                       "staged_for_you",
+                       # #448 slice 4 — they tried it and say it is right: the settling stage
+                       "tried_and_right",
+                       # #448 slice 6 — the same three, as the card's door's port says them
+                       "went_in", "to_try_at_the_stage", "tried_it_right"}}
 _PRODUCERS = {"openfactory/product/door.py", "openfactory/product/events.py",
               "openfactory/runtime/temporal/activities.py", "openfactory/product/engine.py",
               # #269: a document the ingestion READ — its name is the file's path, and the
@@ -1049,7 +1112,10 @@ _PRODUCERS = {"openfactory/product/door.py", "openfactory/product/events.py",
               # #412: what happened to a card — the card's door tells it, after the transition was
               # recorded; the sentence is the catalogue's, and a transport hands over only which
               # card, which event and why, never what is said (#384's `withdraw_card` before it)
-              "openfactory/lifecycle/ports.py"}
+              "openfactory/lifecycle/ports.py",
+              # #414: a delivery a card completed — the door's `Loops("deliver")` announces it and
+              # closes its loop where the card's other promises close (`loops.announce`)
+              "openfactory/lifecycle/loops.py"}
 
 
 def test_ONLY_the_factorys_own_producers_tell_the_door_an_event():
@@ -1075,11 +1141,17 @@ def test_ONLY_the_factorys_own_producers_tell_the_door_an_event():
 def test_the_guard_above_is_LOOKING():
     """It would pass over an empty tree: the producers it allows are where it finds the calls."""
     source = (ROOT / "openfactory/runtime/temporal/activities.py").read_text()
-    for call in ("events.card_finished(", "events.ci_went_red(",
-                 "events.pull_requests_at_the_gate(", "events.deliver(", "events.to_room(",
-                 "events.ready_for_you(", "events.ready_at_the_gate(", "door.report(",
-                 "events.merged_for_you("):
+    for call in ("events.ci_went_red(", "events.pull_requests_at_the_gate(", "events.to_room(",
+                 "door.report("):
         assert call in source, call
+    # #414: the ready-for-you telling and the delivery's are the card's door's — said from its port
+    # and its loops, which the guard above allows, and found there; and since #448 slice 6 the
+    # requester's loop past the pull request: went in, theirs to try at a stage, tried and right
+    ports = (ROOT / "openfactory/lifecycle/ports.py").read_text()
+    loops = (ROOT / "openfactory/lifecycle/loops.py").read_text()
+    assert "events.ready_to_try(" in ports and "events._tell(" in loops
+    for call in ("events.went_in(", "events.to_try_at_the_stage(", "events.tried_it_right("):
+        assert call in ports, call
 
 
 def test_the_product_board_is_read_again_when_the_role_speaks_and_when_it_is_opened():

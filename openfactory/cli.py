@@ -3263,13 +3263,20 @@ def _drive_one(view, issue: str, *, sandbox: str, image: str, review: bool = Tru
     ran to Done and the metrics database held one row, a channel message).
 
     Both commands below go through here so neither can forget, and the rows themselves are
-    `observability/job_record.record_job` — the same function the activity calls."""
+    `observability/job_record.record_job` — the same function the activity calls.
+
+    AND THE ATTENDED DRIVER IS A WORKER (ADR-0055 D7, #414): the runner hands its outcomes back —
+    the pull request, the merge, the park — and they reach the card through its door here, as
+    they do from the worker's activity, or nothing would move the card past its last progress
+    mark."""
     from datetime import UTC, datetime
 
+    from openfactory.lifecycle.handed_back import apply as the_outcomes_go_through_the_door
     from openfactory.observability.job_record import record_job
 
     started = time.monotonic()
     result = build_runner(view, issue, sandbox=sandbox, image=image, review=review).run(issue)
+    the_outcomes_go_through_the_door(view, issue, result)
     record_job(project=view.name, issue=str(issue),
                ts=datetime.now(UTC).isoformat(),
                state=getattr(result.state, "value", str(result.state)),

@@ -128,6 +128,17 @@ class JobParams(BaseModel):
     #: up: the workflow may not read the registry. A history that predates the field deserialises
     #: it as today's hard-coded 2, so a job in flight replays and refuses exactly as it did.
     adjust_passes: int = ADJUST_PASSES
+    #: THE CARD'S NEXT CHANGE, ASKED FOR AT THE LAST GATE (#448 slice 4). A job parked before the
+    #: product's users, its change merged, is told "not yet" by the person who asked for the card
+    #: (`JobWorkflow.not_yet`), and continues as new with these three: what is still wrong — the
+    #: words its brief carries beside the card, whose criteria were corrected first; how many
+    #: passes the job had spent by then, so the project's one budget (`adjust_passes`) is counted
+    #: across both runs and never starts again; and which change of the card this run builds,
+    #: which names its branch (`namespace.job_branch`) so it never pushes over the merged one.
+    #: Defaults are a first run, so a history that predates them reads exactly what it did.
+    another_pass: str = ""
+    passes_spent: int = 0
+    change: int = 0
 
     def traits(self) -> BoxTraits:
         """What the WORKFLOW may ask about this job's box, with no I/O: the stamped traits, else the
@@ -160,6 +171,11 @@ class RunJobInput(BaseModel):
     # text ("DECISION A — Trust only configured proxies"). Carried into the box so the agent
     # proceeds with the chosen option instead of re-asking. Empty on a normal run.
     decision: str = ""
+    #: What the card's requester said is still wrong with its last change, which merged — and
+    #: which change of the card this run builds (#448 slice 4, `JobParams`). Empty and 0 on every
+    #: first run.
+    another_pass: str = ""
+    change: int = 0
 
 
 class PreflightInput(BaseModel):
@@ -234,6 +250,21 @@ class CiRepairInput(BaseModel):
     # a SECOND attempt launches a fresh task instead of reconciling the FIRST attempt's stale
     # (still-STOPPED, ≤1h in ECS) result — otherwise the repair cap of 2 collapses to 1.
     attempt: int = 0
+    #: which change of the card the pull request is (#448 slice 4) — it names the branch
+    change: int = 0
+
+
+class AdjustedInput(BaseModel):
+    """A person's adjust pass rewrote the pull request (#413, #448): the card's door records
+    `adjusted`, the live preview is rebuilt from the new head, and the requester is told the pass
+    is ready — once per pass, keyed by its number, never folded into the first pass's telling."""
+
+    project: str
+    issue: str
+    pr_url: str = ""
+    pass_number: int = 1
+    by: str = ""
+    instruction: str = ""
 
 
 class AdjustInput(BaseModel):
@@ -263,6 +294,8 @@ class AdjustInput(BaseModel):
     source: str = ""
     #: who asked for the pass, for the note the pull request carries about it.
     by: str = ""
+    #: which change of the card the pull request is (#448 slice 4) — it names the branch
+    change: int = 0
 
 
 #: `AdjustInput.source` for a pass whose words are the pull request's review comments (#330).
@@ -285,6 +318,8 @@ class ReviewPassInput(BaseModel):
     #: which re-review this is (1-based), folded into the launcher's idempotency scope — without
     #: it a second ask would reconcile the first one's stale STOPPED task and return its verdict.
     attempt: int = 1
+    #: which change of the card the pull request is (#448 slice 4) — it names the branch
+    change: int = 0
 
 
 class PromoteInput(BaseModel):
@@ -748,6 +783,11 @@ class HoldSyncInput(BaseModel):
     issue: str
     state: str = "on_hold"
     note: str = ""
+    #: THE PARK THE WORKER ALREADY APPLIED, when the box handed it back (ADR-0055 D7, #414): the
+    #: id of its transition in the card's record, so this reconcile is answered from that row and
+    #: the card is not parked a second time. `""` — a park the workflow made itself (a crash, a
+    #: timeout, the merge watch), or an input recorded before this field — decides afresh.
+    event_id: str = ""
 
 
 class ReadyForYouInput(BaseModel):
@@ -787,6 +827,11 @@ class DeployWatchInput(BaseModel):
     #: Where a person looks once it is green (`post_merge_deploy.url`). Defaulted so an in-flight
     #: watch started before #122 keeps deserialising.
     url: str = ""
+    #: WHETHER THIS DEPLOY IS THE CARD'S LAST STAGE (#448 slice 5): the project declares the watch
+    #: and no `environments:`, so the job left the card In review at the merge and the watch is
+    #: what settles it — Done and announced when green, held for a person when not. False for a
+    #: watch that only informs, and for every watch started before this field.
+    delivers: bool = False
 
 
 class DeployStatusInput(BaseModel):

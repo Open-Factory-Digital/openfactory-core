@@ -358,16 +358,16 @@ def test_a_reply_in_a_fresh_thread_still_sees_her_channel_level_question(store):
         "her own question is the one turn she cannot remember"
 
 
-def test_the_sweep_records_what_she_posts(store, monkeypatch):
-    """The proactive path: _product_followup's delivery notice must land in the transcript keyed by
-    the channel. Driven through the production orchestration, not the helper in isolation — and,
-    since #267 slice 3, through the door, which records what it took (`door.announce`)."""
+def test_the_delivery_she_announces_is_recorded(store, monkeypatch):
+    """The proactive path: the delivery notice must land in the transcript keyed by the channel.
+    Driven through the production path, not the helper in isolation — since #267 slice 3 through
+    the door, which records what it took (`door.announce`), and since #414 from the card's door's
+    own effect (`Loops("deliver")`), where the weekly sweep announced it before."""
     import openfactory.adapters.channel as channel_pkg
     import openfactory.memory.store as loop_store
     from openfactory.memory.ledger import DELIVERY, open_loop
-    from openfactory.product.triage import Ticket, TriageReport
-    from openfactory.runtime.temporal.activities import _product_followup
-    from tests.the_room_heard import taken_at_the_door
+    from openfactory.product.triage import Ticket
+    from tests.the_room_heard import delivered_through_the_door, taken_at_the_door
 
     taken_at_the_door(monkeypatch)
 
@@ -387,11 +387,10 @@ def test_the_sweep_records_what_she_posts(store, monkeypatch):
     monkeypatch.setattr(loop_store, "read", lambda project: list(rows))
     monkeypatch.setattr(loop_store, "write", lambda project, loops: len(loops))
 
-    class _Module:
-        _board_tickets = [Ticket(number=500, title="a", state="closed", column="Done", body="")]
-        token = None
+    done = [Ticket(number=500, title="a", state="closed", column="Done", body="")]
 
-    _product_followup(_project(), _Module(), TriageReport(), _project().product)
+    assert delivered_through_the_door(_project(), "500", tickets=done,
+                                      monkeypatch=monkeypatch) == "1 announced"
 
     room = _project().product.channel_options["channel"]
     hers = [r for r in store.rows

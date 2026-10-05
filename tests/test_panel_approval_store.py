@@ -21,6 +21,7 @@ from openfactory.approvals import hash_password
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.registry import ProjectRegistry
 from openfactory.runtime.temporal import view as tv
+from tests.the_card_at_its_last_gate import at_its_last_gate
 
 
 @pytest.fixture
@@ -55,6 +56,7 @@ def _register(tmp_path, monkeypatch, *, with_manifest: bool, prod_approvers=()):
 @pytest.fixture
 def engine(monkeypatch):
     """Fake durable engine: records the approve signal instead of dialing Temporal."""
+    at_its_last_gate(monkeypatch)      # the card's door reads it first (#448 slice 6)
     signals: list[dict] = []
 
     async def connect():

@@ -17,10 +17,13 @@ only for a loop whose every other card is already delivered. A read that fails i
 said once, and never raised into the round.
 
 WHAT IS DRIVEN HERE. A GitHub product of `acme/api` (the tracker's own) and `acme/web`, its loop
-written by the production writer (`followup.deliveries_to_open`), and `gh` faked at its one
-transport (`subprocess.run`) for BOTH reads: the board's `gh issue list` of `acme/api`, and a card
-read by itself, `gh issue view` in `acme/web`. Between them everything is the production path —
-`card_finished` → `_delivered_now` → `read_board` → `deliver` → the per-ref read → `followup.delivered`.
+the promise a breakdown hands its cards' doors (`_track_requirement`), opened by the door's own
+effect (`loops.owe`, #414), and `gh` faked at its one transport (`subprocess.run`) for BOTH reads:
+the board's `gh issue list` of `acme/api`, and a card read by itself, `gh issue view` in
+`acme/web`. Between them everything is the production path — a card's `delivered` through its door
+→ `loops.announce_what_it_completes` → `_delivered_now` → `read_board` → `loops.announce` → the
+per-ref read → `followup.delivered`; and the door's converge, the second chance where the weekly
+sweep's catch-all was (`loops.announce` with the board's set, `Ports.deliver_what_remains`).
 The one seam stood in for is the door (`events._tell`), which records what it was handed; and the
 impediment reporter a board read pings (`module._tell_the_factory`), which is not this test's.
 """
@@ -33,10 +36,16 @@ import subprocess
 
 import pytest
 
+from openfactory.lifecycle import loops
 from openfactory.memory import store as loop_store
 from openfactory.memory.ledger import ACCEPTANCE, CLOSED, DELIVERY, waiting
-from openfactory.product import events, followup
-from tests.test_a_requirements_delivery_keys_on_the_trackers_refs import ANA, ANAS, _memory
+from openfactory.product import events
+from tests.test_a_requirements_delivery_keys_on_the_trackers_refs import (
+    ANA,
+    ANAS,
+    _memory,
+    _the_door_delivers,
+)
 
 API, WEB = "acme/api", "acme/web"
 
@@ -99,9 +108,7 @@ def product(monkeypatch, tmp_path):
                       tracker=ProviderRef(kind="github", repo=API),
                       product=ProductConfig(docs_repo="acme/acme-docs", admins=[ANA],
                                             agent_name="Nina"))
-    loop_store.write(project.name, followup.deliveries_to_open(
-        {7: ["#1", f"{WEB}#1"]}, [], ts="2026-10-01T00:00:00+00:00", conversation=ANAS,
-        requester=ANA))
+    _promised(project, 7, ["#1", f"{WEB}#1"])
     said: list[dict] = []
     monkeypatch.setattr(events, "_tell", lambda project, **kw: said.append(kw) or True)
     board.forget_board()
@@ -109,8 +116,33 @@ def product(monkeypatch, tmp_path):
     board.forget_board()
 
 
+def _promised(project, requirement: int, landed: list[str]) -> None:
+    """The promise a breakdown over `landed` hands each of its cards' doors, opened by the first
+    (`loops.owe`, #414) — as `_open_delivery` builds it."""
+    from types import SimpleNamespace
+
+    from openfactory.contracts.refs import canonical_refs
+    from openfactory.product.module import ProductModule
+
+    cards = canonical_refs(landed)
+    owed = ProductModule._track_requirement(SimpleNamespace(project=project), requirement, cards,
+                                            conversation=ANAS, requester=ANA)
+    for card in cards:
+        loops.owe(project, card, owed)
+
+
 def _deliveries(project) -> list:
     return [x for x in waiting(loop_store.read(project.name)) if x.kind == DELIVERY]
+
+
+def _delivered(project, card: str) -> list:
+    """`card` reached Done through its door — the rows its announcement wrote."""
+    return _the_door_delivers(project, card)
+
+
+def _converged(project, *, delivered: set[str]) -> list:
+    """The door's second chance, with the board's set (`Ports.deliver_what_remains`)."""
+    return loops.announce(project, delivered=delivered)[0]
 
 
 def test_one_card_in_each_repository_is_announced_once_when_both_are_delivered_and_not_before(
@@ -121,7 +153,7 @@ def test_one_card_in_each_repository_is_announced_once_when_both_are_delivered_a
 
     # THE API'S CARD SHIPPED; THE WEB'S IS STILL OPEN — read by itself, and nothing is said
     forge.has(API, 1, "CLOSED", "COMPLETED")
-    assert events.card_finished(project, card="1") == []
+    assert _delivered(project, "1") == []
     assert said == [] and _deliveries(project) == [loop]
     # the board is the tracker's own repository's list, read fresh — and the web card is on no list
     assert [c[:2] for c in forge.asked_of(API)] == [["issue", "list"]]
@@ -131,7 +163,7 @@ def test_one_card_in_each_repository_is_announced_once_when_both_are_delivered_a
 
     # THE WEB'S CARD SHIPPED: its job ends, and the requirement is announced — to Ana, once
     forge.has(WEB, 1, "CLOSED", "COMPLETED")
-    written = events.card_finished(project, card=f"{WEB}#1")
+    written = _delivered(project, f"{WEB}#1")
 
     assert [t["conversation"] for t in said] == [ANAS]
     assert "requisito 7" in said[0]["text"]
@@ -140,9 +172,10 @@ def test_one_card_in_each_repository_is_announced_once_when_both_are_delivered_a
     assert [x.kind for x in written if x.kind == ACCEPTANCE] == [ACCEPTANCE]
     assert _deliveries(project) == []
 
-    # …AND NEVER TWICE: the job's event again, and the weekly sweep's catch-all
-    assert events.card_finished(project, card=f"{WEB}#1") == []
-    assert events.deliver(project, delivered={"1"}) == []
+    # …AND NEVER TWICE: the card's door again, and the door's converge (the weekly sweep's since
+    # #414)
+    assert _delivered(project, f"{WEB}#1") == []
+    assert _converged(project, delivered={"1"}) == []
     assert len(said) == 1
     # THE OTHER REPOSITORY WAS NEVER LISTED — only the card the loop names was read
     assert not [c for c in forge.calls if c[:2] == ["issue", "list"] and WEB in c]
@@ -153,19 +186,20 @@ def test_the_web_card_delivered_first_is_not_the_requirement_delivered(product):
     project, forge, said = product
     forge.has(WEB, 1, "CLOSED", "COMPLETED")
 
-    assert events.card_finished(project, card=f"{WEB}#1") == []
+    assert _delivered(project, f"{WEB}#1") == []
     assert said == [] and len(_deliveries(project)) == 1
     # A LOOP WITH WORK STILL OPEN IN ITS OWN REPOSITORY CANNOT CLOSE, so the other one is not read
     assert forge.asked_of(WEB) == []
 
 
 def test_the_sweep_sees_a_card_in_another_repository_delivered_too(product):
-    """The catch-all's own call (`_product_followup` → `deliver` with the board's set): an event
-    missed, a card closed by hand — the sweep announces it the same way."""
+    """The second chance's own call (the door's converge → `loops.announce` with the board's set,
+    where the weekly sweep's `deliver` was until #414): an effect that failed, a delivery a
+    cancellation narrowed — it announces it the same way."""
     project, forge, said = product
     forge.has(WEB, 1, "CLOSED", "COMPLETED")
 
-    written = events.deliver(project, delivered={"1"})
+    written = _converged(project, delivered={"1"})
 
     assert [t["conversation"] for t in said] == [ANAS]
     assert [(x.subject, x.state) for x in written if x.kind == DELIVERY] == [("7", CLOSED)]
@@ -176,7 +210,7 @@ def test_a_card_in_another_repository_closed_as_NOT_PLANNED_is_not_delivered(pro
     forge.has(API, 1, "CLOSED", "COMPLETED")
     forge.has(WEB, 1, "CLOSED", "NOT_PLANNED")
 
-    assert events.card_finished(project, card=f"{WEB}#1") == []
+    assert _delivered(project, f"{WEB}#1") == []
     assert said == [] and len(_deliveries(project)) == 1
 
 
@@ -188,8 +222,8 @@ def test_a_failed_read_of_the_other_repository_announces_nothing_and_raises_noth
     forge.down.add(WEB)
 
     with caplog.at_level(logging.WARNING, logger="openfactory.product.events"):
-        assert events.card_finished(project, card=f"{WEB}#1") == []
-        assert events.deliver(project, delivered={"1"}) == []
+        assert _delivered(project, f"{WEB}#1") == []
+        assert _converged(project, delivered={"1"}) == []
 
     assert said == [] and len(_deliveries(project)) == 1
     unread = [r.getMessage() for r in caplog.records if "OPENFACTORY_DELIVERY_UNREAD" in
@@ -200,7 +234,7 @@ def test_a_failed_read_of_the_other_repository_announces_nothing_and_raises_noth
 
     # THE FORGE ANSWERS AGAIN: the next telling asks again, and says it
     forge.down.clear()
-    assert [x.subject for x in events.deliver(project, delivered={"1"})
+    assert [x.subject for x in _converged(project, delivered={"1"})
             if x.kind == DELIVERY] == ["7"]
     assert [t["conversation"] for t in said] == [ANAS]
 
@@ -212,7 +246,7 @@ def test_a_card_the_other_repository_does_not_have_is_not_delivered(product):
     forge.has(API, 1, "CLOSED", "COMPLETED")
     del forge.issues[(WEB, "1")]
 
-    assert events.deliver(project, delivered={"1"}) == []
+    assert _converged(project, delivered={"1"}) == []
     assert said == []
 
 
@@ -229,7 +263,7 @@ def test_a_tracker_that_raises_reading_the_card_is_not_delivered(product, monkey
         raise RuntimeError("the `gh` CLI is not installed")
 
     monkeypatch.setattr(GitHubIssuesTracker, "ticket_summary", boom)
-    assert events.deliver(project, delivered={"1"}) == []
+    assert _converged(project, delivered={"1"}) == []
     assert said == [] and len(_deliveries(project)) == 1
 
 
@@ -238,15 +272,13 @@ def test_a_requirement_whose_cards_are_all_in_another_repository_is_announced(
     """Nothing of it on the tracker's own board — so the board's set says nothing about it at all,
     and is not what decides whether it is asked."""
     project, forge, said = product
-    loop_store.write(project.name, followup.deliveries_to_open(
-        {9: [f"{WEB}#2", f"{WEB}#3"]}, [], ts="2026-10-02T00:00:00+00:00", conversation=ANAS,
-        requester=ANA))
+    _promised(project, 9, [f"{WEB}#2", f"{WEB}#3"])
     forge.has(WEB, 2, "CLOSED", "COMPLETED")
     forge.has(WEB, 3, "OPEN")
 
-    assert events.card_finished(project, card=f"{WEB}#2") == []
+    assert _delivered(project, f"{WEB}#2") == []
     forge.has(WEB, 3, "CLOSED", "COMPLETED")
-    written = events.card_finished(project, card=f"{WEB}#3")
+    written = _delivered(project, f"{WEB}#3")
 
     assert [(x.subject, x.state) for x in written if x.kind == DELIVERY] == [("9", CLOSED)]
     assert len(said) == 1
@@ -254,8 +286,8 @@ def test_a_requirement_whose_cards_are_all_in_another_repository_is_announced(
 
 def test_a_failure_anywhere_in_the_other_repositorys_read_never_reaches_the_round(
         product, monkeypatch):
-    """The sweep calls `deliver` bare: whatever goes wrong asking the other repository, the board's
-    answer stands and the round goes on."""
+    """The converge calls `loops.announce` bare: whatever goes wrong asking the other repository,
+    the board's answer stands and the round goes on."""
     from openfactory.product import board
 
     project, forge, said = product
@@ -265,7 +297,7 @@ def test_a_failure_anywhere_in_the_other_repositorys_read_never_reaches_the_roun
         raise OSError("the deployment's credential store is unreadable")
 
     monkeypatch.setattr(board, "read_cards", boom)
-    assert events.deliver(project, delivered={"1"}) == []
+    assert _converged(project, delivered={"1"}) == []
     assert said == [] and len(_deliveries(project)) == 1
 
 

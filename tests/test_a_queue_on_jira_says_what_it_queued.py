@@ -56,6 +56,16 @@ class _Site:
     def urlopen(self, req, timeout=0):  # noqa: ARG002 — urllib's own signature
         method = req.get_method()
         path = req.full_url.split("/rest/api/3/", 1)[1]
+        # THE CARD'S DOOR READS THE BOARD, THEN EACH CARD, BEFORE IT QUEUES ONE (ADR-0055, #414)
+        if method == "GET" and path.startswith("search/jql?"):
+            return _Answer({"isLast": True, "issues": [
+                {"key": card, "fields": {"status": {"name": status}}}
+                for card, status in self.status.items()]})
+        read = re.fullmatch(rf"issue/({KEY}-\d+)", path)
+        if read and method == "GET":
+            return _Answer({"key": read.group(1), "fields": {
+                "summary": "Exportar CSV", "description": None, "reporter": None,
+                "status": {"name": self.status[read.group(1)], "statusCategory": {"key": "new"}}}})
         moved = re.fullmatch(rf"issue/({KEY}-\d+)/transitions", path)
         names = {TO_BACKLOG: BACKLOG, TO_QUEUE: QUEUE, TO_DOING: DOING}
         if moved and method == "GET":
@@ -150,8 +160,11 @@ def test_a_queue_half_refused_on_jira_names_the_card_that_went_in(jira):
     said = _yes(project, module, ["DAR-9", "DAR-10"])
 
     assert site.status == {"DAR-9": QUEUE, "DAR-10": BACKLOG}
+    # the refusal is a failed placement of a RECORDED promotion, which the hourly round applies
+    # again (ADR-0055, #414) — and the card it names is spelled as Jira spells it
     assert said == ("Nina: Coloquei na fila, nesta ordem: DAR-9. A fábrica começa pelo primeiro."
-                    "\n\n1 não entraram: o quadro recusou a movimentação"), said
+                    "\n\n1 não entraram: não consegui colocar o DAR-10 na fila agora — ficou "
+                    "anotado, e eu tento de novo dentro de uma hora."), said
 
 
 # ── the local row: a numbered board reads as it always read ──────────────────────────────────────

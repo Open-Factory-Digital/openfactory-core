@@ -49,12 +49,21 @@ DIR = ".openfactory"
 BRANCH_PREFIX = "openfactory"
 
 
-def job_branch(ticket_id: str) -> str:
+def job_branch(ticket_id: str, change: int = 0) -> str:
     """The branch a job for `ticket_id` works on — the one name every job is known by.
 
     Recalculated from the ticket id on every entry, so a repair or a resume finds the branch the
-    open pull request tracks without anybody storing it."""
-    return f"{BRANCH_PREFIX}/{str(ticket_id).lstrip('#')}"
+    open pull request tracks without anybody storing it.
+
+    `change` IS WHICH CHANGE OF THE CARD THIS IS (#448 slice 4): 0 the first, and one more each
+    time its requester said "not yet" at the last gate — after the first change had MERGED. Every
+    change had this one name, and the box pushes with `--force` (`publish_branch`), so a second
+    change would have been pushed over the branch of the merged one. The first change keeps the
+    name it always had; a later one is `<prefix>/<id>-<n>`, n counting changes from 2 — a sibling
+    name, never `<prefix>/<id>/…`, which git refuses beside an existing `<prefix>/<id>`. It is
+    recalculated like the rest, from the change number the job carries (`JobParams.change`)."""
+    bare = str(ticket_id).lstrip('#')
+    return f"{BRANCH_PREFIX}/{bare}-{change + 1}" if change > 0 else f"{BRANCH_PREFIX}/{bare}"
 
 
 #: The two files that live in it, as the defaults every caller starts from.

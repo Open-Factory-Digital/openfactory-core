@@ -35,9 +35,10 @@ MUTATIONS = [
      "        self._set_state(ticket, JobState.PR_OPEN, needs_person=True)\n        return None"),
 
     ("the machine takes the distinction and drops it", MACHINE,
-     "            self.tracker.set_state(ticket.id, state, reason=reason, "
-     "needs_person=needs_person)",
-     "            self.tracker.set_state(ticket.id, state, reason=reason)"),
+     # re-pinned 2026-10-04: a pull request is an outcome the box hands back, with who the blocker is, and
+     # the worker applies it through the card's door (#414)
+     "                HandedBack(state=state, needs_person=needs_person, reason=reason or \"\"))",
+     "                HandedBack(state=state, reason=reason or \"\"))"),
 
     # ── the vendors ─────────────────────────────────────────────────────────────────────────────
     ("the GitHub tracker stops handing it to its board", GH,

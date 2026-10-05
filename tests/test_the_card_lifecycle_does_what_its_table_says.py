@@ -27,18 +27,23 @@ from openfactory.lifecycle.ports import Seen
 from openfactory.lifecycle.table import (
     ALLOWED,
     DECIDED,
+    MOVES_NOTHING,
+    OBSERVED,
     ONLY_ON_A_CLOSED_CARD,
+    WRITES_THE_CARD,
     CardEvent,
     Close,
     Column,
     Comment,
     Forget,
     Loops,
+    Place,
     Preview,
     Remove,
     Reopen,
     State,
     Tell,
+    after,
     allowed,
     consequences,
     name_of,
@@ -85,6 +90,9 @@ class Ports:
     def column(self, card, key):
         return self._do("column", card, key)
 
+    def place(self, card, key, *, name=""):
+        return self._do("place", card, key)
+
     def close(self, card, *, delivered, note):
         return self._do("close", card, delivered, note)
 
@@ -97,10 +105,11 @@ class Ports:
     def comment(self, card, text):
         return self._do("comment", card, text)
 
-    def loops(self, card, action):
+    def loops(self, card, action, *, about="", **_):
         return self._do("loops", card, action)
 
-    def tell(self, card, *, notice, event_id, title, removed, opened_by, conversation):
+    def tell(self, card, *, notice, event_id, title, removed, opened_by, conversation,
+             pass_number=0, **_):
         return self._do("tell", card, notice)
 
     def preview(self, card, *, action, by):
@@ -117,6 +126,8 @@ class Ports:
 def _call_of(effect, carried: bool):
     if isinstance(effect, Column):
         return ("column", effect.key)
+    if isinstance(effect, Place):
+        return ("place", effect.key)
     if isinstance(effect, Close):
         return ("close", effect.delivered)
     if isinstance(effect, Remove):
@@ -139,7 +150,7 @@ def _call_of(effect, carried: bool):
 def _shape(call: tuple) -> tuple:
     """A call as `_call_of` spells it: the port, and the argument the table decides."""
     what = call[0]
-    if what in ("column", "loops", "tell", "preview"):
+    if what in ("column", "place", "loops", "tell", "preview"):
         return (what, call[2])
     if what == "close":
         return (what, call[2])
@@ -168,7 +179,8 @@ def test_every_decided_event_does_exactly_what_its_row_says(event, delivered):
     moved, ports = _drive(event, _a_state_it_happens_in(event), open_card=open_card,
                           facts=facts)
 
-    row = consequences(event, facts)
+    # the facts the door decided with — it adds where the card was (`before`)
+    row = consequences(event, moved.facts)
     carried = any(isinstance(e, Close | Remove) for e in row)
     assert moved.ok, moved.refused
     assert [_shape(c) for c in ports.calls] == \
@@ -225,7 +237,9 @@ def test_the_five_consumers_the_defects_missed_are_each_in_the_rows():
     the requester's conversation (#401) and the preview (#405)."""
     backlog = (CardEvent.DISCARDED, CardEvent.SKIPPED, CardEvent.STOPPED)
     gone = (CardEvent.WITHDRAWN, CardEvent.REMOVED)
-    for event in DECIDED:
+    # every event that MOVES the card forgets the snapshot; one that moves nothing has no board
+    # to forget, and is held to moving nothing in `test_a_promise_moves_nothing` (#414)
+    for event in DECIDED - MOVES_NOTHING:
         assert Forget() in consequences(event, {}), f"{event}: the snapshot is not forgotten"
     for event in backlog:
         row = consequences(event, {})
@@ -238,8 +252,10 @@ def test_the_five_consumers_the_defects_missed_are_each_in_the_rows():
         assert Loops("cancel") in row, "a card that is gone keeps its promise open for ever"
         assert Tell("will_not_be_built") in row and Preview("stop") in row
     delivered = consequences(CardEvent.CLOSED, {"delivered": True})
-    assert not any(isinstance(e, Loops | Tell | Preview) for e in delivered), (
-        "closing finished work cancels its promise or tells somebody it will not be built")
+    assert not any(isinstance(e, Tell | Preview) for e in delivered) and \
+        Loops("cancel") not in delivered, (
+            "closing finished work cancels its promise or tells somebody it will not be built")
+    assert Loops("deliver") in delivered, "finished work closed announces nothing it completes"
     assert Loops("restore") in consequences(CardEvent.REOPENED, {})
 
 
@@ -383,3 +399,350 @@ def test_the_rows_keep_what_the_boards_own_gates_refused():
         assert allowed(before_pickup, CardEvent.REMOVED) is None
         assert allowed(before_pickup, CardEvent.DISCARDED) is not None, (
             "a card no job has is 'discarded' — there is no pull request to close")
+
+
+def test_an_answer_moves_only_a_card_still_parked_on_its_question():
+    """#413: the answer to a card's question returns it to the queue from the park the question put
+    it in — never a card somebody already moved on, and never one that is gone, whose question
+    closes as cancelled because nobody will pick the card up."""
+    for parked in ("waiting_on_a_person", ""):
+        row = consequences(CardEvent.QUESTION_ANSWERED, {"before": parked})
+        assert Column("todo") in row and Loops("answer") in row, parked
+    for moved_on in ("backlog", "todo", "running", "delivered"):
+        row = consequences(CardEvent.QUESTION_ANSWERED, {"before": moved_on})
+        assert not any(isinstance(e, Column) for e in row), f"{moved_on}: moved back"
+        assert Loops("answer") in row
+    for gone in ("closed", "removed"):
+        assert consequences(CardEvent.QUESTION_ANSWERED, {"before": gone}) == (Loops("moot"),)
+
+
+def test_a_decision_the_jobs_own_ending_already_carried_out_is_not_refused():
+    """#413: a person's skip signals the job, and the job's settle can record before the row does.
+    The row's decision then finds the card already where it would leave it: it stands, and nothing
+    is applied twice — where it used to be refused for a skip the engine had in fact performed."""
+    sink = InMemoryMetricsSink()
+    ports = Ports(Seen(state=State.WAITING_ON_A_PERSON), sink_=sink)
+
+    def the_job_settles_first():
+        record.write(sink, "acme", record.Row(card="12", seq=1, event_id="settled-by-the-job",
+                                              event="skipped", by="the workflow", effects=()))
+        ports.seen_as = Seen(state=State.BACKLOG)
+        return None
+
+    moved, _ = _drive(CardEvent.SKIPPED, State.WAITING_ON_A_PERSON, ports=ports,
+                      act=the_job_settles_first)
+
+    assert moved.ok and not moved.refused, moved
+    assert ports.calls == [], "the job's ending was applied a second time"
+
+
+def test_every_adjust_pass_ends_the_way_the_first_did():
+    """#448: when a pass ends, the preview shows the new head and its requester is told that this
+    pass is theirs to try — the two things the live run found missing."""
+    row = consequences(CardEvent.ADJUSTED, {})
+    assert Preview("rebuild") in row, "the preview goes on showing the pass before"
+    assert Tell("pass_ready") in row, "the requester never hears the pass is ready"
+
+
+# ── 7. filing, the operator's two columns, and edits (#414) ───────────────────────────────────
+
+def test_a_card_is_filed_and_moved_only_within_the_operators_two_columns():
+    """Cards land in the backlog (ADR-0019 §5), and a person moves them between the backlog and the
+    queue. A filing into a column the factory writes places nothing; a move out of a column a job
+    holds the card in is refused — ending a job is `stop`, `skip` or `discard`, which tell it."""
+    assert consequences(CardEvent.FILED, {}) == (Place("backlog"), Forget())
+    assert consequences(CardEvent.FILED, {"column": "todo"})[0] == Place("todo")
+    for factory in ("in_progress", "in_review", "needs_action", "done"):
+        assert not any(isinstance(e, Place) for e in
+                       consequences(CardEvent.FILED, {"column": factory})), factory
+    assert consequences(CardEvent.FILED, {"column": ""}) == (Forget(),), (
+        "a caller with no board was given a placement")
+    for event in (CardEvent.PROMOTED, CardEvent.REORDERED, CardEvent.EDITED):
+        for held in (State.RUNNING, State.DELIVERED, State.CLOSED):
+            assert allowed(held, event, open_card=held is not State.CLOSED) is not None, (
+                f"{event} of a card the factory holds or finished")
+    assert allowed(State.WAITING_ON_A_PERSON, CardEvent.PROMOTED) is None, (
+        "a parked card no job waits on can no longer be queued again by hand")
+    assert allowed(State.WAITING_ON_A_PERSON, CardEvent.REORDERED) is not None
+    assert allowed(State.WAITING_ON_A_PERSON, CardEvent.EDITED) is not None
+
+
+def test_a_promotion_is_placed_and_says_nothing_and_an_edit_is_one_comment():
+    assert consequences(CardEvent.PROMOTED, {}) == (Place("todo"), Forget())
+    assert consequences(CardEvent.REORDERED, {}) == (Place("backlog"), Forget())
+    assert consequences(CardEvent.EDITED, {}) == (Comment(), Forget())
+
+
+# ── 8. a change made in the vendor's own interface (D8, #414) ─────────────────────────────────
+
+_WRITES = ("column", "place", "close", "remove", "reopen", "comment")
+
+
+@pytest.mark.parametrize("delivered", [False, True])
+@pytest.mark.parametrize("event", sorted(DECIDED))
+def test_an_observed_change_does_what_its_row_says_minus_the_writes_to_the_card(event,
+                                                                               delivered):
+    """Derived from the table, like the first: an observed event writes NOTHING to the card —
+    the vendor's interface made that write — and everything else of its row happens."""
+    was = _a_state_it_happens_in(event)
+    ports = Ports(Seen(state=State.CLOSED, open=False, title="Monthly report"))
+    moved = transition(Project(), "#12", event, by=OBSERVED, ports=ports,
+                       facts={"delivered": delivered, "before": was.value if was else ""})
+
+    assert moved.ok, moved.refused
+    row = consequences(event, moved.facts)
+    assert moved.facts["observed"] is True
+    assert [_shape(c) for c in ports.calls] == [c for c in (_call_of(e, False) for e in row)
+                                                if c is not None]
+    assert not [c for c in ports.calls if c[0] in _WRITES], ports.calls
+
+
+def test_a_closed_card_left_in_the_queue_is_filed_where_its_close_puts_it():
+    """The one write an observed change makes: the BOARD following a close, from the pickup column
+    only — what the stale-pickup healer did by hand (#413). On a row whose column is its status a
+    closed card is never there, and moving it would reopen it."""
+    gone = consequences(CardEvent.CLOSED, {"observed": True, "column": "todo"})
+    assert gone[0] == Column("backlog") and Loops("cancel") in gone
+    done = consequences(CardEvent.CLOSED, {"observed": True, "column": "todo", "delivered": True})
+    assert done == (Column("done"), Loops("deliver"), Forget())
+    for elsewhere in ("backlog", "done", "in_progress", ""):
+        row = consequences(CardEvent.CLOSED, {"observed": True, "column": elsewhere})
+        assert not any(isinstance(e, Column) for e in row), elsewhere
+
+
+def test_an_observed_change_is_judged_against_what_the_platform_last_knew():
+    """The tracker already shows the change, so asked of it a close would be refused as the close
+    of a closed card. The record's latest transition says where the card was — and a close the
+    record already holds is not observed twice."""
+    sink = InMemoryMetricsSink()
+    ports = Ports(Seen(state=State.BACKLOG), sink_=sink)
+    assert _drive(CardEvent.PROMOTED, State.BACKLOG, ports=ports)[0].ok
+
+    ports.seen_as = Seen(state=State.CLOSED, open=False)      # closed on the vendor's screen
+    ports.calls.clear()
+    moved = transition(Project(), "#12", CardEvent.CLOSED, by=OBSERVED, ports=ports,
+                       facts={"delivered": False})
+    assert moved.ok and moved.before is State.TODO, moved
+    assert ("loops", "12", "cancel") in ports.calls
+    assert ("tell", "12", "will_not_be_built") in ports.calls
+    assert [r.event for r in record.read(sink, "acme", "12").rows] == ["promoted", "closed"]
+
+    ports.calls.clear()
+    again = transition(Project(), "#12", CardEvent.CLOSED, by=OBSERVED, ports=ports,
+                       facts={"delivered": False})
+    assert not again.ok and ports.calls == [], "a close the record holds was observed twice"
+
+
+def test_an_observed_reopen_is_judged_from_the_close_the_record_holds():
+    sink = InMemoryMetricsSink()
+    ports = Ports(Seen(state=State.BACKLOG), sink_=sink)
+    record.write(sink, "acme", record.Row(card="12", seq=1, event_id="w", event="withdrawn",
+                                          by="ana", before="backlog", after="closed"))
+
+    moved = transition(Project(), "#12", CardEvent.REOPENED, by=OBSERVED, ports=ports)
+
+    assert moved.ok and moved.before is State.CLOSED, moved
+    assert ("loops", "12", "restore") in ports.calls
+    assert not [c for c in ports.calls if c[0] in _WRITES], ports.calls
+
+
+def _reachable() -> set[State]:
+    """Every state a decided event can leave a card in, read from `after` over every fact it reads
+    — not from the rows of `ALLOWED`, which is what a test of those rows must not start from."""
+    facts = [{}, {"delivered": True}, {"needs_person": True}, {"gate": "last"},
+             {"column": "todo"}, {"column": ""}, *({"before": s.value} for s in State)]
+    return {s for event in DECIDED for f in facts if (s := after(event, f)) is not None}
+
+
+@pytest.mark.parametrize("event", [CardEvent.CLOSED, CardEvent.REMOVED])
+def test_every_state_a_transition_leaves_a_card_in_can_still_be_ended(event):
+    """A card is never un-endable (review of #524): whatever the record holds it as, the vendor's
+    own interface can still report it closed or deleted (D8). A refused observed end leaves the
+    promise open, tells nobody, and is refused again on every round. The two derived tests above
+    cannot see a missing state, because both start from the rows this one checks."""
+    reachable = _reachable()
+    assert {State.MERGED, State.STAGED} <= reachable, sorted(reachable)
+    stuck = sorted(s.value for s in reachable
+                   if s not in (State.CLOSED, State.REMOVED, State.DELIVERED)
+                   and allowed(s, event, open_card=True) is not None)
+    assert not stuck, (f"a card the record holds in {stuck} cannot be {event.value}: an observed "
+                       f"end is refused, the promise stays open and nobody is told")
+
+
+@pytest.mark.parametrize("held", [State.MERGED, State.STAGED, State.WAITING_ON_A_PERSON])
+@pytest.mark.parametrize("event", [CardEvent.CLOSED, CardEvent.REMOVED])
+def test_a_merged_or_staged_card_ended_on_the_vendors_screen_is_followed_like_a_parked_one(held,
+                                                                                          event):
+    """The case the review of #524 drove: the record holds the card merged (or at a production
+    gate, or parked), and it is closed as not planned or deleted on the vendor's own screen. Its
+    promise is cancelled, the requester is told, and nothing is written to the card."""
+    sink = InMemoryMetricsSink()
+    ports = Ports(Seen(state=State.CLOSED, open=False), sink_=sink)
+    record.write(sink, "acme", record.Row(card="12", seq=1, event_id="w", event="parked",
+                                          by="worker", before="running", after=held.value))
+
+    moved = transition(Project(), "#12", event, by=OBSERVED, ports=ports,
+                       facts={"delivered": False})
+
+    assert moved.ok and moved.before is held, moved
+    assert ("loops", "12", "cancel") in ports.calls
+    assert ("tell", "12", "will_not_be_built") in ports.calls
+    assert not [c for c in ports.calls if c[0] in _WRITES], ports.calls
+
+
+# ── 9. the job's tellings, splits, questions and deliveries (#414, part B1) ──────────────────
+
+def test_a_card_split_into_others_is_closed_and_keeps_its_promise():
+    """ADR-0055 is silent on a split, and D10's "the card is gone" is not what happened: the split's
+    parent ships nothing itself and its work lives in its children, so its close cancels nothing,
+    tells nobody it will not be built, and is still a close (`triage.delivered_numbers`)."""
+    row = consequences(CardEvent.CLOSED, {"delivered": False, "split_into": "#2, #3"})
+    assert row == (Close(delivered=False), Comment(), Forget())
+    assert after(CardEvent.CLOSED, {"split_into": "#2, #3"}) is State.CLOSED
+
+
+def test_a_finished_card_announces_what_it_completes_after_it_is_closed():
+    """The delivery reads the board fresh, so it follows the write that closes the card — by the
+    job (`delivered`), by a person, or on the vendor's own screen (a close of finished work)."""
+    for row in (consequences(CardEvent.DELIVERED, {}),
+                consequences(CardEvent.CLOSED, {"delivered": True})):
+        names = [name_of(e) for e in row]
+        assert "loops:deliver" in names, row
+        assert names.index("loops:deliver") > names.index(name_of(row[0])), row
+    assert Loops("deliver") in consequences(CardEvent.CLOSED, {"delivered": True,
+                                                              "observed": True})
+
+
+def test_a_question_and_a_pull_request_happen_only_where_a_job_holds_the_card():
+    """The narrowest rule ADR-0055 allows for two events it names and does not place: a question
+    before the plan on a card a job holds; a pull request on a card a job holds — TO-DO included,
+    where a job re-picked from the queue finds its pull request already open before its first
+    progress mark (#414's B2). Never on a card that is gone, and never on one in the backlog."""
+    for held in (State.TODO, State.RUNNING, State.WAITING_ON_A_PERSON):
+        assert allowed(held, CardEvent.QUESTION_ASKED) is None, held
+        assert allowed(held, CardEvent.PR_OPENED) is None, held
+    for gone in (State.CLOSED, State.REMOVED, State.DELIVERED):
+        for event in (CardEvent.QUESTION_ASKED, CardEvent.PR_OPENED):
+            assert allowed(gone, event, open_card=gone is State.DELIVERED) is not None, (gone,
+                                                                                         event)
+    for event in (CardEvent.QUESTION_ASKED, CardEvent.PR_OPENED):
+        assert allowed(State.BACKLOG, event) is not None, event
+    assert consequences(CardEvent.QUESTION_ASKED, {}) == (
+        Comment(), Column("needs_refinement"), Loops("ask"), Forget())
+
+
+def test_a_pull_request_is_one_row_the_column_and_for_a_person_the_telling():
+    """ONE ROW, whoever hands the pull request in (#414, B1 and B2 merged): the column the box's
+    hand-back always wrote, and — only when a person decides it, and the transition names it — the
+    requester told it is theirs to try. An armed merge waits on a build, and tells nobody."""
+    gate = {"needs_person": True, "pr_url": "https://x/pr/1", "note": ""}
+    assert consequences(CardEvent.PR_OPENED, gate) == (
+        Column("pr_open", needs_person=True), Tell("ready_for_you"), Forget())
+    assert after(CardEvent.PR_OPENED, gate) is State.WAITING_ON_A_PERSON
+    armed = {"needs_person": False, "pr_url": "https://x/pr/1", "note": ""}
+    assert consequences(CardEvent.PR_OPENED, armed) == (Column("pr_open", needs_person=False),
+                                                        Forget())
+    assert after(CardEvent.PR_OPENED, armed) is State.RUNNING
+    # a later pass back at the gate names no pull request: the column again, and nothing retold
+    assert consequences(CardEvent.PR_OPENED, {"needs_person": True, "note": ""}) == (
+        Column("pr_open", needs_person=True), Forget())
+
+
+def test_a_question_waits_only_on_a_card_parked_for_it_and_the_sweep_leaves_it_alone():
+    """ADR-0048 §5's order, and its one exception to "a failing effect does not stop the next": a
+    park that did not land opens no loop, and the hourly sweep does not park the card an hour later
+    under a job that went on without it (`STOPS_AT_A_FAILED_WRITE`)."""
+    from openfactory.lifecycle.executor import NOT_APPLIED
+
+    sink = InMemoryMetricsSink()
+    ports = Ports(Seen(state=State.TODO), sink_=sink, breaks={"column"})
+    moved, _ = _drive(CardEvent.QUESTION_ASKED, State.TODO, ports=ports,
+                      facts={"note": "what is the late fee?", "about": "h1"})
+
+    assert [c[0] for c in ports.calls] == ["comment"], ports.calls
+    assert moved.outcome("column").startswith("failed")
+    assert moved.outcome("loops").startswith(NOT_APPLIED) and moved.outcome("forget").startswith(
+        NOT_APPLIED), moved.effects
+
+    ports.breaks = set()
+    ports.calls.clear()
+    assert converge(Project(), ports=ports) == []
+    assert ports.calls == [], "the sweep parked a card its job went on with"
+
+    ports.calls.clear()
+    landed, _ = _drive(CardEvent.QUESTION_ASKED, State.TODO, ports=Ports(Seen(state=State.TODO)),
+                       facts={"note": "what is the late fee?", "about": "h1"})
+    assert [n for n, _ in landed.effects] == ["comment", "column:needs_refinement", "loops:ask",
+                                              "forget"]
+    assert not landed.failed and not any(o.startswith(NOT_APPLIED) for _, o in landed.effects)
+
+
+# ── 10. a card joins a requirement's promise (#414, ADR-0055 amended 2026-10-04) ──────────────
+
+def test_a_promise_moves_nothing_and_opens_the_promise_it_carries():
+    """`promised` is a fact about the card's promises, never about where it is: no write to the
+    card, no column, no snapshot to forget — the state after is the state before, and on a card no
+    board places it is still placed nowhere. What follows is the promise it carries, opened."""
+    assert MOVES_NOTHING == frozenset({CardEvent.PROMISED})
+    for event in MOVES_NOTHING:
+        row = consequences(event, {"owed": {"subject": "7"}})
+        assert row == (Loops("open"),), row
+        assert not any(isinstance(e, (*WRITES_THE_CARD, Forget)) for e in row), row
+        for state in ALLOWED[event]:
+            assert after(event, {"before": state.value}) is state, state
+        assert after(event, {"before": ""}) is None
+
+
+def test_a_requirement_is_promised_on_an_open_card_wherever_it_is_and_never_on_one_done_or_gone():
+    """The breakdown REUSES open cards wherever they are — queued, under a job, at the merge gate —
+    so the promise is allowed in every open state, and on a card no board places. A card whose
+    work is done or gone is refused: a promise waiting on it would wait for ever."""
+    for open_state in (State.BACKLOG, State.TODO, State.RUNNING, State.WAITING_ON_A_PERSON,
+                       State.MERGED, State.STAGED, None):
+        assert allowed(open_state, CardEvent.PROMISED) is None, open_state
+    for done_or_gone in (State.DELIVERED, State.CLOSED, State.REMOVED):
+        assert allowed(done_or_gone, CardEvent.PROMISED, open_card=False) is not None, done_or_gone
+    assert allowed(State.DELIVERED, CardEvent.PROMISED, open_card=True) is not None
+
+
+def test_a_promise_after_a_filing_does_not_strand_the_filings_failed_placement():
+    """THE LATEST MOVE, NOT THE LATEST ROW: a requirement's cards are promised a moment after they
+    are filed, so a placement the board refused at the filing is followed by a promise. The sweep
+    supersedes a late effect only by a newer MOVE — so it still places the card, where a promise
+    taken for the card's latest transition would have stranded it with no column for ever."""
+    sink = InMemoryMetricsSink()
+    ports = Ports(Seen(state=None), sink_=sink, breaks={"place"})
+    filed, _ = _drive(CardEvent.FILED, None, ports=ports)
+    assert filed.outcome("place").startswith("failed"), filed.effects
+    ports.breaks = set()
+    promised, _ = _drive(CardEvent.PROMISED, None, ports=ports,
+                         facts={"owed": {"subject": "7"}})
+    assert promised.ok and promised.seq == 2, promised
+
+    ports.calls.clear()
+    converge(Project(), ports=ports)
+
+    assert ("place", "12", "backlog") in ports.calls, ports.calls
+    first = record.read(sink, "acme", "12").rows[0]
+    assert first.outcome(first.effects.index("place:backlog")) == "place done"
+
+
+def test_an_observed_change_is_judged_against_the_last_move_not_the_last_promise():
+    """The board sweep judges what the vendor's screen shows against where the platform last placed
+    the card — a promise recorded since placed it nowhere, so it does not stand for it."""
+    from openfactory.lifecycle import observed
+
+    sink = InMemoryMetricsSink()
+    ports = Ports(Seen(state=State.BACKLOG), sink_=sink)
+    assert _drive(CardEvent.FILED, State.BACKLOG, ports=ports)[0].ok
+    ports.seen_as = Seen(state=None)            # the promise reads no board (`_open_delivery`)
+    assert _drive(CardEvent.PROMISED, None, ports=ports, facts={"owed": {"subject": "7"}})[0].ok
+    [_, promise] = record.read(sink, "acme", "12").rows
+    assert (promise.before, promise.after) == ("", "")
+
+    assert observed._held(Project(), ports).get("12") is State.BACKLOG
+
+    ports.seen_as = Seen(state=State.TODO)      # dragged into the queue on the vendor's screen
+    moved = transition(Project(), "#12", CardEvent.PROMOTED, by=OBSERVED, ports=ports)
+    assert moved.ok and moved.before is State.BACKLOG, moved
+

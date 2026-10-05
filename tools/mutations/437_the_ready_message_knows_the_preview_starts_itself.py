@@ -5,9 +5,10 @@ EVENTS = "openfactory/product/events.py"
 VOICE = "openfactory/product/voice.py"
 
 MUTATIONS = [
+    # re-pinned 2026-10-04: the telling is the card door's port's (`ready_to_try`, #414)
     ("the event never asks whether previews start themselves", EVENTS,
-     "                            preview_starts_itself=_preview_starts_itself(project))))\n",
-     "                            preview_starts_itself=False)))\n"),
+     "                                preview_starts_itself=_preview_starts_itself(project)))):\n",
+     "                                preview_starts_itself=False))):\n"),
     ("the policy's auto_start is not asked", EVENTS,
      '        return bool(getattr(policy, "auto_start", True)) and bool(kind) and kind != "none"\n',
      '        return bool(kind) and kind != "none"\n'),

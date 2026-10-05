@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import pytest
+
 from openfactory.memory.ledger import DELIVERY, QUESTION, open_loop
 from openfactory.product.followup import (
     Question,
@@ -18,7 +20,6 @@ from openfactory.product.followup import (
     chase_text,
     delivered,
     delivered_text,
-    deliveries_to_open,
     questions_from,
     to_open,
 )
@@ -102,15 +103,79 @@ def test_a_delivery_closes_only_when_ALL_of_the_work_is_done():
     assert delivered(waiting, closed_issues={"500", "501"}) == {(DELIVERY, "7", ""): "delivered"}
 
 
-def test_a_requirement_that_produced_no_work_opens_no_delivery_loop():
+def test_a_requirement_that_produced_no_work_opens_no_delivery_loop(monkeypatch):
     """A loop nothing can ever close is a row that sits open for ever and teaches everyone to
-    ignore the list."""
-    assert deliveries_to_open({7: []}, [], ts="T1") == []
+    ignore the list. A requirement's promise goes through its cards' doors since #414 — and a
+    breakdown that landed no card hands no door anything. A Jira key IS a card since #485
+    (`test_a_requirements_delivery_keys_on_the_trackers_refs.py`), so what lands here is nothing,
+    and a ref that names no card."""
+    from types import SimpleNamespace
+
+    from openfactory import lifecycle
+    from openfactory.product.authoring import WriteResult
+    from openfactory.product.module import ProductModule
+
+    handed: list = []
+    monkeypatch.setattr(lifecycle, "transition", lambda *a, **k: handed.append((a, k)))
+    fake = SimpleNamespace(project=SimpleNamespace(name="books"))
+    ProductModule._open_delivery(fake, SimpleNamespace(number=7),
+                                 [WriteResult(ok=False, detail="refused"),
+                                  WriteResult(ok=True, ref="#")])
+    assert handed == []
 
 
-def test_a_delivery_is_not_opened_twice_for_one_requirement():
-    already = [open_loop(DELIVERY, "7", owner="product", ts="T1")]
-    assert deliveries_to_open({7: [500]}, already, ts="T2") == []
+@pytest.mark.parametrize("carries", [set(), {"#501"}])
+def test_a_promise_no_card_recorded_is_said_lost_once_and_only_then(carries, monkeypatch, caplog):
+    """The review of #524: with the record store down mid-filing, every card's door raised and
+    each warning said "the requirement's other cards still open its promise", while none did. The
+    warning per card says only what it knows; once every door was asked, a promise no card carries
+    is said lost, once, as it was before #414."""
+    import logging
+    from types import SimpleNamespace
+
+    from openfactory import lifecycle
+    from openfactory.lifecycle import ports
+    from openfactory.product.authoring import WriteResult
+    from openfactory.product.module import ProductModule
+
+    def transition(project, ref, event, **_k):
+        if ref not in carries:
+            raise RuntimeError("the record store is down")
+        return SimpleNamespace(refused="", failed=[])
+
+    monkeypatch.setattr(lifecycle, "transition", transition)
+    monkeypatch.setattr(ports, "Ports", lambda *a, **k: object())
+    fake = SimpleNamespace(project=SimpleNamespace(name="books"),
+                           _track_requirement=lambda *a, **k: {"subject": "7"})
+    with caplog.at_level(logging.WARNING, logger="openfactory.product"):
+        ProductModule._open_delivery(fake, SimpleNamespace(number=7),
+                                     [WriteResult(ok=True, ref="#500"),
+                                      WriteResult(ok=True, ref="#501")])
+
+    said = [r.getMessage() for r in caplog.records]
+    assert not [s for s in said if "other cards" in s], said
+    lost = [s for s in said if "nobody will announce" in s]
+    if carries:
+        assert lost == [], "a promise a card carries was said lost"
+    else:
+        assert len(lost) == 1 and "#500, #501" in lost[0], said
+
+
+def test_a_delivery_is_not_opened_twice_for_one_requirement(monkeypatch):
+    """ONE PER SUBJECT, opened by the card's door (`loops.owe`, #414): a requirement's next card,
+    or the same breakdown run again, finds its promise owed already."""
+    from types import SimpleNamespace
+
+    from openfactory.lifecycle import loops
+    from openfactory.memory import store as loop_store
+
+    rows = [open_loop(DELIVERY, "7", owner="product", ts="T1", context={"issues": "500"})]
+    monkeypatch.setattr(loop_store, "read", lambda project, **_k: list(rows))
+    monkeypatch.setattr(loop_store, "write",
+                        lambda project, loops_, **_k: rows.extend(loops_) or len(loops_))
+    owed = {"subject": "7", "context": {"issues": "500,501"}}
+    assert loops.owe(SimpleNamespace(name="books"), "501", owed) == "7 was owed already"
+    assert len(rows) == 1
 
 
 # ── how it reads ────────────────────────────────────────────────────────────────────────────────

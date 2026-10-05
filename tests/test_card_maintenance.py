@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -222,7 +223,15 @@ class _FactoryTracker(_Tracker):
         self.created.append((title, body))
         return f"#{self._next}"
 
+    def get_ticket(self, ref: str):
+        """What the card's door reads before it closes one (#414): open while it is filed here."""
+        from types import SimpleNamespace
+
+        held = f"#{str(ref).lstrip('#')}" in self.tickets.values()
+        return SimpleNamespace(title="", raw="", state="open" if held else "closed")
+
     def close_ticket(self, ref: str, reason: str, *, delivered: bool = True) -> None:
+        ref = f"#{str(ref).lstrip('#')}"        # the door names a card by its canonical ref
         self.closed.append((ref, reason))
         for title, r in list(self.tickets.items()):
             if r == ref:
@@ -1159,6 +1168,10 @@ def test_a_board_that_REFUSES_a_placement_is_a_machine_failure_too(world):
         def create_ticket(self, *, title, body):
             return "#700"
 
+        def get_ticket(self, ref):
+            # the card just written, as the card's door reads it before it files it (#414)
+            return SimpleNamespace(title="Uma frente", state="open", raw="")
+
     mod, _ = world('{"issues": [{"title": "Uma frente", "objective": "o", '
                    '"acceptance_criteria": ["c"]}]}')
     mod._given_tracker, mod._given_board = _Filing(), _Refusing()
@@ -1284,6 +1297,10 @@ class _SlowBoard:
     def __init__(self, *, times_out: int) -> None:
         self.times_out = times_out
         self.moved: list[int] = []
+
+    def columns(self):
+        """Where the cards are — read once by `promote` for the card's door (#414): nowhere yet."""
+        return {}
 
     def add_item(self, *, issue_url):
         return True

@@ -14,6 +14,20 @@ take down and the door says so).
     filed → promoted → pull request → discarded → promoted again
     filed → removed
     pull request → closed → reopened
+    opened → queued → back to the backlog → corrected, on the board's own rows (#414)
+    closed on the vendor's own screen → observed: its promise cancelled, its requester told (#414)
+    split → its children filed in the queue → its parent closed, its promise kept → each child
+        delivered → the requirement announced once, when the last one is (#414, B1)
+    asked a question before the plan → parked → asked again by a retry, said once (#414, B1)
+    pull request → ready to try, from the watch and the round, said once (#414, B1)
+    pull request handed back by the box → the same one the watch and the round find told; a
+        later pass back at the gate placed again (#414, B1 and B2 merged)
+    delivered at the box's last stage, or beside the door → announced by the door, once; the
+        job's exit and the weekly sweep announce nothing of their own (#414)
+    the factory's own card closed when its trouble is gone, kept apart from the product's (B1)
+    a requirement broken into two cards filed and one reused → one promise over all three, each
+        card's record holding it; retried, said nothing twice; all reused, still opened; a card
+        gone before its promise refused, and the promise the same (#414, `promised`)
 """
 
 from __future__ import annotations
@@ -126,9 +140,14 @@ def _act(name: str, *, who: str, product: bool = False, **params):
     return asyncio.run(actions.perform(name, by=by, **params))
 
 
-# ── the steps the door does not own yet (slices 2 and 3), as their writers do them ────────────
+# ── a card as every card on a board stood before its door owned these steps ─────────────────
+#
+# Filed and queued by direct writes, with NO RECORD of its own — the shape every card on a live
+# board has the day #414 lands, and the one the board sweep must still read (`observe` holds a card
+# by its promise when nothing recorded it). Filing and moves through the door are driven below by
+# their real rows (`card_create`, `card_move`, `card_edit`).
 
-def _filed(project, *, by_the_product_role: bool = True) -> str:
+def _filed(project, *, by_the_product_role: bool = True, promised: str = "7") -> str:
     """A card the product role filed for ASKER from what they asked in CONVERSATION, and the
     delivery it promised them — as `module._open_delivery` records it."""
     from openfactory.adapters.board_db import now_iso
@@ -143,7 +162,7 @@ def _filed(project, *, by_the_product_role: bool = True) -> str:
     ref = tracker.create_ticket(title="A monthly report", body=body, requester=ASKER)
     _board(project).set_column(issue=ref, issue_url="", name="Backlog")
     loop_store.write(project.name, [open_loop(
-        DELIVERY, "7", owner="product", ts=now_iso(),
+        DELIVERY, promised, owner="product", ts=now_iso(),
         context={"issues": ref.lstrip("#"), **delivered_to(CONVERSATION, ASKER)})])
     return ref
 
@@ -346,7 +365,8 @@ def test_a_delivery_of_two_cards_waits_on_the_one_that_remains_and_is_announced_
         deployment, heard):
     """D10: a delivery spanning several cards closes only when what REMAINS is delivered. One card
     removed leaves the promise open for the other; that other already delivered, the hourly round
-    announces the delivery — nothing else would before the weekly catch-all."""
+    announces the delivery — no card's transition is left to say it, and since #414 no weekly
+    catch-all beside the door either."""
     from openfactory.adapters.board_db import now_iso
     from openfactory.adapters.tracker.base import close_ticket
     from openfactory.lifecycle import converge
@@ -398,3 +418,1059 @@ def test_a_caller_that_hands_the_door_only_its_tracker_still_has_the_card_placed
     seen = Ports(deployment, tracker=_tracker(deployment)).seen(ref.lstrip("#"))
 
     assert seen.state is State.WAITING_ON_A_PERSON, seen
+
+
+# ── the sweeps ask before they act (#413) ────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("delivered,where", [(True, "DONE"), (False, "SKIPPED")])
+def test_the_stale_pickup_healer_files_a_closed_card_where_its_close_put_it(deployment, delivered,
+                                                                           where):
+    """A closed card left in TO-DO was moved to Done whatever it was closed as, so a card withdrawn
+    as not planned was filed as delivered work (#411's inventory). Finished work goes to Done, and
+    anything else back to Backlog."""
+    from openfactory.adapters.tracker.base import close_ticket
+    from openfactory.contracts import JobState
+    from openfactory.runtime.temporal.activities import _where_a_closed_card_goes
+
+    tracker, board = _tracker(deployment), _board(deployment)
+    ref = tracker.create_ticket(title="Export", body="## Objective\n\nExport\n")
+    close_ticket(tracker, ref, "done with it", delivered=delivered)
+    board.set_column(issue=ref, issue_url="", name="TO-DO")     # the stale card the poller finds
+
+    assert _where_a_closed_card_goes(deployment, tracker, board, ref) is getattr(JobState, where)
+
+
+# ── the job's own endings go through the door (#413, part 2) ─────────────────────────────────
+
+def _settle(project, ref: str, state: str, note: str = "") -> str:
+    """The workflow's `settle_ticket`, called as the worker calls it — and, for a job that ended,
+    its one exit after it (`record_outcome`), which journals the outcome. What the card delivered
+    is the settle's own effect since #414 (`Loops("deliver")`): the exit announces nothing."""
+    from openfactory.runtime.temporal.activities import record_outcome, settle_ticket
+    from openfactory.runtime.temporal.io import HoldSyncInput
+
+    inp = HoldSyncInput(project=project.name, issue=ref.lstrip("#"), state=state, note=note)
+    settled = asyncio.run(settle_ticket(inp))
+    asyncio.run(record_outcome(inp))
+    return settled
+
+
+def test_a_job_that_delivers_on_the_local_board_tells_its_requester_it_is_ready(deployment,
+                                                                                heard):
+    """#411's inventory marked it "to verify": on the local row a delivered card stayed OPEN in
+    Done, and `Ticket.delivered` asks for a closed card — so the requester was never told "it is
+    ready" until a person closed the card by hand. Measured true on #413. A job settled DONE is
+    `delivered`: the card closes as delivered, and the delivery it completes is announced."""
+    from openfactory.memory.ledger import ACCEPTANCE, DELIVERY
+
+    ref = _filed(deployment)
+    _promoted(deployment, ref)
+    _at_the_merge_gate(deployment, ref)
+
+    assert _settle(deployment, ref, "done", note="Merged, and nothing follows the merge.") == "done"
+
+    ticket = _tracker(deployment).get_ticket(ref)
+    assert (ticket.state, ticket.state_reason) == ("closed", "completed")
+    [delivery] = _loops(deployment, DELIVERY)
+    assert not delivery.waiting and delivery.outcome == "delivered", delivery
+    assert [x for x in _loops(deployment, ACCEPTANCE) if x.waiting], "nobody was asked if it works"
+    told = [m.text for m in heard if m.conversation == CONVERSATION]
+    assert any("is ready" in t for t in told), told
+    [row] = _history(deployment, ref)
+    assert row.event == "delivered" and row.before == "waiting_on_a_person"
+    assert any("nothing follows the merge" in s for s in _said_on_the_card(deployment, ref))
+
+
+def test_a_parked_job_moves_its_card_and_says_why_on_every_row(deployment):
+    from openfactory.contracts import JobState
+    from openfactory.runtime.temporal.activities import mark_needs_action
+    from openfactory.runtime.temporal.io import HoldSyncInput
+
+    ref = _filed(deployment, by_the_product_role=False)
+    _tracker(deployment).set_state(ref, JobState.IMPLEMENTING)
+
+    asyncio.run(mark_needs_action(HoldSyncInput(project="acme", issue=ref.lstrip("#"),
+                                                state="on_hold", note="the CI is red twice")))
+
+    assert _column(deployment, ref) == "needs_action"
+    assert any("the CI is red twice" in s for s in _said_on_the_card(deployment, ref)), (
+        "the local board dropped the park's reason, as `set_state(reason=…)` did")
+    [row] = _history(deployment, ref)
+    assert row.event == "parked" and row.after == "waiting_on_a_person"
+
+
+def test_the_jobs_settle_after_a_persons_discard_writes_nothing_twice(deployment, heard):
+    """A person's discard goes through the door from the row; the job's own settle arrives after
+    it and finds the card where the discard left it — one comment, one transition."""
+    from openfactory.lifecycle import CardEvent, transition
+
+    ref = _filed(deployment)
+    _at_the_merge_gate(deployment, ref)
+    transition(deployment, ref, CardEvent.DISCARDED, by="Rob", why="not now")
+
+    assert _settle(deployment, ref, "skipped", note="PR closed without merging by Rob") == \
+        "already-settled"
+    assert len(_said_on_the_card(deployment, ref)) == 1
+    assert [r.event for r in _history(deployment, ref)] == ["discarded"]
+
+
+# ── every pass ends the way the first did (#413 part 3, #448 slice 2) ─────────────────────────
+
+def test_every_adjust_pass_is_told_to_its_requester_numbered_and_none_is_folded_away(deployment,
+                                                                                     heard):
+    """Measured on a live run (#448): the second pass's "it is ready" was deduplicated away —
+    `ready_for_you` is keyed on the card and the pull request, which a pass does not change. Each
+    pass is `adjusted` through the door, keyed by its number: told, commented, recorded."""
+    from openfactory.runtime.temporal.activities import card_adjusted
+    from openfactory.runtime.temporal.io import AdjustedInput
+
+    ref = _filed(deployment)
+    _at_the_merge_gate(deployment, ref)
+
+    for n, asked in ((1, "the button on the right"), (2, "and bigger")):
+        out = asyncio.run(card_adjusted(AdjustedInput(project="acme", issue=ref.lstrip("#"),
+                                                      pr_url="https://x/pr/1", pass_number=n,
+                                                      by="ana", instruction=asked)))
+        assert "tell:pass_ready=told" in out, out
+
+    told = _told(heard, about=ref.lstrip("#"))
+    assert [("Pass 1" in t, "Pass 2" in t) for t in told] == [(True, False), (False, True)], told
+    assert all("/p/acme/card/" in t or "/p/acme/preview/" in t for t in told), (
+        "the requester was not told where to try it")
+    said = _said_on_the_card(deployment, ref)
+    assert sum("One more pass, asked for by ana" in s for s in said) == 2, said
+    assert [r.event for r in _history(deployment, ref)] == ["adjusted", "adjusted"]
+
+
+def test_a_pass_with_a_live_preview_tells_its_requester_where_to_try_it(deployment, heard):
+    """The preview's own link, not the card's, while the preview is up: `link_for` reads the
+    project's NAME, and the callers that handed it the project got "" for every card — so this
+    asks for the link the way `link_for` reads it, and holds that it arrives."""
+    import time
+
+    from openfactory import preview
+    from openfactory.runtime.temporal.activities import card_adjusted
+    from openfactory.runtime.temporal.io import AdjustedInput
+
+    ref = _filed(deployment)
+    _at_the_merge_gate(deployment, ref)
+    bare = ref.lstrip("#")
+    assert preview.record(preview.Preview(project="acme", unit=bare, cards=(bare,),
+                                          state=preview.LIVE,
+                                          expires_at=int(time.time()) + 3600))
+
+    asyncio.run(card_adjusted(AdjustedInput(project="acme", issue=bare, pr_url="https://x/pr/1",
+                                            pass_number=1, by="ana", instruction="bigger")))
+
+    [told] = _told(heard, about=bare)
+    assert f"/p/acme/preview/{bare}" in told, told
+
+
+# ── filing, the moves between the operator's columns, and edits through the door (#414) ──────
+
+_A_CARD = ("## Objective\n\nExport the monthly report\n\n## Acceptance criteria\n\n"
+           "- the export is a CSV\n")
+
+
+def test_a_card_opened_queued_and_corrected_on_the_board_goes_through_its_door_every_time(
+        deployment):
+    """The board's own three verbs (ADR-0049 D6) on the real local board: each is a transition,
+    recorded, and the role's read of the board is the board as it now is (#393)."""
+    opened = _act("card_create", who="rob", project="acme", title="Export", body=_A_CARD)
+    assert opened.ok, opened.message
+    ref = opened.data["issue"]
+    assert _column(deployment, ref) == "backlog"
+    assert _on_the_role_s_board(deployment, ref)
+
+    queued = _act("card_move", who="rob", project="acme", issue=ref, column="TO-DO")
+    assert queued.ok and queued.data["event"] == "promoted", queued.message
+    assert _column(deployment, ref) == "todo"
+
+    back = _act("card_move", who="rob", project="acme", issue=ref, column="Backlog")
+    assert back.ok and back.data["event"] == "reordered", back.message
+    assert _column(deployment, ref) == "backlog"
+
+    edited = _act("card_edit", who="rob", project="acme", issue=ref, title="Export it")
+    assert edited.ok and edited.data["event"] == "edited", edited.message
+    # THE NOTE IS THE DOOR'S COMMENT, once, on the local board too
+    [said] = _said_on_the_card(deployment, ref)
+    assert "edited the title" in said, said
+
+    assert [(r.event, r.by) for r in _history(deployment, ref)] == [
+        (event, "Rob (via panel)") for event in ("filed", "promoted", "reordered", "edited")]
+
+
+def test_a_person_moves_a_card_only_between_the_backlog_and_the_queue(deployment):
+    """The factory's four columns are written by its jobs: a drag that says a card no job holds is
+    in progress — or that takes a card a job holds out from under it — is refused, and nothing
+    moves or is recorded."""
+    from openfactory.contracts import JobState
+
+    ref = _act("card_create", who="rob", project="acme", title="Export", body=_A_CARD
+               ).data["issue"]
+
+    into = _act("card_move", who="rob", project="acme", issue=ref, column="In progress")
+    assert not into.ok and into.code == "conflict" and "factory's column" in into.message
+    assert _column(deployment, ref) == "backlog"
+
+    _tracker(deployment).set_state(ref, JobState.IMPLEMENTING)     # a job took it up
+    out = _act("card_move", who="rob", project="acme", issue=ref, column="Backlog")
+    assert not out.ok and out.code == "conflict", out.message
+    assert _column(deployment, ref) == "in_progress"
+    assert [r.event for r in _history(deployment, ref)] == ["filed"]
+
+
+# ── a change made in the vendor's own interface (D8, #414) ────────────────────────────────────
+
+def _a_hosted_row(project):
+    """A DOUBLE OF A HOSTED ROW: the real local store underneath, the capabilities of a hosted
+    tracker (no deletion it can tell from a failed read), and a close made on the vendor's own
+    screen — `vendor_close` writes the card and runs nothing of ours, the column staying where it
+    was, as an issue's project column does on GitHub."""
+    from openfactory.adapters.tracker.github import GitHubIssuesTracker
+    from openfactory.adapters.tracker.local import LocalTracker
+    from openfactory.contracts import JobState
+
+    class _Hosted(LocalTracker):
+        observes = GitHubIssuesTracker.observes
+
+        def vendor_close(self, ref: str, *, delivered: bool, stays_in: JobState | None = None):
+            LocalTracker.close_ticket(self, ref, "closed on the vendor's screen",
+                                      delivered=delivered)
+            if stays_in is not None:
+                LocalTracker.set_state(self, ref, stays_in)
+
+    return _Hosted(project.name)
+
+
+def test_a_card_closed_on_the_vendors_screen_cancels_its_promise_as_a_close_through_the_platform(
+        deployment, heard):
+    """#414's scenario. Two cards a requester asked for: one closed through the platform, one
+    closed on the vendor's own screen, where no code of ours runs. The board sweep hands the second
+    to the door as an observed close, and every consumer says what it said of the first."""
+    from openfactory.lifecycle import observe
+    from openfactory.lifecycle.ports import Ports
+    from openfactory.memory.ledger import CANCELLED, DELIVERY
+
+    hosted = _a_hosted_row(deployment)
+    by_us = _filed(deployment, promised="7")
+    outside = _filed(deployment, promised="8")
+
+    assert _act("card_close", who="rob", project="acme", issue=by_us, reason="out of scope").ok
+    hosted.vendor_close(outside, delivered=False)
+
+    said = observe(deployment, ports=Ports(deployment, tracker=hosted))
+
+    assert [line.split(" ", 1)[0] for line in said] == [f"#{outside.lstrip('#')}"], said
+    for ref in (by_us, outside):
+        [delivery] = [x for x in _loops(deployment, DELIVERY)
+                      if x.context["issues"] == ref.lstrip("#")]
+        assert not delivery.waiting and delivery.outcome == CANCELLED, (ref, delivery)
+    [told_by_us] = _told(heard, about=by_us.lstrip("#"))
+    [told_outside] = _told(heard, about=outside.lstrip("#"))
+    assert told_outside.replace(outside.lstrip("#"), "N") == \
+        told_by_us.replace(by_us.lstrip("#"), "N"), (told_by_us, told_outside)
+    [row] = _history(deployment, outside)
+    assert (row.event, row.by, row.facts.get("observed")) == ("closed", "observed", True)
+    # NOTHING WRITTEN TO THE CARD: the vendor's own close is the only thing said on it
+    assert _said_on_the_card(deployment, outside) == ["closed on the vendor's screen"]
+
+    # the next round finds the record holding it, and says nothing twice
+    assert observe(deployment, ports=Ports(deployment, tracker=hosted)) == []
+    assert len(_told(heard, about=outside.lstrip("#"))) == 1
+
+
+def test_a_card_moved_into_the_queue_on_the_vendors_screen_is_promoted_and_one_that_was_split_is_not_withdrawn(  # noqa: E501
+        deployment, heard):
+    """A move between the operator's columns is a person's too; the close of a card some other card
+    was split from is the splitter's — its work lives in its children, and its promise stands."""
+    from openfactory.adapters.tracker.local import LocalTracker
+    from openfactory.contracts import JobState
+    from openfactory.lifecycle import observe
+    from openfactory.lifecycle.ports import Ports
+    from openfactory.memory.ledger import DELIVERY
+
+    hosted = _a_hosted_row(deployment)
+    queued = _act("card_create", who="rob", project="acme", title="Export", body=_A_CARD
+                  ).data["issue"]
+    LocalTracker.set_state(hosted, queued, JobState.TODO)          # dragged on the vendor's screen
+    split = _filed(deployment, promised="9")
+    hosted.create_ticket(title=f"Its first half [auto-split of {split}]", body=_A_CARD)
+    hosted.vendor_close(split, delivered=False)
+
+    said = observe(deployment, ports=Ports(deployment, tracker=hosted))
+
+    assert said == [f"#{queued.lstrip('#')} promoted, observed: forget=forgotten"], said
+    assert [r.event for r in _history(deployment, queued)] == ["filed", "promoted"]
+    [delivery] = [x for x in _loops(deployment, DELIVERY) if x.subject == "9"]
+    assert delivery.waiting, "the split card's promise was cancelled"
+    assert _told(heard, about=split.lstrip("#")) == []
+
+
+def test_a_card_closed_outside_while_it_sat_in_the_queue_is_healed_through_its_door(deployment,
+                                                                                   heard):
+    """The stale-pickup healer (#413) now hands the door what it finds: the card goes where its
+    close puts it, and — withdrawn — its promise is cancelled and its requester told, which the
+    healer's own move never did."""
+    from openfactory.contracts import JobState
+    from openfactory.memory.ledger import CANCELLED, DELIVERY
+    from openfactory.runtime.temporal.activities import _a_closed_card_in_the_queue
+
+    hosted = _a_hosted_row(deployment)
+    ref = _filed(deployment)
+    hosted.vendor_close(ref, delivered=False, stays_in=JobState.TODO)
+
+    said = _a_closed_card_in_the_queue(deployment, hosted, _board(deployment), ref)
+
+    assert "Backlog" in said and "moved" in said, said
+    ticket = _tracker(deployment).get_ticket(ref)
+    assert (ticket.state, ticket.state_reason) == ("closed", "not_planned")
+    [delivery] = _loops(deployment, DELIVERY)
+    assert delivery.outcome == CANCELLED
+    assert "will not be built" in _told(heard, about=ref.lstrip("#"))[0]
+    assert [(r.event, r.by) for r in _history(deployment, ref)] == [("closed", "observed")]
+
+
+def test_the_healer_leaves_a_split_cards_close_and_its_promise_alone(deployment, heard):
+    """The splitter closes the card it split as not delivered; its children carry the work, so its
+    promise stands (`triage.delivered_numbers`) — the healer's close is not a person's."""
+    from openfactory.contracts import JobState
+    from openfactory.memory.ledger import DELIVERY
+    from openfactory.runtime.temporal.activities import _a_closed_card_in_the_queue
+
+    hosted = _a_hosted_row(deployment)
+    parent = _filed(deployment)
+    child = hosted.create_ticket(title=f"Its half [auto-split of {parent}]", body=_A_CARD)
+    hosted.link_child(parent, child)
+    hosted.vendor_close(parent, delivered=False, stays_in=JobState.TODO)
+
+    said = _a_closed_card_in_the_queue(deployment, hosted, _board(deployment), parent)
+
+    assert "split" in said, said
+    [delivery] = _loops(deployment, DELIVERY)
+    assert delivery.waiting, "the split card's promise was cancelled"
+    assert _told(heard, about=parent.lstrip("#")) == [] and not _history(deployment, parent)
+
+
+def test_the_hourly_round_observes_a_card_closed_outside_the_platform(deployment, heard):
+    """On the real local row, through the hourly round's own hook (`techlead_watch`): what the
+    record does not hold is observed before what failed is converged."""
+    from openfactory.adapters.tracker.base import close_ticket
+    from openfactory.memory.ledger import CANCELLED, DELIVERY
+    from openfactory.runtime.temporal.activities import _converge_card_transitions
+
+    ref = _filed(deployment)
+    close_ticket(_tracker(deployment), ref, "closed by hand, outside", delivered=False)
+
+    _converge_card_transitions(deployment)
+
+    [delivery] = _loops(deployment, DELIVERY)
+    assert delivery.outcome == CANCELLED
+    assert [(r.event, r.by) for r in _history(deployment, ref)] == [("closed", "observed")]
+
+
+def test_a_row_reports_only_the_changes_it_declares(deployment, heard):
+    """A deletion on a hosted row reads as a failed read, so no hosted row declares it, and the
+    sweep does not take a card it cannot find for one that was removed. The local row reads its
+    own store, and does."""
+    from openfactory.adapters.tracker.base import observes
+    from openfactory.lifecycle import observe
+    from openfactory.lifecycle.ports import Ports
+    from openfactory.memory.ledger import CANCELLED, DELIVERY
+
+    class _Silent:
+        """A row from before the capability — and a double is not a declaration."""
+
+    assert observes(_Silent()) == frozenset()
+    hosted = _a_hosted_row(deployment)
+    assert "removed" not in observes(hosted) and "removed" in observes(_tracker(deployment))
+
+    ref = _filed(deployment)
+    _tracker(deployment).remove_ticket(ref, "deleted on the vendor's screen", by="someone")
+
+    assert observe(deployment, ports=Ports(deployment, tracker=hosted)) == []
+    [delivery] = _loops(deployment, DELIVERY)
+    assert delivery.waiting, "a row that cannot tell a deletion read one"
+
+    [said] = observe(deployment, ports=Ports(deployment, tracker=_tracker(deployment)))
+    assert "removed, observed" in said, said
+    [delivery] = _loops(deployment, DELIVERY)
+    assert delivery.outcome == CANCELLED
+
+
+def test_a_parked_card_is_queued_by_hand_only_when_no_job_waits_on_it(deployment, monkeypatch):
+    """A card left in Needs Action with no job on it goes back to the queue by hand; one a job
+    still waits on is answered instead, or it would be queued under a job still holding it."""
+    from openfactory.actions import catalog
+    from openfactory.contracts import JobState
+
+    ref = _act("card_create", who="rob", project="acme", title="Export", body=_A_CARD
+               ).data["issue"]
+    _tracker(deployment).set_state(ref, JobState.ON_HOLD)
+    assert _column(deployment, ref) == "needs_action"
+
+    async def a_job_waits(project, issue):
+        return catalog._JobOnTheCard(running=True, waiting_on="a decision", answer_it="resume")
+
+    monkeypatch.setattr(catalog, "_job_on_the_card", a_job_waits)
+    held = _act("card_move", who="rob", project="acme", issue=ref, column="TO-DO")
+    assert not held.ok and "`resume`" in held.message, held.message
+    assert _column(deployment, ref) == "needs_action"
+
+    async def no_job(project, issue):
+        return catalog._JobOnTheCard()
+
+    monkeypatch.setattr(catalog, "_job_on_the_card", no_job)
+    queued = _act("card_move", who="rob", project="acme", issue=ref, column="TO-DO")
+    assert queued.ok, queued.message
+    assert _column(deployment, ref) == "todo"
+
+
+# ── the job's tellings, splits, questions and deliveries through the door (#414, B1) ─────────
+#
+# A RETRIED ACTIVITY IS THE SAME ACTIVITY: Temporal hands it the same run and activity ids, and the
+# door keys what it applies by them (`activities._this_activitys_event`) — so these drive the
+# writers inside one `ActivityEnvironment`, whose ids hold still between runs as a retry's do.
+
+_PR = "https://forge.example/acme/pull/12"
+_CHILDREN = [{"title": "the report", "objective": "o", "criteria": ["c1"]},
+             {"title": "its export", "objective": "o2", "criteria": ["c2"]}]
+
+
+def _split_into_the_queue(project, ref: str, monkeypatch) -> list[str]:
+    """The pre-flight split of `ref`, as the worker runs it, its children sent to the queue."""
+    from types import SimpleNamespace
+
+    from temporalio.testing import ActivityEnvironment
+
+    import openfactory.loader
+    from openfactory.runtime.temporal import activities as acts
+    from openfactory.runtime.temporal.io import SplitInput
+
+    monkeypatch.setattr(openfactory.loader, "load_manifest",
+                        lambda project: SimpleNamespace(split_to_todo=True))
+    said = ActivityEnvironment().run(acts._do_split, SplitInput(
+        project=project.name, issue=ref.lstrip("#"), children=_CHILDREN, reasons="two features"))
+    assert said.startswith("split into"), said
+    return [c.strip() for c in said.removeprefix("split into").split(",")]
+
+
+def test_a_split_files_its_children_in_the_queue_and_closes_its_parent_keeping_its_promise(
+        deployment, heard, monkeypatch):
+    """The children go through their door as `filed`, into TO-DO; the parent as `closed` — split,
+    so NOT gone: its work lives in its children, its promise stands, and nobody is told it will
+    not be built. One comment on the parent, saying what it was split into."""
+    from temporalio.testing import ActivityEnvironment
+
+    from openfactory.memory.ledger import DELIVERY
+    from openfactory.runtime.temporal import activities as acts
+
+    parent = _filed(deployment)
+    _promoted(deployment, parent)
+
+    children = _split_into_the_queue(deployment, parent, monkeypatch)
+
+    for child in children:
+        assert _column(deployment, child) == "todo", child
+        assert [(r.event, r.after) for r in _history(deployment, child)] == [("filed", "todo")]
+    ticket = _tracker(deployment).get_ticket(parent)
+    assert (ticket.state, ticket.state_reason) == ("closed", "not_planned")
+    [said] = _said_on_the_card(deployment, parent)
+    assert said.startswith("✂️ Split into"), said
+    [row] = _history(deployment, parent)
+    assert (row.event, row.after) == ("closed", "closed") and row.facts["split_into"]
+    [delivery] = _loops(deployment, DELIVERY)
+    assert delivery.waiting, "the split cancelled the promise its children carry"
+    assert _told(heard, about=parent.lstrip("#")) == []
+
+    # A RETRIED FILING IS ANSWERED FROM ITS RECORD: a person took the first child back to the
+    # backlog meanwhile, and the retry does not put it in the queue again
+    _board(deployment).set_column(issue=children[0], issue_url="", name="Backlog")
+    tracker, board = _tracker(deployment), _board(deployment)
+    assert ActivityEnvironment().run(acts._file_the_child, deployment, tracker, board,
+                                     children[0], column="todo")
+    assert _column(deployment, children[0]) == "backlog"
+    assert len(_history(deployment, children[0])) == 1
+
+
+def test_a_closed_card_is_never_filed_into_the_queue(deployment):
+    from openfactory.adapters.tracker.base import close_ticket
+    from openfactory.runtime.temporal import activities as acts
+
+    tracker = _tracker(deployment)
+    ref = tracker.create_ticket(title="Its export", body="## Objective\n\nexport\n")
+    close_ticket(tracker, ref, "not needed", delivered=False)
+
+    assert acts._file_the_child(deployment, tracker, _board(deployment), ref,
+                                column="todo") is False
+    assert _history(deployment, ref) == ()
+
+
+def test_a_split_cards_promise_is_announced_once_when_its_last_child_is_delivered(
+        deployment, heard, monkeypatch):
+    """The requirement holds the parent, and the parent's work is in its children: the door that
+    delivers a child follows its title to the card it was split from
+    (`loops.announce_what_it_completes`), so the requester hears it when — and only when — the
+    last child is delivered."""
+    from openfactory.contracts import JobState
+    from openfactory.memory.ledger import ACCEPTANCE, DELIVERY
+
+    parent = _filed(deployment)
+    first, second = _split_into_the_queue(deployment, parent, monkeypatch)
+    for child in (first, second):
+        _tracker(deployment).set_state(child, JobState.PR_OPEN, needs_person=True)
+
+    assert _settle(deployment, first, "done") == "done"
+    filed, row = _history(deployment, first)
+    assert (filed.event, row.event) == ("filed", "delivered")
+    assert row.outcome(row.effects.index("loops:deliver")) == "nothing it completes is due yet"
+    assert [m.text for m in heard if m.conversation == CONVERSATION] == []
+
+    assert _settle(deployment, second, "done") == "done"
+    [delivery] = _loops(deployment, DELIVERY)
+    assert not delivery.waiting and delivery.outcome == "delivered", delivery
+    assert [x for x in _loops(deployment, ACCEPTANCE) if x.waiting]
+    told = [m.text for m in heard if m.conversation == CONVERSATION]
+    assert len(told) == 1 and "is ready" in told[0], told
+
+
+def test_the_card_door_announces_what_a_delivered_card_completes_once_and_a_retry_says_nothing(
+        deployment, heard):
+    """`delivered` announces the delivery itself now — the job's exit after it, and the same
+    settle retried, find it said."""
+    from temporalio.testing import ActivityEnvironment
+
+    from openfactory.memory.ledger import DELIVERY
+    from openfactory.runtime.temporal.activities import record_outcome, settle_ticket
+    from openfactory.runtime.temporal.io import HoldSyncInput
+
+    ref = _filed(deployment)
+    _at_the_merge_gate(deployment, ref)
+    inp = HoldSyncInput(project="acme", issue=ref.lstrip("#"), state="done", note="merged")
+    env = ActivityEnvironment()
+
+    assert asyncio.run(env.run(settle_ticket, inp)) == "done"
+
+    [delivery] = _loops(deployment, DELIVERY)
+    assert delivery.outcome == "delivered"
+    [row] = _history(deployment, ref)
+    assert row.outcome(row.effects.index("loops:deliver")) == "1 announced"
+    asyncio.run(env.run(settle_ticket, inp))                 # the same activity, retried
+    asyncio.run(record_outcome(inp))                         # the job's one exit, after it
+    told = [m.text for m in heard if m.conversation == CONVERSATION]
+    assert len(told) == 1 and "is ready" in told[0], told
+    assert len(_history(deployment, ref)) == 1
+
+
+@pytest.mark.parametrize("what_failed", ["the board", "the conversation"])
+def test_a_delivery_the_door_could_not_announce_is_announced_by_the_hourly_round(
+        deployment, heard, monkeypatch, what_failed):
+    """An unread board and a conversation that did not take it are a FAILED effect of a recorded
+    transition — applied again by the hourly round, where the weekly catch-all was the only
+    second chance."""
+    from openfactory.lifecycle import converge
+    from openfactory.memory.ledger import DELIVERY
+    from openfactory.product import events
+
+    ref = _filed(deployment)
+    _at_the_merge_gate(deployment, ref)
+    with monkeypatch.context() as broken:
+        if what_failed == "the board":
+            broken.setattr(events, "_delivered_now", lambda project: None)
+        else:
+            broken.setattr(events, "_tell", lambda project, **kw: False)
+        assert _settle(deployment, ref, "done", note="merged") == "done"
+        [delivery] = _loops(deployment, DELIVERY)
+        assert delivery.waiting
+        [row] = _history(deployment, ref)
+        assert row.outcome(row.effects.index("loops:deliver")).startswith("failed")
+
+    said = converge(deployment)
+
+    assert any("loops:deliver: 1 announced" in line for line in said), said
+    [delivery] = _loops(deployment, DELIVERY)
+    assert delivery.outcome == "delivered"
+    assert len([m for m in heard if m.conversation == CONVERSATION]) == 1
+
+
+def test_a_card_the_box_delivers_at_its_last_stage_is_announced_by_its_door_and_the_exit_adds_nothing(  # noqa: E501
+        deployment, heard):
+    """The promotion's last stage — or a merge nothing follows — is Done reached inside the box,
+    which hands it back (B2): the worker applies `merged`, then `delivered`, whose `Loops("deliver")`
+    announces what the card completes. The job's exit after it, which announced deliveries beside
+    the door until #414, says nothing."""
+    from openfactory.contracts import JobState
+    from openfactory.contracts.run import HandedBack, RunResult
+    from openfactory.memory.ledger import DELIVERY
+    from openfactory.runtime.temporal import activities as acts
+    from openfactory.runtime.temporal.io import HoldSyncInput
+
+    ref = _filed(deployment)
+    _at_the_merge_gate(deployment, ref)
+    bare = ref.lstrip("#")
+
+    acts._the_worker_applies("acme", bare, "handed-back-run-1-act-9", RunResult(
+        ticket_id=ref, state=JobState.DONE,
+        handed_back=[HandedBack(state=JobState.MERGED), HandedBack(state=JobState.DONE)]))
+
+    merged, delivered = _history(deployment, ref)
+    assert (merged.event, delivered.event) == ("merged", "delivered")
+    assert delivered.outcome(delivered.effects.index("loops:deliver")) == "1 announced"
+    [delivery] = _loops(deployment, DELIVERY)
+    assert delivery.outcome == "delivered"
+    asyncio.run(acts.record_outcome(HoldSyncInput(project="acme", issue=bare, state="done")))
+    told = [m.text for m in heard if m.conversation == CONVERSATION]
+    assert len(told) == 1 and "is ready" in told[0], told
+
+
+def test_a_card_delivered_beside_the_door_is_announced_by_the_door_when_it_is_seen_and_never_by_the_exit(  # noqa: E501
+        deployment, heard):
+    """A box from before the hand-back, or a person on the vendor's own screen, closes the card as
+    finished work beside the door. The job's exit says nothing; the hourly round sees the close
+    (`observe`) and hands it to the door, whose `closed` announces the delivery — once."""
+    from openfactory.adapters.tracker.base import close_ticket
+    from openfactory.lifecycle import observe
+    from openfactory.runtime.temporal import activities as acts
+    from openfactory.runtime.temporal.io import HoldSyncInput
+
+    ref = _filed(deployment)
+    _at_the_merge_gate(deployment, ref)
+    close_ticket(_tracker(deployment), ref, "merged, and nothing follows", delivered=True)
+
+    asyncio.run(acts.record_outcome(HoldSyncInput(project="acme", issue=ref.lstrip("#"),
+                                                  state="done")))
+    assert [m for m in heard if m.conversation == CONVERSATION] == [], "the job's exit announced"
+
+    said = observe(deployment)
+
+    assert any("closed, observed" in line and "loops:deliver=1 announced" in line
+               for line in said), said
+    assert observe(deployment) == []
+    told = [m.text for m in heard if m.conversation == CONVERSATION]
+    assert len(told) == 1 and "is ready" in told[0], told
+
+
+def test_the_weekly_sweep_says_again_what_the_door_could_not_and_nothing_of_its_own(
+        deployment, heard, monkeypatch):
+    """The weekly sweep was the catch-all beside the door: it read the board and announced every
+    delivery it showed done. Its second chance is the door's own now — `converge`, applying again
+    an announcement the conversation did not take — and a delivery the door never made (a card
+    closed beside it, not yet seen by the hourly round) is not the sweep's to announce."""
+    from types import SimpleNamespace
+
+    from openfactory.adapters.tracker.base import close_ticket
+    from openfactory.memory.ledger import DELIVERY
+    from openfactory.product import events
+    from openfactory.product.triage import TriageReport
+    from openfactory.runtime.temporal import activities as acts
+
+    monkeypatch.setattr(acts, "_land_product_proposals", lambda project, **kw: [])
+    ref = _filed(deployment)
+    _at_the_merge_gate(deployment, ref)
+    beside = _filed(deployment, promised="8")
+    close_ticket(_tracker(deployment), beside, "closed by hand, outside", delivered=True)
+    with monkeypatch.context() as broken:
+        broken.setattr(events, "_tell", lambda project, **kw: False)
+        assert _settle(deployment, ref, "done", note="merged") == "done"
+    [row] = _history(deployment, ref)
+    assert row.outcome(row.effects.index("loops:deliver")).startswith("failed")
+
+    def _weekly() -> str:
+        """The sweep's follow-through, with the board the sweep read — a card closed beside the
+        door among it, which the catch-all used to announce."""
+        from openfactory.product.board import read_board
+
+        tickets, error = read_board(deployment)
+        assert not error, error
+        return acts._product_followup(deployment, SimpleNamespace(_board_tickets=tickets,
+                                                                  token=None),
+                                      TriageReport(), deployment.product)
+
+    assert "accepting:1" in _weekly()
+    assert "accepting:0" in _weekly()
+
+    told = [m.text for m in heard if m.conversation == CONVERSATION]
+    assert len(told) == 1 and "is ready" in told[0], told
+    by_subject = {x.subject: x for x in _loops(deployment, DELIVERY)}
+    assert by_subject["7"].outcome == "delivered"
+    assert by_subject["8"].waiting, "the weekly sweep announced a delivery beside the card's door"
+
+
+def test_a_question_before_the_plan_parks_the_card_and_a_retry_asks_nothing_twice(deployment):
+    """`question_asked`: the question on the card, the park, then the loop its answer closes — and
+    the same activity retried is answered from the record: one comment, one loop."""
+    from openfactory.lifecycle import CardEvent, transition
+    from openfactory.memory import store as loop_store
+    from openfactory.memory.ledger import CARD_QUESTION
+
+    ref = _filed(deployment)
+    _promoted(deployment, ref)
+    asked = {"requester": ASKER, "poster": "openfactory-bot", "asked_at": "2026-10-04T10:00:00+00:00",
+             "paths": "billing/fees.py", "question": "what is the late fee?", "gap_keys": "",
+             "repo": "acme", "language": "en"}
+
+    for _ in range(2):
+        moved = transition(deployment, ref, CardEvent.QUESTION_ASKED, by="the workflow",
+                           facts={"note": f"@{ASKER} — what is the late fee?", "about": "h1",
+                                  "asked": asked},
+                           event_id="question_asked-run-1")
+        assert moved.ok, moved.refused
+
+    assert _column(deployment, ref) == "needs_action"
+    assert _said_on_the_card(deployment, ref) == [f"@{ASKER} — what is the late fee?"]
+    raw = [x for x in loop_store.read(deployment.name) if x.kind == CARD_QUESTION]
+    assert len(raw) == 1 and raw[0].subject == ref.lstrip("#") and raw[0].about == "h1"
+    assert raw[0].context["requester"] == ASKER and raw[0].ts == asked["asked_at"]
+    assert [r.event for r in _history(deployment, ref)] == ["question_asked"]
+
+    # THE LOOP IS OPENED ONCE however often it is applied — the sweep converging a pending one
+    from openfactory.lifecycle import loops
+
+    assert loops.ask(deployment, ref, about="h1", context=asked) == "already waiting on an answer"
+    assert len([x for x in loop_store.read(deployment.name) if x.kind == CARD_QUESTION]) == 1
+
+
+def test_a_question_on_a_card_that_is_gone_asks_nobody(deployment):
+    from openfactory.adapters.tracker.base import close_ticket
+    from openfactory.lifecycle import CardEvent, transition
+    from openfactory.memory.ledger import CARD_QUESTION
+
+    ref = _filed(deployment)
+    close_ticket(_tracker(deployment), ref, "not needed", delivered=False)
+
+    moved = transition(deployment, ref, CardEvent.QUESTION_ASKED, by="the workflow",
+                       facts={"note": "what is the late fee?", "about": "h1", "asked": {}})
+
+    assert not moved.ok and moved.refused
+    assert _said_on_the_card(deployment, ref) == ["not needed"]
+    assert _loops(deployment, CARD_QUESTION) == []
+
+
+def test_a_pull_request_a_person_decides_is_told_once_whichever_of_the_watch_and_the_round_comes_first(  # noqa: E501
+        deployment, heard):
+    """`pr_opened`, keyed by the pull request: the watch tells the requester it is theirs to try,
+    and the round that sees the same gate is answered from the card's record. A second pull
+    request is a new thing to try."""
+    from openfactory.runtime.temporal import activities as acts
+    from openfactory.runtime.temporal.io import ReadyForYouInput
+
+    ref = _filed(deployment)
+    _at_the_merge_gate(deployment, ref)
+    bare = ref.lstrip("#")
+
+    assert asyncio.run(acts.tell_the_requester(ReadyForYouInput(project="acme", issue=bare,
+                                                                pr_url=_PR)))
+    assert acts._pull_requests_waiting(deployment, [(bare, _PR)]) == []
+    assert acts._pull_requests_waiting(deployment, [(bare, _PR)]) == []
+
+    [told] = _told(heard, about=bare)
+    assert "is ready for you to check" in told, told
+    assert [r.event for r in _history(deployment, ref)] == ["pr_opened"]
+
+    assert acts._pull_requests_waiting(deployment, [(bare, _PR + "-2")]) == [bare]
+    assert len(_told(heard, about=bare)) == 2
+
+
+def test_a_card_nobody_is_working_on_has_no_pull_request_to_try(deployment, heard):
+    from openfactory.runtime.temporal import activities as acts
+
+    ref = _filed(deployment)                                   # in the backlog
+
+    assert acts._pull_requests_waiting(deployment, [(ref.lstrip("#"), _PR)]) == []
+    assert _told(heard, about=ref.lstrip("#")) == [] and _history(deployment, ref) == ()
+
+
+def test_a_ready_to_try_the_conversation_did_not_take_is_told_by_the_hourly_round(
+        deployment, heard, monkeypatch):
+    from openfactory.lifecycle import converge
+    from openfactory.product import events
+    from openfactory.runtime.temporal import activities as acts
+
+    ref = _filed(deployment)
+    _at_the_merge_gate(deployment, ref)
+    bare = ref.lstrip("#")
+    with monkeypatch.context() as broken:
+        broken.setattr(events, "_tell", lambda project, **kw: False)
+        assert acts._pull_requests_waiting(deployment, [(bare, _PR)]) == []
+    [row] = _history(deployment, ref)
+    assert row.outcome(row.effects.index("tell:ready_for_you")).startswith("failed")
+
+    converge(deployment)
+
+    assert len(_told(heard, about=bare)) == 1
+    assert acts._pull_requests_waiting(deployment, [(bare, _PR)]) == []
+    assert len(_told(heard, about=bare)) == 1
+
+
+def test_the_pull_request_the_box_hands_back_is_the_one_the_watch_and_the_round_find_told(
+        deployment, heard):
+    """B1 AND B2, MERGED (#414): one `pr_opened` per pull request a person decides. The box that
+    opened it hands it back, and the worker takes it through the door keyed by the pull request —
+    the column the box used to write, and the requester told it is theirs to try, with the review's
+    word read from the result. The merge watch, the round and the same activity retried hand in the
+    same event and are answered from the card's record: one row, one telling, nothing on the card
+    (the box said it there). A LATER pass that brings the card back to the gate is its own
+    transition — its progress mark moved the card — and tells nobody twice."""
+    from openfactory.contracts import JobState
+    from openfactory.contracts.review import ReviewResult
+    from openfactory.contracts.run import HandedBack, RunResult
+    from openfactory.runtime.temporal import activities as acts
+    from openfactory.runtime.temporal.io import ReadyForYouInput
+
+    ref = _filed(deployment)
+    _promoted(deployment, ref)
+    bare = ref.lstrip("#")
+    _tracker(deployment).set_state(ref, JobState.IMPLEMENTING)        # the box's last mark
+
+    def opened() -> RunResult:
+        return RunResult(ticket_id=ref, state=JobState.PR_OPEN, pr_url=_PR,
+                         review=ReviewResult(decision="rejected", score=30),
+                         handed_back=[HandedBack(state=JobState.PR_OPEN, needs_person=True)])
+
+    acts._the_worker_applies("acme", bare, "handed-back-run-1-act-1", opened())
+
+    assert _column(deployment, ref) == "needs_action"
+    [told] = _told(heard, about=bare)
+    assert "is ready for you to check" in told and "review rejected it" in told, told
+
+    assert not asyncio.run(acts.tell_the_requester(ReadyForYouInput(project="acme", issue=bare,
+                                                                    pr_url=_PR)))
+    assert acts._pull_requests_waiting(deployment, [(bare, _PR)]) == []
+    acts._the_worker_applies("acme", bare, "handed-back-run-1-act-1", opened())   # retried
+    assert [r.event for r in _history(deployment, ref)] == ["pr_opened"]
+    assert len(_told(heard, about=bare)) == 1
+    assert _said_on_the_card(deployment, ref) == []
+
+    # A RE-REVIEW: its progress mark took the card to review, and the gate is handed back again
+    _tracker(deployment).set_state(ref, JobState.REVIEWING)
+    assert _column(deployment, ref) == "in_review"
+    acts._the_worker_applies("acme", bare, "handed-back-run-1-act-2", opened())
+    assert _column(deployment, ref) == "needs_action"
+    assert [r.event for r in _history(deployment, ref)] == ["pr_opened", "pr_opened"]
+    assert len(_told(heard, about=bare)) == 1
+
+
+def test_an_armed_merge_tells_nobody_and_a_person_handed_it_later_is_told_by_the_round(
+        deployment, heard):
+    """A pull request whose merge is armed waits on a build, not a person: its `pr_opened` places
+    the card in review and is keyed by its activity, not by the pull request — so when the merge
+    is handed to a person later, the round's catch-all is a new transition, and tells them."""
+    from openfactory.contracts import JobState
+    from openfactory.contracts.run import HandedBack, RunResult
+    from openfactory.runtime.temporal import activities as acts
+
+    ref = _filed(deployment)
+    _promoted(deployment, ref)
+    bare = ref.lstrip("#")
+    _tracker(deployment).set_state(ref, JobState.IMPLEMENTING)
+
+    acts._the_worker_applies("acme", bare, "handed-back-run-1-act-1", RunResult(
+        ticket_id=ref, state=JobState.PR_OPEN, pr_url=_PR, auto_merge=True,
+        handed_back=[HandedBack(state=JobState.PR_OPEN, needs_person=False)]))
+
+    assert _column(deployment, ref) == "in_review" and _told(heard, about=bare) == []
+    assert acts._pull_requests_waiting(deployment, [(bare, _PR)]) == [bare]
+    assert _column(deployment, ref) == "needs_action"
+    assert [r.event for r in _history(deployment, ref)] == ["pr_opened", "pr_opened"]
+
+
+def test_the_factorys_own_card_is_closed_through_its_door_with_its_evidence_once(deployment):
+    """The factory closes its impediment when the capability works again: `closed`, delivered —
+    its work done — and the evidence is the close's one comment, where it was a comment and the
+    bare word "completed" beside it."""
+    from openfactory.ops import impediment
+
+    cause = impediment.PRODUCT_MOUNT_EMPTY
+    impediment._LAST.pop(f"acme|{cause}", None)
+    ref = impediment.report(deployment, cause, "entries=0")
+    assert ref
+
+    assert impediment.resolved(deployment, cause, "entries=37") is True
+
+    ticket = _tracker(deployment).get_ticket(ref)
+    assert (ticket.state, ticket.state_reason) == ("closed", "completed")
+    [said] = _said_on_the_card(deployment, ref)
+    assert "entries=37" in said, said
+    assert [(r.event, r.by) for r in _history(deployment, ref)] == [("closed", "the factory")]
+    impediment._LAST.pop(f"acme|{cause}", None)
+
+
+def test_a_factory_board_of_its_own_keeps_its_cards_record_apart_from_the_products(
+        deployment, heard, tmp_path):
+    """A declared factory board on another tracker numbers its cards apart: the impediment's close
+    is recorded under the factory's own name, and the product's card with the same number is not
+    taken by the board sweep for one reopened."""
+    from openfactory.contracts.project import FactoryBoard, ProviderRef
+    from openfactory.lifecycle import observe, record
+    from openfactory.ops import impediment
+
+    product_card = _filed(deployment)
+    project = deployment.model_copy(update={"factory_board": FactoryBoard(tracker=ProviderRef(
+        kind="local", repo="acme", options={"board_db": str(tmp_path / "factory.db")}))})
+    cause = impediment.PRODUCT_NO_CODE
+    impediment._LAST.pop(f"acme|{cause}", None)
+    ref = impediment.report(project, cause, "no checkout")
+    assert ref == product_card, "the two boards were meant to number their cards alike"
+
+    assert impediment.resolved(project, cause, "the checkout is back") is True
+
+    assert _history(deployment, product_card) == ()
+    held = record.read(record.keyed_sink(), "acme:factory", ref.lstrip("#")).rows
+    assert [r.event for r in held] == ["closed"]
+    assert observe(deployment) == []
+    assert _told(heard, about=product_card.lstrip("#")) == []
+    impediment._LAST.pop(f"acme|{cause}", None)
+
+
+# ── a requirement's promise, through each of its cards' doors (#414, ADR-0055 amended 2026-10-04)
+#
+# The breakdown files some cards and REUSES others — open cards the requirement verified on the
+# board — and its promise is one over all of them. Driven through `file_issues` on the real local
+# board, the real ledger and the real card record; the model's answer and the card judge are stood
+# in (the floor still runs), as for every breakdown in the suite.
+
+_REQUIREMENT = 7
+
+
+def _breakdown(project, tmp_path, fronts: list[dict]):
+    """Requirement 7 broken into `fronts` — a front naming `already_on_board` reuses that card —
+    for ASKER, in CONVERSATION, confirmed by ADMIN."""
+    import json
+
+    from openfactory.contracts import AgentRunResult
+    from openfactory.product.config import ProductLink
+    from openfactory.product.corpus import Corpus, Requirement
+    from openfactory.product.loader import ProductContext
+    from openfactory.product.module import ProductModule
+
+    requirement = Requirement(number=_REQUIREMENT, slug="report", path="0007-report.md",
+                              title="The monthly report", status="accepted")
+    answer = json.dumps({"issues": [{"objective": "o", "acceptance_criteria": ["c"], **front}
+                                    for front in fronts]})
+
+    class _Model:
+        name = "recording"
+
+        def ask(self, *, sandbox, workspace, prompt, phase="ask"):
+            return AgentRunResult(ok=True, summary=answer)
+
+    context = ProductContext(
+        link=ProductLink(active=True, docs_repo="acme/docs", kind="ok", reason="fine"),
+        corpus=Corpus(requirements=[requirement]), docs_path=str(tmp_path / "docs"),
+        docs_commit="abc123", requirements_dir="requirements")
+    (tmp_path / "docs").mkdir(exist_ok=True)
+    return ProductModule(project, context=context, agent=_Model()).file_issues(
+        requirement, actor=ADMIN, conversation=CONVERSATION, requester=ASKER)
+
+
+def _on_the_board(title: str) -> str:
+    out = _act("card_create", who="rob", project="acme", title=title, body=_A_CARD)
+    assert out.ok, out.message
+    return out.data["issue"].lstrip("#")
+
+
+def _the_promise(project):
+    from openfactory.memory.ledger import DELIVERY
+
+    return [x for x in _loops(project, DELIVERY) if x.subject == str(_REQUIREMENT)]
+
+
+def _promised(project, ref: str) -> list:
+    return [r for r in _history(project, ref) if r.event == "promised"]
+
+
+def test_a_requirement_that_files_two_cards_and_reuses_one_opens_one_promise_over_all_three(
+        deployment, heard, tmp_path):
+    """The promise opened beside every door, and the reused card joined it through none (#414).
+    Now every card of the breakdown is handed `promised`, carrying the whole promise: the first the
+    door admits opens it, naming all three, and each card's record says it joined. A retried
+    breakdown is answered from those records — no second promise, and no second row. And a promise
+    moves nothing: the reused card a person had queued is still in the queue."""
+    from openfactory.product.speaker import sealed
+
+    reused = _on_the_board("The export already on the board")
+    queued = _act("card_move", who="rob", project="acme", issue=reused, column="TO-DO")
+    assert queued.ok, queued.message
+
+    results = _breakdown(deployment, tmp_path, [
+        {"title": "The report"}, {"title": "Its schedule"},
+        {"title": "The export", "already_on_board": reused}])
+
+    assert [(r.ok, r.existed) for r in results] == [(True, False), (True, False), (True, True)]
+    filed = [r.ref.lstrip("#") for r in results[:2]]
+    cards = sorted([*filed, reused], key=int)
+    [promise] = _the_promise(deployment)
+    assert promise.waiting and promise.context["issues"] == ",".join(cards), promise.context
+    assert promise.context["conversation"] == CONVERSATION
+    assert promise.context["requester"] == sealed(ASKER)
+    for ref in filed:
+        assert [r.event for r in _history(deployment, ref)] == ["filed", "promised"], ref
+    assert [r.event for r in _history(deployment, reused)] == ["filed", "promoted", "promised"]
+    rows = [row for ref in cards for row in _promised(deployment, ref)]
+    for row in rows:
+        assert row.by == ADMIN and row.facts["requirement"] == _REQUIREMENT, row
+        assert row.facts["owed"]["context"]["issues"] == ",".join(cards), row.facts
+        # A PROMISE MOVES NOTHING: the record holds the card where the promise found it
+        assert (row.before, row.after) == ("", ""), row
+    opened = sorted(row.outcome(row.effects.index("loops:open")) for row in rows)
+    assert opened == ["7 owed", "7 was owed already", "7 was owed already"], opened
+    # nothing said to anybody, and every card still where it was: filed in the backlog, or queued
+    assert heard == [], [m.text for m in heard]
+    assert [_column(deployment, ref) for ref in [*filed, reused]] == ["backlog", "backlog", "todo"]
+
+    again = _breakdown(deployment, tmp_path, [
+        {"title": "The report"}, {"title": "Its schedule"},
+        {"title": "The export", "already_on_board": reused}])
+
+    assert [r.ref.lstrip("#") for r in again] == [*filed, reused]
+    assert len(_the_promise(deployment)) == 1, "a retried breakdown opened a second promise"
+    for ref in cards:
+        assert len(_promised(deployment, ref)) == 1, f"#{ref} was promised twice"
+
+
+def test_a_requirement_whose_every_card_is_reused_still_opens_its_promise(deployment, heard,
+                                                                          tmp_path):
+    """No card is filed, so before `promised` no transition at all carried the promise. And a
+    reused card whose work had stopped still reads as one whose work stopped: the promise moved
+    nothing, so the card's line still says it is back in the backlog."""
+    from openfactory.lifecycle import CardEvent, back_in_the_backlog, transition
+
+    first, second = _on_the_board("The report"), _on_the_board("Its export")
+    _at_the_merge_gate(deployment, first)
+    assert transition(deployment, first, CardEvent.DISCARDED, by="Rob", why="later").ok
+    assert back_in_the_backlog(deployment, first)
+
+    results = _breakdown(deployment, tmp_path, [
+        {"title": "The report", "already_on_board": first},
+        {"title": "Its export", "already_on_board": second}])
+
+    assert [r.existed for r in results] == [True, True]
+    [promise] = _the_promise(deployment)
+    assert promise.waiting and promise.context["issues"] == f"{first},{second}"
+    for ref in (first, second):
+        assert len(_promised(deployment, ref)) == 1, ref
+    assert back_in_the_backlog(deployment, first), (
+        "a promise recorded after the discard was taken for where the card is")
+
+
+def test_a_card_gone_before_its_promise_is_refused_and_the_others_open_the_same_promise(
+        deployment, heard, tmp_path):
+    """A breakdown run again finds a card by its title — on the local board a closed one too — and
+    the door refuses to promise work that is done or gone: nothing is recorded on it. The other
+    cards still open the promise, the one the breakdown opened before this event existed: over
+    every card that landed (`_open_delivery`'s outcome, kept)."""
+    from openfactory.adapters.tracker.base import close_ticket
+
+    gone = _on_the_board("The old report")
+    close_ticket(_tracker(deployment), gone, "not needed", delivered=False)
+
+    results = _breakdown(deployment, tmp_path, [{"title": "The old report"},
+                                                {"title": "Its export"}])
+
+    assert results[0].ref.lstrip("#") == gone and results[0].existed
+    fresh = results[1].ref.lstrip("#")
+    [promise] = _the_promise(deployment)
+    assert promise.waiting and promise.context["issues"] == f"{gone},{fresh}", promise.context
+    assert _promised(deployment, gone) == [], "a card that is gone was promised"
+    [row] = _promised(deployment, fresh)
+    assert row.outcome(row.effects.index("loops:open")) == "7 owed"

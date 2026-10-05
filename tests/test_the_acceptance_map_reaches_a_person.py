@@ -188,14 +188,24 @@ def test_many_unmet_criteria_are_counted_rather_than_listed():
 # where somebody decides. Rendering something nobody delivers is this repository's signature
 # defect wearing the fix as a disguise.
 
+def _the_projection() -> str:
+    """The verdict query's projection, where it lives since #414 (`verdict.of_result`) — and the
+    workflow's query is held to it, so a second hand-listed copy cannot come back unseen."""
+    import inspect
+
+    from openfactory.review import verdict
+    from openfactory.runtime.temporal import workflow as wf
+
+    assert "of_result(result)" in inspect.getsource(wf.JobWorkflow._remember_verdict), (
+        "the verdict query no longer publishes the one projection")
+    return inspect.getsource(verdict.of_result)
+
+
 def test_the_verdict_QUERY_carries_the_acceptance_map():
     """Reachability, across the seam that actually broke it."""
     import ast
-    import inspect
 
-    from openfactory.runtime.temporal import workflow as wf
-
-    src = inspect.getsource(wf.JobWorkflow)
+    src = _the_projection()
     published = [n for n in ast.walk(ast.parse(src.lstrip()))
                  if isinstance(n, ast.Dict)
                  and {getattr(k, "value", None) for k in n.keys} >= {"decision", "score", "gates"}]
@@ -212,14 +222,11 @@ def test_and_it_is_TRIMMED_like_everything_else_that_crosses_the_wire():
     """A query response is fetched on every panel refresh. The criterion text identifies it to a
     reader; the evidence is prose and belongs to the closed job's result."""
     import ast
-    import inspect
-
-    from openfactory.runtime.temporal import workflow as wf
 
     # READ AS SOURCE, NOT SLICED ON A BRACKET. The first `]` after the key belongs to the very
     # `[:200]` this asserts on, so cutting there removed the thing being measured — the guard
     # failed while the code was right.
-    src = inspect.getsource(wf.JobWorkflow)
+    src = _the_projection()
     published = next(n for n in ast.walk(ast.parse(src.lstrip()))
                      if isinstance(n, ast.Dict)
                      and "acceptance" in {getattr(k, "value", None) for k in n.keys})

@@ -67,7 +67,7 @@ def link_for(project, card: str, *, latest=None, now: float | None = None) -> st
     read.
 
     THE PROJECT OR ITS NAME. Both callers — the merge watch's `tell_the_requester` and the round's
-    `ready_at_the_gate` — hand it the registry's project, and it compared that object to the
+    `_pull_requests_waiting` — hand it the registry's project, and it compared that object to the
     record's project NAME: never equal, so every "ready for you" said "start the preview from the
     card" while one was up (measured building #413, 2026-10-02)."""
     project = str(getattr(project, "name", project) or "")

@@ -66,6 +66,12 @@ def _summary(row: dict, *, ref: str) -> TicketSummary:
 
 
 class GitHubIssuesTracker(TrackerAdapter):
+    #: WHAT THIS ROW CAN REPORT OF A CHANGE MADE ON GITHUB ITSELF (ADR-0055 D8,
+    #: `tracker/base.py::observes`): a close and why (`stateReason`, on every summary), a reopen,
+    #: and a move between the board's Backlog and TO-DO. Not a deletion: a deleted or transferred
+    #: issue answers `gh` the way an unreachable one does, and an absence is not a failed read.
+    observes = frozenset({"closed", "reopened", "promoted", "reordered"})
+
     def __init__(
         self,
         repo: str,
@@ -165,7 +171,10 @@ class GitHubIssuesTracker(TrackerAdapter):
             ["issue", "view", num, "--repo", repo,
              # `state` because `scan_todo` refuses to re-run a delivered ticket and cannot know
              # without asking — it was never in this list, so the guard read a default forever.
-             "--json", "number,title,body,labels,author,state"]
+             # `stateReason` FOR THE SAME REASON, ONE FIELD LATER (#414): the stale-pickup healer
+             # and the card's door read WHY a card was closed (`lifecycle.ports.withdrawn`), and a
+             # field never asked for read as "cannot say" — finished work — on every card here
+             "--json", "number,title,body,labels,author,state,stateReason"]
         )
         if p.returncode != 0:
             raise RuntimeError(f"gh issue view failed: {p.stderr}")
@@ -177,6 +186,7 @@ class GitHubIssuesTracker(TrackerAdapter):
         ticket.labels = [(lbl.get("name") or "").lower() for lbl in data.get("labels", [])]
         ticket.author = (data.get("author") or {}).get("login") or None
         ticket.state = str(data.get("state") or "").lower() or None
+        ticket.state_reason = str(data.get("stateReason") or "").lower()
         return ticket
 
     def set_state(self, ref: str, state: JobState, reason: str | None = None, *,
@@ -204,8 +214,9 @@ class GitHubIssuesTracker(TrackerAdapter):
                 log.error("OPENFACTORY_BOARD_MOVE_FAILED %s#%s -> %s — falling back to the "
                           "openfactory:<state> label", repo, num, state.value)
             self._transition_label(str(num), state, repo=repo)
-        if reason:
-            self.comment(ref, f"[{state.value}] {reason}")
+        # `reason` IS NOT WRITTEN (ADR-0055 D6, #414): a transition's comment is the card's door's,
+        # the same on every row. Written here it existed on two rows of four and was doubled where
+        # the caller also commented — which every caller that passes one does.
         if state is JobState.DONE:
             # AFTER the move: if the close is the write that fails, the card is already where the
             # work got to.
@@ -578,6 +589,28 @@ class GitHubIssuesTracker(TrackerAdapter):
         self._write(["issue", "close", num, "--repo", repo,
                      "--reason", "completed" if delivered else "not planned",
                      "--comment", reason])
+        self._off_the_queue(ref, delivered=delivered)
+
+    def _off_the_queue(self, ref: str, *, delivered: bool) -> None:
+        """A CLOSED CARD LEAVES ITS COLUMN WITH ITS CLOSE (#414), as the local row's close moves it
+        and as a Jira or Azure close IS a move. An issue's state and its project column are two
+        objects here, so a card closed from the panel stayed in TO-DO until the stale-pickup
+        healer met it — and that healer now hands the card's door a close the platform did not
+        make (ADR-0055 D8), which a close the platform DID make must not look like.
+
+        Done for finished work, Backlog otherwise — where `_close_as_delivered` and a withdrawn
+        close put it on every other row. BEST-EFFORT AND SAID BY NAME, like that close: the card
+        IS closed, and a column that did not follow is the healer's to find."""
+        if self.board is None:
+            return
+        try:
+            self.board.set_status(issue=str(ref).strip().lstrip("#"),
+                                  issue_url=self.ticket_url(ref),
+                                  state=JobState.DONE if delivered else JobState.SKIPPED)
+        except Exception as exc:  # noqa: BLE001 — the close stands; only its column lags
+            log.error("OPENFACTORY_CLOSED_CARD_NOT_MOVED %s was closed, and its board column did "
+                      "not follow — the stale-pickup healer moves it if it sits in TO-DO: %s",
+                      ref, str(exc)[:160])
 
     def update_title(self, ref: str, title: str) -> None:
         """`gh issue edit --title`, through `_write` so a refusal raises."""

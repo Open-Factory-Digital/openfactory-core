@@ -27,8 +27,9 @@ MUTATIONS = [
      '        if answer in ("merge", "adjust", "discard", "review"):'),
 
     ("the job sends an empty instruction instead of asking for the comments", WF,
-     'source=REVIEW_THREAD if threads else "", by=who),',
-     'source="", by=who),'),
+     # re-pinned 2026-10-04: the input also carries which change of the card it is (#448)
+     'source=REVIEW_THREAD if threads else "", by=who,\n',
+     'source="", by=who,\n'),
 
     ("the pass never reads the pull request", ACT,
      "    if inp.source == REVIEW_THREAD:\n",

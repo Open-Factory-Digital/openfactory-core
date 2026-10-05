@@ -37,6 +37,16 @@ class Seen:
     column: str = ""
 
 
+#: How a tracker says a card was closed as NOT delivered, in its own word (`Ticket.state_reason`).
+NOT_DELIVERED = frozenset({"not_planned", "not planned", "duplicate"})
+
+
+def withdrawn(ticket) -> bool:
+    """Whether the tracker SAYS `ticket` was closed as not delivered — False when it says it was
+    finished, and False when it cannot say."""
+    return str(getattr(ticket, "state_reason", "") or "").lower() in NOT_DELIVERED
+
+
 class Unreadable(RuntimeError):
     """The tracker or the board could not be read — a state, not "the card is not there"."""
 
@@ -57,7 +67,12 @@ class Ports:
         # a tracker and no board; built only alongside a missing tracker, the board stayed None for
         # it, every open card read as one no board places, and the table's permissive row for
         # that answered instead of the card's own column (found building #413).
-        self._board_known = board is not None
+        #
+        # A CALLER THAT HANDS `columns` HAS READ ITS BOARD ALREADY — the board it holds, or none:
+        # the product role files with `board=None` to mean "do not place" (`_board_or_default`),
+        # and a card it has just written is on no column it put it in (`columns={}`). Building a
+        # board here would read a hosted one for an answer the caller already gave (#414).
+        self._board_known = board is not None or columns is not None
         self._columns = columns
 
     def _where(self) -> dict[str, str] | None:
@@ -106,9 +121,12 @@ class Ports:
     def seen(self, card: str) -> Seen:
         """Where `card` is. Absent from its tracker: `removed`. Closed: `closed`. Open: what its
         board's column says — `None` when no board places it, and a sentence when a board cannot be
-        read or names a column this platform does not map, which refuses rather than guesses."""
+        read or names a column this platform does not map, which refuses rather than guesses.
+
+        A REFUSAL NAMES THE CARD AS ITS TRACKER DOES (#497): `promote` answers a person with it
+        since it queues through the door (#414), and nobody on Jira writes `#DAR-9`."""
         from openfactory.adapters.board.base import stage_key
-        from openfactory.contracts.refs import canonical_ref
+        from openfactory.contracts.refs import canonical_ref, ref_label
 
         try:
             ticket = self.tracker.get_ticket(card)
@@ -116,7 +134,7 @@ class Ports:
             return Seen(state=State.REMOVED)
         except Exception as exc:  # noqa: BLE001 — an unreadable card is an answer, and it refuses
             log.warning("OPENFACTORY_CARD_UNREAD card=%s: %s", card, exc)
-            return Seen(cannot_tell=(f"#{card.lstrip('#')} could not be read ({str(exc)[:120]}), "
+            return Seen(cannot_tell=(f"{ref_label(card)} could not be read ({str(exc)[:120]}), "
                                      f"so there is no way to tell where it is. Nothing was "
                                      f"changed — try again."))
         from openfactory.product.authoring import filed_by_the_product_role
@@ -133,14 +151,14 @@ class Ports:
         if where is None:
             return Seen(title=title, cannot_tell=(
                 f"{self.name}'s board could not be read, so there is no way to tell where "
-                f"#{card.lstrip('#')} is. Nothing was changed — try again."))
+                f"{ref_label(card)} is. Nothing was changed — try again."))
         column = where.get(canonical_ref(card)) or where.get(str(card))
         if not column:
             return Seen(state=None, title=title, opened_by=opened_by)
         state = BY_COLUMN.get(stage_key(board, column))
         if state is None:
             return Seen(title=title, cannot_tell=(
-                f"#{card.lstrip('#')} is in {column!r}, which is not a column this platform "
+                f"{ref_label(card)} is in {column!r}, which is not a column this platform "
                 f"maps, so it cannot tell where the card is in its life. Map it in the "
                 f"project's tracker options. Nothing was changed."))
         return Seen(state=state, title=title, opened_by=opened_by, column=column)
@@ -154,9 +172,9 @@ class Ports:
         from openfactory.adapters.board.base import stage_key
         from openfactory.contracts.refs import canonical_ref
 
-        reason = str(getattr(ticket, "state_reason", "") or "").lower()
-        if reason in ("not_planned", "not planned", "duplicate"):
+        if withdrawn(ticket):
             return State.CLOSED
+        reason = str(getattr(ticket, "state_reason", "") or "").lower()
         if reason == "completed":
             return State.DELIVERED
         try:
@@ -191,16 +209,52 @@ class Ports:
 
     # ── the card ────────────────────────────────────────────────────────────────────────────────
 
-    def column(self, card: str, key: str) -> str:
+    def column(self, card: str, key: str, *, needs_person: bool | None = None) -> str:
         from openfactory.contracts import JobState
 
         # THE ONE COLUMN A PERSON'S ENDING WRITES, through the port's one writer of a card's state.
         # No `reason`: the door's comment is its own effect, and `set_state` writing it too is the
-        # double comment D6 ends (two rows write `reason`, the local board drops it).
-        states = {"backlog": JobState.SKIPPED}
-        if self.tracker.set_state(card, states[key]) is False:
+        # double comment D6 ends (two rows write `reason`, the local board drops it). A job state
+        # (`pr_open`, `merged`, a park's) is written as itself, with who the blocker is (#166).
+        states = {"backlog": JobState.SKIPPED, "todo": JobState.TODO, "done": JobState.DONE}
+        state = states.get(key) or JobState(key)
+        moved = (self.tracker.set_state(card, state) if needs_person is None else
+                 self.tracker.set_state(card, state, needs_person=needs_person))
+        if moved is False:
             raise RuntimeError(f"the tracker did not move the card to {key}")
         return "moved"
+
+    def place(self, card: str, key: str, *, name: str = "") -> str:
+        """Put `card` on the board in the column `key` — by `name`, the board's own name for it,
+        when the caller holds one (what a person named on the board, the product role's constant),
+        else through the board's own map of a state to its column (C-14: a board whose columns
+        were renamed has no column called by the platform's name). Added first: on a hosted board
+        an issue is a card only once it is put on it, and adding is idempotent everywhere."""
+        from openfactory.contracts import JobState
+
+        board = self.board
+        if board is None:
+            return "nowhere to place it: this project keeps no board"
+        url = self._url(card)
+        board.add_item(issue_url=url)
+        if name:
+            moved = board.set_column(issue=card, issue_url=url, name=name)
+        else:
+            state = {"backlog": JobState.SKIPPED, "todo": JobState.TODO}.get(key) or JobState(key)
+            moved = board.set_status(issue=card, issue_url=url, state=state)
+        if not moved:
+            raise RuntimeError(f"the board did not place the card in {name or key!r}")
+        return f"placed in {name or key}"
+
+    def _url(self, card: str) -> str:
+        """Where a person opens `card` — asked of the tracker; `""` when it cannot say, which every
+        board's `add_item` and `set_column` already tolerate. STRIPPED: a row composes it from
+        configuration a person typed, and a padded URL resolves to no card on a hosted board."""
+        try:
+            return str(self.tracker.ticket_url(card) or "").strip()
+        except Exception:  # noqa: BLE001 — a link is a courtesy; the placement is not
+            log.info("the tracker could not name a URL for #%s", card, exc_info=True)
+            return ""
 
     def close(self, card: str, *, delivered: bool, note: str) -> str:
         from openfactory.adapters.tracker.base import close_ticket
@@ -225,9 +279,26 @@ class Ports:
 
     # ── the promise, the conversation, the preview, the snapshot ───────────────────────────────
 
-    def loops(self, card: str, action: str) -> str:
+    def loops(self, card: str, action: str, *, about: str = "", context: dict | None = None,
+              title: str = "", owed: dict | None = None, release: dict | None = None) -> str:
         from openfactory.lifecycle import loops
+        from openfactory.lifecycle.table import RELEASE_ASKS, RELEASE_CLOSES
 
+        if action == "open":
+            return loops.owe(self.project, card, owed or {})
+        if action in RELEASE_ASKS:
+            # THE RELEASE QUESTION THE ROUND ASKED (#448 slice 6): the room's copy, and the
+            # requester's once they were told
+            return loops.release_asked(self.project, card, release or {},
+                                       theirs=action != "release:ask")
+        if action in RELEASE_CLOSES:
+            return loops.release_answered(self.project, card, action.split(":", 1)[1])
+        if action in ("answer", "moot"):
+            return loops.question(self.project, card, about=about, answered=action == "answer")
+        if action == "ask":
+            return loops.ask(self.project, card, about=about, context=context or {})
+        if action == "deliver":
+            return loops.announce_what_it_completes(self.project, card, title=title)
         if action != "cancel":
             return loops.restore(self.project, card)
         said, _still = loops.cancel(self.project, card)
@@ -236,32 +307,65 @@ class Ports:
     def deliver_what_remains(self) -> None:
         """A delivery whose remaining cards were all delivered before one of its cards was cancelled
         is due — announced through the delivery's own path, which reads the board and the ledger
-        again under the telling lock (`events.deliver`). The hourly sweep asks it (`converge`),
+        again under the telling lock (`loops.announce`). The door's sweep asks it (`converge`),
         never a person's turn: a turn reaching the delivery path is a second way into it."""
+        from openfactory.lifecycle import loops
         from openfactory.product import events
 
         try:
             delivered = events._delivered_now(self.project)
-            if delivered:
-                events.deliver(self.project, delivered=delivered)
-        except Exception:  # noqa: BLE001 — the weekly catch-all announces what this missed
+            # AN EMPTY BOARD ANSWER STILL ASKS: what a delivery names in another repository of the
+            # product is read by the announcement itself (#492), whatever this board holds
+            if delivered is not None:
+                loops.announce(self.project, delivered=delivered)
+        except Exception:  # noqa: BLE001 — the next round asks again, for a day (`NARROWED_FOR`)
             log.exception("[%s] could not see whether what remains of a delivery is delivered",
                           self.name)
 
     def tell(self, card: str, *, notice: str, event_id: str, title: str, removed: bool,
-             opened_by: str, conversation: str) -> str:
+             opened_by: str, conversation: str, pass_number: int = 0, pr_url: str = "",
+             review: str = "", preview_url: str = "", stages_follow: bool = False,
+             where: str = "", run: str = "", who: str = "") -> str:
         """Tell the conversation the card was asked in. A card nobody asked for in a conversation —
         written on the board, with no delivery recording where — has no requester to tell, and the
         product's room is not told what an operator did on the board; one the product role opened
-        is said to the room when nobody's conversation is known, as #384 said it."""
+        is said to the room when nobody's conversation is known, as #384 said it.
+
+        A CHANGE READY TO TRY (`READY_FOR_YOU`, #401) is its own sentence and its own rule: only to
+        the conversation somebody asked in — the room already has the card's own comment — and
+        once per card and pull request, whichever of the watch and the round hands it over first
+        (`events.ready_to_try`).
+
+        THE REQUESTER'S LOOP PAST THE PULL REQUEST (#448 slice 6), each its own sentence and its
+        own rule, as the events module keeps them: the change went in (`MERGED_FOR_YOU`, once per
+        card and pull request, never where the delivery says it), it is theirs to try at a stage
+        (`STAGED_FOR_YOU`, once per card and run, never in the room), and — to the ROOM — they
+        tried it and say it is right (`TRIED`, once per card and run)."""
+        from openfactory.lifecycle.table import (
+            MERGED_FOR_YOU,
+            READY_FOR_YOU,
+            STAGED_FOR_YOU,
+            TRIED,
+        )
         from openfactory.product import events
 
         if not events._speaks(self.project):
             return "nobody to tell: the project has no product role"
+        if notice == READY_FOR_YOU:
+            return events.ready_to_try(self.project, card=card, pr_url=pr_url, review=review,
+                                       preview_url=preview_url)
+        if notice == MERGED_FOR_YOU:
+            return events.went_in(self.project, card=card, pr_url=pr_url,
+                                  stages_follow=stages_follow)
+        if notice == STAGED_FOR_YOU:
+            return events.to_try_at_the_stage(self.project, card=card, where=where, run=run)
+        if notice == TRIED:
+            return events.tried_it_right(self.project, card=card, run=run, where=where, who=who)
         if not opened_by and not conversation:
             return "nobody to tell: nobody asked for it in a conversation"
         return events.card_moved(self.project, card=card, notice=notice, event_id=event_id,
-                                 title=title, removed=removed, conversation=conversation)
+                                 title=title, removed=removed, conversation=conversation,
+                                 pass_number=pass_number)
 
     def preview(self, card: str, *, action: str, by: str) -> str:
         """Take down the preview of `card`'s unit — unless the unit also shows another card that is
@@ -276,7 +380,7 @@ class Ports:
         if found is None or not found.live:
             return "none running"
         others = [c for c in (found.cards or ()) if str(c).rsplit("#", 1)[-1] != bare]
-        still = [c for c in others if self._open(str(c))]
+        still = [c for c in others if self._open(str(c))] if action == "stop" else []
         if still:
             return f"kept: it also shows #{str(still[0]).lstrip('#')}, which is still open"
         try:

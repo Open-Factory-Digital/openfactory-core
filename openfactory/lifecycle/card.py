@@ -8,7 +8,12 @@ THE ONLY WAY A CARD CHANGES STATE — for the events a slice has moved through i
      click) is answered from its own row: nothing is decided twice, and a retry is never refused
      for a transition that in fact succeeded (D5, the event id first);
   2. the card is read where it is (`Ports.seen`) and `allowed` is asked: a refused transition
-     changes nothing and says why, in the project's language (D2);
+     changes nothing and says why, in the project's language (D2). A change somebody made in the
+     vendor's own interface (`by=OBSERVED`, D8) is judged against where the record last placed
+     the card instead, since the tracker already shows the change, and what follows it writes
+     nothing to the card (`table.consequences`). The requester's loop past the pull request
+     (`table.READ_FROM_THE_RECORD`, #448 slice 6) is judged where the RECORD says a held card is
+     when its column cannot — merged, or at a stage (`_merged_or_staged`);
   3. `act`, when the caller has one, runs — the engine's half of a person's decision (a signal to
      a parked job, a merge gate's answer, a terminate). Its refusal is the caller's to return, and
      nothing is recorded or applied;
@@ -29,10 +34,12 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from openfactory.lifecycle import executor, record
 from openfactory.lifecycle.table import (
+    OBSERVED,
+    READ_FROM_THE_RECORD,
     CardEvent,
     State,
     after,
@@ -40,6 +47,10 @@ from openfactory.lifecycle.table import (
     consequences,
     name_of,
 )
+
+#: The states a card is in once it is no longer open — what an observed reopen is judged from. A
+#: `delivered` card is closed on every row since #413 (the local row's Done closes it as well).
+_NOT_OPEN = frozenset({State.CLOSED, State.REMOVED, State.DELIVERED})
 
 log = logging.getLogger("openfactory.lifecycle.card")
 
@@ -113,6 +124,7 @@ def transition(project, card: str, event: CardEvent, *, by: str, why: str = "",
 
     card = canonical_ref(card)
     event = CardEvent(event)
+    observed = by == OBSERVED
     ports = ports or Ports(project, tracker=tracker, board=board, columns=columns)
     language = getattr(project, "language", None)
     sink = _sink(ports)
@@ -139,7 +151,25 @@ def transition(project, card: str, event: CardEvent, *, by: str, why: str = "",
         seen = ports.seen(card)
         if seen.cannot_tell:
             return Transition(card=card, event=event, refused=seen.cannot_tell)
+        if observed:
+            # WHAT THE PLATFORM LAST KNEW, NOT WHAT THE TRACKER SHOWS NOW (D8): the tracker already
+            # shows the change, so asked of it a close would be refused as the close of a closed
+            # card. The record's latest MOVE says where the card was — never a promise, which moves
+            # nothing (#414); with no move recorded, the sweep's own reading of what was promised
+            # about it (`facts["before"]`)
+            latest = history.latest_move
+            seen = replace(seen, state=_state(latest.after) if latest is not None else
+                           _state(str((facts or {}).get("before") or "")))
+            seen = replace(seen, open=seen.state not in _NOT_OPEN)
+        elif event in READ_FROM_THE_RECORD:
+            seen = replace(seen, state=_merged_or_staged(seen.state, history))
         refusal = allowed(seen.state, event, open_card=seen.open)
+        if refusal is not None and acted and seen.state is after(event, {**(facts or {}),
+                                                                        "before": ""}):
+            # THE ENGINE ACTED, AND THE JOB'S OWN ENDING GOT THERE FIRST: a person's skip signals
+            # the job, whose settle can record before this row does (#413). The card is already
+            # where this decision leaves it — the decision stands, and nothing is applied twice.
+            return Transition(card=card, event=event, before=seen.state, after=seen.state)
         if refusal is not None:
             if acted:
                 log.error("OPENFACTORY_CARD_ACTED_UNRECORDED project=%s card=%s event=%s — the "
@@ -154,17 +184,23 @@ def transition(project, card: str, event: CardEvent, *, by: str, why: str = "",
                 return Transition(card=card, event=event, before=seen.state, answer=answer)
             acted = True
         known = dict(facts or {})
+        # where the card was, for the rows whose consequences turn on it (`question_answered`)
+        known["before"] = seen.state.value if seen.state else ""
+        if observed:
+            known["observed"] = True
         known.setdefault("title", seen.title)
         known.setdefault("opened_by", seen.opened_by)
         # WHERE THE REQUESTER ASKED, READ BEFORE ANYTHING IS APPLIED: the card's delivery loop
         # says it, and a cancellation closes that loop — so a telling applied after it, or by the
         # sweep an hour later, would find nobody's conversation and say it to the room
         known.setdefault("conversation", ports.asked_in(card))
-        known.setdefault("note", card_note(event.value, who=by, why=why, language=language))
+        if "note" not in known:     # the caller's own words win, and only then is one composed
+            known["note"] = card_note(event.value, who=by, why=why, language=language)
         effects = consequences(event, known)
+        lands = after(event, known)
         row = record.Row(card=card, seq=history.next_seq, event_id=this_id, event=event.value,
                          by=by, why=why, before=seen.state.value if seen.state else "",
-                         after=after(event, known).value,
+                         after=lands.value if lands else "",
                          effects=tuple(name_of(e) for e in effects), facts=known)
         recorded = False
         if sink is not None:
@@ -178,7 +214,7 @@ def transition(project, card: str, event: CardEvent, *, by: str, why: str = "",
                 sink = None
         done = executor.apply(ports, row, effects, sink=sink if recorded else None)
         return Transition(card=card, event=event, event_id=this_id, seq=row.seq,
-                          before=seen.state, after=after(event, known), effects=tuple(done),
+                          before=seen.state, after=lands, effects=tuple(done),
                           recorded=recorded, facts=known)
     return Transition(card=card, event=event, refused=card_raced(ref=card, language=language))
 
@@ -190,6 +226,26 @@ def _state(value: str) -> State | None:
         return None
 
 
+#: The states a column cannot tell apart from a merged or staged card (`table.BY_COLUMN`), and the
+#: two the record can say instead.
+_A_COLUMN_CANNOT_TELL = frozenset({State.RUNNING, State.WAITING_ON_A_PERSON})
+_ONLY_THE_RECORD_SAYS = frozenset({State.MERGED, State.STAGED})
+
+
+def _merged_or_staged(state: State | None, history: record.History) -> State | None:
+    """WHERE THE RECORD SAYS A HELD CARD IS, when its column cannot (#448 slice 6, ADR-0055 D2
+    amended 2026-10-05). A merged card sits In review like one under review, and a production gate
+    in Needs Action like any park; so for the requester's loop past the pull request
+    (`READ_FROM_THE_RECORD`) a column reading `running` or `waiting_on_a_person` is refined by the
+    card's latest MOVE when that move left it merged or staged. With no record — a store that
+    cannot keep one, or a card nothing recorded — the column stands."""
+    latest = history.latest_move
+    if state not in _A_COLUMN_CANNOT_TELL or latest is None:
+        return state
+    said = _state(latest.after)
+    return said if said in _ONLY_THE_RECORD_SAYS else state
+
+
 #: The endings that leave a card in the backlog with its promise still open (D10).
 _STOPPED_THERE = frozenset({CardEvent.DISCARDED.value, CardEvent.SKIPPED.value,
                             CardEvent.STOPPED.value})
@@ -197,14 +253,15 @@ _STOPPED_THERE = frozenset({CardEvent.DISCARDED.value, CardEvent.SKIPPED.value,
 
 def back_in_the_backlog(project, card: str) -> bool:
     """Whether `card` is in the backlog because a person ended the work on it — its record's latest
-    transition is a discard, a skip or a stop — rather than because it was filed there and nobody
-    has started it. False when the record cannot say: "the work stopped" is a claim, and a card
-    nobody can account for is not said to have one."""
+    MOVE is a discard, a skip or a stop — rather than because it was filed there and nobody has
+    started it. A promise after it moves nothing (#414): a stopped card a requirement reused is
+    still one whose work stopped. False when the record cannot say: "the work stopped" is a claim,
+    and a card nobody can account for is not said to have one."""
     from openfactory.contracts.refs import canonical_ref
 
     try:
         latest = record.read(record.keyed_sink(), getattr(project, "name", "") or "",
-                             canonical_ref(card)).latest
+                             canonical_ref(card)).latest_move
     except Exception:  # noqa: BLE001 — see the docstring: unknown is not "stopped"
         log.info("could not read #%s's record to tell why it is in the backlog", card,
                  exc_info=True)

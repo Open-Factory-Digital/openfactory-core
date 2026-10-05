@@ -1324,6 +1324,52 @@ async def merge_gate(client: Client, project: str, issue: str) -> dict | None:
     return await handle.query(JobWorkflow.awaiting_merge) or None
 
 
+async def release_gate(client: Client, project: str, issue: str) -> dict | None:
+    """What the job on this card publishes while it waits at the LAST gate, before the product's
+    users — `{adjust_passes, adjusts_left, hears}` — or None when no job is RUNNING there (#448
+    slice 4). `merge_gate`'s sibling, read the same way and for its reason: the status first, so a
+    job that finished is never read as one still waiting.
+
+    THE CHANGE IS ALREADY MERGED THERE, which is what makes it a gate of its own: "not yet" at the
+    merge gate rewrites the open pull request; here it is answered with a NEW change of the card
+    (`another_change`). A job whose binary predates the query raises, as the engine says it."""
+    handle = client.get_workflow_handle(job_id(project, issue))
+    described = await handle.describe()
+    if described.status != WorkflowExecutionStatus.RUNNING:
+        return None
+    if not await handle.query(JobWorkflow.awaiting_approval):
+        return None
+    return dict(await handle.query(JobWorkflow.release_wait) or {"hears": False})
+
+
+async def another_change(client: Client, project: str, issue: str, *, instruction: str,
+                         by: str) -> dict:
+    """Deliver "not yet" to the job parked at the last gate, sending its card back for another
+    pass as a new change (#448 slice 4). Returns what the gate published.
+
+    THE SEAM'S THREE REFUSALS, as `answer_merge_gate` makes them and for its reasons: QUERY BEFORE
+    SIGNAL, so an answer to a job no longer waiting is refused, never swallowed (RuntimeError);
+    a job that cannot hear it — a run parked there before it could (`hears` False) — is
+    `GateDeaf`; and a pass the job would refuse, the project's passes spent, is `AdjustsSpent`
+    before any signal. SEALED like every answer a gate acts on (`gate_seal.NOT_YET`), over exactly
+    the two fields the job acts on."""
+    from openfactory import gate_seal
+
+    wf_id = job_id(project, issue)
+    handle = client.get_workflow_handle(wf_id)
+    if not await handle.query(JobWorkflow.awaiting_approval):
+        raise RuntimeError("this job is not waiting at its last gate")
+    gate = dict(await handle.query(JobWorkflow.release_wait) or {"hears": False})
+    if gate.get("hears") is not True:
+        raise GateDeaf("this job reached its last gate before it could hear a \"not yet\" — it "
+                       "can be released as it is, or a person starts the card again")
+    if gate.get("adjusts_left") == 0:
+        raise AdjustsSpent(int(gate.get("adjust_passes") or 0))
+    seal = gate_seal.seal(gate_seal.NOT_YET, wf_id, instruction, by)
+    await handle.signal(JobWorkflow.not_yet, args=[instruction, by, seal])
+    return gate
+
+
 async def merge_gate_of(client: Client, project: str, issue: str) -> dict | None:
     """The merge-wait a job is holding, or None when it is not at the merge gate — asked, never
     answered. For a row that must read the pull request before it decides to answer (#330)."""

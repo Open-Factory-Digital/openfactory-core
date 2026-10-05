@@ -50,6 +50,11 @@ class AgentContext(BaseModel):
     # injected on resume so the agent proceeds with the chosen option instead of re-asking:
     # "DECISION A — <label> (chosen by <who>)". Empty on a normal run.
     decision: str = ""
+    #: WHAT IS STILL WRONG WITH THE CARD'S LAST CHANGE, which merged (#448 slice 4): the person
+    #: who asked for the card tried it at the last gate and said "not yet", and this run builds a
+    #: new change from the base. A person's words, so the brief fences them as DATA beside the
+    #: card. Empty on every other run.
+    another_pass: str = ""
 
 
 @runtime_checkable
@@ -688,7 +693,8 @@ def ticket_brief(context: AgentContext, *, failures: str = "",
     t = context.ticket
     criteria = [c.text for c in t.acceptance_criteria]
     nonce = _marker_nonce([str(v) for v in (t.title, t.objective, t.context, context.knowledge_map,
-                                            failures, *t.in_scope, *criteria, *t.out_of_scope)
+                                            failures, context.another_pass, *t.in_scope,
+                                            *criteria, *t.out_of_scope)
                            if v])
 
     # THE RULE IS THE FIRST BYTE OF THE BRIEF, and the ticket's own title is no longer above it.
@@ -712,6 +718,13 @@ def ticket_brief(context: AgentContext, *, failures: str = "",
             nonce, *(c.bullet() for c in t.acceptance_criteria))
     if t.out_of_scope:
         parts += ["", "### Out of scope"] + _fenced(nonce, *(f"- {x}" for x in t.out_of_scope))
+    if context.another_pass:
+        # A NEW CHANGE OF A CARD WHOSE LAST ONE MERGED (#448 slice 4): its requester tried that
+        # change and said what is still wrong. The criteria above were corrected to match before
+        # this run was asked for; these are the words, fenced like every other person's.
+        parts += ["", "### Still wrong in this card's last change, which is already merged — "
+                      "said by the person who asked for it (build this as a new change from the "
+                      "base branch)"] + _fenced(nonce, context.another_pass)
     if failures:
         parts += _handed(nonce, failures, this_pass)
 

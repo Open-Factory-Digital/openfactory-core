@@ -90,6 +90,11 @@ class LocalTracker:
     #: and a test holds the two declarations together.
     whole_read_is_cheap = True
 
+    #: WHAT THIS ROW CAN REPORT OF A CHANGE NOBODY MADE THROUGH THE PLATFORM (ADR-0055 D8,
+    #: `tracker/base.py::observes`): everything — its store is read whole, a card gone from it is
+    #: gone (`get_ticket` raises `KeyError`), and a close keeps its reason (`closed_reason`).
+    observes = frozenset({"closed", "reopened", "removed", "promoted", "reordered"})
+
     def __init__(self, project: str, *, db_path=None, token=None, token_provider=None) -> None:
         self.project = (project or "").strip()
         self._db = db_path
@@ -120,6 +125,7 @@ class LocalTracker:
         ticket.labels = [lbl.lower() for lbl in labels]
         ticket.author = row["author"] or None
         ticket.state = row["state"] or "open"
+        ticket.state_reason = row["closed_reason"] or ""
         # The card's own record wins over anything the body's prose says: the requester is written
         # when the card is opened and a person editing the description must not silently reassign
         # who the factory asks (ADR-0048 §5).

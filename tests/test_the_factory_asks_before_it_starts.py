@@ -344,10 +344,16 @@ def test_the_bundles_open_questions_about_the_file_ride_the_comment_and_their_ke
 
 
 def test_the_order_is_comment_park_loop_and_the_park_asks_for_a_person(tmp_path, monkeypatch):
+    from openfactory.adapters.tracker.base import column_key
+
     w = _World(tmp_path, monkeypatch)
     w.gather("billing/fees.py")
     assert w.tracker.order == ["comment", "park"]
-    assert w.tracker.moves == [("#41", JobState.NEEDS_REFINEMENT, True)]
+    # THROUGH THE CARD'S DOOR SINCE #414 (`question_asked`): the card by its canonical ref, and a
+    # park that is a person's by its state — Needs Action on every row, `needs_person` or not
+    assert [(ref, state) for ref, state, _ in w.tracker.moves] == [
+        ("41", JobState.NEEDS_REFINEMENT)]
+    assert column_key(JobState.NEEDS_REFINEMENT) == "needs_action"
     (loop,) = w.loops_written
     assert loop.kind == "card_question" and loop.subject == "41"
     assert loop.context["requester"] == "octocat" and loop.context["paths"] == "billing/fees.py"

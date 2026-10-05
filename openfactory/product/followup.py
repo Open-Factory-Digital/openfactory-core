@@ -30,7 +30,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from openfactory.contracts.refs import canonical_ref, canonical_refs, ref_label
+from openfactory.contracts.refs import canonical_ref, ref_label
 from openfactory.memory.ledger import ACCEPTANCE, DELIVERY, QUESTION, Loop, open_loop
 
 OWNER = "product"
@@ -153,30 +153,6 @@ def answered(waiting: list[Loop], live_keys: set[str]) -> dict[tuple[str, str, s
         for loop in waiting
         if loop.kind == QUESTION and f"{loop.subject}:{loop.about}" not in live_keys
     }
-
-
-def deliveries_to_open(filed: dict[int, list[str]], waiting: list[Loop], *,
-                       ts: str, conversation: str = "", requester: str = "") -> list[Loop]:
-    """A loop per requirement that just became work. `filed` is `requirement → the refs its cards
-    landed under`, as the tracker answered them.
-
-    KEYED ON THE TRACKER'S OWN REFS, never on the numbers only some trackers mint (#485): `CONT-412`
-    on Jira and `owner/web#3` for a card filed in another repository of the product are cards this
-    loop waits for like any other. Written in the one spelling its readers compare
-    (`refs.canonical_refs`, `events._deliveries_of`), so `#12` and `12` are one card.
-
-    `conversation` is where the requester asked for it, and `requester` a digest of who
-    (`delivered_to`) — so "está pronto" is said in THEIR conversation when the work is done, not
-    in the project's room at the next sweep (#267 slice 3)."""
-    already = {loop.subject for loop in waiting if loop.kind == DELIVERY}
-    keyed = {req: canonical_refs(refs) for req, refs in filed.items()}
-    return [
-        open_loop(DELIVERY, str(req), owner=OWNER, ts=ts,
-                  context={"issues": ",".join(issues),
-                           **delivered_to(conversation, requester)})
-        for req, issues in sorted(keyed.items())
-        if str(req) not in already and issues
-    ]
 
 
 def delivered_to(conversation: str, requester: str) -> dict[str, str]:
@@ -416,10 +392,18 @@ def acceptance_of(loop: Loop, *, ts: str) -> Loop:
     thing whether they got it, and it is the difference between a product owner and a status feed.
     """
     ctx = loop.context or {}
+    gone = cancelled_cards(loop)
+    cards = ",".join(n.strip() for n in str(ctx.get("issues") or "").split(",")
+                     if n.strip() and canonical_ref(n) not in gone)
     return open_loop(ACCEPTANCE, loop.subject, owner=OWNER, ts=ts,
                      about=ctx.get("channel", ""),
                      context={"defect": ctx.get("defect", ""),
                               "asked_by": ctx.get("person", ""),
+                              # THE CARDS IT DELIVERED (#448 slice 5) — never one cancelled out of
+                              # it: a "did not work" files a defect linked to them, and the agenda's
+                              # item names the first (`agenda._answered_at`). Both read it here,
+                              # and it was never copied.
+                              **({"issues": cards} if cards else {}),
                               # a card somebody asked for stays one when it is asked about (#481)
                               **({"ticket": "1", "title": ctx.get("title", "")}
                                  if ctx.get("ticket") else {})})
@@ -589,7 +573,8 @@ def acceptance_chase_text(loop: Loop, *, mention: str = "", agent_name: str = ""
 
 
 def release_of(issue: str, *, channel: str, ts: str, requirement: str = "",
-               where: str = "") -> Loop:
+               where: str = "", conversation: str = "", requester: str = "",
+               run: str = "") -> Loop:
     """The loop that opens when a job parks waiting to go to production.
 
     An ACCEPTANCE loop, deliberately, rather than a kind of its own: it asks the same question
@@ -599,10 +584,28 @@ def release_of(issue: str, *, channel: str, ts: str, requirement: str = "",
     parallel machine somebody has to keep in step.
 
     `subject` is the issue, because that is what the approval names when it is delivered.
+
+    THE REQUESTER'S OWN COPY (#448 slice 4). With `conversation`, the same question asked of the
+    person who asked for the card, where they asked (`events.staged_for_you`): it lives in that
+    conversation (`agenda.audience`), so their answer there is read (`module._acceptances_here`)
+    and the room's turns never see it, and its reminder goes there too. `about` is that
+    conversation, so the two copies are two rows of the ledger and never one — the room's is keyed
+    on the room. `requester` is ALREADY A DIGEST (`speaker.sealed`), as the card's delivery holds
+    it: the round never has the person's id, and sealing a digest again would name nobody.
+
+    `run` is the run of the parked job the question is about (#448 slice 4), on both copies: what
+    the room is told once when the requester says it is right is keyed on it
+    (`events.tried_and_right`). Absent on a question asked before it was recorded.
     """
-    return open_loop(ACCEPTANCE, f"release-{issue}", owner=OWNER, ts=ts, about=channel,
+    where_asked = str(conversation or "").strip()
+    return open_loop(ACCEPTANCE, f"release-{issue}", owner=OWNER, ts=ts,
+                     about=where_asked or channel,
                      context={"release_issue": str(issue), "requirement": requirement,
-                              "where": where, "channel": channel})
+                              "where": where, "channel": channel,
+                              **({"conversation": where_asked} if where_asked else {}),
+                              **({"requester": str(requester)}
+                                 if where_asked and str(requester or "").strip() else {}),
+                              **({"run": str(run)} if str(run or "").strip() else {})})
 
 
 def requirement_behind(issue: str, waiting: list[Loop]) -> str:

@@ -65,10 +65,9 @@ class InMemoryTracker:
 
     def set_state(self, ref: str, state: JobState, reason: str | None = None, *,
                   needs_person: bool | None = None) -> bool:
+        # `reason` is not written, as on every row (ADR-0055 D6): the comment is the card's door's
         col = {JobState.TODO: "TO-DO"}.get(state, state.value)
         self._tickets[self._bare(ref)]["column"] = col
-        if reason:
-            self.comments.append((ref, f"[{state.value}] {reason}"))
         return True
 
     def comment(self, ref: str, body: str) -> None:
@@ -112,6 +111,22 @@ class InMemoryTracker:
     # -- board scan (what the poller's scan_todo reads) ---------------------------------
     def items_in_status(self, status: str) -> list[str]:
         return [n for n, t in self._tickets.items() if t["open"] and t["column"] == status]
+
+    # -- the board the cards are placed on: this tracker's own, as a local row's is --------
+    #
+    # THE SPLIT'S CHILDREN ARE PLACED THROUGH THEIR DOOR (ADR-0055, #414), by the board's own
+    # write, and a project with no board has nowhere to place a card — so the board this harness
+    # scans is the one the door is handed (`activities._board_beside`).
+    @property
+    def board(self) -> InMemoryTracker:
+        return self
+
+    def add_item(self, *, issue_url: str) -> None:
+        return None
+
+    def set_status(self, *, issue: str, issue_url: str, state: JobState,
+                   needs_person: bool | None = None) -> bool:
+        return self.set_state(issue, state)
 
 
 class _ScriptedSizer:

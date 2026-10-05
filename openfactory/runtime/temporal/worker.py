@@ -38,6 +38,7 @@ from openfactory.runtime.temporal.activities import (
     adjust_pr,
     announce_rate_pause,
     available_slots,
+    card_adjusted,
     card_question_sweep,
     check_ci_status,
     check_deploy_status,
@@ -171,6 +172,10 @@ WORKER_ACTIVITIES = [
     mark_needs_action, settle_ticket, record_outcome, diagnose_impediment, record_job_metrics,
     # #401 — the requester told the change is theirs to try, from the merge watch
     tell_the_requester,
+    # #413 — an adjust pass ends the way the first did: the door's `adjusted`. REGISTERED with the
+    # merge-gate answers' reason: a person presses Adjust hours later, and an unknown activity
+    # type fails at exactly that moment
+    card_adjusted,
     # #448 — and told it went in, the moment it merged, whoever merged it
     tell_the_requester_it_merged,
     refresh_knowledge, product_sweep, techlead_watch, open_review_loop,

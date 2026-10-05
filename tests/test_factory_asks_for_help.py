@@ -64,8 +64,16 @@ class _Tracker:
         self.created.append((title, body))
         return ref
 
+    def get_ticket(self, ref: str):
+        """What the card's door reads before it closes one (#414): open while it is filed here."""
+        from types import SimpleNamespace
+
+        held = f"#{str(ref).lstrip('#')}" in self.tickets.values()
+        return SimpleNamespace(title="", raw="", state="open" if held else "closed")
+
     def close_ticket(self, ref: str, reason: str, *, delivered: bool = True) -> None:
         self._maybe_break("close")
+        ref = f"#{str(ref).lstrip('#')}"        # the door names a card by its canonical ref
         self.closed.append((ref, reason))
         for title, r in list(self.tickets.items()):
             if r == ref:
@@ -227,9 +235,11 @@ def test_the_next_working_mount_closes_it_and_says_why():
 
     assert impediment.resolved(project, PRODUCT_MOUNT_EMPTY, "entries=37", tracker=trk) is True
 
-    assert trk.closed == [(ref, "completed")]
-    assert any("entries=37" in body for _, body in trk.comments), (
-        "it closed without recording the evidence that closed it")
+    # THE EVIDENCE IS THE CLOSE'S ONE COMMENT since it goes through the card's door (#414, D6):
+    # every row writes a close's note as the card's comment
+    [(closed, note)] = trk.closed
+    assert closed == ref
+    assert "entries=37" in note, "it closed without recording the evidence that closed it"
 
 
 def test_closing_something_that_was_never_open_is_not_an_event():
@@ -298,7 +308,8 @@ def test_a_CLOSE_the_forge_refused_is_retried_and_never_remembered_as_closed():
     trk.breaks = ""
     assert impediment.resolved(project, PRODUCT_MOUNT_EMPTY, "entries=41", tracker=trk) is True
 
-    assert trk.closed == [(ref, "completed")], "the impediment was left open and never retried"
+    assert [(r, "entries=41" in note) for r, note in trk.closed] == [(ref, True)], (
+        "the impediment was left open and never retried")
 
 
 def test_a_deployment_with_no_board_is_SAID_not_silently_dropped(caplog):

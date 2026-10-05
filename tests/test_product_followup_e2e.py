@@ -9,6 +9,10 @@ suite.
 
 The fakes here are BOUNDARY fakes only (channel, ledger store, board tickets); everything between —
 close, announce, ask, cap, chase — is the production code.
+
+THE ANNOUNCEMENT LEFT THE SWEEP IN #414: a card's `delivered` transition announces what it
+completes (`Loops("deliver")`), and the sweep's second chance is the door's converge. So the crash
+line's two tests drive that effect, end to end, with the same boundary fakes.
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ from openfactory.contracts.project import Project, ProviderRef
 from openfactory.memory.ledger import DELIVERY, QUESTION, open_loop
 from openfactory.product.triage import Ticket, TriageReport
 from openfactory.runtime.temporal.activities import _product_followup
-from tests.the_room_heard import through
+from tests.the_room_heard import delivered_through_the_door, through
 
 
 class _Channel:
@@ -88,33 +92,33 @@ def wired(monkeypatch):
     return channel, store
 
 
-def test_a_completed_defect_delivery_announces_THE_FIX_and_does_not_crash(wired):
+def test_a_completed_defect_delivery_announces_THE_FIX_and_does_not_crash(wired, monkeypatch):
     """The crash line, executed: a closed defect issue folds through delivered() (three-part
     keys), the announce loop unpacks it, and the client hears about their PROBLEM — never about
     'requisito defeito-88', a number they cannot recognise."""
     channel, store = wired
     store.rows = [open_loop(DELIVERY, "defeito-88", owner="product", ts="2026-07-28T10:00:00+00:00",
                             context={"issues": "88", "defect": "1"})]
-    module = _Module([Ticket(number=88, title="Conciliação duplicada", state="closed",
-                             column="Done", body="")])
+    done = [Ticket(number=88, title="Conciliação duplicada", state="closed", column="Done",
+                   body="")]
 
-    result = _product_followup(_project(), module, TriageReport(), _project().product)
+    said = delivered_through_the_door(_project(), "88", tickets=done, monkeypatch=monkeypatch)
 
-    assert "closed:1" in result, result
+    assert said == "1 announced", said
     fix_posts = [p for p in channel.posts if "corrigido" in p]
     assert fix_posts, f"the fix was never announced: {channel.posts}"
     assert "requisito" not in fix_posts[0], fix_posts[0]
     assert "88" not in fix_posts[0], "an internal issue number leaked to the client"
 
 
-def test_a_requirement_delivery_still_uses_the_requirement_sentence(wired):
+def test_a_requirement_delivery_still_uses_the_requirement_sentence(wired, monkeypatch):
     channel, store = wired
     store.rows = [open_loop(DELIVERY, "7", owner="product", ts="2026-07-28T10:00:00+00:00",
                             context={"issues": "500,501"})]
-    module = _Module([Ticket(number=500, title="a", state="closed", column="Done", body=""),
-                      Ticket(number=501, title="b", state="closed", column="Done", body="")])
+    done = [Ticket(number=500, title="a", state="closed", column="Done", body=""),
+            Ticket(number=501, title="b", state="closed", column="Done", body="")]
 
-    _product_followup(_project(), module, TriageReport(), _project().product)
+    delivered_through_the_door(_project(), "501", tickets=done, monkeypatch=monkeypatch)
 
     assert any("requisito 7" in p for p in channel.posts), channel.posts
 

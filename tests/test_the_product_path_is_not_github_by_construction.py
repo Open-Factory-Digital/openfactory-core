@@ -716,6 +716,10 @@ def _ado_project_naming_its_pat() -> Project:
 
 
 class _FakeBoard:
+    def columns(self):
+        """Where the cards are — read once by `promote` for the card's door (#414): nowhere."""
+        return {}
+
     def add_item(self, *, issue_url):
         return True
 
@@ -747,6 +751,10 @@ def test_the_tickets_and_the_board_travel_on_this_projects_credential_not_the_de
     class _Tracker:
         def ticket_url(self, ref):
             return f"https://dev.azure.com/{ORG}/{ADO_PROJECT}/_workitems/edit/{ref}"
+
+        def get_ticket(self, ref):
+            # the card as the card's door reads it before it queues it (ADR-0055, #414)
+            return type("_Tk", (), {"state": "open", "title": "a card", "raw": ""})()
 
     monkeypatch.setattr("openfactory.adapters.tracker.registry.build_tracker",
                         lambda project, *, token=None, token_provider=None:

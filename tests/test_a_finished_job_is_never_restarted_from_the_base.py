@@ -196,8 +196,11 @@ def test_a_ticket_whose_pull_request_is_open_runs_no_agent_and_leaves_its_branch
     said = [e.message for e in job.journal.events if e.kind == "note"]
     assert any(first.pr_url in m and "already open" in m for m in said), (
         f"nothing in the journal says why this run did nothing: {said}")
-    assert job.tracker.states[walked:] == [JobState.PR_OPEN], (
+    # NO PROGRESS MARK, AND THE GATE HANDED BACK: the pull request is an outcome the worker applies
+    # through the card's door (ADR-0055 D7, #414), so the box writes nothing on the card at all
+    assert job.tracker.states[walked:] == [], (
         f"the card was walked through the job again: {job.tracker.states[walked:]}")
+    assert [(b.state, b.needs_person) for b in again.handed_back] == [(JobState.PR_OPEN, True)]
 
 
 @pytest.mark.parametrize("which", ["the lookup answers None", "the state read raises"])

@@ -59,19 +59,13 @@ MUTATIONS = [
      "        return WriteResult(ok=True, ref=str(ref), url=url, detail=detail)",
      '        return WriteResult(ok=True, ref=str(ref), url="", detail=detail)'),
 
-    # RE-PINNED 2026-10-02: the placement is keyed on the tracker's own ref (#479)
-    # re-pinned 2026-10-04: the column is the board's name for the filing key (#496)
+    # RE-PINNED 2026-10-02 (#414): the three filing writers place a card through its door now, and
+    # read one answer for whether it landed — the cut is that answer read as yes whatever it was
+    # re-pinned 2026-10-04: filing goes through the door (#458) with the board's name (#505)
     ("a board that refuses the placement is read as having placed it",
      "openfactory/product/module.py",
-     # anchored THROUGH the log line, which is the only text in this block that `file_defect` and
-     # `_file_one` do not share byte for byte — a bare `placed = bool(...)` matches three times
-     "                placed = bool(board.set_column(issue=key, issue_url=url, name=column))\n"
-     "            except Exception as exc:  # noqa: BLE001 — the card exists; placement is repairable\n"
-     "                log.info(\"card %s opened but not placed on the board (%s)\", ref, exc)",
-     "                board.set_column(issue=key, issue_url=url, name=column)\n"
-     "                placed = True\n"
-     "            except Exception as exc:  # noqa: BLE001 — the card exists; placement is repairable\n"
-     "                log.info(\"card %s opened but not placed on the board (%s)\", ref, exc)"),
+     '        return board is None or moved.outcome("place").startswith("placed"), column',
+     "        return True, column"),
 
     ("the row opens cards without a yes — the spend gate the whole product area shares, gone "
      "for one verb",

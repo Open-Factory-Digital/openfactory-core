@@ -16,9 +16,11 @@ its cards landed under, and `ref_numbers` drops every ref that is not a number. 
 So on Jira no requirement's requester was ever told it shipped, and on a product of several
 repositories it was said early, or never.
 
-NOW THE LOOP HOLDS THE TRACKER'S REFS (`followup.deliveries_to_open`), in the one spelling every
-reader of it compares (`refs.canonical_ref`, `events._deliveries_of`), deduplicated and in board
-order — so a GitHub project of one repository writes the same row, byte for byte, as before.
+NOW THE LOOP HOLDS THE TRACKER'S REFS — the promise `_open_delivery` hands each card's door
+(`_track_requirement`, opened by the door's `Loops("open")`, `loops.owe`, since #414) — in the one
+spelling every reader of it compares (`refs.canonical_ref`, `events._deliveries_of`), deduplicated
+and in board order — so a GitHub project of one repository writes the same row, byte for byte, as
+before.
 
 WHAT IS DRIVEN HERE. The breakdown's filer, `file_issues`, over the real tracker of each row against
 a fake at its one transport: Jira's `urllib.request.urlopen`, as `test_a_jira_key_is_a_card_ref.py`
@@ -26,7 +28,8 @@ does, and GitHub's `gh` (`subprocess.run`). The breakdown is a harness answering
 ledger is the deployment's SQLite store. Whether a card was delivered is the board's to say
 (`events._delivered_now`), so that one read is stood in for, and the door (`events._tell`) records
 what it was handed. Everything between — which loop waits on the card that finished, whether ALL
-of its work is delivered, the announcement and the close — is the production path.
+of its work is delivered, the announcement and the close — is the production path: the effect a
+card's `delivered` applies through its door (`loops.announce_what_it_completes`, #414).
 """
 
 from __future__ import annotations
@@ -102,10 +105,53 @@ def _the_board_says(monkeypatch, delivered: set[str]) -> None:
     monkeypatch.setattr(events, "_delivered_now", lambda project: set(delivered))
 
 
+def _the_door_delivers(project, card: str) -> list:
+    """`card` reached Done through its door, which announces what it completes — the effect its
+    `delivered` applies (`Loops("deliver")` → `loops.announce_what_it_completes`, #414) — and the
+    ledger rows that wrote, in order, as the job's exit used to return them."""
+    from openfactory.lifecycle import loops
+
+    written: list = []
+    real = loop_store.write
+    with pytest.MonkeyPatch.context() as spy:
+        spy.setattr(loop_store, "write",
+                    lambda name, rows, **kw: written.extend(rows) or real(name, rows, **kw))
+        loops.announce_what_it_completes(project, card)
+    return written
+
+
 def _finished(project, monkeypatch, card: str, *, delivered: set[str]) -> list:
     """A job ended with `card` done, and the board, read fresh, says `delivered` were delivered."""
     _the_board_says(monkeypatch, delivered)
-    return events.card_finished(project, card=card)
+    return _the_door_delivers(project, card)
+
+
+def _the_door_opens(monkeypatch) -> None:
+    """The card's door stood in by the one effect a `promised` card applies — `Loops("open")`,
+    `loops.owe` (#414) — so the row is the one the door writes, with no tracker to read."""
+    from types import SimpleNamespace
+
+    from openfactory import lifecycle
+    from openfactory.lifecycle import loops
+
+    def door(project, card, event, *, facts, **_kw):
+        assert event == "promised", event
+        loops.owe(project, card, facts["owed"])
+        return SimpleNamespace(refused="", failed=[])
+
+    monkeypatch.setattr(lifecycle, "transition", door)
+
+
+def _filer(name: str):
+    """The product role's filer with nothing but its project — all `_open_delivery` and the promise
+    it builds (`_track_requirement`) read of it."""
+    from types import SimpleNamespace
+
+    from openfactory.product.module import ProductModule
+
+    pen = ProductModule.__new__(ProductModule)
+    pen.project = SimpleNamespace(name=name)
+    return pen
 
 
 def _memory(monkeypatch, tmp_path) -> None:
@@ -240,10 +286,12 @@ def test_on_a_product_of_two_repositories_the_loop_waits_for_the_card_in_the_oth
     assert (loop.subject, loop.context["issues"]) == ("7", "1,acme/web#1")
     assert events.requester_conversation(project, "acme/web#1") == ANAS
 
-    # THE API'S #1 IS NOT THE WEB'S — and the web's #1 was asked, and is still open
+    # THE API'S #1 IS NOT THE WEB'S — and the web's #1 was asked, and is still open. Only the reads
+    # from here on: the card's door reads each card it files too (#458)
+    asked_before = len(gh.viewed)
     assert _finished(project, monkeypatch, "1", delivered={"1"}) == []
     assert told == [] and _deliveries(project) == [loop]
-    assert gh.viewed == [("acme/web", "1")], gh.viewed
+    assert gh.viewed[asked_before:] == [("acme/web", "1")], gh.viewed
 
     written = _finished(project, monkeypatch, "acme/web#1", delivered={"1", "acme/web#1"})
 
@@ -281,19 +329,18 @@ def test_on_one_repository_the_loop_written_is_byte_for_byte_what_it_was(monkeyp
     from types import SimpleNamespace
 
     from openfactory.product.authoring import WriteResult
-    from openfactory.product.module import ProductModule
 
     rows: list = []
     monkeypatch.setattr(loop_store, "read", lambda project, **_k: list(rows))
     monkeypatch.setattr(loop_store, "write",
                         lambda project, loops, **_k: rows.extend(loops) or len(loops))
+    _the_door_opens(monkeypatch)
     landed = ["#12", "3", "#3", "12"]
     results = [WriteResult(ok=True, ref=r) for r in landed]
     results.insert(2, WriteResult(ok=False, ref="", detail="this front was not filed"))
 
-    ProductModule._open_delivery(SimpleNamespace(project=SimpleNamespace(name="books")),
-                                 SimpleNamespace(number=7), results, conversation=ANAS,
-                                 requester=ANA)
+    _filer("books")._open_delivery(SimpleNamespace(number=7), results, conversation=ANAS,
+                                   requester=ANA)
 
     [loop] = rows
     before = _as_main_wrote_it(7, landed, ts=loop.ts)
@@ -308,9 +355,22 @@ def test_on_one_repository_the_loop_written_is_byte_for_byte_what_it_was(monkeyp
     (["acme/web#1", "#1", " 1 "], "1,acme/web#1"),
     (["", "#", "  "], None),
 ])
-def test_the_loop_holds_the_refs_in_one_spelling_once_each(landed, issues):
-    loops = followup.deliveries_to_open({7: landed}, [], ts="T1")
-    assert [x.context["issues"] for x in loops] == ([issues] if issues else [])
+def test_the_loop_holds_the_refs_in_one_spelling_once_each(landed, issues, monkeypatch):
+    """What the filer hands the cards' doors, as the loop the first of them opens."""
+    from types import SimpleNamespace
+
+    from openfactory.product.authoring import WriteResult
+
+    rows: list = []
+    monkeypatch.setattr(loop_store, "read", lambda project, **_k: list(rows))
+    monkeypatch.setattr(loop_store, "write",
+                        lambda project, loops, **_k: rows.extend(loops) or len(loops))
+    _the_door_opens(monkeypatch)
+
+    _filer("books")._open_delivery(SimpleNamespace(number=7),
+                                   [WriteResult(ok=True, ref=str(r)) for r in landed])
+
+    assert [x.context["issues"] for x in rows] == ([issues] if issues else [])
 
 
 # ── the readers of the loop ──────────────────────────────────────────────────────────────────────

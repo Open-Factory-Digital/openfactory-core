@@ -237,21 +237,28 @@ def resolved(project, cause: str, evidence: str = "", *, tracker=None) -> bool:
         if not existing:
             _LAST[f"{name}|{cause}"] = True       # nothing open — the ordinary path, and it is free
             return False
+        note = "completed"
         if evidence:
             from openfactory.techlead import voice as tl_voice
 
-            trk.comment(str(existing),
-                        tl_voice.say(tl_voice.NARRATION, "ops.impediment.closed",
-                                     getattr(project, "language", None),
-                                     evidence=evidence[:400]))
-        # DELIVERED, SAID OUT LOUD AND THROUGH THE PORT'S SEAM (2026-09-19). The card tracked a
-        # capability that was broken; it works again, which is this card's work done — "not
-        # delivered" would say somebody gave up on it. It was the port's default by omission, in a
-        # direct call to the row, which is how the split's parent came to be closed with a word
-        # nobody chose.
-        from openfactory.adapters.tracker.base import close_ticket
+            note = tl_voice.say(tl_voice.NARRATION, "ops.impediment.closed",
+                                getattr(project, "language", None), evidence=evidence[:400])
+        # DELIVERED, SAID OUT LOUD AND THROUGH THE CARD'S DOOR (#414) — the port's seam behind it
+        # (2026-09-19). The card tracked a capability that was broken; it works again, which is
+        # this card's work done — "not delivered" would say somebody gave up on it. It was the
+        # port's default by omission, in a direct call to the row, which is how the split's parent
+        # came to be closed with a word nobody chose. THE EVIDENCE IS THE CLOSE'S ONE COMMENT, on
+        # every row (ADR-0055 D6): it was a comment of its own and then the bare word beside it.
+        from openfactory.lifecycle import CardEvent, transition
 
-        close_ticket(trk, str(existing), "completed", delivered=True)
+        moved = transition(_door_view(project), str(existing), CardEvent.CLOSED, by="the factory",
+                           why="the capability worked again",
+                           facts={"delivered": True, "note": note}, tracker=trk, board=None,
+                           columns={})
+        if moved.refused or moved.outcome("close").startswith("failed"):
+            log.warning("OPENFACTORY_OPS_CLOSE_FAILED project=%s cause=%s (%s)", name, cause,
+                        (moved.refused or moved.outcome("close"))[:160])
+            return False
         _LAST[f"{name}|{cause}"] = True           # after the close, so a refused one is retried
         log.warning("OPENFACTORY_OPS_IMPEDIMENT_CLOSED project=%s cause=%s ref=%s — the capability "
                     "worked again", name, cause, existing)
@@ -260,6 +267,28 @@ def resolved(project, cause: str, evidence: str = "", *, tracker=None) -> bool:
         log.warning("OPENFACTORY_OPS_CLOSE_FAILED project=%s cause=%s "
                     "(%s)", name, cause, str(exc)[:160])
         return False
+
+
+def _door_view(project):
+    """The project the factory's own card goes through its door as (ADR-0055, #414).
+
+    ON A BOARD OF ITS OWN — a declared `factory_board` (ADR-0027) on another tracker than the
+    product's — the factory's cards are numbered apart from the product's, so their record is kept
+    under the factory's own name and with no product role: a product card with the same number
+    must never read the impediment's close as its own (the board sweep would take the product
+    card, open, for a reopen), and the factory's trouble is no requester's delivery. On the one
+    board a local deployment derives (`_board`), or a declared one that IS the product's tracker,
+    the card is one of the product's cards, and goes through the door as one.
+
+    `board=None, columns={}` at the call: the door reads no board for a card it may not be on —
+    the product's board does not hold the factory's cards."""
+    declared = getattr(project, "factory_board", None)
+    if declared is None or getattr(declared, "tracker", None) == getattr(project, "tracker", None):
+        return project
+    copy = getattr(project, "model_copy", None)
+    if not callable(copy):
+        return project
+    return copy(update={"name": f"{getattr(project, 'name', '')}:factory", "product": None})
 
 
 def _body(project: str, cause: str, detail: str, board, language: str | None = None) -> str:

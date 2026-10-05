@@ -203,7 +203,12 @@ def test_the_GITHUB_tracker_hands_it_to_its_board():
 def test_the_machine_hands_it_DOWN(monkeypatch):
     """Reachability. The guards above read the machine's own calls; this one watches what reaches
     the tracker, because a `_set_state` that accepted the argument and dropped it would satisfy
-    every one of them."""
+    every one of them.
+
+    TWO HOPS SINCE THE BOX HANDS ITS OUTCOMES BACK (ADR-0055 D7, #414): the pull request is an
+    outcome, so the machine carries the distinction on its result, and the card's door — which the
+    worker applies it through — hands it to the tracker. Each hop is watched."""
+    from openfactory.lifecycle.ports import Ports
     from openfactory.orchestrator.machine import JobRunner
 
     seen: dict = {}
@@ -211,6 +216,9 @@ def test_the_machine_hands_it_DOWN(monkeypatch):
     class _Tracker:
         def set_state(self, ref, state, reason=None, *, needs_person=None):
             seen.update(state=state, needs_person=needs_person)
+
+        def remove_label(self, ref, label):
+            pass
 
     machine = JobRunner.__new__(JobRunner)
     machine.tracker = _Tracker()
@@ -221,5 +229,12 @@ def test_the_machine_hands_it_DOWN(monkeypatch):
 
     JobRunner._set_state(machine, ticket, JobState.PR_OPEN, needs_person=True)
 
+    assert machine._handed_back[-1].needs_person is True, (
+        "the machine takes the distinction and does not hand it back")
+    assert seen == {}, "the box wrote an outcome on the card itself"
+
+    Ports(type("P", (), {"name": "acme"})(), tracker=_Tracker()).column(
+        "#7", "pr_open", needs_person=True)
+
     assert seen.get("needs_person") is True, (
-        "the machine takes the distinction and does not pass it on")
+        "the door takes the distinction and does not pass it on")

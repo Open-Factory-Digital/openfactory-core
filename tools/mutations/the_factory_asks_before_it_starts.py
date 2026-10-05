@@ -34,9 +34,11 @@ MUTATIONS = [
      '    return (all(v == "fresh" for v in concepts.values())\n',
      '    return (all(v in ("fresh", "stale", "missing") for v in concepts.values())\n'),
 
+    # re-pinned 2026-10-04: the park is the card door's `question_asked` (#414), read back from
+    # its outcome
     ("a park that did not land is treated as a park",
      "openfactory/runtime/temporal/activities.py",
-     "        if landed is False:\n",
+     '        if parked.startswith("failed"):\n',
      "        if False:\n"),
 
     ("the bot that opened the card is asked the question",

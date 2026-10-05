@@ -82,7 +82,7 @@ from pathlib import Path
 
 from openfactory.adapters.board.base import stage_column
 from openfactory.contracts.document import INTERNAL
-from openfactory.contracts.refs import canonical_ref, ref_sort_key
+from openfactory.contracts.refs import canonical_ref, ref_label, ref_sort_key
 from openfactory.ops.impediment import PRODUCT_BOARD_UNREADABLE as _IMP_BOARD
 from openfactory.ops.impediment import PRODUCT_CANNOT_WRITE as _IMP_WRITE
 from openfactory.ops.impediment import PRODUCT_CORPUS_UNREADABLE as _IMP_CORPUS
@@ -596,11 +596,12 @@ def _acceptances_here(project, ledger, conversation: str | None) -> list:
     """The open acceptances a message in `conversation` may answer (#267 slice 3).
 
     AN ACCEPTANCE ASKED IN A PRIVATE CONVERSATION IS ANSWERED THERE, AND NOWHERE ELSE: the delivery
-    was announced to the person who asked, where they asked (`events.deliver`), and somebody else's
-    "funcionou" in the room must neither close it nor be told which delivery it closed. One asked
-    in the room is answered from anywhere, as every acceptance was before. `None` — a caller that
-    names no conversation — reads them all, as before; "" is a conversation nobody could name,
-    which answers the room's alone. The one rule the agenda and the chat use (`agenda.sees`)."""
+    was announced to the person who asked, where they asked (`lifecycle.loops.announce`), and
+    somebody else's "funcionou" in the room must neither close it nor be told which delivery it
+    closed. One asked in the room is answered from anywhere, as every acceptance was before.
+    `None` — a caller that names no conversation — reads them all, as before; "" is a conversation
+    nobody could name, which answers the room's alone. The one rule the agenda and the chat use
+    (`agenda.sees`)."""
     from openfactory.memory.ledger import ACCEPTANCE, waiting
     from openfactory.product.followup import OWNER
 
@@ -703,7 +704,35 @@ def _named_release(text: str, loops: list) -> object | None:
         return None
     candidates = [x for x in loops
                   if is_release(x) and canonical_ref(is_release(x)).upper() in mentioned]
-    return candidates[0] if len(candidates) == 1 else None
+    # ONE RELEASE, NOT ONE LOOP (#448 slice 4): asked in the room and of its requester, "funcionou
+    # o #12" names one release that has two loops — that is a name, not a second guess
+    return candidates[0] if len({_question_of(x) for x in candidates}) == 1 else None
+
+
+def _close_a_delivery_s_acceptance(project_name: str, ledger, loop, verdict: str) -> None:
+    """Close the acceptance of a DELIVERY — "did it work?" about what was announced — with the
+    person's verdict (`ProductModule.settle_acceptance`). Never a release's: its caller hands every
+    release question back open, and the verdict on one counts only through the card's door, once
+    the release gate knows who gave it (`engine._maybe_release`, #273, #448 slice 6). A function of
+    its own so that the door's guard reads every release question's writer as the door's
+    (`tests/test_the_card_lifecycle_has_one_door.py`)."""
+    from openfactory.memory import store as loop_store
+    from openfactory.memory.ledger import ACCEPTANCE, close_by_observation
+
+    rows = close_by_observation(ledger, {(ACCEPTANCE, loop.subject, loop.about): verdict})
+    if rows:
+        loop_store.write(project_name, rows)
+
+
+def _question_of(loop) -> object:
+    """What `loop` asks, for telling questions apart: a RELEASE is one question wherever it was
+    asked — the room's copy and the requester's (#448 slice 4) — and any other loop is its own.
+    Ambiguity is between questions; two copies of one are not a choice anybody can be asked to
+    make."""
+    from openfactory.product.followup import is_release
+
+    issue = is_release(loop)
+    return ("release", canonical_ref(issue).upper()) if issue else loop.key
 
 
 #: How the fact that nobody passed a board is told apart from a caller saying "do not place this".
@@ -730,6 +759,10 @@ _FILING = {
                             "time foi avisado e posiciona."),
         "defect_unplaced": ("registrei o problema, mas ainda não consegui posicionar o cartão no "
                             "quadro — o time foi avisado e posiciona."),
+        "queue_retried": ("não consegui colocar o {number} na fila agora — ficou anotado, e eu "
+                          "tento de novo dentro de uma hora."),
+        "queue_refused": ("não consegui colocar o {number} na fila agora. O time foi avisado e "
+                          "resolve."),
     },
     "en": {
         "no_title": "I need a title to open the card.",
@@ -747,6 +780,10 @@ _FILING = {
                             "team has been told and will place it."),
         "defect_unplaced": ("I registered the problem, but could not place the card on the board "
                             "yet — the team has been told and will place it."),
+        "queue_retried": ("I could not put {number} in the queue just now — it is noted, and I "
+                          "try again within the hour."),
+        "queue_refused": ("I could not put {number} in the queue just now. The team has been "
+                          "told and will sort it out."),
     },
 }
 
@@ -2131,7 +2168,6 @@ class ProductModule:
         reads every acceptance, as before.
         """
         from openfactory.memory import store as loop_store
-        from openfactory.memory.ledger import ACCEPTANCE, close_by_observation
         from openfactory.product.followup import acceptance_verdict
 
         verdict = acceptance_verdict(text)
@@ -2158,7 +2194,13 @@ class ProductModule:
         # here, BEFORE anything closes, so a correct reply never gets overruled by a guess.
         named = _named_release(text, open_acc)
         loop = named or max(open_acc, key=lambda x: x.ts)
-        ambiguous = named is None and len(open_acc) > 1
+        ambiguous = named is None and len({_question_of(x) for x in open_acc}) > 1
+        # THE COPY ASKED HERE (#448 slice 4). A release asked of its requester in their own
+        # conversation is also the room's question, and both are open where they answer: the
+        # question is chosen above, and the copy it settles is the one asked where they wrote.
+        here = str(conversation or "")
+        loop = next((x for x in open_acc if _question_of(x) == _question_of(loop)
+                     and here and str((x.context or {}).get("conversation") or "") == here), loop)
 
         # A RELEASE LOOP IS NEVER CLOSED HERE, and two defects taught it. The first was an
         # AMBIGUOUS "funcionou": the guess was recorded as `worked` first and the "which one?"
@@ -2177,10 +2219,7 @@ class ProductModule:
 
         if is_release(loop):
             return verdict, loop, ambiguous
-
-        rows = close_by_observation(ledger, {(ACCEPTANCE, loop.subject, loop.about): verdict})
-        if rows:
-            loop_store.write(self.project.name, rows)
+        _close_a_delivery_s_acceptance(self.project.name, ledger, loop, verdict)
         return verdict, loop, ambiguous
 
     def record_decisions(self, labels: list[str], *, channel: str = "", conversation: str = "",
@@ -2854,9 +2893,9 @@ class ProductModule:
                     cause="breakdown budget spent"))
                 continue
             results.append(self._file_one(draft, requirement, tracker, board, vet=vet,
-                                          known_open=known_open))
-        self._open_delivery(requirement, results, conversation=conversation,
-                            requester=requester)
+                                          known_open=known_open, by=actor))
+        self._open_delivery(requirement, results, by=actor, tracker=tracker,
+                            conversation=conversation, requester=requester)
         return results
 
     def compose_card(self, *, request: str, conversation: str = "", reply: str = "",
@@ -2972,29 +3011,30 @@ class ProductModule:
         key = canonical_ref(ref)
         board = self._board_or_default(board)
         detail = ""
-        if board is not None and key:
-            placed = False
-            # THE BOARD'S OWN NAME FOR THE KEY (#496) — and the one the log says, because the
-            # person reading it looks for that column on their board, not for the platform's word
-            column = stage_column(board, self.FILING_KEY)
-            try:
-                board.add_item(issue_url=url)
-                placed = bool(board.set_column(issue=key, issue_url=url, name=column))
-            except Exception as exc:  # noqa: BLE001 — the card exists; placement is repairable
-                log.info("card %s opened but not placed on the board (%s)", ref, exc)
+        if key:
+            # THE PROMISE GOES THROUGH THE DOOR WITH THE FILING (#414): a card asked for in a
+            # conversation is owed its delivery there; one filed with none is owed nothing
+            owed = (self._track_ticket(ref, title=name, conversation=conversation,
+                                       requester=requester)
+                    if str(conversation or "").strip() else None)
+            # THE BOARD'S OWN NAME FOR THE KEY (#496) comes back with the answer — the one the
+            # door placed it by, and the one the log says, because the person reading it looks
+            # for that column on their board, not for the platform's word
+            placed, column = self._filed_through_the_door(str(ref), by=reported_by,
+                                                          tracker=tracker, board=board,
+                                                          owed=owed)
             if not placed:
                 log.warning("OPENFACTORY_PRODUCT_TICKET_NOT_PLACED ref=%s column=%s — the card "
                             "exists but has no column, so the queue cannot see it until a person "
                             "places it", ref, column)
                 detail = said["ticket_unplaced"]
-        if str(conversation or "").strip():
-            self._track_ticket(ref, title=name, conversation=conversation, requester=requester)
         return WriteResult(ok=True, ref=str(ref), url=url, detail=detail)
 
     def file_defect(self, *, restated: str, reported_by: str, violates: int | None,
                     severity: str = "", source: str = "", tracker=None,
                     board=_UNSET, seen: int | None = None, conversation: str = "",
-                    requester: str = "", card: str = "", title: str = "") -> WriteResult:
+                    requester: str = "", card: str = "", title: str = "",
+                    linked: str = "") -> WriteResult:
         """Register a broken promise as work — classified, citing the requirement it violates.
 
         A defect skips the requirement-drafting ceremony ON PURPOSE: the promise already exists;
@@ -3006,7 +3046,10 @@ class ProductModule:
         And it is FOLLOWED UP: a delivery loop opens on the filed issue, so the person who reported
         it is told — unprompted — that the fix shipped, when it ships and in the conversation they
         reported it in (`conversation`, `requester`: #267 slice 3). A bug report that vanishes into
-        a board the client cannot see is indistinguishable from being ignored."""
+        a board the client cannot see is indistinguishable from being ignored.
+
+        `linked` names the cards a delivery that did not work was about (#448 slice 5): the defect
+        says it came from them, and each of them says this defect followed it."""
         from openfactory.product.authoring import defect_body
         from openfactory.product.cards import TITLE_LIMIT
         from openfactory.product.voice import _pick
@@ -3039,6 +3082,7 @@ class ProductModule:
                 title=title,
                 body=defect_body(restated=restated, reported_by=reported_by,
                                  severity=severity, source=source, card=card, language=lang,
+                                 linked=linked,
                                  requester_forge=forge_identity_for(
                                      getattr(self, "project", None), reported_by, tracker),
                                  requirement=cited,
@@ -3066,15 +3110,11 @@ class ProductModule:
         key = canonical_ref(ref)
         board = self._board_or_default(board)
         detail = ""
-        if board is not None and key:
-            placed = False
-            column = stage_column(board, self.FILING_KEY)   # the board's name for it (#496)
-            try:
-                url = self._issue_url(tracker, ref)
-                board.add_item(issue_url=url)
-                placed = bool(board.set_column(issue=key, issue_url=url, name=column))
-            except Exception as exc:  # noqa: BLE001 — the issue exists; placement is repairable
-                log.info("defect %s filed but not placed on the board (%s)", ref, exc)
+        if key:
+            # THE DEFECT'S PROMISE GOES THROUGH THE DOOR WITH ITS FILING (#414)
+            placed, column = self._filed_through_the_door(
+                str(ref), by=reported_by, tracker=tracker, board=board,
+                owed=self._track_defect(key, conversation=conversation, requester=requester))
             if not placed:
                 # A `False` FROM THE BOARD IS THE INVISIBLE-CARD STATE, NOT A QUIETER SUCCESS.
                 # `promote` checks this same bool; discarding it here meant a column-less card
@@ -3085,26 +3125,56 @@ class ProductModule:
                             "but has no column, so the queue cannot see it until a person places "
                             "it", ref, column)
                 detail = said["defect_unplaced"]
-        if key:
-            self._track_defect(key, conversation=conversation, requester=requester)
+        if linked:
+            self._said_on_the_delivered_cards(tracker, linked, ref, lang)
         return WriteResult(ok=True, ref=str(ref), detail=detail)
 
+    @staticmethod
+    def _said_on_the_delivered_cards(tracker, linked: str, ref: str, lang) -> None:
+        """Each card a delivery that did not work was about says which defect followed it (#448
+        slice 5) — the other half of the link, on the card a person opens first. A comment, never a
+        state: the card stays delivered, and the defect is the work. Best-effort: the defect is
+        filed, and a card that could not be told keeps its link in the defect's own body."""
+        from openfactory.product.authoring import defect_after_delivery_note
+
+        for card in [r.strip() for r in str(linked).split(",") if r.strip()]:
+            try:
+                tracker.comment(card, defect_after_delivery_note(ref, language=lang))
+            except Exception as exc:  # noqa: BLE001 — the defect is filed; its body links back
+                log.info("the delivered card %s was not told of defect %s (%s)", card, ref, exc)
+
     def _track_defect(self, number: str, *, conversation: str = "",
-                      requester: str = "") -> None:
+                      requester: str = "") -> dict:
         """A delivery loop on the fix, so 'consertamos o que você reportou' gets said unprompted —
-        in the conversation it was reported in, when there is one (#267 slice 3).
+        in the conversation it was reported in, when there is one (#267 slice 3). RETURNED, NOT
+        WRITTEN: it is the promise the defect's filing opens through the card's door (#414).
 
         Subject `defeito-<ref>` rather than a requirement number: the loop closes when THIS issue
         closes, and the sweep's delivered() pass already knows how to watch a set of issues. The
         ref is the tracker's own — `defeito-88` on GitHub, `defeito-CONT-412` on Jira (#479)."""
-        _follow_card(self.project, f"defeito-{number}", number, {"defect": "1"},
+        return _owed(f"defeito-{number}", {"defect": "1"}, conversation=conversation,
+                     requester=requester)
+
+    def _track_requirement(self, number, cards, *, conversation: str = "",
+                           requester: str = "") -> dict:
+        """A delivery loop on a requirement's work, so "está pronto" is said when ALL of it is
+        delivered — in the conversation it was asked in, when there is one (#267 slice 3).
+        RETURNED, NOT WRITTEN: every card of the breakdown carries it through its door as
+        `promised`, and the first card the door admits opens it (ADR-0055, amended 2026-10-04,
+        #414).
+
+        Subject: the requirement's number, as it always was — the sweep, the agenda and the
+        announcement read it so. `issues`: EVERY card of the breakdown, filed or reused, so the
+        promise is the same whichever card opens it."""
+        return _owed(str(number), {"issues": ",".join(str(c) for c in cards)},
                      conversation=conversation, requester=requester)
 
     def _track_ticket(self, ref: str, *, title: str = "", conversation: str = "",
-                      requester: str = "") -> None:
+                      requester: str = "") -> dict:
         """A delivery loop on a card a person asked for (#481), so the events about it — the
         change is theirs to try, it is in the product, it was withdrawn — are said to them, in the
-        conversation they asked in.
+        conversation they asked in. RETURNED, NOT WRITTEN: the card's filing opens it through the
+        card's door (#414).
 
         `ticket` BESIDE A DEFECT'S `defect`: the staged kind that filed it, which is what every
         sentence the loop leads to reads, so none of them calls the card a requirement. The title
@@ -3113,8 +3183,7 @@ class ProductModule:
         KEYED ON THE TRACKER'S OWN REF, never on a number only some trackers mint: the ledger
         compares refs as the provider wrote them (`events.issues_of`, C-05)."""
         ref = canonical_ref(ref)
-        _follow_card(self.project, f"cartao-{ref}", ref,
-                     {"ticket": "1", "title": str(title or "")[:120]},
+        return _owed(f"cartao-{ref}", {"ticket": "1", "title": str(title or "")[:120]},
                      conversation=conversation, requester=requester)
 
     def note_fact(self, *, term: str, body: str, said_by: str, where: str = "",
@@ -3319,49 +3388,99 @@ class ProductModule:
         except OSError:
             return ""
 
-    def _open_delivery(self, requirement, results: list[WriteResult], *, conversation: str = "",
-                       requester: str = "") -> None:
+    def _open_delivery(self, requirement, results: list[WriteResult], *, by: str = "",
+                       tracker=None, conversation: str = "", requester: str = "") -> None:
         """The moment a requirement becomes filed work is the moment she starts WAITING on it
         (ADR-0021): a `delivery` loop opens here, and it closes when every one of these issues is
-        delivered — observed the moment a job finishes one (`events.card_finished`), or by the
-        weekly sweep as the catch-all — and only then does she say "está pronto", in the
-        conversation it was asked in (`conversation`), else the room (#267 slice 3).
+        delivered — each card's delivery through its door announces what it completes
+        (`lifecycle.loops.announce_what_it_completes`, #414) — and only then does she say "está
+        pronto", in the conversation it was asked in (`conversation`), else the room (#267 slice
+        3).
 
-        Filing is the ONLY place this can open. `followup.deliveries_to_open` existed, was tested,
-        and was called by nothing — the twelfth instance of this repo's signature defect, caught
-        the same hour it was written. Closing worked; nothing ever opened, so "it's done" was a
-        sentence she could still never say. Best-effort: the issues were filed either way, and a
-        delivery she fails to track is a missing courtesy, not lost work — but it says so.
+        THROUGH EACH CARD'S DOOR (ADR-0055, amended 2026-10-04, #414). The promise spans several
+        cards, and the breakdown REUSED some of them — open cards the requirement verified on the
+        board, which no transition of theirs marked as joining it — so it opened here, beside every
+        door, and an all-reused requirement went through none. Now every card of the breakdown,
+        filed or reused, is handed `promised`, carrying the whole promise (`_track_requirement`):
+        recorded on each card, and opened by the door's `Loops("open")` with the first card it
+        admits — ONE per subject, so every other card finds it owed already. A card the door
+        refuses (closed or removed since the breakdown read it) records nothing and stops nobody:
+        the others open the same promise this opened before, over every card that landed. Keyed by
+        the card and the promise (`_promised_id`), so a retried breakdown is answered from each
+        card's record and opens nothing twice.
+
+        Filing is the ONLY place this can open. Its first builder, `followup.deliveries_to_open`
+        (gone since #414), existed, was tested, and was called by nothing — the twelfth instance
+        of this repo's signature defect, caught the same hour it was written. Closing worked;
+        nothing ever opened, so "it's done" was a sentence she could still never say.
+        Best-effort: the issues were filed either way, and a delivery she fails to track is a
+        missing courtesy, not lost work — but it says so.
 
         EVERY CARD IT BECAME, AS THE TRACKER NAMED IT (#485). The loop was keyed on the refs that
         are numbers, so on Jira (`CONT-412`) it never opened, and a card filed in another
         repository of the product (`owner/web#3`) was dropped from it — the delivery then closed
-        when the cards it kept shipped, with that one still open. `deliveries_to_open` keys it on
-        the refs themselves, in the spelling its readers compare."""
+        when the cards it kept shipped, with that one still open. The promise is keyed on the refs
+        themselves (`refs.canonical_refs`), in the spelling its readers compare."""
         import logging
 
         log = logging.getLogger("openfactory.product")
         try:
+            from openfactory.contracts.refs import canonical_ref, canonical_refs
+
             landed = [r.ref for r in results if r.ok and r.ref]
-            if not landed:
+            # EVERY CARD, IN THE ONE SPELLING THE LEDGER COMPARES (#485), the first ref that
+            # carries it — and the card's door is handed the ref it was filed under
+            refs: dict[str, str] = {}
+            for ref in landed:
+                refs.setdefault(canonical_ref(ref), str(ref))
+            cards = canonical_refs(landed)
+            if not cards:
                 return  # nothing was filed, so nothing is owed
-            from datetime import UTC, datetime
+            from openfactory.lifecycle import CardEvent, transition
+            from openfactory.lifecycle.ports import Ports
 
-            from openfactory.memory import store as loop_store
-            from openfactory.memory.ledger import waiting
-            from openfactory.product.followup import OWNER, deliveries_to_open
-
-            ledger = loop_store.read(self.project.name)
-            fresh = deliveries_to_open({requirement.number: landed},
-                                       waiting(ledger, owner=OWNER),
-                                       ts=datetime.now(UTC).isoformat(),
-                                       conversation=conversation, requester=requester)
-            if fresh:
-                loop_store.write(self.project.name, fresh)
+            owed = self._track_requirement(requirement.number, cards,
+                                           conversation=conversation, requester=requester)
+            # THE BOARD IS NOT READ (`columns={}`): a promise moves nothing, and whether a card may
+            # join one is the tracker's word on whether it is open — so a board that cannot be
+            # read does not cost a promise this opened before without it
+            ports = Ports(self.project, tracker=tracker, columns={})
         except Exception as exc:  # noqa: BLE001 — the work was filed; only the follow-up is lost
             log.warning("could not start tracking the delivery of REQ-%s (%s) — the work exists, "
-                        "but nobody will announce when it is done", 
+                        "but nobody will announce when it is done",
                         getattr(requirement, "number", "?"), exc)
+            return
+        name = getattr(self.project, "name", "") or ""
+        # WHETHER ANY CARD CARRIES THE PROMISE is known only once every door was asked (review of
+        # #524): a door that raises says so for its card, and only when NO card carries it, and
+        # one did raise, is the promise said lost — once, as before #414. A promise every door
+        # refused is left unsaid: its cards are gone, so it would never close
+        carried, unrecorded = False, []
+        for card in cards:
+            ref = refs[card]
+            try:
+                moved = transition(self.project, ref, CardEvent.PROMISED,
+                                   by=str(by or "") or "the product role",
+                                   facts={"requirement": requirement.number, "owed": owed},
+                                   event_id=_promised_id(name, ref, owed), ports=ports)
+            except Exception as exc:  # noqa: BLE001 — one card must not cost the others' promise
+                log.warning("OPENFACTORY_PRODUCT_PROMISE_UNRECORDED ref=%s req=%s (%s) — the "
+                            "card's door could not be gone through", ref, requirement.number, exc)
+                unrecorded.append(str(ref))
+                continue
+            if moved.refused:
+                log.info("REQ-%s: #%s was not promised — %s", requirement.number,
+                         str(ref).lstrip("#"), moved.refused)
+                continue
+            carried = True
+            if moved.failed:
+                log.warning("OPENFACTORY_PRODUCT_PROMISE_NOT_OPENED ref=%s req=%s (%s) — the "
+                            "hourly round opens it again", ref, requirement.number,
+                            "; ".join(moved.failed))
+        if unrecorded and not carried:
+            log.warning("could not start tracking the delivery of REQ-%s: no card of it recorded "
+                        "its promise (%s) — the work exists, but nobody will announce when it is "
+                        "done", requirement.number, ", ".join(unrecorded))
 
     def _reused_card(self, draft, requirement, tracker,
                      known_open: set[str] | None) -> str | None:
@@ -3465,7 +3584,7 @@ class ProductModule:
                               getattr(requirement, "asked_by", "") or "", tracker))
 
     def _file_one(self, draft, requirement, tracker, board,
-                  *, known_open: set[str] | None = None, vet=None) -> WriteResult:
+                  *, known_open: set[str] | None = None, vet=None, by: str = "") -> WriteResult:
         reused = self._reused_card(draft, requirement, tracker, known_open)
         if reused:
             return WriteResult(ok=True, ref=f"#{reused}", existed=True,
@@ -3506,10 +3625,9 @@ class ProductModule:
             # inside it. One state, one sentence, one place to change it.
             from openfactory.contracts.refs import split_repo_ref
 
-            placed = False
             # a card filed in another repository of the product comes back QUALIFIED (C-18); the
-            # board is asked for the part after the repository — the tracker's own ref, a number
-            # on GitHub and a key on Jira, which the port takes since C-05 (#479)
+            # card's ref is the part after the repository — a number on GitHub and a key on Jira,
+            # which the port takes since C-05 (#479)
             key = split_repo_ref(ref)[1]
             if not key:
                 # NO REF, NO CARD TO MOVE — but the tracker said it filed one, so this reports the
@@ -3519,24 +3637,60 @@ class ProductModule:
                 return WriteResult(ok=True, ref=str(ref),
                                    detail="criado, mas o quadro não aceitou a colocação — o "
                                           "cartão está sem coluna e o time foi avisado.")
-            column = stage_column(board, self.FILING_KEY)   # the board's name for it (#496)
-            try:
-                url = self._issue_url(tracker, ref)
-                board.add_item(issue_url=url)
-                placed = bool(board.set_column(issue=key, issue_url=url, name=column))
-            except Exception as exc:  # noqa: BLE001 — the issue exists; placement is repairable
-                log.info("work %s filed but not placed on the board (%s)", ref, exc)
-            if not placed:
-                log.warning("OPENFACTORY_PRODUCT_CARD_NOT_PLACED ref=%s column=%s — the "
-                            "card exists "
-                            ""
-                            "but "
-                            "has no column, so the queue cannot see it until a person places it",
-                            ref, column)
-                return WriteResult(ok=True, ref=str(ref),
-                                   detail="criado, mas o quadro recusou a colocação — o cartão "
-                                          "está sem coluna e o time foi avisado.")
+        placed, column = self._filed_through_the_door(str(ref), by=by, tracker=tracker,
+                                                      board=board)
+        if board is not None and not placed:
+            log.warning("OPENFACTORY_PRODUCT_CARD_NOT_PLACED ref=%s column=%s — the card exists "
+                        "but has no column, so the queue cannot see it until a person places it",
+                        ref, column)
+            return WriteResult(ok=True, ref=str(ref),
+                               detail="criado, mas o quadro recusou a colocação — o cartão "
+                                      "está sem coluna e o time foi avisado.")
         return WriteResult(ok=True, ref=str(ref), detail=elsewhere)
+
+    def _filed_through_the_door(self, ref: str, *, by: str, tracker, board,
+                                owed: dict | None = None) -> tuple[bool, str]:
+        """THE CARD JUST WRITTEN GOES THROUGH ITS DOOR (ADR-0055, #414): `filed` puts it in the
+        filing column — by the column's name, the board's own write it always was — and forgets
+        the role's snapshot, recorded like every other change of a card. Returns whether it was
+        placed, and the board's own name for the column; `False` is the column-less card no queue
+        can see (finding 56), which the caller says — naming the column as the board calls it. A
+        placement the board refused is a failed effect of a RECORDED transition, so the hourly
+        round places it again — "placement is repairable" used to be a comment.
+
+        THE KEY IS THE GATE, THE NAME IS THE BOARD'S (#496). The three filing writers come here,
+        so the one place filing names a column is this one: `FILING_KEY`, never a parameter, and
+        the name `stage_column` reads from the deployment's own map — the platform's `Backlog`
+        was refused by every board that calls its backlog something else. Asked once, and handed
+        to the door as `column_name`, which its placement writes (and the hourly round writes
+        again from the record).
+
+        `columns={}`: a card its caller wrote a moment ago is on no column the caller put it in,
+        so the door does not read a hosted board for an answer this already has. `board=None` is
+        "deliberately do not place" (`_board_or_default`): the card is still filed, on its
+        tracker alone.
+
+        `owed` IS THE PROMISE THE FILING MAKES (#414) — the delivery a reported defect, or a card
+        asked for in a conversation, is owed (`_track_defect`, `_track_ticket`) — and the door
+        opens it with the filing, recorded with it: a promise the ledger did not take is the
+        hourly round's to open again, where it used to be a line in the log."""
+        from openfactory.lifecycle import CardEvent, transition
+
+        column = stage_column(board, self.FILING_KEY) if board is not None else ""
+        try:
+            moved = transition(getattr(self, "project", None), ref, CardEvent.FILED,
+                               by=str(by or "") or "the product role",
+                               facts={"column": self.FILING_KEY if board is not None else "",
+                                      "column_name": column,
+                                      **({"owed": owed} if owed else {})},
+                               tracker=tracker, board=board, columns={})
+        except Exception as exc:  # noqa: BLE001 — the card exists; its placement is repairable
+            log.info("card %s filed, and its door could not be gone through (%s)", ref, exc)
+            return False, column
+        if moved.refused:
+            log.info("card %s filed, and its door refused it: %s", ref, moved.refused)
+            return False, column
+        return board is None or moved.outcome("place").startswith("placed"), column
 
     def _filing_repo(self, draft, tracker) -> tuple[str, str]:
         """`(repository, said)` — where a card of this draft is filed: the repository the role
@@ -3956,32 +4110,52 @@ class ProductModule:
         from openfactory.product.voice import board_move_said
 
         lang = getattr(self.project, "language", None)
-        refused = board_move_said("queue_refused", language=lang)
         if not may_act(self.project, actor, via=self._via):
             return [WriteResult(ok=False, detail=unauthorized_message(self.project))]
         board = board or self._board()
         if board is None:
             return [WriteResult(ok=False, detail=board_move_said("unreachable", language=lang))]
 
-        from openfactory.product.board import forget_board
+        from openfactory.lifecycle import CardEvent, transition
+        from openfactory.product.voice import _pick
 
-        # what we cached describes a board we are about to change
-        forget_board(getattr(self.project, "name", ""))
-        # ONE tracker for the whole batch: it is only consulted for the card's URL, and building
-        # one per number would authenticate once per card moved.
+        # ONE tracker for the whole batch, and ONE read of where the cards are: the door asks it
+        # for each card (`promoted` is allowed from the backlog, the queue and a park — ADR-0055
+        # D2), and a read per card would read the whole board once per card moved.
         tracker = self._tracker()
         # THE BOARD NAMES THE QUEUE (#496): `QUEUE_KEY` is the gate, and the name is what this
         # deployment's board calls it — the platform's `TO-DO` was refused by every board that
-        # says anything else, which on Azure Boards is every board nobody renamed
+        # says anything else, which on Azure Boards is every board nobody renamed. Asked once, for
+        # the batch, and handed to the door, whose placement writes it
         queue = stage_column(board, self.QUEUE_KEY)
+        try:
+            where = board.columns()
+        except Exception:  # noqa: BLE001 — unread is what the door reads again, and refuses on
+            log.info("could not read the board before queueing", exc_info=True)
+            where = None
         out: list[WriteResult] = []
         for number in numbers:
             try:
-                url = self._issue_url(tracker, number)
-                board.add_item(issue_url=url)
-                moved = board.set_column(issue=str(number), issue_url=url, name=queue)
-                out.append(WriteResult(ok=bool(moved), ref=f"#{number}",
-                                       detail="" if moved else refused))
+                # THROUGH THE CARD'S DOOR (ADR-0055, #414): placed in the queue by the board's own
+                # name for it (#496), recorded, and the role's snapshot forgotten by the transition
+                # that changed the board — not by hand, before anything had
+                moved = transition(self.project, f"#{number}", CardEvent.PROMOTED, by=actor,
+                                   facts={"column_name": queue}, tracker=tracker,
+                                   board=board, columns=where)
+                if moved.refused:
+                    out.append(WriteResult(ok=False, ref=f"#{number}", detail=moved.refused))
+                    continue
+                if moved.outcome("place").startswith("placed"):
+                    out.append(WriteResult(ok=True, ref=f"#{number}"))
+                    continue
+                # A PLACEMENT THE BOARD REFUSED IS A FAILED EFFECT OF A RECORDED TRANSITION: the
+                # hourly round applies it again, and the sentence says so rather than "no" — naming
+                # the card as its tracker spells it (#491): `DAR-10` on Jira, never `#DAR-10`
+                said = _pick(_FILING, lang)
+                out.append(_could_not(
+                    said["queue_retried" if moved.recorded else "queue_refused"].format(
+                        number=ref_label(number)),
+                    act="queue approved work", cause=moved.outcome("place"), ref=f"#{number}"))
             except Exception as exc:  # noqa: BLE001 — one failure must not lose the rest
                 # A CLIENT READS THIS ONE. Both branches of the reply speak it — the whole-failure
                 # branch as the entire message, the partial one under a pt-BR headline — so
@@ -4457,7 +4631,8 @@ class ProductModule:
         WHO MAY: a product admin (`may_act`), as for every correction — and at the merge gate also
         the card's own requester, and an operator a row vouches for, `withdraw_card`'s rule (#384):
         the person who tried the change judges it, and correcting the bar of what they asked for
-        with the pass they asked for needs nobody's yes.
+        with the pass they asked for needs nobody's yes. The LAST gate admits it the same way
+        (#448 slice 4, `adjust.pass_gate_of`): the pass is a new change, built to the bar it reads.
 
         TWO WRITES, TWO OUTCOMES (`close_card`): the correction, then the note. A note that failed
         is reported on a SUCCESS, never as a failure of the correction that landed.
@@ -4532,39 +4707,88 @@ class ProductModule:
         from openfactory.product.board import forget_board
 
         failed = correction_refused("failed", number=number, language=lang)
-        if text_changed or bar_changed:
-            try:
-                tracker.update_body(f"#{number}", after)
-            except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
-                return _could_not(failed, act=f"correct #{number}", cause=exc, ref=f"#{number}")
-            forget_board(getattr(self.project, "name", ""))   # what we cached is now wrong
+        landed = {"title_changed": title_changed, "residue": ""}
 
-        residue = ""
-        if title_changed:
-            try:
-                rename(f"#{number}", title)
-            except Exception as exc:  # noqa: BLE001 — the text may have landed; the title did not
-                if not (text_changed or bar_changed):
-                    return _could_not(failed, act=f"rename #{number}", cause=exc,
+        def write() -> WriteResult | None:
+            """The text, then the title — TWO WRITES, TWO OUTCOMES. The act of a transition, always
+            (ADR-0055 D9 amended 2026-10-05): before the factory takes the card up, of its own
+            `edited`; at a gate, of the `resumed` its caller is in (`send_back`), whose pass reads
+            the bar this writes."""
+            if text_changed or bar_changed:
+                try:
+                    tracker.update_body(f"#{number}", after)
+                except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
+                    return _could_not(failed, act=f"correct #{number}", cause=exc,
                                       ref=f"#{number}")
-                log.warning("OPENFACTORY_PRODUCT_CORRECT_UNRENAMED card=#%s (%s) — the text was "
-                            "corrected and the title was not", number, exc)
-                residue = correction_refused("unrenamed", number=number, language=lang)
-                title_changed = False
-            else:
-                forget_board(getattr(self.project, "name", ""))
+                forget_board(getattr(self.project, "name", ""))   # what we cached is now wrong
+            if landed["title_changed"]:
+                try:
+                    rename(f"#{number}", title)
+                except Exception as exc:  # noqa: BLE001 — the text may have landed; the title did not
+                    if not (text_changed or bar_changed):
+                        return _could_not(failed, act=f"rename #{number}", cause=exc,
+                                          ref=f"#{number}")
+                    log.warning("OPENFACTORY_PRODUCT_CORRECT_UNRENAMED card=#%s (%s) — the text "
+                                "was corrected and the title was not", number, exc)
+                    landed.update(title_changed=False, residue=correction_refused(
+                        "unrenamed", number=number, language=lang))
+                else:
+                    forget_board(getattr(self.project, "name", ""))
+            return None
 
-        try:
-            tracker.comment(f"#{number}", correction_note(
+        def note() -> str:
+            return correction_note(
                 kind=kind, actor=actor, old_text=old_text, old_title=card.title or "",
-                text_changed=text_changed, title_changed=title_changed,
+                text_changed=text_changed, title_changed=bool(landed["title_changed"]),
                 criteria_removed=removed is not None, language=lang, agent_name=self._name(),
-                bar_changed=bar_changed, old_bar=old_bar, with_a_pass=at_the_gate))
-        except Exception as exc:  # noqa: BLE001 — the correction landed; only its record is lost
-            log.warning("OPENFACTORY_PRODUCT_CORRECT_UNNOTED card=#%s (%s) — the card was "
-                        "corrected and does not say what it said before", number, exc)
-            residue = " ".join(filter(None, [
-                residue, correction_refused("unnoted", number=number, language=lang)]))
+                bar_changed=bar_changed, old_bar=old_bar, with_a_pass=at_the_gate)
+
+        unnoted = correction_refused("unnoted", number=number, language=lang)
+        if at_the_gate:
+            # THE BAR AT A GATE IS THE ENGINE'S HALF OF `resumed` (#448 slice 6): this runs inside
+            # that transition's act, which records the decision once the pass is sent too
+            refusal = write()
+            if refusal is not None:
+                return refusal
+            residue = str(landed["residue"])
+            try:
+                tracker.comment(f"#{number}", note())
+            except Exception as exc:  # noqa: BLE001 — the correction landed; only its record is lost
+                log.warning("OPENFACTORY_PRODUCT_CORRECT_UNNOTED card=#%s (%s) — the card was "
+                            "corrected and does not say what it said before", number, exc)
+                residue = " ".join(filter(None, [residue, unnoted]))
+        else:
+            # BEFORE THE FACTORY TAKES IT UP, A CORRECTION IS `edited` (ADR-0055, #448 slice 6):
+            # the text is the transition's act, and the note is its comment — the door's, the same
+            # on every row (D6)
+            from openfactory.lifecycle import CardEvent, transition
+
+            # THE NOTE IS THE WRITE'S TO NAME — whether the title landed is known only once the act
+            # ran, and the door reads its facts after its act (`catalog._card_edit`'s way)
+            facts = {}
+
+            def act() -> WriteResult | None:
+                refusal = write()
+                if refusal is None:
+                    facts["note"] = note()
+                return refusal
+
+            # THE GATE'S OWN READ OF THE BOARD, handed to the door (#162): the column this method
+            # just judged the card by is the one the door judges it by — never a second read
+            moved = transition(self.project, f"#{number}", CardEvent.EDITED, by=actor,
+                               facts=facts, act=act, tracker=tracker,
+                               board=self._board() if column else None,
+                               columns={number: column} if column else {})
+            if moved.answer is not None:
+                return moved.answer
+            if moved.refused:
+                return WriteResult(ok=False, ref=f"#{number}", detail=moved.refused)
+            residue = str(landed["residue"])
+            if moved.outcome("comment").startswith("failed"):
+                log.warning("OPENFACTORY_PRODUCT_CORRECT_UNNOTED card=#%s (%s) — the card was "
+                            "corrected and does not say what it said before", number,
+                            moved.outcome("comment"))
+                residue = " ".join(filter(None, [residue, unnoted]))
         if residue:
             return WriteResult(ok=True, ref=f"#{number}", detail=residue)
         # A MEASURE, NOT A RESIDUE (`confirm._unfinished`): how many criteria went with the old
@@ -4607,7 +4831,9 @@ class ProductModule:
         lang = language or getattr(self.project, "language", None)
         if not self.may_send_back(number, actor):
             return adjust.Prepared(said=adjust_said("not_yours", ref=number, language=lang))
-        gate = adjust.gate_of(self.project, number)
+        # THE MERGE GATE, OR THE LAST ONE (#448 slice 4): a change already in, waiting before the
+        # product's users, is sent back too — as a new change (`Gate.merged`)
+        gate = adjust.pass_gate_of(self.project, number)
         if not gate.open:
             return adjust.Prepared(gate=gate, said=adjust_said(gate.why, ref=number,
                                                                passes=gate.passes, language=lang))
@@ -4631,7 +4857,8 @@ class ProductModule:
         drafted = adjust.draft(cards.as_json(cards.in_a_room(self.project, harness,
                                                              adjust.DRAFT_PHASE)),
                                number=number, card=body, conversation=conversation,
-                               request=request, reply=reply, language=lang)
+                               request=request, reply=reply, language=lang,
+                               merged=gate.merged)
         if drafted is None:
             return adjust.Prepared(gate=gate, said=adjust_said("undrafted", ref=number,
                                                                language=lang))
@@ -4654,7 +4881,11 @@ class ProductModule:
             the pass       `adjust.send_back`, through the seam every answer crosses.
 
         A PASS THAT COULD NOT BE SENT AFTER THE BAR MOVED says both: the correction stands — it is
-        what the person agreed — and the pass is what to ask for again."""
+        what the person agreed — and the pass is what to ask for again.
+
+        THROUGH THE CARD'S DOOR (#448 slice 6, ADR-0055 amended 2026-10-05): `resumed`, whose act is
+        the bar and the pass — the engine's half of the person's decision, between the door's
+        `allowed` and its record. A pass the job did not take records nothing."""
         from openfactory.product import adjust
         from openfactory.product.voice import adjust_said
 
@@ -4671,30 +4902,50 @@ class ProductModule:
         if not self.may_send_back(number, actor, vouched=vouched):
             return WriteResult(ok=False, ref=f"#{number}",
                                detail=adjust_said("not_yours", ref=number, language=lang))
-        gate = adjust.gate_of(self.project, number)
+        gate = adjust.pass_gate_of(self.project, number)
         if not gate.open:
             return WriteResult(ok=False, ref=f"#{number}", detail=adjust_said(
                 gate.why, ref=number, passes=gate.passes, language=lang))
-        corrected, residue = False, ""
-        if any(str(c).strip() for c in criteria or ()):
-            fixed = self.correct_card(number, actor=actor, criteria=list(criteria), gate=gate,
-                                      vouched=vouched)
-            if not fixed.ok:
-                return fixed
-            corrected, residue = not fixed.existed, str(fixed.detail or "")
-        why = adjust.send_back(self.project, number, instruction=said, by=actor)
-        if why:
+        landed = {"corrected": False, "residue": ""}
+
+        def the_bar_and_the_pass() -> WriteResult | None:
+            """The engine's half, between the door's `allowed` and its record: the bar, then the
+            pass. Its refusal is the person's answer, and nothing is recorded."""
+            if any(str(c).strip() for c in criteria or ()):
+                fixed = self.correct_card(number, actor=actor, criteria=list(criteria),
+                                          gate=gate, vouched=vouched)
+                if not fixed.ok:
+                    return fixed
+                landed.update(corrected=not fixed.existed, residue=str(fixed.detail or ""))
+            # AT THE LAST GATE, THE GATE'S OWN ANSWER (#448 slice 4): a new change of the card
+            why = adjust.send_back(self.project, number, instruction=said, by=actor,
+                                   merged=gate.merged)
+            if not why:
+                return None
             detail = adjust_said(why, ref=number, passes=gate.passes, language=lang)
-            if corrected:
+            if landed["corrected"]:
                 detail += " " + adjust_said("corrected_anyway", ref=number, language=lang)
             return WriteResult(ok=False, ref=f"#{number}", detail=detail)
+
+        from openfactory.lifecycle import CardEvent, transition
+
+        pass_number = (gate.passes - gate.left + 1
+                       if gate.passes is not None and gate.left is not None else None)
+        moved = transition(self.project, f"#{number}", CardEvent.RESUMED, by=actor,
+                           why=" ".join(said.split())[:280],
+                           facts={"gate": "last" if gate.merged else "merge",
+                                  "pr_url": gate.pr_url, "pass_number": pass_number or 0,
+                                  "note": ""},
+                           act=the_bar_and_the_pass, tracker=self._tracker())
+        if moved.answer is not None:
+            return moved.answer
+        if moved.refused:
+            return WriteResult(ok=False, ref=f"#{number}", detail=moved.refused)
         # THE FACTS, AND ON SUCCESS `detail` IS ONLY WHAT DID NOT LAND (`confirm._unfinished`): the
         # headline is composed by whoever answers the person, from these (`adjust.headline`)
-        return adjust.Sent(ok=True, ref=f"#{number}", detail=residue, corrected=corrected,
-                           passes=gate.passes,
-                           pass_number=(gate.passes - gate.left + 1
-                                        if gate.passes is not None and gate.left is not None
-                                        else None))
+        return adjust.Sent(ok=True, ref=f"#{number}", detail=str(landed["residue"]),
+                           corrected=bool(landed["corrected"]), passes=gate.passes,
+                           merged=gate.merged, pass_number=pass_number)
 
     def adjust_view(self, number: str, *, actor: str, vouched: bool = False) -> dict:
         """What the card's "send back for another pass" control needs on the product view (#448):
@@ -4712,7 +4963,7 @@ class ProductModule:
         lang = getattr(self.project, "language", None)
         if not self.may_send_back(number, actor, vouched=vouched):
             return {"offered": False}
-        gate = adjust.gate_of(self.project, number)
+        gate = adjust.pass_gate_of(self.project, number)       # the last gate too (#448 slice 4)
         if gate.why in (adjust.SPENT, adjust.WORKING, adjust.DEAF):
             return {"offered": False, "note": adjust_said(gate.why, ref=number,
                                                           passes=gate.passes, language=lang)}
@@ -4783,8 +5034,13 @@ class ProductModule:
                          is a change the yes never saw. A pull request that moved past it refuses;
             the record   one `card_accepted` row (`accept.record`) — refused by name when it did
                          not land, and nothing after it runs;
-            the merge    only on `_the_yes_merges`, through the seam every answer crosses;
-            the note     on the card, saying who, on which head, and whether it is going in.
+            the note     on the card, saying who, on which head, and whether it is going in;
+            the merge    only on `_the_yes_merges`, through the seam every answer crosses.
+
+        THROUGH THE CARD'S DOOR (#448 slice 6, ADR-0055 amended 2026-10-05): `accepted`, whose act
+        is the record — the engine's half of the decision, written between the door's `allowed`
+        and its own record — and whose comment is the note. The merge the yes gives follows the
+        transition, so the card's record holds the acceptance before the job can merge on it.
 
         A note that failed is reported on a SUCCESS (`close_card`'s rule), never as a failure of
         the acceptance that landed."""
@@ -4811,22 +5067,36 @@ class ProductModule:
             return refused(tried.why)
         if head and head != tried.head:
             return refused(accept.MOVED)        # the preview was rebuilt since it was staged
-        if not accept.record(getattr(self.project, "name", "") or "", accept.Acceptance(
-                card=number, pr_url=gate.pr_url, head=tried.head, by=actor, at=now_iso(),
-                where=where)):
-            return refused(accept.UNRECORDED)
+        from openfactory.lifecycle import CardEvent, transition
+
+        merges = self._the_yes_merges(gate, tried)
+
+        def write() -> WriteResult | None:
+            """The acceptance, recorded between the door's `allowed` and its record."""
+            if not accept.record(getattr(self.project, "name", "") or "", accept.Acceptance(
+                    card=number, pr_url=gate.pr_url, head=tried.head, by=actor, at=now_iso(),
+                    where=where)):
+                return refused(accept.UNRECORDED)
+            return None
+
+        moved = transition(self.project, f"#{number}", CardEvent.ACCEPTED, by=actor,
+                           facts={"gate": "merge", "pr_url": gate.pr_url, "head": tried.head,
+                                  "note": change_accepted_note(
+                                      by=actor, head=tried.head, pr_url=gate.pr_url,
+                                      merging=merges, language=lang, agent_name=self._name())},
+                           act=write, tracker=self._tracker())
+        if moved.answer is not None:
+            return moved.answer
+        if moved.refused:
+            return WriteResult(ok=False, ref=f"#{number}", detail=moved.refused)
         merging, unmerged = False, ""
-        if self._the_yes_merges(gate, tried):
+        if merges:
             unmerged = accept.merge(self.project, number, by=actor)
             merging = not unmerged
         residue = ""
-        try:
-            self._tracker().comment(f"#{number}", change_accepted_note(
-                by=actor, head=tried.head, pr_url=gate.pr_url, merging=merging, language=lang,
-                agent_name=self._name()))
-        except Exception as exc:  # noqa: BLE001 — the acceptance landed; only its note is lost
+        if moved.outcome("comment").startswith("failed"):
             log.warning("OPENFACTORY_PRODUCT_ACCEPT_UNNOTED card=#%s (%s) — the acceptance was "
-                        "recorded and the card does not say so", number, exc)
+                        "recorded and the card does not say so", number, moved.outcome("comment"))
             residue = accept_change_said("unnoted", ref=number, language=lang)
         log.info("OPENFACTORY_PRODUCT_ACCEPTED card=#%s by=%s head=%s merging=%s unmerged=%s",
                  number, actor, tried.head[:12], merging, unmerged)
@@ -5490,28 +5760,29 @@ def _refine_note(answer: dict, *, agent: str = "") -> str:
 _CARD_KINDS = ("ticket", "defect")
 
 
-def _follow_card(project, subject: str, ref: str, marks: dict[str, str], *,
-                 conversation: str, requester: str) -> None:
-    """ONE DELIVERY LOOP PER CARD, DEDUPLICATED BY ITS SUBJECT — a reported defect's and a card
-    somebody asked for (#481), opened one way so the two cannot drift. Never raises: the card was
-    filed, and only the courtesy is lost — said in the log."""
-    try:
-        from datetime import UTC, datetime
+def _owed(subject: str, marks: dict[str, str], *, conversation: str, requester: str) -> dict:
+    """THE PROMISE A CARD'S DOOR OPENS (`Loops("open")`, #414) — a reported defect's and a card
+    somebody asked for (#481), with its filing, and a requirement's, with each card of its
+    breakdown (`promised`) — built one way so the three cannot drift: one delivery loop per
+    subject. Who asked travels as the ledger keeps it, a digest (`delivered_to`), so the card's
+    record never holds a name."""
+    from openfactory.product.followup import delivered_to
 
-        from openfactory.memory import store as loop_store
-        from openfactory.memory.ledger import DELIVERY, open_loop, waiting
-        from openfactory.product.followup import delivered_to
+    return {"subject": subject, "context": {**marks, **delivered_to(conversation, requester)}}
 
-        ledger = loop_store.read(project.name)
-        already = {x.subject for x in waiting(ledger) if x.kind == DELIVERY}
-        if subject in already:
-            return
-        loop_store.write(project.name, [open_loop(
-            DELIVERY, subject, owner="product", ts=datetime.now(UTC).isoformat(),
-            context={"issues": str(ref), **marks, **delivered_to(conversation, requester)})])
-    except Exception as exc:  # noqa: BLE001 — the card was filed; only the courtesy is lost
-        log.warning("could not start tracking %s (%s) — it will ship without anyone announcing it "
-                    "to whoever asked for it", subject, exc)
+
+def _promised_id(project: str, card: str, owed: dict) -> str:
+    """The id of `promised` for `card` joining ONE promise — its subject and every card of it — so
+    a retried breakdown is answered from the card's record and never recorded or applied twice
+    (ADR-0055 D5, #414). A later breakdown of the same requirement over other cards is another
+    promise to this card, recorded; while the first still waits, it opens nothing (`loops.owe`)."""
+    import hashlib
+
+    from openfactory.contracts.refs import canonical_ref
+
+    issues = str(((owed or {}).get("context") or {}).get("issues") or "")
+    seed = f"{project}|{canonical_ref(card)}|{(owed or {}).get('subject', '')}|{issues}"
+    return f"promised-{hashlib.sha256(seed.encode()).hexdigest()[:20]}"
 
 
 def _saved_in_the_repository(result: WriteResult) -> tuple[str, str] | None:

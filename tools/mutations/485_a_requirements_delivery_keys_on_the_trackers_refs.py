@@ -26,10 +26,11 @@ MUTATIONS = [
      '    unique = {canonical_ref(r) for r in refs} - {""}\n',
      "    unique = {str(n) for n in ref_numbers(refs)}\n"),
 
+    # re-pinned 2026-10-05: integration of slices 4/5 with the door stack — the promise goes
+    # through each card's door (#414), and the filer keys it on what landed
     ("…and the filer hands the loop only the refs that are numbers", MOD,
-     "            fresh = deliveries_to_open({requirement.number: landed},\n",
-     "            fresh = deliveries_to_open({requirement.number: [\n"
-     "                r for r in landed if str(r).lstrip(\"#\").isdigit()]},\n"),
+     "            cards = canonical_refs(landed)\n",
+     "            cards = canonical_refs(r for r in landed if str(r).lstrip(\"#\").isdigit())\n"),
 
     ("the refs are kept as typed, so #12 and 12 are two cards", REFS,
      '    unique = {canonical_ref(r) for r in refs} - {""}\n',
@@ -43,15 +44,16 @@ MUTATIONS = [
      "    return sorted(unique, key=ref_sort_key)\n",
      "    return sorted(unique)\n"),
 
-    ("the loop is written with the refs as the filer handed them", FOLLOWUP,
-     "    keyed = {req: canonical_refs(refs) for req, refs in filed.items()}\n",
-     "    keyed = {req: [str(r) for r in refs] for req, refs in filed.items()}\n"),
+    # re-pinned 2026-10-05: integration of slices 4/5 with the door stack — `deliveries_to_open`
+    # left with #414; the promise each card's door opens is keyed in `_open_delivery`
+    ("the loop is written with the refs as the filer handed them", MOD,
+     "            cards = canonical_refs(landed)\n",
+     "            cards = [str(r) for r in landed]\n"),
 
-    ("a loop is opened over no card at all", FOLLOWUP,
-     "        for req, issues in sorted(keyed.items())\n"
-     "        if str(req) not in already and issues\n",
-     "        for req, issues in sorted(keyed.items())\n"
-     "        if str(req) not in already\n"),
+    # RETIRED 2026-10-05: a loop over no card has no path left to be written — a requirement's
+    # promise is opened by a card's door, one card at a time (`promised`, #414), so a breakdown
+    # that landed no card goes through no door (`test_a_requirement_that_produced_no_work_opens_no_
+    # delivery_loop`, and the `["", "#", "  "]` case here).
 
     ("the release question matches the card as typed again", FOLLOWUP,
      "    want = canonical_ref(issue)\n",

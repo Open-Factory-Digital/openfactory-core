@@ -71,6 +71,12 @@ class _Tracker:
         self.created.append(title)
         return f"#{900 + len(self.created)}"
 
+    def get_ticket(self, ref):
+        """The card just written, as its door reads it before it files it (ADR-0055, #414)."""
+        from types import SimpleNamespace
+
+        return SimpleNamespace(title=self.created[-1], state="open", raw="")
+
     def comment(self, ref, body):
         if self.comment_raises:
             raise RuntimeError("secondary rate limit")

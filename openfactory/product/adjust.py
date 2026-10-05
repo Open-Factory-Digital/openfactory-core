@@ -13,7 +13,9 @@ says (`gate_of`) and the answer `adjust` (`send_back`), and the `merge` a reques
 gives when the look is all that holds it (`answer_gate`, #448 slice 3) — through the one seam
 every surface's answer crosses (`view.answer_merge_gate`), on the process's standing loop with the
 client the release path keeps (`release._client`, #201: one client per process, not one per
-answer). And
+answer). And the LAST gate (#448 slice 4): a change already merged and waiting before the product's
+users is sent back from there too (`pass_gate_of`), as a new change of the card (`Gate.merged`,
+`send_back(merged=True)`). And
 the pure half of drafting the pass from the conversation (`draft_prompt`, `floor`), for the
 module to run.
 
@@ -70,6 +72,11 @@ class Gate:
     #: tried may answer this gate with `merge` (`product/accept.py`). False for a job that does
     #: not say, which a person merges.
     look_only: bool = False
+    #: THE CHANGE IS ALREADY MERGED (#448 slice 4): the job waits at the LAST gate, before the
+    #: product's users, and another pass is a NEW change of the card from the base — never a pass
+    #: on the pull request, which is closed. Said differently to the person (`voice`), and
+    #: delivered as the last gate's own answer (`send_back(merged=True)`).
+    merged: bool = False
 
     @property
     def open(self) -> bool:
@@ -98,6 +105,22 @@ def read(gate: dict | None, *, card: str, deaf: str = "") -> Gate:
     return Gate(**said)
 
 
+def read_release(gate: dict | None, *, card: str) -> Gate:
+    """What a job publishes at its LAST gate (`JobWorkflow.release_wait`), read as a `Gate` —
+    PURE, like `read`, with its refusals (#448 slice 4): no gate is `NOT_WAITING`, a run that
+    cannot hear a "not yet" is `DEAF`, and the project's passes spent is `SPENT`. The budget is
+    the merge gate's: one per card, counted across its changes."""
+    if not gate:
+        return Gate(card=card, why=NOT_WAITING)
+    passes, left = _count(gate.get("adjust_passes")), _count(gate.get("adjusts_left"))
+    said = dict(card=card, passes=passes, left=left, merged=True)
+    if gate.get("hears") is not True:
+        return Gate(why=DEAF, **said)
+    if left == 0:
+        return Gate(why=SPENT, **said)
+    return Gate(**said)
+
+
 def _count(value) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
@@ -112,6 +135,21 @@ def _missing(exc: BaseException) -> bool:
 def gate_of(project, card: str) -> Gate:
     """What the job on `card` says about its merge gate — NEVER RAISES: an engine that could not be
     asked is `UNREACHABLE`, and a card no job ever ran for is `NOT_WAITING`."""
+    return _gate(project, card, last=False)
+
+
+def pass_gate_of(project, card: str) -> Gate:
+    """THE GATE A PERSON CAN SEND A CARD BACK FROM (#448 slice 4): its merge gate, and — when no
+    pull request waits on anybody — the LAST gate, where the change is merged and waits before
+    the product's users (`Gate.merged`). NEVER RAISES, as `gate_of`.
+
+    A SIBLING, NOT `gate_of` WIDENED: another pass is the one act both gates take. The requester's
+    "that's it" (`accept`) is recorded against what they tried in a pull request's preview, and
+    at the last gate there is no pull request to record it on — so it keeps asking `gate_of`."""
+    return _gate(project, card, last=True)
+
+
+def _gate(project, card: str, *, last: bool) -> Gate:
     from openfactory.contracts.refs import canonical_ref
 
     name, card = str(getattr(project, "name", "") or ""), canonical_ref(card)
@@ -122,6 +160,8 @@ def gate_of(project, card: str) -> Gate:
 
         client = await _client()
         gate = await tv.merge_gate(client, name, card)
+        if not gate and last:
+            return read_release(await tv.release_gate(client, name, card), card=card)
         deaf = tv.gate_cannot_hear(gate) if gate and not gate.get("working") else ""
         return read(gate, card=card, deaf=deaf)
 
@@ -137,15 +177,56 @@ def gate_of(project, card: str) -> Gate:
         return Gate(card=card, why=UNREACHABLE)
 
 
-def send_back(project, card: str, *, instruction: str, by: str) -> str:
+def send_back(project, card: str, *, instruction: str, by: str, merged: bool = False) -> str:
     """Deliver `adjust` with `instruction` to the job on `card` — `""` when it was delivered, else
     the reason it was not (one of `WHY`). NEVER RAISES.
 
     THROUGH THE SEAM EVERY SURFACE'S ANSWER CROSSES (`view.answer_merge_gate`): it queries the gate
     before signalling, so a stale answer is refused rather than swallowed, it refuses a pass the
     job would refuse (`AdjustsSpent`), and it seals the answer as the panel's (`gate_seal`) — the
-    worker refuses an unsealed one."""
+    worker refuses an unsealed one.
+
+    `merged` (#448 slice 4): the job waits at its LAST gate (`Gate.merged`), and the pass is a new
+    change of the card — delivered as that gate's "not yet" (`view.another_change`), through the
+    same three refusals and sealed the same way."""
+    if merged:
+        return _not_yet(project, card, instruction=instruction, by=by)
     return answer_gate(project, card, answer="adjust", instruction=instruction, by=by)
+
+
+def _not_yet(project, card: str, *, instruction: str, by: str) -> str:
+    """`send_back` at the last gate — `""` when the job was told, else one of `WHY`. Never
+    raises."""
+    from openfactory.contracts.refs import canonical_ref
+
+    name, card = str(getattr(project, "name", "") or ""), canonical_ref(card)
+
+    async def _run() -> str:
+        from openfactory.product.release import _client
+        from openfactory.runtime.temporal import view as tv
+
+        client = await _client()
+        try:
+            await tv.another_change(client, name, card, instruction=instruction, by=by)
+        except tv.AdjustsSpent:
+            return SPENT
+        except tv.GateDeaf:
+            return DEAF
+        except RuntimeError:        # the engine answered: the job is not at its last gate
+            return NOT_WAITING
+        return ""
+
+    try:
+        from openfactory.runtime.temporal.standing import from_a_thread
+
+        return from_a_thread(_run)
+    except Exception as exc:  # noqa: BLE001 — a person's yes must never see a traceback
+        if _missing(exc):
+            return NOT_WAITING
+        log.error("OPENFACTORY_NOT_YET_NOT_DELIVERED project=%s card=#%s by=%s (%s) — a person "
+                  "sent a merged change back and the job was not told", name, card, by,
+                  str(exc)[:200])
+        return UNREACHABLE
 
 
 def answer_gate(project, card: str, *, answer: str, instruction: str = "", by: str) -> str:
@@ -223,6 +304,8 @@ class Sent(WriteResult):
     pass_number: int | None = None
     passes: int | None = None
     corrected: bool = False
+    #: the pass is a NEW change of a card whose last one merged (#448 slice 4)
+    merged: bool = False
 
 
 def headline(sent: Sent, *, instruction: str, language: str | None = None) -> str:
@@ -235,7 +318,8 @@ def headline(sent: Sent, *, instruction: str, language: str | None = None) -> st
     return adjust_sent(ref=getattr(sent, "ref", ""), instruction=instruction,
                        number=getattr(sent, "pass_number", None),
                        passes=getattr(sent, "passes", None),
-                       corrected=bool(getattr(sent, "corrected", False)), language=language)
+                       corrected=bool(getattr(sent, "corrected", False)), language=language,
+                       merged=bool(getattr(sent, "merged", False)))
 
 
 @dataclass(frozen=True)
@@ -281,8 +365,11 @@ def floor(raw: dict | None) -> tuple[Adjustment | None, list[str]]:
 
 
 def draft_prompt(*, number: str, card: str, conversation: str, request: str, reply: str,
-                 language: str | None, problems: list[str] | None = None) -> str:
-    """What the role is asked when it drafts the pass — in `language` when one is named (#429)."""
+                 language: str | None, problems: list[str] | None = None,
+                 merged: bool = False) -> str:
+    """What the role is asked when it drafts the pass — in `language` when one is named (#429).
+    `merged`: the change they tried is already in, and the pass is a NEW change of the card
+    (#448 slice 4) — never "the same pull request", which is closed."""
     from openfactory.product.voice import language_rules
 
     written_in = (f"Write both in {language}, the conversation's language — whatever language "
@@ -292,10 +379,12 @@ def draft_prompt(*, number: str, card: str, conversation: str, request: str, rep
     if problems:
         again = ("\n\n## Your previous answer could not be used\n\nChange exactly this:\n"
                  + "\n".join(f"- {p}" for p in problems))
+    where = ("NEW change of the card — the one they tried is already merged, and the pass builds "
+             "on top of it from the base —" if merged else "SAME pull request")
     return (
         f"The person who asked for card #{number} tried the change that is waiting on them and "
         "said what is still wrong. From the conversation below, write what the next pass on the "
-        "SAME pull request must change, and the card's acceptance criteria as they must read "
+        f"{where} must change, and the card's acceptance criteria as they must read "
         "now — the bar that pass is reviewed against. The pass reads only the card and your "
         f"instruction; it never sees this conversation. {written_in}\n\n"
         + (f"{rules}\n\n" if rules else "")
@@ -321,7 +410,8 @@ def draft_prompt(*, number: str, card: str, conversation: str, request: str, rep
 
 
 def draft(ask: Callable[[str], dict | None], *, number: str, card: str, conversation: str,
-          request: str, reply: str = "", language: str | None = None) -> Adjustment | None:
+          request: str, reply: str = "", language: str | None = None,
+          merged: bool = False) -> Adjustment | None:
     """At most `ATTEMPTS` drafts, the floor's problems handed to the second — the adjustment, or
     None when neither was usable (the person is then asked to say it again)."""
     problems: list[str] = []
@@ -329,7 +419,7 @@ def draft(ask: Callable[[str], dict | None], *, number: str, card: str, conversa
         try:
             raw = ask(draft_prompt(number=number, card=card, conversation=conversation,
                                    request=request, reply=reply, language=language,
-                                   problems=problems))
+                                   problems=problems, merged=merged))
         except Exception as exc:  # noqa: BLE001 — a draft that broke is a draft not usable
             log.warning("OPENFACTORY_ADJUST_DRAFT_FAILED card=#%s attempt=%d (%s)", number,
                         attempt, str(exc)[:200])

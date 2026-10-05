@@ -16,20 +16,28 @@ in four processes, through nine writers, and each site had to remember every con
                      transition took the card's next number
     the executor     `executor.apply` through `ports.Ports`, and `executor.converge`, the hourly
                      sweep that applies again what failed — never backwards
+    the observation  `observed.observe`, the board sweep that hands the door a change made in
+                     the vendor's own interface, which the record did not hold (D8)
+    the reading      `reading.step`, pure: the seven steps of the requester's loop a card walked,
+                     read from its record alone (D12, #448 slice 6)
 
 NOT `test_the_lifecycle_names_no_provider`'s "lifecycle", which is the job's:
 `orchestrator/machine.py` and the durable workflow. A job is one stretch of a card's life; this is
 the whole of it.
 
 Slice 1 (#412) moves the endings a person causes through the door; job endings (#413) and filing,
-promotion and edits (#414) follow, and the writers they still own are named in one list that may
-only shrink (`tests/card_writers_outside_the_door.py`).
+promotion, edits and observed changes (#414) follow, and the writers they still own are named in
+one list that may only shrink (`tests/card_writers_outside_the_door.py`) — empty since #414, whose
+last writer, a requirement's promise over several cards, goes through each card's door as
+`promised`.
 """
 
 from __future__ import annotations
 
 from openfactory.lifecycle.card import Transition, back_in_the_backlog, transition
 from openfactory.lifecycle.executor import converge
-from openfactory.lifecycle.table import CardEvent, State
+from openfactory.lifecycle.observed import observe
+from openfactory.lifecycle.table import OBSERVED, CardEvent, State
 
-__all__ = ["CardEvent", "State", "Transition", "back_in_the_backlog", "converge", "transition"]
+__all__ = ["OBSERVED", "CardEvent", "State", "Transition", "back_in_the_backlog", "converge",
+           "observe", "transition"]

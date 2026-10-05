@@ -34,6 +34,7 @@ import pytest
 
 from openfactory.memory.ledger import ACCEPTANCE, DELIVERY, open_loop
 from openfactory.product import followup
+from tests.the_card_at_its_last_gate import at_its_last_gate
 from tests.the_chat_turn import chat_turn
 
 
@@ -108,6 +109,9 @@ def released(monkeypatch):
         return True, ""
 
     monkeypatch.setattr("openfactory.product.release.release", _fake)
+    # a verdict on a release goes through the card's door, which reads the card first (#448
+    # slice 6): this file's project is a stand-in with no tracker, its card parked at its last gate
+    at_its_last_gate(monkeypatch)
     return calls
 
 
@@ -127,11 +131,17 @@ def test_the_clients_yes_releases_production(released):
 
 
 def test_a_NO_releases_nothing_and_says_so(released):
+    """And promises nothing (#448 slice 4): "vou devolver isso ao time… e volto quando estiver
+    corrigido" was a promise no code kept. A module that can stage another pass stages it
+    (`tests/test_not_yet_at_the_last_gate_is_another_pass.py`); one that cannot, like this one,
+    says what the person can do."""
     said = _say(_Module(("did-not-work", _release_loop(512), False)), text="não funcionou")
 
     assert released == [], "a rejection released production"
     assert "não subi nada" in said.lower(), said
-    assert "time" in said, "the client was not told what happens to what they reported"
+    assert "mais uma passada" in said, "the client was not told what they can do next"
+    assert "volto quando" not in said and "devolver isso ao time" not in said, (
+        "the reply promises what nothing does")
 
 
 def test_an_ORDINARY_delivery_acceptance_is_untouched(released):
@@ -169,6 +179,7 @@ def test_a_job_no_longer_PARKED_is_told_honestly_not_reassuringly(monkeypatch):
     monkeypatch.setattr("openfactory.product.release.release",
                         lambda p, i, *, approver, comment="": (False, "o #512 não está mais "
                                                                      "esperando essa liberação"))
+    at_its_last_gate(monkeypatch)      # the card's door reads it first (#448 slice 6)
 
     said = _say(_Module(("worked", _release_loop(512), False)))
 

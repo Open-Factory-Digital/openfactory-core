@@ -281,3 +281,55 @@ def headline(verdict: dict | None, *, unread: bool = False) -> dict:
     return {"level": "unknown", "stance": UNREAD, "word": "No review",
             "clause": "nothing reviewed this change — the gates are all there is",
             "points": [], "criteria": tally}
+
+
+def of_result(result) -> dict | None:
+    """The verdict a job's result carries, in the shape this module reads (see the module) — `None`
+    when nothing was measured, which says nothing rather than an empty verdict.
+
+    ONE PROJECTION FOR EVERY READER (#414): the workflow keeps it for the `verdict` query
+    (`JobWorkflow._remember_verdict`), and the worker that applies a pull request the box handed
+    back tells its requester the review's word from it (`lifecycle/handed_back.py`). Two hand-listed
+    copies would come to disagree, and the requester would hear a stance the gate does not show.
+
+    TRIMMED HERE, not by the reader: a query response crosses the wire on every panel refresh that
+    asks for it, and a reviewer's `summary` plus a dozen findings is prose measured in kilobytes.
+    PURE, like the rest of this module — no command, so the workflow replays it unchanged."""
+    review = getattr(result, "review", None)
+    gates = [{"name": v.name, "passed": bool(v.passed), "advisory": bool(v.advisory)}
+             for v in (result.validations or [])]
+    # SUPPRESSIONS TRAVEL AS THEIR KINDS. They are the single commonest reason a green PR is
+    # handed to a person (`_why` says so in as many words), so a merge gate that did not
+    # mention them would be answering the question with the one fact left out.
+    kinds = sorted({str(k) for k in (result.added_suppressions or [])})
+    if review is None and not gates and not kinds:
+        return None
+    return {
+        "decision": getattr(review, "decision", "") or "",
+        "score": getattr(review, "score", None),
+        "summary": (getattr(review, "summary", "") or "")[:600],
+        "findings": [{"severity": f.severity, "description": (f.description or "")[:300],
+                      "file": f.file or ""}
+                     for f in (getattr(review, "findings", None) or [])[:8]],
+        "gates": gates,
+        "suppressions": kinds,
+        # WHAT THE REVIEWER SAID ABOUT EACH CRITERION (#184). This projection is hand-listed,
+        # and the field was simply never added to it — so the map reached the tech-lead's
+        # channel, which reads the whole `ReviewResult`, and died at the merge gate, which
+        # reads this query. #184 taught the renderer to show it and the data never arrived:
+        # the fix worked on one surface and was invisible on the one where somebody decides.
+        #
+        # TRIMMED LIKE ITS NEIGHBOURS, for the reason the docstring above gives — this crosses
+        # the wire on every panel refresh. The criterion text is what identifies it to a
+        # reader; the evidence is prose and belongs to the closed job's result.
+        #
+        # AND WHAT EXECUTED IT (#447): `executed_by` is the gate the platform confirmed ran the
+        # evidence, `would_verify` the check no gate runs, `evidence_checked` whether the
+        # platform looked at all — the three the stance is computed from. Fields, not a
+        # command: replay-safe, as the docstring says.
+        "acceptance": [{"criterion": (c.criterion or "")[:200], "status": c.status,
+                        "executed_by": getattr(c, "executed_by", None) or "",
+                        "would_verify": (getattr(c, "would_verify", None) or "")[:160]}
+                       for c in (getattr(review, "acceptance", None) or [])[:12]],
+        "evidence_checked": bool(getattr(review, "evidence_checked", False)),
+    }

@@ -64,6 +64,14 @@ def merge_wait_note(auto: bool) -> str:
     return "waiting for CI / the merge" if auto else "waiting for your review and merge"
 
 
+def release_passes_spent_note(passes: int) -> str:
+    """`adjusts_spent_note`, at the LAST gate (#448 slice 4): the change there is merged, so what a
+    person decides between is releasing it as it is or leaving it — never a merge or a discard."""
+    return (f"the {passes} extra passes this project allows for one change are spent "
+            f"(`adjust_passes` in the registry) — a person decides now: release it as it is, or "
+            f"leave it unreleased and start the card again")
+
+
 def adjusts_spent_note(passes: int) -> str:
     """What a gate whose passes are spent says to the floor: WHAT HAPPENS NEXT, never only what is
     refused (#448). "2 adjust passes already spent" was the whole sentence, and it named a wall and

@@ -499,7 +499,9 @@ def test_the_job_says_whether_stages_follow_with_the_promotions_own_condition():
 
     src = inspect.getsource(JobWorkflow._lifecycle)
     assert "should_promote = params.promote or bool(result.environments)" in src
-    assert "self._tell_the_requester_it_merged(params, result, stages_follow=should_promote)" in src
+    # …OR A WATCHED DEPLOY THAT IS THE CARD'S LAST STAGE (#448 slice 5): the delivery waits for it
+    # too, so the requester is told a stage follows (`test_delivered_means_the_last_declared_stage`)
+    assert "stages_follow=should_promote or deploy_is_last)" in src
     assert src.index("should_promote = params.promote") < src.index(
         "self._tell_the_requester_it_merged(")
 
@@ -931,8 +933,9 @@ def test_with_stages_to_pass_the_requester_hears_it_went_in_once(product, store)
 
 
 def test_with_no_stage_the_delivery_says_it_and_this_says_nothing(product, store):
-    """MEASURED: with no stage the job ends Done at this merge and `card_finished` announces the
-    delivery to the same conversation — a second message would be the same news twice."""
+    """MEASURED: with no stage the job ends Done at this merge and the card's door announces the
+    delivery to the same conversation (`delivered`, #414) — a second message would be the same news
+    twice."""
     project, book = product
     book.rows = [_delivery("500")]
 
@@ -969,8 +972,13 @@ def test_a_card_nobody_asked_for_in_a_conversation_is_told_to_nobody(product, st
 
 
 async def test_the_activity_is_registered_and_reaches_the_event(monkeypatch, tmp_path):
+    """THROUGH THE CARD'S DOOR since #448 slice 6: the activity hands the job's `merged` to it,
+    with whether stages follow, keyed by the pull request — and the door's port tells the requester
+    (`events.went_in`, `lifecycle/ports.py::tell`)."""
     from temporalio.testing import ActivityEnvironment
 
+    from openfactory.lifecycle import CardEvent, Transition
+    from openfactory.lifecycle.handed_back import merged_event
     from openfactory.runtime.temporal import activities as acts
     from openfactory.runtime.temporal.worker import WORKER_ACTIVITIES
 
@@ -978,14 +986,20 @@ async def test_the_activity_is_registered_and_reaches_the_event(monkeypatch, tmp
     heard: list = []
     monkeypatch.setattr(acts.ProjectRegistry, "get",
                         lambda self, name: SimpleNamespace(name=name))
-    monkeypatch.setattr(events, "merged_for_you",
-                        lambda project, **kw: heard.append((project.name, kw)) or True)
+    monkeypatch.setattr(acts, "_tracker_for", lambda project: None)
+
+    def _door(project, card, event, *, facts, event_id, **_kw):
+        heard.append((project.name, card, event, facts, event_id))
+        return Transition(card=card, event=event, effects=(("tell:merged_for_you", "told"),))
+
+    monkeypatch.setattr("openfactory.lifecycle.transition", _door)
 
     assert await ActivityEnvironment().run(
         acts.tell_the_requester_it_merged,
         MergedInput(project="acme", issue="500", pr_url=PR, stages_follow=True))
-    assert heard == [("acme", {"card": "500", "pr_url": PR, "stages_follow": True})]
-    assert events.PRODUCERS[events.MERGED].endswith("::tell_the_requester_it_merged")
+    assert heard == [("acme", "500", CardEvent.MERGED,
+                      {"pr_url": PR, "stages_follow": True, "note": ""}, merged_event(PR))]
+    assert events.PRODUCERS[events.MERGED] == "openfactory/lifecycle/ports.py::tell"
 
 
 # ── 8. in the client's words ────────────────────────────────────────────────────────────────────

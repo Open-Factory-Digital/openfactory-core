@@ -23,7 +23,10 @@ from openfactory.adapters.notify.base import Level, NullNotifier
 from openfactory.adapters.notify.base import Notifier as NotifierT
 from openfactory.adapters.tracker.base import TrackerAdapter
 from openfactory.contracts import Environment, JobState, Manifest, RunResult
+from openfactory.contracts.run import HandedBack
+from openfactory.contracts.state import PROGRESS_MARKS
 from openfactory.observability import EventKind, EventSink, JobEvent, NullEventSink, now_iso
+from openfactory.orchestrator.outcomes import hands_back
 from openfactory.techlead import voice as tl_voice
 
 log = logging.getLogger("openfactory.promotion")
@@ -71,6 +74,9 @@ class PromotionRunner:
     reach_poll: float = REACH_POLL_SECONDS
     sleep: Callable[[float], None] = field(default=time.sleep, repr=False)
     clock: Callable[[], float] = field(default=time.monotonic, repr=False)
+    #: The outcomes this call reached on the card and did not write, in order (ADR-0055 D7,
+    #: #414): the merge it starts from, the park at a gate or a red stage, the delivery.
+    _handed_back: list[HandedBack] = field(default_factory=list, init=False, repr=False)
 
     def _say(self, key: str, **params: object) -> str:
         """One catalogue entry, in this project's language."""
@@ -306,7 +312,20 @@ class PromotionRunner:
         return RunResult(ticket_id=ticket_ref, state=JobState.ON_HOLD, note=f"{env} {seen}")
 
     def _state(self, ticket_ref: str, state: JobState, reason: str | None = None) -> None:
-        self.tracker.set_state(ticket_ref, state, reason=reason)
+        """Write a PROGRESS MARK on the card, and hand every other state back (ADR-0055 D7, #414).
+
+        The promotion's steps — observing a stage, tagging and observing production, rolling
+        back — say how far it is, and are written here. What it REACHES is handed back in its
+        result, which the worker applies through the card's door: the merge it starts from, a
+        park at the production gate or on a red stage, the delivery. This runs in the job's box,
+        which has the forge credential and the manifest, and no ledger, conversation or record of
+        the card's life. The guard admits this `set_state` by rule, and only under this test."""
+        if state in PROGRESS_MARKS:
+            self.tracker.set_state(ticket_ref, state)
+        else:
+            # `vars(...)`: a runner built without its constructor starts its list here
+            vars(self).setdefault("_handed_back", []).append(
+                HandedBack(state=state, reason=reason or ""))
         self._emit(ticket_ref, "state", state.value)
 
     def _say_on_ticket(self, ticket_ref: str, body: str) -> None:
@@ -340,3 +359,11 @@ class PromotionRunner:
                 ts=now_iso(), job_id=ticket_ref, ticket_id=ticket_ref, kind=kind, message=message
             )
         )
+
+
+# THE PUBLIC ENTRIES HAND THEIR OUTCOMES BACK (ADR-0055 D7, #414) — wrapped after the class and not
+# decorated, as `machine.py`'s are and for its reason: a decorator line breaks the guards that
+# parse a method's source.
+for _entry in ("promote", "release_prod"):
+    setattr(PromotionRunner, _entry, hands_back(getattr(PromotionRunner, _entry)))
+del _entry

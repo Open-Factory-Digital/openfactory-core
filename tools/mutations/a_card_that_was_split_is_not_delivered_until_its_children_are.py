@@ -9,24 +9,35 @@ REFS = "openfactory/contracts/refs.py"
 AZURE = "openfactory/adapters/tracker/azure_devops.py"
 REGISTRY = "openfactory/adapters/tracker/registry.py"
 IMPEDIMENT = "openfactory/ops/impediment.py"
+#: the card's door's ports — where a split's close and the impediment's reach the row since #414
+PORTS = "openfactory/lifecycle/ports.py"
+#: where the card's door reads what the board delivered, since the sweep stopped announcing (#414)
+EVENTS = "openfactory/product/events.py"
 VOICE = "openfactory/techlead/voice.py"
 
 MUTATIONS = [
     # ── the word the split closes with ──────────────────────────────────────────────────────────
+    # re-pinned 2026-10-04: the split's close goes through the card's door (#414), and the word
+    # it closes with is a fact of the transition
     ("THE DEFECT ITSELF: the parent is closed as delivered, so a card that shipped nothing counts "
      "as work the client got", ACTIVITIES,
-     "                     why=inp.reasons[:300], where=where),\n        delivered=False)",
-     "                     why=inp.reasons[:300], where=where),\n        delivered=True)"),
+     '        facts={"delivered": False, "split_into": links,',
+     '        facts={"delivered": True, "split_into": links,'),
 
-    ("the split closes on the row directly, walking around the port's seam", ACTIVITIES,
-     "    close_ticket(\n        tracker, parent_ref,",
-     "    tracker.close_ticket(\n        parent_ref,"),
+    # re-pinned 2026-10-04: the close reaches the row through the door's port since #414 — the
+    # seam this row walks around is that port's
+    ("the split closes on the row directly, walking around the port's seam", PORTS,
+     "        close_ticket(self.tracker, card, note, delivered=delivered)\n",
+     "        self.tracker.close_ticket(card, note)\n"),
 
     # ── what the sweep counts ───────────────────────────────────────────────────────────────────
+    # re-pinned 2026-10-04: the delivery is read by the card's door (`events._delivered_now`), the
+    # sweep's reading went with its announcing (#414)
     ("the delivery sweep asks the CARD, not the board, so a split parent is never followed",
-     ACTIVITIES,
-     "    return delivered_numbers(list(module._board_tickets or []))",
-     "    return {t.number for t in (module._board_tickets or []) if t.delivered}"),
+     EVENTS,
+     "    return delivered_numbers(list(tickets or []))",
+     "    return {t.number for t in (tickets or []) if t.delivered}",
+     "tests/test_the_life_of_a_card.py"),
 
     ("a card that was split counts the moment it is closed, whatever its children are doing",
      TRIAGE,
@@ -54,9 +65,10 @@ MUTATIONS = [
      "_SPLIT_CHILD_MARK = \"[auto-split of issue #\""),
 
     # ── what a person reads on the parent ───────────────────────────────────────────────────────
+    # re-pinned 2026-10-04: the note is the close's fact through the card's door (#414)
     ("the note is written in English whatever the project speaks", ACTIVITIES,
-     "\"split.parent.closed\", lang, children=links,",
-     "\"split.parent.closed\", \"en\", children=links,"),
+     "\"split.parent.closed\", lang,",
+     "\"split.parent.closed\", \"en\","),
 
     ("the note no longer says the card was SPLIT INTO the children", VOICE,
      "        \"en\": \"✂️ Split into {children} ({where}). This card was too large for one pass \"",
@@ -105,13 +117,17 @@ MUTATIONS = [
      "        options=options,"),
 
     # ── the other close that chose no word ──────────────────────────────────────────────────────
+    # re-pinned 2026-10-04: the impediment's close goes through the card's door (#414)
     ("the impediment's close walks around the seam", IMPEDIMENT,
-     "        close_ticket(trk, str(existing), \"completed\", delivered=True)",
-     "        trk.close_ticket(str(existing), \"completed\")"),
+     "        moved = transition(_door_view(project), str(existing), CardEvent.CLOSED, "
+     "by=\"the factory\",\n",
+     "        trk.close_ticket(str(existing), note)\n"
+     "        moved = transition(_door_view(project), str(existing), CardEvent.CLOSED, "
+     "by=\"the factory\",\n"),
 
     ("a capability that works again is recorded as work nobody did", IMPEDIMENT,
-     "str(existing), \"completed\", delivered=True)",
-     "str(existing), \"completed\", delivered=False)"),
+     "facts={\"delivered\": True, \"note\": note}",
+     "facts={\"delivered\": False, \"note\": note}"),
 
     # ── the guard that would have seen all of this ──────────────────────────────────────────────
     ("the language walk stops following a name back to what the function put in it", LANGUAGE,

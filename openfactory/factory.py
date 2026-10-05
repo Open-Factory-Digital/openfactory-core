@@ -373,7 +373,7 @@ def _bot_token_provider():
 
 
 def build_runner(project, issue: str, *, sandbox: str, image: str, review: bool, events=None,
-                 repo_key: str | None = None):
+                 repo_key: str | None = None, change: int = 0):
     """Assemble a JobRunner for one ticket: tracker + forge + agent + sandbox +
     reviewer + manifest + bot identity, credentials from env. `events` overrides the
     default journal (e.g. a Tee that also streams to stdout in a Fargate task).
@@ -381,7 +381,10 @@ def build_runner(project, issue: str, *, sandbox: str, image: str, review: bool,
     `repo_key` NAMES WHICH OF THE PROJECT'S REPOSITORIES this run works in (C-18). One product can
     own several — a card qualified `owner/name#n` is worked against its own — and two of them must
     share neither a checkout nor a container name. Absent → the project's name, which is what every
-    single-repo project has always used, so nothing moves for them."""
+    single-repo project has always used, so nothing moves for them.
+
+    `change` is which change of the card the runner builds (#448 slice 4, `JobRunner.change`) —
+    the branch's name follows it, so every runner of one job must be handed the same number."""
     from openfactory.adapters.agent import build_executor, build_reviewer
     from openfactory.adapters.forge.registry import build_forge
     from openfactory.adapters.sandbox.registry import build_sandbox
@@ -460,6 +463,7 @@ def build_runner(project, issue: str, *, sandbox: str, image: str, review: bool,
     # is the App minter for the reference vendor and None for a vendor that declares none.
     return JobRunner(
         project=project,  # ADR-0027: the gate needs to know whose board this is
+        change=change,  # #448 slice 4: which change of the card — it names the branch
         # the REGISTRY decides which provider — the factory composes a runner, it does not pick
         # a vendor (a client on Jira changes one registry value and nothing here)
         tracker=build_tracker(project, token=tracker_token_for(project),

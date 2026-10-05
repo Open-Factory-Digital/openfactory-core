@@ -11,8 +11,8 @@ finished", with both children open in Backlog.
 
 WHAT IS DRIVEN HERE IS THE REAL `_do_split` AGAINST THE REAL `LocalTracker` on a board file of its
 own, read back through the function the board sweep uses (`product/board.py::_ticket`) and judged
-by the functions the delivery sweep calls (`activities._closed_issue_numbers`,
-`followup.delivered`). The Azure Boards row is the real `AzureBoardsTracker` built by the real
+by the functions a delivery is decided by (`triage.delivered_numbers`, which the card's door reads
+the board with — `events._delivered_now` — and `followup.delivered`). The Azure Boards row is the real `AzureBoardsTracker` built by the real
 registry row, over the recorded client `test_the_ado_tracker.py` already uses.
 """
 
@@ -67,11 +67,13 @@ def _cards(tracker) -> dict[str, Ticket]:
 
 
 def _the_sweep_says(tracker, *issues: str) -> dict:
-    """What the delivery sweep decides for a requirement filed as `issues`, by its own two calls."""
-    module = SimpleNamespace(_board_tickets=list(_cards(tracker).values()))
+    """What a delivery's announcement decides for a requirement filed as `issues`, by its own two
+    calls — the card's door's since #414 (`loops.announce`), the delivery sweep's before."""
+    from openfactory.product.triage import delivered_numbers
+
     loop = followup.open_loop(followup.DELIVERY, "7", owner=followup.OWNER,
                               ts="2026-09-19T10:00:00Z", context={"issues": ",".join(issues)})
-    return followup.delivered([loop], acts._closed_issue_numbers(module))
+    return followup.delivered([loop], delivered_numbers(list(_cards(tracker).values())))
 
 
 # ── the word the split closes its parent with ───────────────────────────────────────────────────
@@ -222,7 +224,9 @@ def test_a_row_that_cannot_say_NOT_delivered_refuses_the_parents_close_BY_NAME(b
     old._db = acts._tracker_for(None)._db
     monkeypatch.setattr(acts, "_tracker_for", lambda project: old)
 
-    with pytest.raises(port.CannotSayUndelivered, match="`delivered`"):
+    # THROUGH THE CARD'S DOOR SINCE #414: the close is its effect, and the refusal comes back as
+    # that effect's outcome, which fails the split by the same name — nothing was closed
+    with pytest.raises(RuntimeError, match="`delivered`"):
         _split(old)
 
 

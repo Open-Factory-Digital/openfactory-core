@@ -63,6 +63,11 @@ TTL_SECONDS = 600
 
 APPROVE_PROD = "approve_prod"
 MERGE_GATE = "human_merge_gate"
+#: The OTHER answer the last gate takes (#448 slice 4): "not yet" from the person who asked for the
+#: card, sending it back for another pass as a new change (`JobWorkflow.not_yet`). Signed by the
+#: worker's product role, which releases through the same key (`view.another_change`); a kind of
+#: its own, so a seal over a release can never send a change back, nor the other way round.
+NOT_YET = "not_yet"
 #: What `openfactory doctor` seals to ask the WORKER whether it would accept this process's answers
 #: (`GateKeyProbeWorkflow`). A kind of its own, so a probe's seal can never answer a gate.
 PROBE = "gate_key_probe"

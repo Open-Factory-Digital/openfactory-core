@@ -2,11 +2,13 @@
 
 THE JOB WRITES DONE THROUGH `set_state`, AND ON THIS ROW THAT ONLY MOVED A COLUMN. Every job that
 finishes ends at `settle_ticket(DONE)` (`JobWorkflow._finish_at_the_merge`, the promotion tail's
-last stage) and then at `record_outcome`, which asks `events.card_finished` whether a delivery is
-complete. The board decides that (`triage.delivered_numbers`), and `Ticket.delivered` is "closed,
-and not as `not_planned`". `LocalTracker.set_state` moved `column_key` to `done` and left the card
-`open`, so the card the factory had just finished was never delivered: the requester heard nothing
-from the job's exit, and nothing from the sweep's catch-all either — both read the same board.
+last stage), which goes through the card's door as `delivered` — whose `Loops("deliver")` asks
+whether a delivery is complete (`loops.announce_what_it_completes`, #414; the job's exit,
+`record_outcome`, asked it before). The board decides that (`triage.delivered_numbers`), and
+`Ticket.delivered` is "closed, and not as `not_planned`". `LocalTracker.set_state` moved
+`column_key` to `done` and left the card `open`, so the card the factory had just finished was never
+delivered: the requester heard nothing from the job, and nothing from the second chance either —
+both read the same board.
 
 THE HOSTED ROWS CLOSE THERE. GitHub closes the issue as completed on DONE (#180); Jira and Azure
 DevOps close by moving the card, because a status in the done category IS closed, and a card moved
@@ -16,8 +18,8 @@ WHY NOTHING HERE STANDS IN FOR `_delivered_now`. The case that announces a deliv
 `test_events_and_the_agenda.py` replaces it with `{"500"}`, and the plain card's case in
 `test_a_plain_card_reaches_the_person_who_asked.py` closes the card with `close_ticket` — a write no
 job makes. Both are green on a board where no finished card was ever delivered. Here the card is
-settled by the workflow's own activity over the real local row, the job's one exit asks, and the
-real board read answers. The door to the conversation is the one seam faked: it leaves the machine,
+settled by the workflow's own activity over the real local row, its door asks, and the real board
+read answers. The door to the conversation is the one seam faked: it leaves the machine,
 and what reached it is recorded.
 """
 
@@ -29,6 +31,7 @@ import pytest
 from temporalio.testing import ActivityEnvironment
 
 from openfactory.contracts import JobState
+from openfactory.lifecycle import converge, loops
 from openfactory.memory import store as loop_store
 from openfactory.memory.ledger import DELIVERY, waiting
 from openfactory.product import events, followup
@@ -81,14 +84,16 @@ def told(project, monkeypatch) -> list[dict]:
 
 def _asked_for(project, tracker) -> str:
     """A card Ana asked for in her conversation, on the board with its delivery loop open — the
-    loop opened by the product role's own helper, as `file_ticket` opens it (#481)."""
-    from openfactory.product.module import _follow_card
+    promise the product role's own helper builds, as `file_ticket` does (#481), opened by the
+    card's door's own effect (`loops.owe`, #414)."""
+    from openfactory.lifecycle import loops
+    from openfactory.product.module import _owed
 
     ref = tracker.create_ticket(title=TITLE, body="## Objective\n\nExport it\n",
                                 author=ANA, requester=ANA)
     card = ref.lstrip("#")
-    _follow_card(project, f"cartao-{card}", card, {"ticket": "1", "title": TITLE},
-                 conversation=ANAS, requester=ANA)
+    loops.owe(project, card, _owed(f"cartao-{card}", {"ticket": "1", "title": TITLE},
+                                   conversation=ANAS, requester=ANA))
     assert [x.subject for x in _deliveries(project)] == [f"cartao-{card}"]
     return card
 
@@ -125,7 +130,7 @@ def _record(project, card: str) -> tuple[str, str, str]:
 
 
 def _delivered(project) -> set[str]:
-    """What the board says was delivered — the real read both announcers make."""
+    """What the board says was delivered — the real read the door's announcement makes."""
     found = events._delivered_now(project)
     assert found is not None, "the board could not be read"
     return found
@@ -142,23 +147,28 @@ def test_a_card_the_factory_finished_is_announced_to_its_requester_ONCE(project,
     assert f"o #{card} ({TITLE}) já entrou no produto" in told[0]["text"], told[0]["text"]
     assert _deliveries(project) == [], "the delivery stays open after it was told"
 
-    # THE CATCH-ALL READS THE SAME BOARD, AND FINDS IT TOLD: the sweep, and a job's exit again
-    events.deliver(project, delivered=_delivered(project))
+    # THE SECOND CHANCES READ THE SAME BOARD, AND FIND IT TOLD: the door's converge (hourly, and on
+    # the weekly sweep), its announcement with the board's set, a replayed settle and the job's exit
+    converge(project)
+    loops.announce(project, delivered=_delivered(project))
+    _activity(acts.settle_ticket, card, JobState.DONE, "settled again by a replay")
     _activity(acts.record_outcome, card, JobState.DONE)
     assert len(told) == 1, "the delivery was announced twice"
 
 
-def test_the_sweep_alone_announces_it_when_the_exit_could_not(project, tracker, told,
-                                                              monkeypatch):
-    """The weekly catch-all is the other reader of the board: a job whose exit could not ask (a
-    board that did not answer in time) is announced by the sweep — which also found nothing on
-    this row before #500."""
+def test_the_converge_alone_announces_it_when_the_settle_could_not(project, tracker, told,
+                                                                   monkeypatch):
+    """The door's converge is the other reader of the board (where the weekly catch-all was until
+    #414): a settle whose announcement could not ask (a board that did not answer in time) is
+    announced when the effect is applied again — which also found nothing on this row before
+    #500."""
     card = _asked_for(project, tracker)
-    monkeypatch.setattr(events, "card_finished", lambda project, **kw: [])
-    _the_job_finishes(project, tracker, card)
+    with monkeypatch.context() as down:
+        down.setattr(events, "_delivered_now", lambda project: None)
+        _the_job_finishes(project, tracker, card)
     assert told == []
 
-    events.deliver(project, delivered=_delivered(project))
+    converge(project)
 
     assert [t["conversation"] for t in told] == [ANAS]
 
@@ -178,14 +188,16 @@ def test_the_finished_card_reads_as_the_hosted_rows_read_it(project, tracker):
 
 
 def test_the_close_writes_no_comment_of_its_own(project, tracker):
-    """The job's note is not written on this row (ADR-0055 D6: the door's comment is its own), and
-    the close that `set_state` now makes adds none — nothing on the card is said twice."""
+    """The job's note is said once, by the card's door (ADR-0055 D6: the door's comment is its
+    own, since the job's settle goes through it, #413), and the close that `set_state` now makes
+    adds none — nor does a replayed settle: nothing on the card is said twice."""
     card = _asked_for(project, tracker)
 
     _the_job_finishes(project, tracker, card)
     _activity(acts.settle_ticket, card, JobState.DONE, "settled again by a replay")
 
-    assert tracker.comments(card) == []
+    assert [c.body for c in tracker.comments(card)] == [
+        "Merged. Nothing follows the merge for this project."]
     assert _record(project, card) == ("closed", "completed", "done")
 
 
@@ -230,6 +242,11 @@ def test_a_card_closed_as_NOT_delivered_stays_not_delivered(project, tracker, to
     tracker.close_ticket(card, "asked for by mistake", delivered=False)
 
     _activity(acts.settle_ticket, card, JobState.DONE)
+    assert _record(project, card)[:2] == ("closed", "not_planned")
+    # THE BOX'S OWN WRITE, which reaches the tracker beside the door (`machine._set_state`): a card
+    # a person withdrew while its job ran is settled Done there too, and stays withdrawn (review of
+    # #458, which closed it as `completed` on this path)
+    assert tracker.set_state(card, JobState.DONE) is True
     assert _record(project, card)[:2] == ("closed", "not_planned")
     tracker.set_state(card, JobState.TODO)
     assert _record(project, card)[:2] == ("closed", "not_planned")

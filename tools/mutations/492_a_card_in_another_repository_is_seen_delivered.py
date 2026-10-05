@@ -20,20 +20,25 @@ answered, not the ref asked, so a row answering `1` makes `acme/web#1` the track
 TEST = "tests/test_a_card_in_another_repository_is_seen_delivered.py"
 
 EVENTS = "openfactory/product/events.py"
+LOOPS = "openfactory/lifecycle/loops.py"
 BOARD = "openfactory/product/board.py"
 BASE = "openfactory/adapters/tracker/base.py"
 GITHUB = "openfactory/adapters/tracker/github.py"
 
 MUTATIONS = [
-    ("TODAY'S DEFECT: the delivered set is the board's, one repository's list", EVENTS,
-     "    delivered = set(delivered or ()) | _delivered_elsewhere(project, set(delivered or ()))\n",
+    # re-pinned 2026-10-05: integration of slices 4/5 with the door stack — `events.deliver`
+    # became the card door's `loops.announce` (#414), which asks the other repository now
+    ("TODAY'S DEFECT: the delivered set is the board's, one repository's list", LOOPS,
+     "    delivered = set(delivered or ()) | events._delivered_elsewhere(project, "
+     "set(delivered or ()))\n",
      "    delivered = set(delivered or ())\n"),
 
-    ("an empty board answer returns before the other repository is asked", EVENTS,
-     "    if not _speaks(project):\n        return []\n"
-     "    delivered = set(delivered or ()) | _delivered_elsewhere(",
-     "    if not _speaks(project) or not delivered:\n        return []\n"
-     "    delivered = set(delivered or ()) | _delivered_elsewhere("),
+    # re-pinned 2026-10-05: integration of slices 4/5 with the door stack (#414)
+    ("an empty board answer returns before the other repository is asked", LOOPS,
+     "    if not events._speaks(project):\n        return [], 0\n"
+     "    delivered = set(delivered or ()) | events._delivered_elsewhere(",
+     "    if not events._speaks(project) or not delivered:\n        return [], 0\n"
+     "    delivered = set(delivered or ()) | events._delivered_elsewhere("),
 
     ("a loop with work still open in its own repository is read anyway", EVENTS,
      "            if elsewhere and cards - elsewhere <= delivered:\n",

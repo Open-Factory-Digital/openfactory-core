@@ -65,10 +65,11 @@ MUTATIONS = [
      '        return (Reopen(), Comment(), Loops("restore"), Tell(BACK_ON_THE_BOARD), Forget())\n',
      '        return (Reopen(), Comment(), Tell(BACK_ON_THE_BOARD), Forget())\n'),
 
+    # re-pinned 2026-10-04: finished work closed announces what it completes (#414)
     ("closing finished work cancels its promise and tells its requester it will not be built",
      TABLE,
-     '        if facts.get("delivered"):\n            return (Close(delivered=True), Comment(), Forget())\n',
-     '        if facts.get("delivered"):\n            return (Close(delivered=True), *_GONE)\n',
+     '            return (Close(delivered=True), Comment(), Loops("deliver"), Forget())\n',
+     '            return (Close(delivered=True), *_GONE)\n',
      TABLE_TEST),
 
     # ── the rows: one refusal each ─────────────────────────────────────────────────────────────
@@ -86,11 +87,13 @@ MUTATIONS = [
      "    **{event: frozenset(State) for event in CardEvent},",
      TABLE_TEST),
 
+    # re-pinned 2026-10-05: the row also holds a card merged or at a stage (review of #524)
     ("a card the factory finished is removed, erasing what was done and said on it (#384)", TABLE,
      "    CardEvent.REMOVED: frozenset({State.BACKLOG, State.TODO, State.RUNNING,\n"
-     "                                  State.WAITING_ON_A_PERSON}),",
+     "                                  State.WAITING_ON_A_PERSON, State.MERGED, State.STAGED}),",
      "    CardEvent.REMOVED: frozenset({State.BACKLOG, State.TODO, State.RUNNING,\n"
-     "                                  State.WAITING_ON_A_PERSON, State.DELIVERED}),",
+     "                                  State.WAITING_ON_A_PERSON, State.MERGED, State.STAGED,\n"
+     "                                  State.DELIVERED}),",
      TABLE_TEST),
 
     # ── the door ───────────────────────────────────────────────────────────────────────────────
@@ -126,8 +129,9 @@ MUTATIONS = [
      TABLE_TEST),
 
     ("the sweep applies an older transition's late effect, moving the card backwards", EXECUTOR,
-     "            if row.seq != latest.seq or tuple(name_of(e) for e in effects) != row.effects:\n",
-     "            if tuple(name_of(e) for e in effects) != row.effects:\n",
+     # re-pinned 2026-10-04: superseded by a newer MOVE — a promise moves nothing (#414)
+     "            if ((moved is not None and row.seq < moved.seq)\n",
+     "            if (False\n",
      TABLE_TEST),
 
     ("the hourly round never announces a delivery whose last card was cancelled, so it waits a "
@@ -143,8 +147,8 @@ MUTATIONS = [
 
     # ── the ports ──────────────────────────────────────────────────────────────────────────────
     ("a card's ending moves it to the queue instead of the backlog", PORTS,
-     '        states = {"backlog": JobState.SKIPPED}\n',
-     '        states = {"backlog": JobState.TODO}\n'),
+     '        states = {"backlog": JobState.SKIPPED, "todo": JobState.TODO, "done": JobState.DONE}\n',
+     '        states = {"backlog": JobState.TODO, "todo": JobState.TODO, "done": JobState.DONE}\n'),
 
     ("a card nobody asked for in a conversation is announced to the product's room", PORTS,
      "        if not opened_by and not conversation:\n",
@@ -175,7 +179,8 @@ MUTATIONS = [
      "                     in_backlog=False, language=getattr(proj, \"language\", None))"),
 
     ("a caller that hands only its tracker judges the card without its column", PORTS,
-     "        self._board_known = board is not None\n",
+     # RE-PINNED 2026-10-02 (#414): a caller that hands `columns` has read its board already
+     "        self._board_known = board is not None or columns is not None\n",
      "        self._board_known = True\n"),
 
     # ── the store ──────────────────────────────────────────────────────────────────────────────
@@ -185,18 +190,26 @@ MUTATIONS = [
      TABLE_TEST),
 
     # ── the guard ──────────────────────────────────────────────────────────────────────────────
+    # re-pinned 2026-10-05: #448 slice 6 — the loop form reads a release's functions too
     ("the walk stops seeing a promise about a card written outside the door", GUARD_TEST,
-     "            elif name in LOOP_WRITES and fn is not None and _named(fn) & CARD_LOOPS:\n",
+     "            elif name in LOOP_WRITES and fn is not None and _named(fn) & (CARD_LOOPS | "
+     "RELEASES):\n",
      "            elif False:\n",
      GUARD_TEST),
 
+    # re-pinned 2026-10-05: #448 slice 6 — the notices are read on every name a file binds to `events`
     ("the walk stops seeing a card's notice told outside the door", GUARD_TEST,
-     '                  and isinstance(func.value, ast.Name) and func.value.id == "events"):\n',
-     '                  and isinstance(func.value, ast.Name) and func.value.id == "nobody"):\n',
+     '        events_module, events_functions = _bound_to(tree, EVENTS, package="openfactory.'
+     'product")\n'
+     '        events_module |= {"events"}\n',
+     "        events_module, events_functions = set(), {}\n",
      GUARD_TEST),
 
     ("the ceiling is raised quietly, so the list can grow", GUARD_TEST,
-     "CEILING = 27\n",
-     "CEILING = 28\n",
+     # RE-PINNED 2026-10-02 (#414): the ceiling is 16 since #414's first part
+     # re-pinned 2026-10-04: and 1 since its B1 and B2, merged, and the last delivery producers (#414)
+     # re-pinned 2026-10-04: and 0 since a requirement's promise goes through its cards' doors (#414)
+     "CEILING = 0\n",
+     "CEILING = 1\n",
      GUARD_TEST),
 ]

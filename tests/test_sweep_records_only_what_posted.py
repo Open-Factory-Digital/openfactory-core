@@ -31,7 +31,7 @@ from openfactory.memory.ledger import ACCEPTANCE, CHASED, DELIVERY, QUESTION, op
 from openfactory.product.triage import Observation, Ticket, TriageReport
 from openfactory.runtime.temporal.activities import _do_split, _product_followup
 from openfactory.runtime.temporal.io import SplitInput
-from tests.the_room_heard import through
+from tests.the_room_heard import delivered_through_the_door, through
 
 
 class _Channel:
@@ -106,26 +106,33 @@ def wired(monkeypatch):
 
 # ── the class: asked / announced / chased must mean DELIVERED ──────────────────────────────────
 
-def test_a_dropped_announcement_leaves_the_delivery_open_for_the_next_sweep(wired):
+def test_a_dropped_announcement_leaves_the_delivery_open_for_the_next_telling(wired, monkeypatch):
     """Recorded first, a dropped "está pronto" was never re-sent, and the 72h acceptance chase
-    became the client's FIRST message about that delivery — referencing one that never existed."""
+    became the client's FIRST message about that delivery — referencing one that never existed.
+
+    THE TELLING IS THE CARD'S DOOR'S SINCE #414 (`Loops("deliver")`): a dropped one is a FAILED
+    effect of the card's transition, and the next telling is the door's converge applying it again
+    — hourly, and on the weekly sweep, which announces nothing of its own."""
     channel, store = wired
     channel.deliver = False
     store.rows = [open_loop(DELIVERY, "7", owner="product", ts="2026-07-28T10:00:00+00:00",
                             context={"issues": "500"})]
     done = [Ticket(number=500, title="a", state="closed", column="Done", body="")]
 
-    result = _product_followup(_project(), _Module(done), TriageReport(), _project().product)
+    said = delivered_through_the_door(_project(), "500", tickets=done, monkeypatch=monkeypatch)
 
-    assert "closed:0" in result and "accepting:0" in result, result
+    assert said.startswith("failed"), said
     assert all(x.state != "closed" for x in store.rows), "closed on a post nobody received"
     assert not [x for x in store.rows if x.kind == ACCEPTANCE], \
         "an acceptance question opened for an announcement that never went out"
-
-    # the channel comes back → the SAME sweep logic announces and only then closes
-    channel.deliver = True
     result = _product_followup(_project(), _Module(done), TriageReport(), _project().product)
-    assert "closed:1" in result and "accepting:1" in result, result
+    assert "accepting:0" in result and not [x for x in store.rows if x.kind == ACCEPTANCE], (
+        "the weekly sweep announced a delivery beside the card's door")
+
+    # the channel comes back → the SAME effect, applied again, announces and only then closes
+    channel.deliver = True
+    assert delivered_through_the_door(_project(), "500", tickets=done,
+                                      monkeypatch=monkeypatch) == "1 announced"
     assert any("requisito 7" in p for p in channel.posts), channel.posts
     assert [x for x in store.rows if x.kind == ACCEPTANCE and x.state == "open"]
 
@@ -337,6 +344,9 @@ class _Board:
         self.moves.append((issue, state))
         return self.ok_for is None or issue in self.ok_for
 
+    def add_item(self, *, issue_url):
+        """The door's placement adds a card first (#414) — idempotent, and nothing to record."""
+
 
 class _SplitTracker:
     repo = "o/app"
@@ -407,7 +417,7 @@ def test_a_failed_board_move_is_never_claimed_as_queued(monkeypatch):
 
     assert "not queued: #102" in out, out
     ref, reason = tracker.closed
-    assert ref == "#37"
+    assert ref == "37"
     assert "except #102" in reason, f"the close comment claims a queue the board refused: {reason}"
     slack = notifier.sent[0]
     # THE FACT, NOT THE WORDING (#160 moved this sentence into the per-language catalogue). What

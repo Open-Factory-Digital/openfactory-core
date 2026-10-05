@@ -62,8 +62,9 @@ MUTATIONS = [
 
     ("the workflow keeps its own copy of the merge-wait sentence again", WORKFLOW,
      # re-pinned 2026-10-01 (#448): the import also brings the spent-budget sentence
-     "    from openfactory.runtime.temporal.vocabulary import adjusts_spent_note, merge_wait_note\n",
-     "    from openfactory.runtime.temporal.vocabulary import adjusts_spent_note\n"
+     # re-pinned 2026-10-04: the import also brings the last gate's spent sentence (#448)
+     "        merge_wait_note,\n        release_passes_spent_note,\n    )\n",
+     "        release_passes_spent_note,\n    )\n"
      "    def merge_wait_note(auto: bool) -> str:\n"
      '        return "waiting for CI / the merge" if auto else "waiting for your review and merge"\n'),
 

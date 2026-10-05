@@ -224,17 +224,23 @@ def test_a_CLOSED_issue_in_the_pickup_column_is_never_re_run(project, monkeypatc
         def items_in_status(self, _s):
             return ["1", "2"]
 
-        def set_status(self, *, issue, issue_url, state, needs_person=None):
-            # set_STATUS, not a column literal: on a renamed board (C-14) the healing must speak
-            # the same map every other move speaks
-            healed.append((issue, state.value))
+        def columns(self):
+            return {"1": "TO-DO", "2": "TO-DO"}
+
+    class _Tracker:
+        def get_ticket(self, ref):
+            return type("_Tk", (), {"state": states[ref]})()
+
+        def set_state(self, ref, state, reason=None, *, needs_person=None):
+            # THROUGH THE CARD'S DOOR SINCE #414 (an observed close, ADR-0055 D8), whose column is
+            # the tracker's one writer of a card's state — a state, not a column literal: on a
+            # renamed board (C-14) the healing must speak the same map every other move speaks
+            healed.append((ref, state.value))
             return True
 
     monkeypatch.setattr(board_pkg, "build_board", lambda *_a, **_k: _Board())
     states = {"1": "closed", "2": "open"}
-    monkeypatch.setattr(acts, "_tracker_for",
-                        lambda p: type("_T", (), {"get_ticket": lambda s, r: type(
-                            "_Tk", (), {"state": states[r]})()})())
+    monkeypatch.setattr(acts, "_tracker_for", lambda p: _Tracker())
 
     with caplog.at_level("WARNING"):
         issues = asyncio.run(acts.scan_todo(ScanInput(

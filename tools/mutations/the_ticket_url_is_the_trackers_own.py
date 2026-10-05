@@ -25,8 +25,8 @@ SLICE = "tests/test_the_ticket_url_is_the_trackers_own.py"
 #: is held by the guard that has always owned it, so those rows are aimed there.
 MOVES = "tests/test_the_card_moves_even_when_the_link_cannot_be_built.py"
 
-ACT = "openfactory/runtime/temporal/activities.py"
 GH = "openfactory/adapters/tracker/github.py"
+PORTS = "openfactory/lifecycle/ports.py"
 
 MUTATIONS = [
     # ── 1. the row answers ─────────────────────────────────────────────────────────────────────
@@ -50,32 +50,35 @@ MUTATIONS = [
      '        return f"https://{host}/{repo}/issues/{ref}"', SLICE),
 
     # ── 2. the guess comes back ────────────────────────────────────────────────────────────────
-    ("the composed literal comes back at the split-child call site", ACT,
-     "            issue_url=_ticket_url(tracker, num),",
-     '            issue_url=(_ticket_url(tracker, num)\n'
-     '                       or f"https://github.com/{repo}/issues/{num}"),', SLICE),
+    # RETIRED 2026-10-04 (#414): "the composed literal comes back at the split-child call site".
+    # A split's children are filed through the card's door, which places them by the board's own
+    # write and asks the link where every placement asks it (`Ports._url`, the row below): the
+    # call site composes nothing and hands nothing, so there is no line left to cut there.
 
-    ("the composed literal comes back on the healing path, resolved through the FORGE's "
-     "repository — the defect this slice closed", ACT,
-     "            healed_url = _ticket_url(tracker, ref)",
-     "            heal_repo, heal_bare = _ref_repo(project, ref)\n"
-     '            healed_url = (_ticket_url(tracker, ref)\n'
-     '                          or f"https://github.com/{heal_repo}/issues/{heal_bare}")', SLICE),
+    # RE-PINNED 2026-10-02 (#414): the healer hands the card's door an observed close, whose column
+    # is the tracker's own `set_state` — no URL is handed on that path any more. The place the door
+    # still asks for a link is its board placement (`Ports._url`), and the guess is cut there.
+    # re-pinned 2026-10-04: the port strips the answer since the helper it replaced went (#414)
+    ("the composed literal comes back where the card's door places a card, resolved through the "
+     "FORGE's repository — the defect this slice closed", PORTS,
+     '            return str(self.tracker.ticket_url(card) or "").strip()\n',
+     '            return str(self.tracker.ticket_url(card) or "").strip() or '
+     'f"https://github.com/{self.name}/issues/{card}"\n', MOVES),
 
-    # ── 3. the helper ──────────────────────────────────────────────────────────────────────────
-    ("a tracker without the method is answered with a guess instead of nothing", ACT,
-     '    ask = getattr(tracker, "ticket_url", None)\n    if not callable(ask):\n        return ""',
-     '    ask = getattr(tracker, "ticket_url", None)\n    if not callable(ask):\n'
-     '        return f"https://github.com/{getattr(tracker, \'repo\', \'\')}/issues/{ref}"', MOVES),
+    # ── 3. the helper — the door's port since the last call site that shared it went (#414) ─────
+    # re-pinned 2026-10-04: `activities._ticket_url` went with `_child_to_todo`; the port that
+    # every placement asks is where a missing, raising or padded link is answered now
+    ("a tracker without the method is answered with a guess instead of nothing", PORTS,
+     '            log.info("the tracker could not name a URL for #%s", card, exc_info=True)\n'
+     '            return ""\n',
+     '            return f"https://github.com/{self.name}/issues/{card}"\n', MOVES),
 
-    ("a tracker that RAISES takes the board move down with it — a link is never worth that", ACT,
-     "    except Exception as exc:  # noqa: BLE001 — a link is never worth failing a board move "
-     "for",
-     "    except Exception as exc:  # noqa: BLE001\n        raise RuntimeError(exc) from exc\n"
-     "    if False:", MOVES),
+    ("a tracker that RAISES takes the board move down with it — a link is never worth that", PORTS,
+     "        except Exception:  # noqa: BLE001 — a link is a courtesy; the placement is not\n",
+     "        except AttributeError:  # noqa: BLE001\n", MOVES),
 
     ("the port's answer is taken unstripped, so a row that pads its URL hands the board a value "
-     "it cannot resolve", ACT,
-     '        return (ask(ref) or "").strip()',
-     '        return ask(ref) or ""', MOVES),
+     "it cannot resolve", PORTS,
+     '            return str(self.tracker.ticket_url(card) or "").strip()\n',
+     '            return str(self.tracker.ticket_url(card) or "")\n', MOVES),
 ]
