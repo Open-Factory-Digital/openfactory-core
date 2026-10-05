@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import email.parser
 import importlib.metadata
+import json
+import posixpath
 import re
 import shutil
 import subprocess
@@ -131,6 +133,98 @@ def _the_declared_description() -> list[str]:
     if isinstance(readme, dict) and readme.get("file"):
         return [readme["file"]]
     return [readme] if isinstance(readme, str) else []
+
+
+def _what_the_backend_reads_beside_pyproject() -> list[str]:
+    """Every file `pyproject.toml` names for the build backend to read, relative to it: the long
+    description and the licence files. Derived, so a file declared tomorrow is required tomorrow."""
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    return [*_the_declared_description(), *project.get("license-files", [])]
+
+
+# ── the images build the package too ───────────────────────────────────────────────────────────
+
+def _landings(args: str, workdir: str) -> list[tuple[str, str]]:
+    """`(source as written, where it lands in the image)` for one COPY/ADD, in either of Docker's
+    forms. A destination ending in `/`, a `.`, or one shared by several sources is a directory and
+    each FILE lands under its own basename — which is how `COPY pyproject.toml docs/pypi.md ./`
+    puts the page at `./pypi.md`, where the backend does not look."""
+    from test_the_public_cut_is_written_down import _copy_sources
+
+    words = [w for w in args.split() if not w.startswith("--")]
+    rest = " ".join(words).strip()
+    dest = str(json.loads(rest)[-1]) if rest.startswith("[") else words[-1]
+    sources = _copy_sources(args)
+    into = dest.endswith("/") or dest in {".", ".."} or len(sources) > 1
+    base = posixpath.join(workdir, dest)
+    return [(posixpath.normpath(src), posixpath.normpath(
+                posixpath.join(base, posixpath.basename(src)) if into else base))
+            for src in sources]
+
+
+def _what_the_build_context_lacks(text: str) -> list[str] | None:
+    """For a Dockerfile that copies `pyproject.toml` in to build the package: each file the
+    backend reads beside it that does not land beside it — `[]` when all do. `None` for a file
+    that builds no package, so the caller can tell "carries everything" from "not one of these"."""
+    from test_the_public_cut_is_written_down import _dockerfile_instructions
+
+    workdir, landed = "/", {}
+    for kind, args in _dockerfile_instructions(text):
+        if kind == "WORKDIR":
+            workdir = posixpath.normpath(posixpath.join(workdir, args.strip()))
+        elif kind in {"COPY", "ADD"} and "--from=" not in args:
+            landed.update(_landings(args, workdir))
+    if "pyproject.toml" not in landed:
+        return None
+    beside = posixpath.dirname(landed["pyproject.toml"])
+    return [rel for rel in _what_the_backend_reads_beside_pyproject()
+            if landed.get(posixpath.normpath(rel)) != posixpath.join(beside, rel)]
+
+
+def test_every_image_that_builds_the_package_carries_what_pyproject_declares():
+    """THE IMAGES ARE THE OTHER BUILD, AND NOTHING BUILDS THEM BEFORE A TAG (#368). Each image
+    copies `pyproject.toml` and the package into its WORKDIR and installs from there — and they
+    copied `pyproject.toml README.md LICENSE NOTICE` while the declared long description is
+    `docs/pypi.md`. setuptools 80.9 only warns and installs an empty description; the image
+    builds run with build isolation and fetch whatever setuptools is current on the release day,
+    and a backend that refuses a missing declared file breaks the image build on the tag — the
+    one build nothing runs earlier. So what the image's build context carries is held to what
+    the declaration says the backend reads, at the path it reads it from."""
+    import dockerfiles
+
+    lacking, building = {}, []
+    for dockerfile in dockerfiles.tracked():
+        gaps = _what_the_build_context_lacks(dockerfile.read_text())
+        if gaps is None:
+            continue
+        building.append(dockerfile.name)
+        if gaps:
+            lacking[dockerfile.name] = gaps
+
+    # DERIVED, WITH A FLOOR NAMED: an image that stops copying `pyproject.toml` the way this
+    # reads it drops out of the set without a word, taking the rule with it
+    assert {"cli.Dockerfile", "sandbox.Dockerfile", "worker.Dockerfile"} <= set(building), (
+        f"the images that build the package are {building} — the reader no longer sees them")
+    assert not lacking, (
+        f"these images build the package without files pyproject.toml declares, at the path it "
+        f"declares them: {lacking} — `COPY <file> ./<file>` beside `pyproject.toml`")
+
+
+def test_the_context_reader_can_SEE_a_missing_or_misplaced_declared_file():
+    """Verify the verifier, on the shape the images had and the two ways to get the fix wrong."""
+    page = _the_declared_description()[0]
+    head = "FROM python:3.12-slim\nWORKDIR /opt/openfactory\n"
+    was_here = head + "COPY pyproject.toml README.md LICENSE NOTICE ./\nCOPY openfactory ./openfactory\n"
+    flattened = head + f"COPY pyproject.toml README.md LICENSE NOTICE {page} ./\n"
+    elsewhere = head + f"COPY pyproject.toml LICENSE NOTICE ./\nWORKDIR /tmp\nCOPY {page} ./{page}\n"
+    fixed = head + f"COPY pyproject.toml README.md LICENSE NOTICE ./\nCOPY {page} ./{page}\n"
+    exec_form = head + f'COPY ["pyproject.toml", "LICENSE", "NOTICE", "./"]\nCOPY ["{page}", "./{page}"]\n'
+
+    for lacking in (was_here, flattened, elsewhere):
+        assert _what_the_build_context_lacks(lacking) == [page], lacking
+    for carries in (fixed, exec_form):
+        assert _what_the_build_context_lacks(carries) == [], carries
+    assert _what_the_build_context_lacks(head + "COPY --from=x /pyproject.toml ./\n") is None
 
 
 @pytest.mark.slow

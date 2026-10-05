@@ -434,6 +434,9 @@ ENV OPENFACTORY_EMBED_MODEL=/opt/openfactory-models/${EMBED_MODEL}
 
 WORKDIR /opt/openfactory
 COPY pyproject.toml README.md LICENSE NOTICE ./
+# THE LONG DESCRIPTION pyproject.toml DECLARES, AT THE PATH IT DECLARES IT (#368). Without it
+# the backend warns and installs an empty description today; a newer one may refuse the build.
+COPY docs/pypi.md ./docs/pypi.md
 COPY openfactory ./openfactory
 # THE ADD-ON PACKAGES, BUILT HERE FROM THE SAME TREE — WHERE THE TREE HAS THEM. The cloud rows (the
 # remote box, the metrics table, the session store, the token pool) and the chat rows (the channel,

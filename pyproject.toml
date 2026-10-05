@@ -129,6 +129,8 @@ dev = [
     # The suite reads real PDFs through the `ingest` extra's library (#269), at the same pin: a
     # PDF test that skipped where the library is absent would be green over nothing.
     "pypdf==6.19.0",
+    # renders docs/pypi.md as the index does (tests/test_the_pypi_page_describes_the_project.py)
+    "readme-renderer[md]>=43",
 ]
 
 # WHERE AN ADD-ON REGISTERS ITSELF (#106). `docs/core/07` states the rule this group exists to

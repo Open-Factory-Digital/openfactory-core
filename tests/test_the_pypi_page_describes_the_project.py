@@ -309,12 +309,13 @@ def test_the_page_renders_the_way_the_index_renders_it():
     fails to render is shown as nothing at all, and a link the sanitiser strips is a word that no
     longer goes anywhere — neither is visible from the source.
 
-    SKIPPED BY NAME where the renderer is not installed: it is not a dependency of this package
-    or of its `dev` extra, so a gate that should run this needs `readme-renderer[md]` installed."""
+    `readme-renderer[md]` IS IN THE `dev` EXTRA, so CI — which installs `dev` — runs this. It is
+    still SKIPPED BY NAME where the library is absent: a venv made before it joined `dev`, or one
+    that cannot reach an index to fetch it, says so here rather than failing on an import."""
     markdown = pytest.importorskip(
         "readme_renderer.markdown",
-        reason="readme_renderer is not installed — the renderer the index uses; install "
-               "`readme-renderer[md]` where this guard must run")
+        reason="readme_renderer is not installed — the renderer the index uses, in the `dev` "
+               "extra (`readme-renderer[md]`); reinstall `dev` where this guard must run")
     pytest.importorskip("cmarkgfm", reason="cmarkgfm is not installed — readme_renderer's "
                                            "GitHub-flavoured variant needs it (`readme-renderer[md]`)")
     text = _page()

@@ -16,11 +16,14 @@ THE CLAIMS, one block of rows each:
      classifiers claim the console and no system the package cannot import on.
   7. The BUILT wheel's METADATA carries the page as markdown, body and all.
   8. The bare-name rule lets the page the index shows name the core — and nothing else changes.
+  9. Every image that builds the package copies what `pyproject.toml` declares beside it, at the
+     path it declares it — the other build, which nothing runs before a tag.
+ 10. The refusal for a missing engine library names an install both doors can follow.
 
 NOT HERE, AND WHY: the rendering guard (`test_the_page_renders_the_way_the_index_renders_it`)
 skips by name where `readme_renderer` is not installed, and it was not installed where this plan
-was written — a row aimed at it could only print GREEN over a skip. It needs `readme-renderer[md]`
-in the environment that runs it.
+was written — a row aimed at it could only print GREEN over a skip. `readme-renderer[md]` is in
+the `dev` extra, so CI runs that guard; a venv that cannot reach an index cannot install it.
 
 THE WHEEL ROWS NEED A BUILD BACKEND. `test_the_wheel_ships_what_the_platform_needs.py` builds
 without isolation when the interpreter's own setuptools meets the declared floor, and otherwise
@@ -32,6 +35,7 @@ TEST = "tests/test_the_pypi_page_describes_the_project.py"
 
 WHEEL = "tests/test_the_wheel_ships_what_the_platform_needs.py"
 REMEDY = "tests/test_the_remedy_a_refusal_hands_you_can_be_followed.py"
+ENGINE = "tests/test_the_engine_starts_only_beside_the_library_its_worker_runs_on.py"
 
 PAGE = "docs/pypi.md"
 PYPROJECT = "pyproject.toml"
@@ -127,4 +131,22 @@ MUTATIONS = [
 
     ("the exemption relaxes the add-on packages as well", REMEDY,
      "        return unpublished - {core}", "        return set()", REMEDY),
+
+    # ── 9. the images build the package from what the declaration names ────────────────────────
+    ("the worker image builds the package without the page", "docker/worker.Dockerfile",
+     "COPY docs/pypi.md ./docs/pypi.md\n", "", WHEEL),
+
+    ("the cli image copies the page under its basename, where the backend does not look",
+     "docker/cli.Dockerfile",
+     "COPY docs/pypi.md ./docs/pypi.md\n", "COPY docs/pypi.md ./\n", WHEEL),
+
+    # ── 10. the remedy for a missing engine library, for both doors ────────────────────────────
+    ("the refusal names only the checkout's install again", "openfactory/runtime/host.py",
+     "RUNTIME_INSTALL = (\"`pip install -e '.[runtime]'` in the checkout you installed from, or, "
+     "for an \"\n"
+     "                   \"install from a package index or a wheel, the same `pip install` "
+     "with \"\n"
+     "                   \"`[runtime]` after the package's name\")\n",
+     "RUNTIME_INSTALL = \"`pip install -e '.[runtime]'` in the checkout you installed from\"\n",
+     ENGINE),
 ]
