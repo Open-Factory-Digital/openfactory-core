@@ -65,13 +65,19 @@ class LocalBoard:
 
         THE DISTINCTION IS THE WHOLE POINT and the module docstring of the port says why: a board
         reported empty when it was unreadable is the factory announcing itself idle while a queue
-        of work sits in front of it."""
+        of work sits in front of it.
+
+        IN THE ORDER `items_in_status` SERVES (#512): each column's cards by `position`, then
+        number. The panel draws a column in this order, and a queue drawn in another one — it was
+        the tracker's most-recently-updated first — shows a person a first card the factory does
+        not pick up."""
         try:
             with connect(self._db()) as conn:
                 rows = conn.execute(
                     "SELECT c.ref AS ref, col.name AS name FROM cards c "
                     "LEFT JOIN columns col ON col.project = c.project AND col.key = c.column_key "
-                    "WHERE c.project = ? AND c.state = 'open'", (self.project,)).fetchall()
+                    "WHERE c.project = ? AND c.state = 'open' "
+                    "ORDER BY c.position ASC, c.ref ASC", (self.project,)).fetchall()
         except Exception:  # noqa: BLE001 — unreadable is not empty
             log.warning("could not read %s's board", self.project, exc_info=True)
             return None

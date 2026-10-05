@@ -203,7 +203,12 @@ class BoardAdapter(Protocol):
         """`{ticket ref: column name}` for the whole board.
 
         `None` = COULD NOT READ. `{}` = read fine, nothing on it. Callers depend on the
-        distinction; see the module docstring."""
+        distinction; see the module docstring.
+
+        IN BOARD ORDER, where the board keeps one: within a column, the cards come in the order
+        `items_in_status` serves them — Jira's rank, a Projects item's position, Azure's
+        `StackRank`, the local board's position (#512). The panel draws each column in it, so the
+        queue a person sees is the queue the factory picks up from."""
         ...
 
     def column_names(self) -> list[str] | None:

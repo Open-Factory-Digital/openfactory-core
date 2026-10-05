@@ -13,7 +13,9 @@ refused rank as kept, and the voice says the old promise whatever it is told. Ro
 local board's own order: a move to where the card is sends it to the back of its column, a card
 that enters a column keeps no place there, and a board file from before the position never gains
 it. Rows 12-13 break `place_after` on the local board: it places a card that is not in the column,
-and it puts a card before its anchor.
+and it puts a card before its anchor. Rows 14-16 break what a person sees: the panel's board draws
+each column most-recently-updated first again, the local board answers `columns()` in no order,
+and the panel sorts by a ref of its own instead of following the order the row returns.
 """
 
 TEST = "tests/test_the_queue_runs_in_the_order_a_person_approved.py"
@@ -23,6 +25,7 @@ CONFIRM = "openfactory/product/confirm.py"
 VOICE = "openfactory/product/voice.py"
 LOCAL = "openfactory/adapters/board/local.py"
 DB = "openfactory/adapters/board_db.py"
+PANEL = "openfactory/api/app.py"
 
 MUTATIONS = [
     ("TODAY'S DEFECT, ON JIRA: promote writes no order, so the queue keeps the backlog's old rank",
@@ -80,4 +83,17 @@ MUTATIONS = [
     ("the local board puts a card BEFORE its anchor", LOCAL,
      "            rest.insert(rest.index(int(anchor)) + 1 if anchor else 0, card)",
      "            rest.insert(rest.index(int(anchor)) if anchor else 0, card)"),
+
+    ("the panel draws each column most-recently-updated first again, so the queue a person sees "
+     "starts on a card the poller does not pick", PANEL,
+     '        cards.sort(key=lambda c: order.get(c["ref"], len(order)))\n',
+     '        cards.sort(key=lambda c: c["updated_at"], reverse=True)\n'),
+
+    ("the local board answers its columns in no order of its own", LOCAL,
+     '"ORDER BY c.position ASC, c.ref ASC", (self.project,)).fetchall()',
+     '"", (self.project,)).fetchall()'),
+
+    ("the panel sorts by a ref of its own instead of the order the row returns", PANEL,
+     '        cards.sort(key=lambda c: order.get(c["ref"], len(order)))\n',
+     '        cards.sort(key=lambda c: c["ref"])\n'),
 ]

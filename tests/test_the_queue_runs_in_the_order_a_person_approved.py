@@ -24,6 +24,9 @@ WHAT IS DRIVEN HERE. The yes itself, `confirm.confirm`, with the product role's 
     waited in the queue — then the poller's own read, `activities.scan_todo` (the workflow takes
     `issues[:slots]` of it), and `openfactory poll`, the one-machine scheduler, whose first job is
     the first card approved;
+  · the panel's board route draws that queue in the same order — a person sees as first the card
+    the poller picks — and a hosted row's columns in the order the row returns, sorted by nothing
+    of the panel's own;
   · on the Jira row, with the transport faked at `urllib.request.urlopen` by a site that ranks as
     Jira does (`test_a_queue_on_jira_says_what_it_queued._Site`), a queue confirmed as DAR-11,
     DAR-9 is read back by the board in that order — and a rank the site would not take is said;
@@ -171,6 +174,68 @@ def test_openfactory_poll_drives_the_first_card_approved_first(local, tmp_path, 
 
     assert code == 0, out
     assert driven == ["3"], (driven, out)
+
+
+# ── what a person sees: the panel's board ───────────────────────────────────────────────────────
+
+def test_the_panel_draws_the_queue_in_the_order_the_poller_picks_it_up(local, tmp_path,
+                                                                        monkeypatch):
+    """The panel's board route is what a person looks at, and the page draws each column in the
+    order its cards come. The tracker lists the most recently updated card first, so the queue
+    confirmed as #3, #1 was drawn #1, #3, #4 while the poller picked #3. Drawn now in the board's
+    own order, the order `items_in_status` serves."""
+    import openfactory.runtime.temporal.activities as acts
+    from openfactory.api.app import board_view
+    from openfactory.runtime.temporal.io import ScanInput
+
+    project, _board = local
+    _yes(project, _pen(project, tmp_path), ["3", "1"])
+    monkeypatch.setenv("OPENFACTORY_SANDBOX", "worktree")
+
+    drawn = [c["ref"] for c in board_view(ROOM)["cards"] if c["column"] == QUEUE]
+    picked = asyncio.run(acts.scan_todo(ScanInput(project=ROOM, board_owner="", board_number="",
+                                                  pickup_status=QUEUE)))
+
+    assert drawn == ["3", "1", "4"], drawn
+    assert drawn == picked and picked[:1] == ["3"], (drawn, picked)
+    # and the Backlog left behind, in its own order
+    assert [c["ref"] for c in board_view(ROOM)["cards"] if c["column"] == BACKLOG] == ["2"]
+
+
+class _RankedElsewhere:
+    """A hosted row's board, as the panel reaches it: its own order, which is neither by number
+    nor by update — DAR-12 above DAR-9 above DAR-11."""
+
+    def column_names(self) -> list[str]:
+        return [BACKLOG, QUEUE]
+
+    def columns(self) -> dict[str, str]:
+        return {"DAR-12": QUEUE, "DAR-9": QUEUE, "DAR-11": QUEUE}
+
+
+class _UpdatedFirst:
+    """Its tracker, which lists the most recently updated card first."""
+
+    def list_tickets(self, *, state: str = "open", **_kw):
+        from openfactory.adapters.tracker.base import TicketSummary
+
+        if state != "open":
+            return []
+        return [TicketSummary(ref=ref, title=ref) for ref in ("DAR-11", "DAR-9", "DAR-12")]
+
+
+def test_a_hosted_row_is_drawn_in_the_order_it_returns_with_no_sort_of_the_panels(local,
+                                                                                 monkeypatch):
+    """The panel follows the board's answer and sorts by nothing of its own: not by number
+    (DAR-9, DAR-11, DAR-12), not as strings (DAR-11, DAR-12, DAR-9), not by update."""
+    import openfactory.adapters.board as board_package
+    import openfactory.adapters.tracker.registry as tracker_registry
+    from openfactory.api.app import board_view
+
+    monkeypatch.setattr(board_package, "build_board", lambda *_a, **_k: _RankedElsewhere())
+    monkeypatch.setattr(tracker_registry, "build_tracker", lambda *_a, **_k: _UpdatedFirst())
+
+    assert [c["ref"] for c in board_view(ROOM)["cards"]] == ["DAR-12", "DAR-9", "DAR-11"]
 
 
 # ── the Jira row ─────────────────────────────────────────────────────────────────────────────────
