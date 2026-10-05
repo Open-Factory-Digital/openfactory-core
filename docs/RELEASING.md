@@ -5,6 +5,39 @@ How a version of OpenFactory goes from `main` to the people who install it. It i
 `release-manager` agent (`.claude/agents/release-manager.md`), which executes it step by step and
 stops before every step that cannot be undone.
 
+## The whole process in five minutes
+
+A version reaches the people who install it in five moments. 0.5.0 is the example, with its real
+dates.
+
+| when | what happens | who | what it means |
+|---|---|---|---|
+| **the cycle** (three weeks) | Pull requests merge into `main`, each with the milestone of the version it ships in (`0.5.0`). | everybody; the reviewer approves | The milestone is the list of what the version will contain, and its **due date is the release date** (2026-10-07). |
+| **the cut** (2026-10-05, two days before) | `release/0.5` is created from a green commit of `main`, and `main` starts declaring `0.6.0.dev0`. | the release manager | The content of 0.5.0 is now **frozen**. New work keeps merging into `main`, for 0.6.0. Only fixes reach `release/0.5`, copied from `main`. |
+| **a candidate** (2026-10-05) | `v0.5.0-rc.1` is tagged on `release/0.5` and published **as a pre-release**. | the release manager tags it; the reviewer approves its version pull request | A real release, with images and a wheel, that **only somebody who names it** installs. Everything that resolves "the newest version" (the one-line install, `install.sh` without `--version`, an install of the wheel without a version, the `:0.5` and `:0` images) keeps giving the last final release, so nobody gets a candidate by accident. |
+| **testing** (2026-10-05 → 2026-10-07) | The candidate is installed and used: the upgrade rehearsal, a fresh install, the end-to-end bed, and a real deployment. | the release manager, and whoever tests it | A defect found here is fixed on `main`, copied to `release/0.5`, and becomes `v0.5.0-rc.2`, whose testing starts again. |
+| **the final** (2026-10-07) | `v0.5.0` is tagged on the last candidate plus the one commit that declares `0.5.0`, and becomes **Latest**. | the release manager | What everybody installs is exactly what was tested. Later fixes become `v0.5.1`, `v0.5.2`… from the same branch. |
+
+Every step that cannot be undone (a branch, a tag, a merge, a publication, a setting) waits for the
+release manager's explicit **go**. Every result is written in the release's **tracking issue**
+(`Release 0.5.0`), so anybody can see where the release stands and pick it up from there.
+
+### The words this page uses
+
+| word | meaning |
+|---|---|
+| **milestone** | The GitHub milestone named after the version (`0.5.0`): what the version contains, and its due date, the release date. |
+| **the cut**, **the freeze** | The moment the release branch is created from `main`. After it, the version's content changes only by a fix copied from `main`. |
+| **release branch** | `release/x.y`, one per minor line (`release/0.5`). Every release of the line is tagged on it: the candidates, `v0.5.0`, `v0.5.1`… |
+| **candidate**, **rc** | `vx.y.z-rc.N`, a release published so it can be tested before the final. It is a **pre-release** on GitHub, `0.5.0rcN` on PyPI, and is installed only by naming it. |
+| **final** | `vx.y.z`, the release everybody installs. On GitHub it is **Latest**. |
+| **Latest** | The GitHub release that "the newest version" resolves to: the one-line install, `install.sh` without `--version`, and the site's installer. Never a candidate. |
+| **floating tag** | An image tag that moves to each new final release: `:0.5` (the line) and `:0`. A candidate moves neither. `:latest` is no longer published: it stays on v0.4.2's images for ever, so pin a version instead. |
+| **backport** | Copying a fix merged on `main` to the release branch, with `git cherry-pick -x`, in a pull request of its own. |
+| **the go** | The release manager's explicit approval of one step that cannot be undone. A go covers that step only. |
+| **tracking issue** | The issue `Release x.y.z`: the checklist of this page, with the result of every step. |
+| **ruleset** | A GitHub rule on branches or tags (`release/*`, `v*`) that enforces what this page says, whoever runs it. |
+
 ## Roles
 
 | role | who, today | what they decide or do |
@@ -176,8 +209,13 @@ release manager decides what earns it.
    - the wheel, as version `x.y.zrcN` on PyPI, with its provenance (the workflow publishes it with
      attestations: the file's page on PyPI shows them);
    - the GitHub release, **marked as a pre-release and not as Latest**, with its assets and `SHA256SUMS`.
-4. **Tell whoever will test it how to install it**, with the commands below. The install line the
-   workflow writes on the release page installs the latest *final* release, not the candidate.
+4. **Check that the release page says how to install the candidate**, with the commands below.
+   The workflow writes them (`scripts/release-page-body.sh`, #531). A release line cut before
+   that change, such as 0.5, prints the one-line install on a candidate's page, which installs the
+   last *final* release. On such a line, the release manager replaces the page's install block by
+   hand with the commands below, as was done for `v0.5.0-rc.1`.
+5. **Tell whoever will test it** where the release page is, and to report what they find in the
+   tracking issue.
 
 #### Installing a candidate
 
@@ -196,11 +234,51 @@ Only somebody who names the candidate gets it:
   - `--force` keeps every value in the installation's `.env.compose` and moves only its pinned
     version.
   - Without `--no-run`, the installer starts the stack on the candidate's images.
-- **The wheel:** `pip install openfactory==x.y.zrcN`, PyPI's spelling of the candidate. A plain
-  `pip install openfactory` keeps resolving the last final release.
-- **Back to the last final release:** the same upgrade command with that release's tag. This
-  direction is **not rehearsed**: what the candidate wrote stays where it is. Take a backup of the
-  installation before trying a candidate on it.
+- **The wheel**, when the release published it to PyPI (its page says so): its exact version,
+  `pip install openfactory==x.y.zrcN`, PyPI's spelling of the candidate. An install of the wheel
+  without a version keeps resolving the last final release.
+- **Back to the last final release:** restore the backup taken before the upgrade (below). Running
+  the upgrade command again with the older tag is **not rehearsed**: what the candidate wrote would
+  stay where it is.
+
+#### Backing up an installation before a candidate
+
+Going back from a candidate is not rehearsed, so a test on an installation somebody relies on
+starts with a backup, and an installation that misbehaves goes back by restoring it. An
+installation is two files and five Docker volumes:
+- **the files**, `.env.compose` and `docker-compose.yml`. The installer replaces
+  `docker-compose.yml` with the candidate's, so both are kept;
+- **the volumes**, which Compose names `openfactory_<volume>` because `docker-compose.yml` says
+  `name: openfactory`.
+
+**The backup**, from the installation's directory:
+
+```bash
+docker compose --env-file .env.compose stop      # nothing writes while the copy is taken
+cp -p .env.compose .env.compose.backup
+cp -p docker-compose.yml docker-compose.yml.backup
+for v in temporal_db openfactory_state openfactory_toolbox openfactory_repos openfactory_logs; do
+  docker run --rm -v "openfactory_$v:/v:ro" -v "$PWD:/b" busybox tar czf "/b/backup-$v.tgz" -C /v .
+done
+docker compose --env-file .env.compose start
+```
+
+**Going back**, if the candidate has to be left:
+
+```bash
+docker compose --env-file .env.compose down       # stops it; the volumes stay
+cp -p .env.compose.backup .env.compose            # as it was, with the previous pin
+cp -p docker-compose.yml.backup docker-compose.yml
+for v in temporal_db openfactory_state openfactory_toolbox openfactory_repos openfactory_logs; do
+  docker run --rm -v "openfactory_$v:/v" -v "$PWD:/b" busybox \
+    sh -c "cd /v && find . -mindepth 1 -delete && tar xzf /b/backup-$v.tgz"
+done
+docker compose --env-file .env.compose up -d
+```
+
+The restored files pin the previous release and describe its stack, so `up -d` runs it again.
+The round trip was checked on a scratch volume on 2026-10-05, including a hidden file, a changed
+file and a new file. It has not been run on a whole installation.
 
 ### 4. Verifying a candidate
 
@@ -240,7 +318,13 @@ and what the workaround is.
    since the last verified candidate, record that candidate's rehearsal for the final.
 3. **Tag `vx.y.z` on the merge commit** (release manager's go), the same commands as for a
    candidate.
-4. **Check the publication**, as for a candidate. This time the GitHub release is **Latest**.
+4. **Check the publication**, as for a candidate. This time:
+   - the GitHub release is **Latest**;
+   - the floating image tags `:x.y` and `:x` point at this release's images, and `:latest` has not moved (it is no longer published);
+   - **the site serves this release's installer.** In the `openfactory-website` repository, run
+     Actions → installer → Run workflow (it also runs every hour). Then check that
+     `curl -fsSL https://openfactory.digital/install.sh | sha256sum` equals the `install.sh` line
+     of this release's `SHA256SUMS`.
 5. **Replace the generated notes on the GitHub release with the curated ones.** The install block
    and the image list the workflow writes stay.
 6. **Close the milestone.** Open the next one, if it is not open, with its due date.
@@ -318,5 +402,6 @@ labelled (`Release x.y.z`), on the release's milestone:
 - [ ] Candidate tested until <date>, and no defect found in a candidate is open
 - [ ] Final version declared (#…) with the release notes
 - [ ] vx.y.z tagged, published, Latest; curated notes on the release page
+- [ ] The site serves vx.y.z's installer (sha256 matches its SHA256SUMS)
 - [ ] Milestone closed; next milestone open with its due date
 ```

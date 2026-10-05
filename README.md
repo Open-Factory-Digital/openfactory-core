@@ -90,6 +90,12 @@ it, and restarts the stack. Every value in your `.env.compose` survives it, cred
 and only the pinned version moves. Your data lives in named volumes, which only `--uninstall`
 removes.
 
+**A specific version, or a release candidate.** `--version <tag>` installs that release instead of
+the newest (`… | sh -s -- --version v0.4.2`). A release candidate (`v0.5.0-rc.1`), published
+before a version so it can be tested, is installed **only** this way: the one line above, the
+wheel on PyPI and every other "newest" keep giving the last final release. How to install, test
+and leave a candidate: [Installing a candidate](docs/RELEASING.md#installing-a-candidate).
+
 <a id="the-un-piped-equivalent"></a>
 Prefer to do it by hand? These are the same four steps, and nothing else:
 

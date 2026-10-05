@@ -413,6 +413,8 @@ jobs:
       - name: write the top of the release page
         env:
           TAG: ${{ github.ref_name }}
+          # the page names the wheel only when this run publishes it (the `pypi` job's gate)
+          WHEEL_PUBLISHED: ${{ vars.PYPI_TRUSTED_PUBLISHER == 'true' }}
         run: sh scripts/release-page-body.sh "$TAG" > release-page.md
 
       - uses: softprops/action-gh-release@v2

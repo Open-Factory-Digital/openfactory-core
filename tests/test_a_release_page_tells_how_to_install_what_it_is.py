@@ -10,12 +10,13 @@ this file runs for both kinds of tag:
 
   a final       the one-line install, and the upgrade by `--force`
   a candidate   its own installer with `--version`, the upgrade, the way back, and the wheel's
-                exact version — and NOT the one-line install
+                exact version when this run publishes it — and NOT the one-line install
   every tag     the three images published under it
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -28,8 +29,10 @@ ONE_LINE = "curl -fsSL https://openfactory.digital/install.sh | sh"
 ASSETS = "https://github.com/Open-Factory-Digital/openfactory-core/releases/download"
 
 
-def _page(tag: str) -> str:
-    done = subprocess.run(["sh", str(SCRIPT), tag], capture_output=True, text=True, check=True)
+def _page(tag: str, *, wheel_published: bool = True) -> str:
+    env = {**os.environ, "WHEEL_PUBLISHED": "true" if wheel_published else "false"}
+    done = subprocess.run(["sh", str(SCRIPT), tag], capture_output=True, text=True, check=True,
+                          env=env)
     return done.stdout
 
 
@@ -42,6 +45,10 @@ def test_a_candidates_page_installs_the_candidate_by_name(tag, wheel):
     assert f"pip install openfactory=={wheel}" in page, page
     assert "pre-release" in page and "not rehearsed" in page, page
     assert ONE_LINE not in page, "a candidate's page tells its testers to install the last final"
+
+
+def test_the_wheel_is_named_only_when_this_run_publishes_it():
+    assert "pip install" not in _page("v0.5.0-rc.1", wheel_published=False)
 
 
 def test_a_final_page_installs_with_the_one_line_install():
@@ -79,6 +86,9 @@ def test_the_workflow_writes_the_page_with_the_script_and_publishes_it():
     steps = workflow["jobs"]["release"]["steps"]
     [write] = [s for s in steps if "release-page-body.sh" in str(s.get("run", ""))]
     assert write["env"]["TAG"] == "${{ github.ref_name }}"
+    assert write["env"]["WHEEL_PUBLISHED"] == "${{ vars.PYPI_TRUSTED_PUBLISHER == 'true' }}"
+    pypi = workflow["jobs"]["pypi"]["if"]
+    assert "vars.PYPI_TRUSTED_PUBLISHER == 'true'" in pypi, "the page's gate is not the publish's"
     assert write["run"].strip() == 'sh scripts/release-page-body.sh "$TAG" > release-page.md'
     [publish] = [s for s in steps if str(s.get("uses", "")).startswith("softprops/action-gh-release")]
     assert publish["with"]["body_path"] == "release-page.md"

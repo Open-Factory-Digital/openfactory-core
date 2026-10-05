@@ -1,7 +1,7 @@
 #!/bin/sh
 # The top of a release's GitHub page: how to install THIS release, and which images it published.
 #
-#   sh scripts/release-page-body.sh <tag>      (writes it to stdout)
+#   WHEEL_PUBLISHED=true sh scripts/release-page-body.sh <tag>      (writes it to stdout)
 #
 # THE INSTALL LINE DEPENDS ON WHAT THE TAG IS (#531). A final release (`v0.5.0`) is installed by the
 # one-line install, `curl -fsSL https://openfactory.digital/install.sh | sh`, because that resolves
@@ -10,6 +10,10 @@
 # installed only by naming it. The page used to print the one-line install for every tag, so
 # v0.5.0-rc.1's page told its testers to install v0.4.2, until the release manager corrected it by
 # hand.
+#
+# THE WHEEL IS NAMED ONLY WHEN THIS RUN PUBLISHES IT. Publishing to PyPI is gated on the
+# repository variable PYPI_TRUSTED_PUBLISHER, and the workflow passes the gate as WHEEL_PUBLISHED: a
+# page promising a wheel the same run declined to publish would send its reader to a 404.
 #
 # A SCRIPT THE SUITE RUNS, for the reason `scripts/collect-release-assets.sh` gives: a `run:` or
 # `body:` block in the workflow can only be executed by tagging.
@@ -51,7 +55,7 @@ Going back to the last final release is the same command with its tag, and it is
 EOF
         # PyPI's spelling of a candidate: `v0.5.0-rc.1` is published as `0.5.0rc1`
         wheel=$(printf '%s\n' "${tag#v}" | sed -n 's/^\([0-9][0-9.]*\)-rc\.\([0-9][0-9]*\)$/\1rc\2/p')
-        if [ -n "$wheel" ]; then
+        if [ -n "$wheel" ] && [ "${WHEEL_PUBLISHED:-false}" = true ]; then
             # shellcheck disable=SC2016  # Markdown backticks, printed as they are
             printf '\nThe wheel: `pip install openfactory==%s`.\n' "$wheel"
         fi
