@@ -209,6 +209,30 @@ CI runs the same ruff + pytest you ran locally.
 copies it to the release branch afterwards (`backport-X.Y`). The milestone on a pull request says
 which version it may ship in. [docs/RELEASING.md](docs/RELEASING.md) is the whole process.
 
+**A pull request that changes behaviour carries its release note**: the line a person installing
+the release will read about it, in a file of its own, `changes/<issue>.<type>.md`. The reviewer
+reads the line with the change, and the release assembles the lines into `CHANGELOG.md` and the
+release page; nobody rewrites them later. For example, `changes/531.fix.md`:
+
+```markdown
+**A release candidate's page installs the candidate.** It printed the one-line install, which installs the latest final release, so its testers installed the previous version.
+```
+
+- `<issue>` is the issue the pull request closes, or the pull request's own number when it closes
+  none.
+- `<type>` is where a reader looks for it: `highlight`, `behaviour` (new or changed behaviour),
+  `fix`, `security`, `upgrade` (what an existing installation must do or will notice) or
+  `limitation` (what does not work yet, and the workaround).
+- **One sentence or paragraph per line, however long**: the release page shows a line break inside
+  a paragraph as a break. A `- ` line under it is a sub-item.
+- **No number in the text**: the assembly adds `(#531)` from the file name.
+- **A pull request that changes only documents or tests carries no fragment**: ask for the label
+  `no-release-note` instead.
+
+The check `release-note` says which pull request carries neither, and names a fragment it cannot
+read. `python3 scripts/release_notes.py preview <version>` shows the notes as they stand.
+[docs/RELEASING.md](docs/RELEASING.md), "The release notes", has the whole of it.
+
 **Your machine is not the reference.** Anything optional that lives outside the clone — a
 directory of sample projects, a credential, a running daemon — must make a test SKIP at run
 time, never change what is collected. A module that resolves such a thing at import can raise

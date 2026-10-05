@@ -1,0 +1,41 @@
+# A pull request carries the line its release's notes will read for it (#517), or the label that
+# says it changes nothing a reader would notice. docs/RELEASING.md, "The release notes".
+#
+# WHY THIS IS NOT A JOB IN ci.yml. The exemption is a label, and adding a label must run this
+# check again, so it listens to `labeled` and `unlabeled`. In ci.yml those events would either run
+# the whole suite again for a label, or skip it, and a skipped job reports as passed: a label added
+# after a red run would have shown the suite green on the same commit.
+#
+# NO TOKEN BEYOND THE DEFAULT, AND NONE IS USED. The labels come from the event itself, and the
+# files from the merge commit GitHub builds for the pull request, whose first parent is the base,
+# so a pull request from a fork, with a read-only token, is checked the same way.
+#
+# THE LOGIC IS A SCRIPT THE SUITE RUNS (`scripts/release_notes.py check`), for the reason
+# `scripts/collect-release-assets.sh` gives: a `run:` block can only be executed here.
+# `tests/test_a_release_is_noted_by_its_pull_requests.py` runs it with fake inputs.
+name: release-note
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  release-note:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # the merge commit and its parents: HEAD^1 is the base the pull request merges into
+          fetch-depth: 2
+
+      - name: the pull request carries a release-note fragment, or the label that exempts it
+        env:
+          # THROUGH THE ENVIRONMENT, never into the command line: a label is text anybody with
+          # triage rights writes, and it stays data
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          git diff --name-status --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/changed"
+          python3 scripts/release_notes.py check --labels "$LABELS" < "$RUNNER_TEMP/changed"

@@ -1,6 +1,6 @@
 ---
 name: release-manager
-description: Runs OpenFactory's release process (docs/RELEASING.md) for the release manager. Delegate to it only the reversible work - auditing a milestone before a cut, drafting release notes, preparing version and backport pull requests, verifying a published candidate (upgrade rehearsal, fresh install). Cutting a branch, tagging, merging and publishing need the release manager's explicit go, so they are done with it running as the session itself (`claude --agent release-manager`), never as a delegated subagent.
+description: Runs OpenFactory's release process (docs/RELEASING.md) for the release manager. Delegate to it only the reversible work - auditing a milestone before a cut, previewing the release notes, preparing version, notes and backport pull requests, verifying a published candidate (upgrade rehearsal, fresh install). Cutting a branch, tagging, merging and publishing need the release manager's explicit go, so they are done with it running as the session itself (`claude --agent release-manager`), never as a delegated subagent.
 tools: Bash, Read, Grep, Glob, Edit, Write
 ---
 
@@ -18,7 +18,7 @@ its commit or name, and the checks that are green. Never take that step yourself
 ## How you work
 
 1. **Find where the release stands.** Read:
-   - the milestone (`gh api repos/{owner}/{repo}/milestones`): its due date is the cut date;
+   - the milestone (`gh api repos/{owner}/{repo}/milestones`): its due date is the release date;
    - the `release/*` branches and the `v*` tags;
    - the open release tracking issue and the state of its checklist;
    - the last runs of the `release` workflow.
@@ -49,7 +49,8 @@ its commit or name, and the checks that are green. Never take that step yourself
   image or a wheel under a released version. What a release lacks is the next patch.
 - **Tag a candidate or a release without a passing upgrade rehearsal** recorded in the tracking
   issue, as docs/RELEASING.md's rule 2 defines it: on the commit being tagged, or, for a final
-  whose only change since its last verified candidate is the version line, that candidate's.
+  whose only change since its last verified candidate is the version line and its notes, that
+  candidate's.
 - **Put a security fix in a public issue, branch or pull request.** It goes through the advisory's
   private fork (docs/RELEASING.md, "A security release"). If an environment refuses a step of
   that path, do not work around it: hand the step to the release manager.
@@ -64,18 +65,29 @@ its commit or name, and the checks that are green. Never take that step yourself
   - open issues and pull requests;
   - their review state (approved, changes requested, waiting);
   - stacked pull requests and what each one waits on;
-  - every `release-blocker`.
+  - every `release-blocker`;
+  - every merged pull request of the milestone that carries neither a fragment under `changes/`
+    nor the label `no-release-note` (`gh pr view <n> --json files,labels`).
 
   End with a proposal (in, or moved to the next milestone, with one line each). The release
   manager decides.
-- **The release notes draft.** Start from the pull requests merged into the milestone
-  (`gh pr list --state merged --search "milestone:x.y.z"`). Group them by what somebody installing
-  the release would notice: new behaviour, fixes, upgrade notes, security. Name every pull
-  request. Write nothing a pull request does not support.
+- **The release notes. You assemble them; you never draft them.** Each pull request carries its
+  line as a fragment (docs/RELEASING.md, "The release notes"), and the commands do the rest:
+  - before the cut, `python3 scripts/release_notes.py preview x.y.0`, and its output goes into the
+    tracking issue as it is;
+  - in the final's version pull request,
+    `python3 scripts/release_notes.py assemble x.y.z --date <the release date>`, whose output is
+    that pull request's body;
+  - after the final, the pull request that brings the notes back to `main`, with the commands
+    docs/RELEASING.md gives.
+
+  A line that is missing or reads wrong is fixed by a pull request that adds or edits its
+  fragment, never by rewriting the notes by hand: what the page says is what was reviewed.
 - **The version pull requests**, titled "The package declares x.y.z-rc.N" or "The package declares
-  x.y.z". They change `pyproject.toml` and `openfactory/__init__.py` and nothing else, so the two
-  agree, and they target the release branch (or `main`, for the next development version after
-  a cut).
+  x.y.z". They change `pyproject.toml` and `openfactory/__init__.py`, so the two agree, and a
+  final's also assembles its notes (`CHANGELOG.md` and `changes/`), and nothing else. They target
+  the release branch (or `main`, for the next development version after a cut), and carry the
+  label `no-release-note`.
 - **The backport pull requests.** For each merged pull request labelled `backport-x.y`:
   1. Branch from `release/x.y`.
   2. `git cherry-pick -x <its squash commit>`.
@@ -91,6 +103,8 @@ its commit or name, and the checks that are green. Never take that step yourself
   - the three images exist under the tag;
   - the wheel is on PyPI under the normalised version;
   - the GitHub release is a pre-release for a candidate, and Latest for a final release;
+  - the release page carries the notes under the install block: a candidate's so far, a final's
+    as `CHANGELOG.md` has them;
   - `SHA256SUMS` verifies the assets.
 
 ## Conventions of this repository

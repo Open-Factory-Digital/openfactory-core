@@ -12,11 +12,11 @@ dates.
 
 | when | what happens | who | what it means |
 |---|---|---|---|
-| **the cycle** (one week) | Pull requests merge into `main`, each with the milestone of the version it ships in (`0.5.0`). | everybody; the reviewer approves | The milestone is the list of what the version will contain, and its **due date is the release date** (2026-10-07). |
+| **the cycle** (one week) | Pull requests merge into `main`, each with the milestone of the version it ships in (`0.5.0`), and each with the line the release notes will read for it (a **fragment**). | everybody; the reviewer approves the change and its line | The milestone is the list of what the version will contain, and its **due date is the release date** (2026-10-07). |
 | **the cut** (2026-10-05, two days before) | `release/0.5` is created from a green commit of `main`, and `main` starts declaring `0.6.0.dev0`. | the release manager | The content of 0.5.0 is now **frozen**. New work keeps merging into `main`, for 0.6.0. Only fixes reach `release/0.5`, copied from `main`. |
 | **a candidate** (2026-10-05) | `v0.5.0-rc.1` is tagged on `release/0.5` and published **as a pre-release**. | the release manager tags it; the reviewer approves its version pull request | A real release, with images and a wheel, that **only somebody who names it** installs. Everything that resolves "the newest version" (the one-line install, `install.sh` without `--version`, an install of the wheel without a version, the `:0.5` and `:0` images) keeps giving the last final release, so nobody gets a candidate by accident. |
 | **testing** (2026-10-05 → 2026-10-07) | The candidate is installed and used: the upgrade rehearsal, a fresh install, the end-to-end bed, and a real deployment. | the release manager, and whoever tests it | A defect found here is fixed on `main`, copied to `release/0.5`, and becomes `v0.5.0-rc.2`, whose testing starts again. |
-| **the final** (2026-10-07) | `v0.5.0` is tagged on the last candidate plus the one commit that declares `0.5.0`, and becomes **Latest**. | the release manager | What everybody installs is exactly what was tested. Later fixes become `v0.5.1`, `v0.5.2`… from the same branch. |
+| **the final** (2026-10-07) | `v0.5.0` is tagged on the last candidate plus the one commit that declares `0.5.0` and assembles its notes, and becomes **Latest**. | the release manager | What everybody installs is exactly what was tested, and its notes are in `CHANGELOG.md` and on its page. Later fixes become `v0.5.1`, `v0.5.2`… from the same branch. |
 
 Every step that cannot be undone (a branch, a tag, a merge, a publication, a setting) waits for the
 release manager's explicit **go**. Every result is written in the release's **tracking issue**
@@ -34,6 +34,7 @@ release manager's explicit **go**. Every result is written in the release's **tr
 | **Latest** | The GitHub release that "the newest version" resolves to: the one-line install, `install.sh` without `--version`, and the site's installer. Never a candidate. |
 | **floating tag** | An image tag that moves to each new final release: `:0.5` (the line) and `:0`. A candidate moves neither. `:latest` is no longer published: it stays on v0.4.2's images for ever, so pin a version instead. |
 | **backport** | Copying a fix merged on `main` to the release branch, with `git cherry-pick -x`, in a pull request of its own. |
+| **fragment** | A file a pull request adds, `changes/<issue>.<type>.md`, holding the line the release notes will read for it. At the final release the fragments are assembled into `CHANGELOG.md` and the release page, and removed. |
 | **the go** | The release manager's explicit approval of one step that cannot be undone. A go covers that step only. |
 | **tracking issue** | The issue `Release x.y.z`: the checklist of this page, with the result of every step. |
 | **ruleset** | A GitHub rule on branches or tags (`release/*`, `v*`) that enforces what this page says, whoever runs it. |
@@ -45,7 +46,7 @@ release manager's explicit **go**. Every result is written in the release's **tr
 | release manager | @robertocsp | the cut date, what goes in, every tag, the go/no-go for each release |
 | reviewer | @hermesfelipe | reviews every pull request, the version and backport pull requests included |
 | deputy release manager | @hermesfelipe | takes the role when the release manager cannot: the `v*` ruleset lists both, so a release never waits on one person |
-| release agent | `release-manager` | audits, prepares the pull requests, runs the rehearsals, drafts the notes. It never tags, publishes, merges or changes a setting without the release manager's explicit go |
+| release agent | `release-manager` | audits, prepares the pull requests, runs the rehearsals, previews and assembles the notes. It never tags, publishes, merges or changes a setting without the release manager's explicit go |
 
 ## Running it with the agent
 
@@ -76,7 +77,7 @@ The whole session is then the agent:
 
 | phase | ask |
 |---|---|
-| before the cut | "Audit milestone 0.6.0 for Monday's cut." / "Draft the release notes for 0.6.0." |
+| before the cut | "Audit milestone 0.6.0 for Monday's cut." / "Preview the release notes of 0.6.0." |
 | the cut | "Cut release/0.5." |
 | a candidate | "Prepare 0.5.0-rc.1." / "Verify v0.5.0-rc.1." |
 | fixes | "Backport the pull requests labelled backport-0.5." |
@@ -99,8 +100,9 @@ done, in plain words:
 ```
 
 That runs it as a subagent. A subagent works to the end and returns a report; it cannot wait for
-an answer. Use it for the reversible work: an audit, the notes, the backport pull requests. For
-anything that needs a go, start `claude --agent release-manager`, or take the step by hand.
+an answer. Use it for the reversible work: an audit, the notes' preview, the backport pull
+requests. For anything that needs a go, start `claude --agent release-manager`, or take the step
+by hand.
 
 **Without Claude Code,** this page is the whole process: every step has its command.
 
@@ -141,10 +143,57 @@ release/0.5          ●───●─────●────●───�
   `openfactory/__init__.py` say `0.5.0-rc.1` for the tag `v0.5.0-rc.1` (PyPI normalises it to
   `0.5.0rc1`). The release workflow refuses a tag whose version the package does not declare.
 - **The final release is tagged on the commit the last candidate was verified on**, plus the one
-  commit that declares the final version. Nothing else changes between the last candidate and the
-  release: what everybody installs is what was tested.
+  commit that declares the final version and assembles its notes. Nothing else changes between the
+  last candidate and the release: what everybody installs is what was tested.
 - **After the cut, `main` declares the next minor's development version** (`0.6.0.dev0`), so a
   build of `main` never claims to be a release it is not.
+
+## The release notes
+
+**Every pull request carries the line the release notes will read for it**, and nobody drafts the
+notes at the cut. The line is written by whoever knows the change, the reviewer reads it beside the
+code it describes, and the release only assembles the lines, by a command.
+
+**A fragment** is the file that holds the line: `changes/<issue>.<type>.md`.
+- `<issue>` is the number of the issue the pull request closes, or of the pull request itself when
+  it closes none. A security fix uses its advisory's id (`GHSA-xxxx-xxxx-xxxx`).
+- `<type>` is the group of the notes a reader looks in:
+
+  | type | heading on the page | for |
+  |---|---|---|
+  | `highlight` | Highlights | one of the few changes a reader should hear about first; instead of a `behaviour` line, not beside it |
+  | `behaviour` | New behaviour | what the product does that it did not do, or does differently |
+  | `fix` | Fixes | a defect that no longer happens |
+  | `security` | Security | a vulnerability fixed |
+  | `upgrade` | Upgrade notes | what an existing installation must do, or will notice, when it upgrades |
+  | `limitation` | Known limitations | what does not work yet in this release, and the workaround |
+
+- The text is the line in Markdown, as somebody installing the release should read it, **one
+  sentence or paragraph per line** (a release page shows a line break inside a paragraph as a
+  break), with `- ` sub-items for detail. It does not carry its number: the assembly adds
+  `(#<issue>)` from the file name.
+- One pull request may carry several fragments, of different types or for different issues.
+
+**The check `release-note`** (`.github/workflows/release-note.yml`) runs on every pull request, and
+again when its labels change. It fails when the pull request adds or edits no fragment and does not
+carry the label `no-release-note`, and it names every fragment that is malformed.
+
+**The label `no-release-note`** exempts a pull request that changes nothing a reader of the notes
+would notice: documents only, tests only, and the release's own pull requests (a version, the
+notes brought back to `main`). It is visible to the reviewer, who can question it.
+
+**`CHANGELOG.md`**, at the root of the repository, holds every version's notes, newest first, from
+0.6.0 on. The notes of earlier versions are on their GitHub release pages.
+
+**The commands**, run from the root of a checkout. `scripts/release_notes.py` uses Python's
+standard library only:
+
+| command | when | what it does |
+|---|---|---|
+| `python3 scripts/release_notes.py preview x.y.z` | before the cut, or any time | prints the notes the fragments make now; changes nothing |
+| `python3 scripts/release_notes.py assemble x.y.z --date <the release date>` | in the final's version pull request | writes the version's section at the top of `CHANGELOG.md`, removes the fragments it used, and prints the notes the release page will carry |
+| `sh scripts/release-page-body.sh vx.y.z` | to read a release's page before tagging it | prints how to install it, its images, and its notes (`python3 scripts/release_notes.py page vx.y.z`): a final's section of `CHANGELOG.md`, or a candidate's fragments so far |
+| `python3 scripts/release_notes.py check` | CI, on every pull request | the check above |
 
 ## Rules that do not bend
 
@@ -153,9 +202,9 @@ release/0.5          ●───●─────●────●───�
    tracked as an issue on the next milestone.
 2. **Rehearse the upgrade before every tag**, candidate or final (below), on the commit being
    tagged. A final release whose only change since its last verified candidate is the version line
-   carries that candidate's rehearsal, recorded again for the final. Anything else is rehearsed
-   again. It caught #363 before `v0.4.0`: an upgrade that emptied every credential, which two
-   tests had pinned as the contract.
+   and its notes carries that candidate's rehearsal, recorded again for the final. Anything else is
+   rehearsed again. It caught #363 before `v0.4.0`: an upgrade that emptied every credential,
+   which two tests had pinned as the contract.
 3. **A security defect never becomes a public issue or an ordinary pull request.** It follows the
    private advisory path (below). Release first, publish the advisory second.
 4. **Only the release manager creates a release branch or a tag**, and only after the checks of
@@ -196,8 +245,16 @@ Wednesday  the final, when nothing found in a candidate is open
 - The release manager decides, item by item, what still goes in and what moves to the next
   milestone. Moving an item is a milestone change on the issue or pull request, with one line
   saying why.
-- Draft the release notes from the merged pull requests of the milestone, grouped by what a reader
-  installing it would notice. The draft lives in the release tracking issue.
+- **Read the notes as they stand**, assembled from the fragments on `main`, and put them in the
+  release tracking issue:
+  ```bash
+  python3 scripts/release_notes.py preview x.y.0
+  ```
+  It changes nothing. A line that reads wrong is corrected by a pull request that edits its
+  fragment, reviewed like any other; the notes are never rewritten by hand in the issue.
+- **Every merged pull request of the milestone carries a fragment or the label `no-release-note`.**
+  The audit lists those that carry neither, and each gets its fragment in a small pull request, or
+  the label.
 
 **Exit:** no open `release-blocker`, and `main`'s CI is green on the commit to be cut.
 
@@ -226,13 +283,14 @@ Wednesday  the final, when nothing found in a candidate is open
    - the wheel, as version `x.y.zrcN` on PyPI, with its provenance (the workflow publishes it with
      attestations: the file's page on PyPI shows them);
    - the GitHub release, **marked as a pre-release and not as Latest**, with its assets and `SHA256SUMS`.
-4. **Check that the release page says how to install the candidate**, with the commands below.
-   The workflow writes them (`scripts/release-page-body.sh`, #531). A release line cut before
-   that change, such as 0.5, prints the one-line install on a candidate's page, which installs the
+4. **Check that the release page says how to install the candidate**, with the commands below,
+   and carries the notes so far, from the fragments on the branch. The workflow writes both
+   (`scripts/release-page-body.sh`, #531, #517). A release line cut before the first of those
+   changes, such as 0.5, prints the one-line install on a candidate's page, which installs the
    last *final* release. On such a line, the release manager replaces the page's install block by
    hand with the commands below, as was done for `v0.5.0-rc.1`, or backports
-   `scripts/release-page-body.sh` and its workflow step with the fixes of the line's next
-   candidate.
+   `scripts/release-page-body.sh`, `scripts/release_notes.py` and its workflow step with the fixes
+   of the line's next candidate.
 5. **Tell whoever will test it** where the release page is, and to report what they find in the
    tracking issue.
 
@@ -354,10 +412,20 @@ and what the workaround is.
 
 ### 5. The final release
 
-1. **A pull request on `release/x.y`** declares `x.y.z`. Its body carries the release notes as
-   they will be published.
-2. **Rehearse the upgrade on that commit**, as rule 2 says: when only the version line changed
-   since the last verified candidate, record that candidate's rehearsal for the final.
+1. **A pull request on `release/x.y` declares `x.y.z` and assembles its notes**, in one commit:
+   the version line, as for a candidate, and
+   ```bash
+   python3 scripts/release_notes.py assemble x.y.z --date <the release date>
+   ```
+   - It writes the section `## x.y.z (<the release date>)` at the top of `CHANGELOG.md`, and
+     removes from `changes/` the fragments it used.
+   - It prints the notes as the release page will carry them. They are the pull request's body.
+   - The pull request carries the label `no-release-note`: its notes are the fragments'.
+   - The check `release-note` refuses a final version whose notes are not in `CHANGELOG.md`, or
+     whose pull request leaves a fragment behind.
+2. **Rehearse the upgrade on that commit**, as rule 2 says: when only the version line and the
+   notes changed since the last verified candidate, record that candidate's rehearsal for the
+   final.
 3. **Tag `vx.y.z` on the merge commit** (release manager's go), the same commands as for a
    candidate.
 4. **Check the publication**, as for a candidate. This time:
@@ -367,10 +435,23 @@ and what the workaround is.
      Actions → installer → Run workflow (it also runs every hour). Then check that
      `curl -fsSL https://openfactory.digital/install.sh | sha256sum` equals the `install.sh` line
      of this release's `SHA256SUMS`.
-5. **Replace the generated notes on the GitHub release with the curated ones.** The install block
-   and the image list the workflow writes stay.
-6. **Close the milestone.** Open the next one, if it is not open, with its due date.
-7. **Close the tracking issue.**
+5. **Check that the release page carries the notes**, under the install block and the image
+   list. The workflow writes them from `CHANGELOG.md`; GitHub's list of the merged pull requests
+   follows them.
+6. **Bring the notes back to `main`**, in a pull request titled "The notes of x.y.z reach main",
+   with the label `no-release-note`:
+   ```bash
+   git switch -c notes/x.y.z origin/main
+   git diff vx.y.z^ vx.y.z -- CHANGELOG.md changes/ | git apply --3way
+   git commit -m "The notes of x.y.z reach main"
+   ```
+   - It applies to `main` what the final's commit did to the notes: the new section of
+     `CHANGELOG.md`, and the removal of the fragments it used, so the next version's notes do
+     not list them again.
+   - On a patch of an older line than `main`'s, `CHANGELOG.md` may conflict: keep both sections,
+     the newest version first.
+7. **Close the milestone.** Open the next one, if it is not open, with its due date.
+8. **Close the tracking issue.**
 
 ### 6. Patch releases
 
@@ -381,8 +462,10 @@ and what the workaround is.
   3. Open a pull request into `release/x.y` titled `[x.y] <the original title> (#<original>)`, with a
      body that links the original and names any conflict resolved.
 
-  The agent prepares these; the reviewer approves them like any other pull request.
-- A patch release is then steps 3–5 with `z+1`. Its candidate is optional, and its rehearsal is not.
+  The agent prepares these; the reviewer approves them like any other pull request. The
+  cherry-pick carries the original's fragment, so the fix's line reaches the patch's notes.
+- A patch release is then steps 3–5 with `z+1`, its notes assembled the same way. Its candidate is
+  optional, and its rehearsal is not.
 - **Which lines get patches:** the latest minor line. The line before it gets security fixes only,
   and only when the release manager decides so.
 
@@ -394,7 +477,7 @@ as an issue or an ordinary pull request:
 1. **Open a draft advisory.** It is private.
 2. **Open the advisory's temporary private fork** and add the reviewer as a collaborator.
 3. **Put the fix there:** one pull request into `main`, and one into each `release/x.y` that
-   receives it.
+   receives it. Its fragment is `changes/GHSA-xxxx-xxxx-xxxx.security.md`, named by the advisory.
 4. **Request the CVE.** The number is assigned after the advisory is published.
 5. **Merge from the advisory page.** A repository admin's "merge and bypass branch protections" is
    scoped to that merge. Never add a bypass actor to a ruleset.
@@ -426,7 +509,11 @@ as an issue or an ordinary pull request:
     Squash-only merges keep the line linear without it.
 - **A tag ruleset on `v*`:** creation restricted to the release manager and the deputy; update
   and deletion forbidden to everybody (a published release is frozen).
-- **The labels** `release-blocker` and `backport-x.y` (one per supported line).
+- **The labels** `release-blocker`, `backport-x.y` (one per supported line), and
+  `no-release-note`, which exempts a pull request from the release-note check.
+- **The check `release-note` as a required status check** of `main`'s ruleset, if the release
+  manager wants a pull request without its line to be unable to merge. Without it, the check
+  still says which pull request lacks one, and the audit before the cut catches what merged red.
 
 ## The release tracking issue
 
@@ -435,6 +522,7 @@ labelled (`Release x.y.z`), on the release's milestone:
 
 ```markdown
 - [ ] Milestone audited; everything left moved or marked `release-blocker`
+- [ ] Notes previewed from the fragments; every merged pull request carries one or `no-release-note`
 - [ ] `release/x.y` cut from <sha> (main's CI green on it)
 - [ ] `main` declares x.(y+1).0.dev0 (#…)
 - [ ] rc.1 declared (#…), tagged, published as a pre-release
@@ -442,8 +530,9 @@ labelled (`Release x.y.z`), on the release's milestone:
 - [ ] Fresh install of the candidate: <result>
 - [ ] End-to-end bed against the candidate: <result>
 - [ ] Candidate tested until <date>, and no defect found in a candidate is open
-- [ ] Final version declared (#…) with the release notes
-- [ ] vx.y.z tagged, published, Latest; curated notes on the release page
+- [ ] Final version declared and its notes assembled into `CHANGELOG.md` (#…)
+- [ ] vx.y.z tagged, published, Latest; its notes on the release page
+- [ ] The notes of x.y.z reached main (#…)
 - [ ] The site serves vx.y.z's installer (sha256 matches its SHA256SUMS)
 - [ ] Milestone closed; next milestone open with its due date
 ```

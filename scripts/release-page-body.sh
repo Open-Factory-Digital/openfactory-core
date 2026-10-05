@@ -1,5 +1,5 @@
 #!/bin/sh
-# The top of a release's GitHub page: how to install THIS release, and which images it published.
+# A release's GitHub page: how to install THIS release, which images it published, and its notes.
 #
 #   WHEEL_PUBLISHED=true sh scripts/release-page-body.sh <tag>      (writes it to stdout)
 #
@@ -18,6 +18,9 @@
 # A SCRIPT THE SUITE RUNS, for the reason `scripts/collect-release-assets.sh` gives: a `run:` or
 # `body:` block in the workflow can only be executed by tagging.
 # `tests/test_a_release_page_tells_how_to_install_what_it_is.py` runs it for both kinds of tag.
+
+# THE NOTES COME LAST (#517): a final's section of CHANGELOG.md, a candidate's fragments as they
+# stand, both written by `scripts/release_notes.py page <tag>`. See the end of this file.
 
 # THE PROSE IS NOT WRAPPED: a release page renders a newline inside a paragraph as a line break.
 
@@ -88,3 +91,13 @@ Images published for this tag (\`linux/amd64\`, \`linux/arm64\`):
 
 Verify the assets below with \`sha256sum -c SHA256SUMS --ignore-missing\`.
 EOF
+
+# THE NOTES OF THIS RELEASE, UNDER HOW TO INSTALL IT (#517). A final's are its section of
+# CHANGELOG.md, which its version pull request assembled from the fragments its pull requests
+# carried; a candidate's are those fragments as they stand, so whoever tests it reads what changed.
+# NEVER A REASON TO FAIL THE RUN: by this step the images are published under the tag, and a
+# failed release job burns the version (docs/RELEASING.md, "When a release goes wrong"). So a page
+# without its notes says so, and the release manager adds them by hand.
+printf '\n'
+python3 "$(dirname "$0")/release_notes.py" page "$tag" \
+    || echo "The notes of this release could not be written here: the release manager adds them to this page by hand."
