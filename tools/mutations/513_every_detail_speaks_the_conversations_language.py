@@ -39,13 +39,14 @@ MUTATIONS = [
      '            return WriteResult(ok=False, detail=f"não encontrei o {ref_label(number)}")\n'
      '        if has_criteria(ticket):'),
 
+    # re-pinned 2026-10-05: the refine note is the voice's `refine_note` now (#538)
     ("refine counts what it wrote as \"3 critérios\" in every language", MOD,
      '        detail = criteria_counted(len(criteria), language=lang)\n'
      '        try:\n'
-     '            tracker.comment(f"#{number}", _refine_note(',
+     '            tracker.comment(f"#{number}", refine_note(',
      '        detail = f"{len(criteria)} critérios"\n'
      '        try:\n'
-     '            tracker.comment(f"#{number}", _refine_note('),
+     '            tracker.comment(f"#{number}", refine_note('),
 
     ("a requirement already agreed is \"esse já estava acordado\" again", MOD,
      '                               detail=record_said("already_agreed", language=lang),',
@@ -67,10 +68,12 @@ MUTATIONS = [
      '            return False, release_said("not_waiting", ref=issue, language=lang)',
      '            return False, f"o #{issue} não está mais esperando essa liberação."'),
 
-    ("the note on the surviving card says `o #DAR-9` — no detail reaches it, only the guard", MOD,
-     '    return (f"{signature(agent)} o {ref_label(closed)} foi fechado em favor deste, '
-     'a pedido de "',
-     '    return (f"{signature(agent)} o #{closed} foi fechado em favor deste, a pedido de "'),
+    # re-pinned 2026-10-05: the survivor note moved from the module into the voice (#538)
+    ("the note on the surviving card says `o #DAR-9` — no detail reaches it, only the guard", VOICE,
+     '    return _pick(_SURVIVOR_NOTE, language).format(sig=signature(agent_name), '
+     'ref=ref_label(closed),',
+     '    return _pick(_SURVIVOR_NOTE, language).format(sig=signature(agent_name), '
+     'ref=f"#{closed}",'),
 
     ("the cards a batch boundary left are joined with `#` in the module again", MOD,
      '            trailer = queue_said("left_for_later", cards=[i.ticket for i in cut], '

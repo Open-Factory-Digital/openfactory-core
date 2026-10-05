@@ -2054,6 +2054,19 @@ _RECORD_SAID = {
                   "o time foi avisado e resolve."),
         "en": ("I could not record the confirmation of capability {term} just now. Nothing "
                "changed — the team has been told and will sort it out.")},
+    # what `capabilities.confirm_in_repository` finds in the file it would write (#538)
+    "capability_is_a_link": {
+        "pt-BR": "o arquivo dessa capacidade é um link — não escrevo através dele",
+        "en": "that capability's file is a link — I do not write through it"},
+    "capability_unreadable": {"pt-BR": "não consegui ler o arquivo dessa capacidade",
+                              "en": "I could not read that capability's file"},
+    "capability_already_confirmed": {"pt-BR": "essa capacidade já estava confirmada",
+                                     "en": "that capability was already confirmed"},
+    "capability_retired": {
+        "pt-BR": ("essa capacidade foi aposentada — confirmar de novo é uma decisão a registrar "
+                  "por escrito, não um sim"),
+        "en": ("that capability was retired — confirming it again is a decision to record in "
+               "writing, not a yes")},
     "decision_on_retired": {
         "pt-BR": ("o requisito {number} já não vale, então registrar uma decisão nele guardaria "
                   "isso onde ninguém vai procurar. Me diga em qual requisito isso deve entrar."),
@@ -2929,7 +2942,7 @@ _CLOSE_CONFIRM_DUPLICATE = {
            "changes, and nothing starts because of this — starting is still your call."
            "\n\nConfirm?"),
 }
-#: WHAT THE CLOSING NOTE ACTUALLY HOLDS. `_closing_note` writes who asked, and the reason only when
+#: WHAT THE CLOSING NOTE ACTUALLY HOLDS. `closing_note` writes who asked, and the reason only when
 #: somebody gave one — so the sentence that claimed "quem decidiu **e por quê**" over a note reading
 #: "fechado a pedido de <@U…>." was promising the client a record that did not exist. Whoever opened
 #: the card in six months found half of what they had been told was there.
@@ -3015,6 +3028,59 @@ def survivor_unclear(*, number: str, other: str, language: str | None = None) ->
     """Which card the work moved to, asked rather than guessed."""
     return _pick(_SURVIVOR_UNCLEAR, language).format(number=ref_label(number),
                                                      other=ref_label(other))
+
+
+# ── what the role leaves written ON a card (#538) ───────────────────────────────────────────────
+#
+# A CARD BELONGS TO THE PROJECT, NOT TO A CONVERSATION. These are not said in the chat: they stay
+# on the card's own thread, where somebody reads them months later with no idea which conversation
+# asked — so they follow the PROJECT's language (`Project.language`), as `_CORRECTION_NOTE` and
+# `_CHANGE_ACCEPTED_NOTE` do. Until #538 the five of them were composed in `module.py` in
+# Portuguese, #513 having fixed only their `#`: an English project's card said "fechado a pedido
+# de …" about its own closing. `{sig}` is `signature`, `{ref}` a card named by `ref_label`.
+
+#: Who asked, when nobody is named — a caller that passed no actor.
+_THE_TEAM = {"pt-BR": "o time", "en": "the team"}
+#: What the closed card is left saying. Written for whoever opens it in six months and asks why the
+#: work disappeared — so it names the decision, the person, and, when it moved, where it went.
+_CLOSING_NOTE = {
+    "pt-BR": "{sig} fechado a pedido de {who}.",
+    "en": "{sig} closed at the request of {who}.",
+}
+_CLOSING_NOTE_IN_FAVOUR = {
+    "pt-BR": ("{sig} fechado a pedido de {who}, em favor do {ref}: o trabalho passa a ser "
+              "acompanhado lá."),
+    "en": ("{sig} closed at the request of {who}, in favour of {ref}: the work is followed there "
+           "now."),
+}
+#: The other half of the link. Without it the surviving card never learns it absorbed something,
+#: and whoever picks it up works from half the conversation.
+_SURVIVOR_NOTE = {
+    "pt-BR": ("{sig} o {ref} foi fechado em favor deste, a pedido de {who}. Se havia algo escrito "
+              "lá que não está aqui, vale trazer antes de começar."),
+    "en": ("{sig} {ref} was closed in favour of this one, at the request of {who}. If something "
+           "was written there that is not here, bring it over before starting."),
+}
+
+
+def closing_note(*, in_favour_of: str | None, actor: str, reason: str = "",
+                 language: str | None = None, agent_name: str = "") -> str:
+    """What the closed card is left saying: who asked, where the work went when it moved, and the
+    reason in the words it was given — never translated, because it is somebody's."""
+    catalogue = _CLOSING_NOTE_IN_FAVOUR if in_favour_of else _CLOSING_NOTE
+    note = _pick(catalogue, language).format(sig=signature(agent_name),
+                                             who=actor or _pick(_THE_TEAM, language),
+                                             ref=ref_label(in_favour_of))
+    if reason:
+        note += f"\n\n{reason.strip()}"
+    return note
+
+
+def survivor_note(*, closed: str, actor: str, language: str | None = None,
+                  agent_name: str = "") -> str:
+    """What the surviving card is told about the card closed in its favour (`closed`, a ref)."""
+    return _pick(_SURVIVOR_NOTE, language).format(sig=signature(agent_name), ref=ref_label(closed),
+                                                  who=actor or _pick(_THE_TEAM, language))
 
 
 # ── correcting a card this role opened (#156) ───────────────────────────────────────────────────
@@ -3763,6 +3829,58 @@ def align_to_dropped_replacement(*, number: str, requirement: int, successor: in
         number=ref_label(number), requirement=requirement, successor=successor)
 
 
+#: The note an alignment leaves on the card (#538): what it now carries out, that its criteria were
+#: rewritten from that text, and — under `_COULD_NOT_DETERMINE` — what this pass could not answer,
+#: kept in the comment where nothing orders an executor to meet it.
+_ALIGN_NOTE = {
+    "pt-BR": ("{sig} este cartão passou a executar o requisito {requirement}, e reescrevi o que "
+              "precisa ser verdade para dá-lo por pronto a partir dele — o texto que ele seguia "
+              "antes foi substituído. Corrijam se eu entendi errado."),
+    "en": ("{sig} this card now carries out requirement {requirement}, and I rewrote what has to "
+           "be true to call it done from that text — the one it followed before was replaced. "
+           "Correct me if I got it wrong."),
+}
+#: The questions a pass of the model could not answer, under the note of `align` and of `refine`.
+_COULD_NOT_DETERMINE = {
+    "pt-BR": "\n\nO que eu não consegui determinar:\n",
+    "en": "\n\nWhat I could not determine:\n",
+}
+#: The note a re-pointed citation leaves (#538). It says what changed AND what deliberately did
+#: not: whoever picks this card up has to know that what it asks for was written against the older
+#: text, or they will read the new citation and assume somebody checked.
+_REPOINT_NOTE = {
+    "pt-BR": ("{sig} este cartão passou a executar o requisito {successor}{who}: o requisito "
+              "{cited}, que ele citava, foi substituído por aquele.\n\n**O que está escrito aqui "
+              "como \"pronto\" continua igual, e foi escrito a partir do texto antigo.** Não "
+              "revisei nada disso: rever pode mudar o que vai ser construído, e essa é uma "
+              "decisão de vocês, não uma arrumação minha."),
+    "en": ("{sig} this card now carries out requirement {successor}{who}: requirement {cited}, "
+           "which it cited, was replaced by that one.\n\n**What is written here as \"done\" is "
+           "unchanged, and it was written from the older text.** I revised none of it: revising "
+           "it can change what gets built, and that is your decision, not tidying of mine."),
+}
+_REPOINT_WHO = {"pt-BR": ", a pedido de {actor}", "en": ", at the request of {actor}"}
+
+
+def _undetermined(questions, language: str | None) -> str:
+    return (_pick(_COULD_NOT_DETERMINE, language) + "\n".join(f"- {q}" for q in questions)
+            if questions else "")
+
+
+def align_note(*, requirement: int, questions=(), language: str | None = None,
+               agent_name: str = "") -> str:
+    return (_pick(_ALIGN_NOTE, language).format(sig=signature(agent_name), requirement=requirement)
+            + _undetermined(questions, language))
+
+
+def repoint_note(*, cited: int, successor: int, actor: str = "", language: str | None = None,
+                 agent_name: str = "") -> str:
+    """Re-pointed by the platform, nobody is named; at somebody's request, they are."""
+    who = _pick(_REPOINT_WHO, language).format(actor=actor) if actor else ""
+    return _pick(_REPOINT_NOTE, language).format(sig=signature(agent_name), successor=successor,
+                                                 who=who, cited=cited)
+
+
 #: What `refine` says when the card already states what must be true. THE REFUSAL IS RIGHT — it
 #: exists to unblock cards with nothing written, and rewriting prose nobody complained about is how
 #: an agent churns a board and teaches people to stop reading its comments.
@@ -3852,6 +3970,25 @@ def criteria_written(*, number: str, measure: str = "", noted: bool = True,
     catalogue = _CRITERIA_WRITTEN if noted else _CRITERIA_WRITTEN_UNEXPLAINED
     return _pick(catalogue, language).format(
         number=ref_label(number), measure=f" ({measure.strip()})" if measure.strip() else "")
+
+
+#: The comment `refine` leaves beside the criteria it wrote (#538): why it wrote them, how many,
+#: from what, and what it could not determine. `{criteria}` is `criteria_counted`, so one is "1
+#: critério" and "1 criterion" rather than the "1 critérios" this said when it was module prose.
+_REFINE_NOTE = {
+    "pt-BR": ("{sig} este item não dizia quando estaria pronto, então seria recusado na entrada. "
+              "Escrevi {criteria} a partir do que já estava descrito — corrijam se eu entendi "
+              "errado."),
+    "en": ("{sig} this item did not say when it would be done, so pickup would have refused it. "
+           "I wrote {criteria} from what was already described — correct me if I got it wrong."),
+}
+
+
+def refine_note(*, criteria: int, questions=(), language: str | None = None,
+                agent_name: str = "") -> str:
+    return (_pick(_REFINE_NOTE, language).format(
+        sig=signature(agent_name), criteria=criteria_counted(criteria, language=language))
+        + _undetermined(questions, language))
 
 
 #: What she is still waiting on, said to the person who asked how things are going. Two clauses,

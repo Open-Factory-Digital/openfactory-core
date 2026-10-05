@@ -35,6 +35,12 @@ the ref handed to the tracker, the card's door or a result (`f"#{number}"`, no w
 the operator's log line, and a prompt to a model are told apart by WHERE the string goes, never by
 an allowance per function. And no detail is composed in either file: every one comes from the
 voice, in the conversation's language.
+
+AND THE CARD'S NOTES, AND THE CAPABILITY WRITE (#538). The notes the role leaves on a card — closed,
+closed into, aligned, re-pointed, refined — were still composed in `module.py` in Portuguese, and
+`capabilities.confirm_in_repository` answered its own details in Portuguese too. The guard reads
+`capabilities.py` beside the module and the release, and holds the module to composing no note:
+what a tracker's `comment` is handed and the `"note"` handed to the card's door are the voice's.
 """
 
 from __future__ import annotations
@@ -620,8 +626,9 @@ def test_a_list_cut_short_ends_in_the_conversations_language():
 
 
 #: The files whose details a person reads in the chat (#513) — every verb of the product role's pen,
-#: and the client's release.
-DETAILS = ("openfactory/product/module.py", "openfactory/product/release.py")
+#: and the client's release — and the capability write the pen hands its yes to (#538).
+DETAILS = ("openfactory/product/module.py", "openfactory/product/release.py",
+           "openfactory/product/capabilities.py")
 
 
 def _spelled(node) -> list[ast.AST]:
@@ -664,19 +671,49 @@ def details_written(source: str) -> tuple[set[str], set[str]]:
     return written, verbs
 
 
+def notes_written(source: str) -> tuple[set[str], set[str]]:
+    """`(written, verbs)`, as `details_written` answers, for what a CARD is left saying (#538): the
+    text handed to a tracker's `comment(ref, text)`, and every `"note"` of a dict — the one handed
+    to the card's door (`facts={"note": …}`), which writes it as the close's comment, and the ones
+    a verb answers its caller with."""
+    written: set[str] = set()
+    verbs: set[str] = set()
+    for verb in ast.walk(ast.parse(source)):
+        if not isinstance(verb, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(verb):
+            said = []
+            if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "comment":
+                said += node.args[1:2] + [k.value for k in node.keywords
+                                          if k.arg in {"body", "text"}]
+            elif isinstance(node, ast.Dict):
+                said += [value for key, value in zip(node.keys, node.values, strict=True)
+                         if isinstance(key, ast.Constant) and key.value == "note"]
+            verbs |= {verb.name} if said else set()
+            written |= {f"{n.lineno} ({verb.name}) {ast.unparse(n)[:80]}"
+                        for value in said for n in _spelled(value)}
+    return written, verbs
+
+
 def test_the_module_and_the_release_compose_no_detail_of_their_own():
     """Every detail the product role's writes answer comes from the voice — a literal or an
     f-string here is a sentence in one language, and the ones that named a card wrote `#{number}`.
-    #497 held `promote` and `reorder` to it; #513, every verb and the release."""
-    written, verbs = set(), set()
+    #497 held `promote` and `reorder` to it; #513, every verb and the release; #538, the capability
+    write, and every note the module leaves on a card."""
+    written, verbs, noted = set(), set(), set()
     for rel in DETAILS:
-        found, answered = details_written((ROOT / rel).read_text(encoding="utf-8"))
-        written |= {f"{rel}:{w}" for w in found}
+        source = (ROOT / rel).read_text(encoding="utf-8")
+        found, answered = details_written(source)
+        left, on_cards = notes_written(source)
+        written |= {f"{rel}:{w}" for w in found | left}
         verbs |= answered
+        noted |= on_cards
     assert {"promote", "reorder", "refine", "_close_one", "_remove_one", "correct_card",
-            "align_card", "repoint_orphans", "release", "_run"} <= verbs, verbs
-    assert not written, "a detail written in the module, in one language:\n  " + "\n  ".join(
-        sorted(written))
+            "align_card", "repoint_orphans", "release", "_run", "confirm_in_repository"} <= verbs, (
+        verbs)
+    assert {"refine", "_close_one", "_remove_one", "align_card", "repoint_orphans"} <= noted, noted
+    assert not written, "a detail or a note written in the module, in one language:\n  " + (
+        "\n  ".join(sorted(written)))
 
 
 def test_the_detail_guard_can_actually_see_one():
@@ -701,6 +738,27 @@ def release(project):
     assert {w.split(" ", 2)[1] for w in written} == {"(verb)", "(release)"}, written
     assert len(written) == 4, written
     assert verbs == {"verb", "release"}, verbs
+
+
+def test_the_note_guard_can_actually_see_one():
+    """THE POSITIVE TWIN for the notes (#538): a note composed in the module, in each place a card
+    is handed one, and the two it must leave alone — the voice's note, and an empty one."""
+    source = '''
+def close(tracker, n, who, lang):
+    tracker.comment(f"#{n}", f"fechado a pedido de {who}")
+    tracker.comment(f"#{n}", body="Fechado. " + who)
+    transition(project, f"#{n}", "closed", facts={"note": f"fechado por {who}"})
+    tracker.comment(f"#{n}", closing_note(in_favour_of=None, actor=who, language=lang))
+    return {"offered": False, "note": ""}
+
+def quiet(tracker, n, lang):
+    tracker.comment(f"#{n}", refine_note(criteria=1, language=lang))
+'''
+    written, noted = notes_written(source)
+
+    assert {w.split(" ", 2)[1] for w in written} == {"(close)"}, written
+    assert len(written) == 3, written
+    assert noted == {"close", "quiet"}, noted
 
 
 # ── the guard ────────────────────────────────────────────────────────────────────────────────────
