@@ -43,12 +43,13 @@ MUTATIONS = [
      "    if awaiting:\n        # THE CARD BEFORE THE PROMISE",
      "    if False:\n        # THE CARD BEFORE THE PROMISE"),
 
+    # re-pinned 2026-10-05: the refusal is the voice's `breakdown_said("retired")` now (#513)
     ("open_cards_for files cards for a requirement that is off the table",
      "openfactory/product/module.py",
      "        if not requirement.is_live:\n            return [WriteResult(ok=False, "
-     "detail=f\"o requisito {number} já não vale — não abri \"\n",
+     "detail=breakdown_said(\"retired\", number=number,\n",
      "        if False:\n            return [WriteResult(ok=False, "
-     "detail=f\"o requisito {number} já não vale — não abri \"\n"),
+     "detail=breakdown_said(\"retired\", number=number,\n"),
 
     ("the write takes the review-request road even when the base accepts it",
      "openfactory/product/authoring.py",

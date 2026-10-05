@@ -2166,7 +2166,7 @@ def _align_refusal(project, corpus, req, *, number: str, requirement: int, lang)
     # second one written here: `_not_a_promise` is what `align_card` and `break_down` both answer
     # with, and it separates a proposal from a reading of the code — a person told two different
     # things about one rule learns the rule is arbitrary.
-    return _not_a_promise(requirement, req)
+    return _not_a_promise(requirement, req, language=lang)
 
 
 def _queue_reply(project, module, name: str, thread: str, *,

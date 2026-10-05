@@ -26,6 +26,15 @@ THE GUARD. A scan of the product's sentence modules for a literal `#` placed str
 card's placeholder — an f-string's `#{…}`, a catalogue's `#{number}` or `*#{…}*`, a `"#" + ref`.
 The catalogues are dict values, not f-strings, so they are read as format strings; docstrings are
 not sentences and are skipped. What it may not see is said in `ALLOWED`, with the reason.
+
+AND THE MODULE AND THE RELEASE (#513). #497 left `ProductModule`'s other verbs — refine, close,
+remove, correct, align — and the release's refusal writing their details as Portuguese literals
+naming the card `#{number}`, and `voice._listed` ending every cut list in "e mais". The guard
+reads `module.py` and `release.py` too, where a `#` before a value is often not a sentence at all:
+the ref handed to the tracker, the card's door or a result (`f"#{number}"`, no word around it),
+the operator's log line, and a prompt to a model are told apart by WHERE the string goes, never by
+an allowance per function. And no detail is composed in either file: every one comes from the
+voice, in the conversation's language.
 """
 
 from __future__ import annotations
@@ -95,7 +104,8 @@ COMPOSERS = {
            skipped=[]), language=lang),
     "queue_proposal": lambda a, b, lang: voice.queue_proposal(*_proposal(a, b), titles={a: "Ta"},
                                                               language=lang),
-    "_listed": lambda a, b, lang: voice._listed([a, b]),
+    "_listed": lambda a, b, lang: [voice._listed([a, b], language=lang),
+                                   voice._listed([a, b], limit=1, language=lang)],
     "close_confirmation": lambda a, b, lang: [
         voice.close_confirmation(number=a, language=lang),
         voice.close_confirmation(number=a, in_favour_of=b, reason="r", language=lang)],
@@ -160,6 +170,18 @@ COMPOSERS = {
     "board_move_said": lambda a, b, lang: [
         voice.board_move_said(reason, ref=a, language=lang)
         for reason in ("queue_failed", "order_failed")],
+    # ── the module's and the release's own details (#513) ──
+    "card_said": lambda a, b, lang: [
+        voice.card_said(reason, number=a, other=b, requirement=4, language=lang)
+        for reason in voice._CARD_SAID],
+    "breakdown_said": lambda a, b, lang: [
+        voice.breakdown_said(reason, ref=a, title="T", why="w", number=4, default="acme/web",
+                             target="evil/api", home="acme/api", language=lang)
+        for reason in voice._BREAKDOWN_SAID],
+    "queue_said": lambda a, b, lang: voice.queue_said("left_for_later", cards=[a, b],
+                                                      language=lang),
+    "release_said": lambda a, b, lang: [voice.release_said(reason, ref=a, language=lang)
+                                        for reason in voice._RELEASE_SAID],
 }
 
 
@@ -214,6 +236,19 @@ NUMBERED_AS_BEFORE = [
      "foi; no que fica, que ele responde pelos dois agora. Nada começou por causa disso."),
     (lambda: voice.still_waiting(questions=["12", "31"], deliveries=1, language="en"),
      "waiting on an answer about #12, #31 · following the delivery of 1 request"),
+    # the module's and the release's details, moved to the voice by #513, say in pt-BR what the
+    # literals said
+    (lambda: voice.card_said("survivor_missing", number="12", other="31", language="pt-BR"),
+     "não encontrei o #31 no quadro, então não fechei o #12: mandar quem ler procurar um cartão "
+     "que não existe é pior do que deixar os dois abertos."),
+    (lambda: voice.card_said("close_unlinked", number="12", other="31", language="pt-BR"),
+     "fechei o #12, mas não consegui deixar o registro disso no #31. O time foi avisado."),
+    (lambda: voice.release_said("not_waiting", ref="512", language="pt-BR"),
+     "o #512 não está mais esperando essa liberação — ou já subiu, ou a janela de espera fechou. "
+     "Não mexi em nada; me diga e eu verifico em que pé está."),
+    (lambda: voice.queue_said("left_for_later", cards=["12", "31"], language="pt-BR"),
+     "Deixei para a próxima rodada o que não cabia inteiro agora: #12, #31."),
+    (lambda: voice._listed(["1", "2", "3"], limit=2, language="pt-BR"), "#1, #2 e mais 1"),
 ]
 
 
@@ -260,7 +295,8 @@ class _Site:
     `unranked`.
 
     THE CARD'S DOOR READS THE CARD, AND THE BOARD, BEFORE IT QUEUES ONE (ADR-0055, #414): a card in
-    `unread` answers 500, and a site that is `blind` answers 500 to every search."""
+    `unread` answers 500, and a site that is `blind` answers 500 to every search. The tracker lists
+    its cards too, for the verbs that must find theirs first (#513)."""
 
     def __init__(self, *cards: str) -> None:
         self.status = dict.fromkeys(cards, BACKLOG)
@@ -283,6 +319,11 @@ class _Site:
             self.ranked.append(body)
             return _Answer(None)
         path = url.split("/rest/api/3/", 1)[1]
+        if method == "POST" and path == "search/jql":     # the tracker's list of cards (#513)
+            return _Answer({"isLast": True, "issues": [
+                {"key": k, "fields": {"summary": "Exportar CSV", "status": {
+                    "name": s, "statusCategory": {"key": "new"}}}}
+                for k, s in self.status.items()]})
         if method == "GET" and path.startswith("search/jql?"):    # the board's own read
             if self.blind:
                 raise self._refused(url)
@@ -501,39 +542,173 @@ def test_a_board_that_is_not_there_or_cannot_rank_is_said_in_the_conversations_l
     assert [r.detail for r in module.reorder(["DAR-9"], actor=ANA)] == [unrankable]
 
 
-def test_promote_and_reorder_compose_no_detail_of_their_own():
-    """Every detail the two verbs answer comes from the voice — a literal or an f-string here is a
-    sentence in one language, and the one that named a card wrote `#{number}`."""
-    tree = ast.parse((ROOT / "openfactory/product/module.py").read_text(encoding="utf-8"))
-    verbs = {n.name: n for n in ast.walk(tree)
-             if isinstance(n, ast.FunctionDef) and n.name in ("promote", "reorder")}
-    assert set(verbs) == {"promote", "reorder"}
-    def text(node) -> list[ast.AST]:
-        """The strings `node` itself spells — not the arguments of a call it makes, where the
-        voice's own key (`"queue_refused"`) is an argument and not a sentence."""
-        if isinstance(node, ast.Call):
-            return []
-        if isinstance(node, ast.JoinedStr) or (isinstance(node, ast.Constant)
-                                               and isinstance(node.value, str)
-                                               and node.value.strip()):
-            return [node]
-        return [found for child in ast.iter_child_nodes(node) for found in text(child)]
+# ── every other verb, and the release: their own details, in both languages (#513) ────────────
 
-    written = []
-    for name, verb in verbs.items():
+@pytest.mark.parametrize(("language", "said"), [
+    ("pt-BR", {"missing": "não encontrei o cartão DAR-77 no quadro",
+               "survivor": ("não encontrei o DAR-77 no quadro, então não fechei o DAR-9: mandar "
+                            "quem ler procurar um cartão que não existe é pior do que deixar os "
+                            "dois abertos."),
+               "proposal": "o requisito 9 ainda não foi acordado, então não dá para virar "
+                           "trabalho",
+               "no_requirement": "não encontrei o requisito 99 escrito na base."}),
+    ("en", {"missing": "I could not find card DAR-77 on the board",
+            "survivor": ("I could not find DAR-77 on the board, so I did not close DAR-9: sending "
+                         "whoever reads it to look for a card that does not exist is worse than "
+                         "leaving both open."),
+            "proposal": "requirement 9 has not been agreed yet, so it cannot become work",
+            "no_requirement": "I could not find requirement 99 written in our base."}),
+])
+def test_the_card_acts_answer_on_jira_in_the_conversations_language(monkeypatch, tmp_path,
+                                                                   language, said):
+    """`refine`, `close_card`, the removal and `align_card` wrote "não encontrei o cartão
+    #{number} no quadro": Portuguese in an English conversation, and `#DAR-77` on Jira. Driven on
+    the Jira row, through the real module, its real tracker and board."""
+    _project, _site, module = _jira(monkeypatch, tmp_path, language=language)
+
+    missing = [module.refine("DAR-77", actor=ANA).detail,
+               module.close_card("DAR-77", actor=ANA).detail,
+               module.withdraw_card("DAR-77", actor=ANA, reason="r", remove=True).detail,
+               module.align_card("DAR-77", requirement=6, actor=ANA).detail]
+
+    assert missing == [said["missing"]] * 4, missing
+    survivor = module.close_card("DAR-9", actor=ANA, in_favour_of="DAR-77").detail
+    assert survivor == said["survivor"], survivor
+    proposal = module.align_card("DAR-9", requirement=9, actor=ANA).detail
+    assert proposal.startswith(said["proposal"]), proposal
+    unwritten = module.align_card("DAR-9", requirement=99, actor=ANA).detail
+    assert unwritten == said["no_requirement"], unwritten
+
+
+@pytest.mark.parametrize(("language", "not_waiting", "failed"), [
+    ("pt-BR", "o DAR-9 não está mais esperando essa liberação", "**Nada subiu**"),
+    ("en", "DAR-9 is no longer waiting for this release", "**Nothing was released**"),
+])
+def test_a_release_that_did_not_go_out_is_said_in_the_conversations_language(
+        monkeypatch, language, not_waiting, failed):
+    """`release()` answered `o #DAR-9 não está mais esperando…` on every project, and "Nada subiu"
+    in an English one."""
+    from openfactory.product import release as rel
+
+    project = NS(name=ROOM, language=language)
+
+    async def _client():
+        return object()
+
+    async def _not_parked(*_a, **_k):
+        return False
+
+    async def _down(*_a, **_k):
+        raise RuntimeError("the engine is down")
+
+    monkeypatch.setattr(rel, "_client", _client)
+    monkeypatch.setattr(rel, "_awaiting", _not_parked)
+    ok, why = rel.release(project, "DAR-9", approver=ANA)
+    assert not ok and why.startswith(not_waiting) and "#DAR" not in why, why
+
+    monkeypatch.setattr(rel, "_awaiting", _down)
+    ok, why = rel.release(project, "DAR-9", approver=ANA)
+    assert not ok and failed in why, why
+
+
+def test_a_list_cut_short_ends_in_the_conversations_language():
+    """`voice._listed` ended every cut list in a hard-coded "e mais"."""
+    refs = ["3", "5", "CONT-7"]
+    assert voice._listed(refs, limit=2, language="en") == "#3, #5 and 1 more"
+    assert voice._listed(refs, limit=2, language="pt-BR") == "#3, #5 e mais 1"
+    assert voice._listed(refs, language="en") == "#3, #5, CONT-7"
+
+
+#: The files whose details a person reads in the chat (#513) — every verb of the product role's pen,
+#: and the client's release.
+DETAILS = ("openfactory/product/module.py", "openfactory/product/release.py")
+
+
+def _spelled(node) -> list[ast.AST]:
+    """The strings `node` itself spells — not the arguments of a call it makes, where the voice's
+    own key (`"queue_refused"`) is an argument and not a sentence, nor a key it looks up in a table
+    (`said["no_title"]`)."""
+    if isinstance(node, (ast.Call, ast.Subscript)):
+        return []
+    if isinstance(node, ast.JoinedStr) or (isinstance(node, ast.Constant)
+                                           and isinstance(node.value, str)
+                                           and node.value.strip()):
+        return [node]
+    return [found for child in ast.iter_child_nodes(node) for found in _spelled(child)]
+
+
+def details_written(source: str) -> tuple[set[str], set[str]]:
+    """`(written, verbs)`: where `source` spells a detail of its own — a `detail=` of a result, the
+    sentence handed to `_could_not`, what is assigned to `detail`, a sentence returned beside a
+    verdict (`release`'s `(ok, said)`, `propose_queue`'s `(…, error)`) — and every function in which
+    a detail is answered at all, so a walk that reached nothing cannot pass."""
+    written: set[str] = set()
+    verbs: set[str] = set()
+    for verb in ast.walk(ast.parse(source)):
+        if not isinstance(verb, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
         for node in ast.walk(verb):
-            said = [k.value for k in getattr(node, "keywords", []) if k.arg == "detail"]
-            if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "_could_not":
-                said += node.args[:1]
-            written += [f"{name}:{n.lineno}" for value in said for n in text(value)]
-    assert not written, f"a detail written in the module: {written}"
+            said = []
+            if isinstance(node, ast.Call):
+                said += [k.value for k in node.keywords if k.arg == "detail"]
+                if getattr(node.func, "id", "") == "_could_not":
+                    said += node.args[:1]
+            elif isinstance(node, ast.Assign) and any(
+                    isinstance(t, ast.Name) and t.id == "detail" for t in node.targets):
+                said.append(node.value)
+            elif isinstance(node, ast.Return) and isinstance(node.value, ast.Tuple):
+                said += node.value.elts
+            verbs |= {verb.name} if said else set()
+            written |= {f"{n.lineno} ({verb.name}) {ast.unparse(n)[:80]}"
+                        for value in said for n in _spelled(value)}
+    return written, verbs
+
+
+def test_the_module_and_the_release_compose_no_detail_of_their_own():
+    """Every detail the product role's writes answer comes from the voice — a literal or an
+    f-string here is a sentence in one language, and the ones that named a card wrote `#{number}`.
+    #497 held `promote` and `reorder` to it; #513, every verb and the release."""
+    written, verbs = set(), set()
+    for rel in DETAILS:
+        found, answered = details_written((ROOT / rel).read_text(encoding="utf-8"))
+        written |= {f"{rel}:{w}" for w in found}
+        verbs |= answered
+    assert {"promote", "reorder", "refine", "_close_one", "_remove_one", "correct_card",
+            "align_card", "repoint_orphans", "release", "_run"} <= verbs, verbs
+    assert not written, "a detail written in the module, in one language:\n  " + "\n  ".join(
+        sorted(written))
+
+
+def test_the_detail_guard_can_actually_see_one():
+    """THE POSITIVE TWIN of the guard above: each shape a detail is written in, and the two it
+    must leave alone — the voice's own key, and a key looked up in a table."""
+    source = '''
+def verb(n, exc, said):
+    if n:
+        return WriteResult(ok=False, detail=f"não encontrei o #{n}")
+    if exc:
+        return _could_not("não consegui fechar agora", act="close", cause=exc)
+    detail = "3 critérios"
+    if said:
+        return _could_not(said["no_title"], act="file")
+    return WriteResult(ok=True, detail=card_said("not_found", number=n, language="en"))
+
+def release(project):
+    return False, "Nada subiu"
+'''
+    written, verbs = details_written(source)
+
+    assert {w.split(" ", 2)[1] for w in written} == {"(verb)", "(release)"}, written
+    assert len(written) == 4, written
+    assert verbs == {"verb", "release"}, verbs
 
 
 # ── the guard ────────────────────────────────────────────────────────────────────────────────────
 
-#: The modules whose strings are sentences a person reads.
+#: The modules whose strings are sentences a person reads — and, since #513, the module and the
+#: release, whose details are said in the chat.
 SENTENCES = ("openfactory/product/voice.py", "openfactory/product/followup.py",
-             "openfactory/product/engine.py")
+             "openfactory/product/engine.py", *DETAILS)
 
 #: `(file, the function or table it is in)` → why it may still write a `#` before a card.
 ALLOWED: dict[tuple[str, str], str] = {
@@ -544,6 +719,45 @@ ALLOWED: dict[tuple[str, str], str] = {
 #: and never an escaped `#{{`, nor a regex quantifier like `#{1,6}`.
 _HASHED_FIELD = re.compile(r"#\{(?!\{)(?:[A-Za-z_][\w.\[\]]*|\d*)(?:![rsa])?(?::[^{}]*)?\}")
 _HASHED_PERCENT = re.compile(r"#%(?:\([^)]*\))?[sdr]")
+
+#: The calls that put a value INTO text: a bare `f"#{n}"` handed to one is a piece of a sentence.
+_COMPOSES = frozenset({"format", "format_map", "join", "append", "extend", "insert"})
+#: The keywords nobody in the conversation reads: the operator's log line `_could_not` writes
+#: (`act`), and a prompt to a model — out of #513's scope unless a model quotes it back.
+_UNSAID = frozenset({"act", "prompt"})
+_LOGGERS = frozenset({"log", "logger"})
+
+
+def _is_bare_ref(node) -> bool:
+    """`f"#{n}"` — the decoration and one value, not a word around them."""
+    return (isinstance(node, ast.JoinedStr) and len(node.values) == 2
+            and isinstance(node.values[0], ast.Constant) and node.values[0].value == "#"
+            and isinstance(node.values[1], ast.FormattedValue))
+
+
+def not_a_sentence(node, parents: dict[int, ast.AST]) -> bool:
+    """Whether a string goes somewhere no person reads it as a sentence (#513) — told by WHERE it
+    goes, never by which function it is in:
+
+    - a BARE REF handed straight to a call that does not compose text: `tracker.comment(f"#{n}",
+      …)`, `transition(project, f"#{n}", …)`, `WriteResult(ref=f"#{n}")` — the tracker's own input
+      spelling, which `canonical_ref` reads back; `"{x}".format(x=f"#{n}")` or
+      `lines.append(f"#{n}")` is still a sentence, and so is anything with a word in it;
+    - anything under `act=` or `prompt=`;
+    - anything handed to `log.<level>(…)` — `card=#%s` is the operator's, not the client's."""
+    parent = parents.get(id(node))
+    call = parents.get(id(parent)) if isinstance(parent, ast.keyword) else parent
+    if (_is_bare_ref(node) and isinstance(call, ast.Call) and node is not call.func
+            and getattr(call.func, "attr", "") not in _COMPOSES):
+        return True
+    while id(node) in parents:
+        node = parents[id(node)]
+        if isinstance(node, ast.keyword) and node.arg in _UNSAID:
+            return True
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name) and node.func.value.id in _LOGGERS):
+            return True
+    return False
 
 
 def hashed_refs(source: str) -> list[tuple[int, str, str]]:
@@ -572,6 +786,8 @@ def hashed_refs(source: str) -> list[tuple[int, str, str]]:
 
     found = []
     for node in ast.walk(tree):
+        if not_a_sentence(node, parents):
+            continue
         if isinstance(node, ast.JoinedStr):
             for left, right in zip(node.values, node.values[1:], strict=False):
                 if (isinstance(left, ast.Constant) and str(left.value).endswith("#")
@@ -622,12 +838,36 @@ def glued(ref):
 
 def labelled(numbers):
     return ", ".join(ref_label(n) for n in numbers) + f" {{ref}} ({len(numbers)})"
+
+def detail(n):
+    return WriteResult(ok=False,
+                       detail=f"não encontrei o #{n}",
+                       ref=f"#{n}")
+
+def failed(n, exc):
+    return _could_not(f"could not close #{n}",
+                      act=f"close #{n}",
+                      cause=exc,
+                      ref=f"#{n}")
+
+def formatted(n):
+    return "{ref} closed".format(ref=f"#{n}")
+
+def appended(lines, n):
+    lines.append(f"#{n}")
+
+def tracked(tracker, n, role):
+    tracker.comment(f"#{n}", "a note")
+    log.warning("card=#%s could not be noted", n)
+    role.ask(prompt=f"## Item #{n} — the title")
+    return transition(project, f"#{n}", "closed")
 '''
     found = {(name, line) for line, name, _what in hashed_refs(source)}
 
     assert {name for name, _ in found} == {"_TABLE", "_POSITIONAL", "_PERCENT", "listed", "bold",
-                                           "glued"}, found
-    assert len(found) == 6, found
+                                           "glued", "detail", "failed", "formatted",
+                                           "appended"}, found
+    assert len(found) == 10, found
 
 
 def test_the_allowlist_names_only_what_still_exists():

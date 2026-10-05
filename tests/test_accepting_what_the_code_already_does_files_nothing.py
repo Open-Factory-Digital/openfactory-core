@@ -523,7 +523,11 @@ def test_the_explicit_door_needs_YES_and_a_PROMISE(origin, monkeypatch, engine):
     unconfirmed = asyncio.run(catalog._product_break_down(
         project="books", number=str(AUTHORED), by=_panel_actor(), yes=True))
     assert not unconfirmed.ok and engine.started == [], unconfirmed.message
-    assert "ainda não foi acordado" in unconfirmed.message, (
+    from openfactory.product.voice import not_a_promise
+
+    # the module's own sentence, in the project's language (#513)
+    said = not_a_promise("proposed", number=AUTHORED, language=mod.project.language)
+    assert said in unconfirmed.message, (
         "the refusal is not the module's own sentence about a proposal: " + unconfirmed.message)
 
 
