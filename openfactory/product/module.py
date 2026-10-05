@@ -884,8 +884,8 @@ class _WatchedWrites:
 
     #: What actually changes something — and the only evidence that CLOSES the impediment. A read
     #: coming back is the forge answering; a write landing is the capability the ticket names.
-    #: `place_after` is the backlog order a person confirmed (#511): a rank the board refused is
-    #: the platform not doing what it said, exactly like a column it refused.
+    #: `place_after` is the backlog order a person confirmed (#511), and the queue's (#512): a rank
+    #: the board refused is the platform not doing what it said, exactly like a column it refused.
     _WRITES = frozenset({"create_ticket", "comment", "close_ticket", "update_body", "update_title",
                          "add_label", "remove_ticket",
                          "remove_label", "set_assignees", "set_state", "link_child",
@@ -4105,6 +4105,12 @@ class ProductModule:
         poller pulls in board order and an approved sequence that arrives shuffled is not the
         sequence anybody approved.
 
+        AND RANKED IN IT (#512), because moving them in sequence is not what orders them: the local
+        board served its queue by card number, and on Jira a card keeps its rank when it changes
+        status, so the poller took whichever card the board already put first — under a reply
+        saying "a fábrica começa pelo primeiro". Each card that went in is placed after the one
+        before it, the first at the top of the queue.
+
         WHAT IT ANSWERS IS SAID IN THE CONVERSATION'S LANGUAGE, the card named as its tracker names
         it (`voice.board_move_said`, #497): `CONT-412` on Jira, never `#CONT-412`."""
         from openfactory.product.voice import board_move_said
@@ -4163,6 +4169,43 @@ class ProductModule:
                 # carrying the mutation and the board's field ids.
                 out.append(_could_not(board_move_said("queue_failed", ref=number, language=lang),
                                       act="queue approved work", cause=exc, ref=f"#{number}"))
+        # IN THE ORDER APPROVED (#512), and said on each card what came of it
+        # (`WriteResult.ranked`), so the reply promises an order only where it holds.
+        #
+        # A BOARD WRITE, NOT A CARD'S TRANSITION: the door moved each card into the queue; where it
+        # stands among the cards there is no state of the card, and it is written as `reorder`
+        # writes the backlog's (#511) — `Rankable.place_after`, through this module's own watched
+        # board, so a rank the board refused or that raised is reported like a refused column.
+        #
+        # THE FIRST TO THE TOP OF THE QUEUE, ahead of anything already waiting there, and each next
+        # one right after the one before it: "a fábrica começa pelo primeiro" names the card the
+        # poller takes next, and a card queued yesterday that nobody re-approved does not outrank
+        # the order a person just gave. A card whose place was refused leaves the anchor where it
+        # was, so the rest still follow the last one placed. A board that cannot rank is said to,
+        # for that board only (`voice.queued`): its cards are queued, in the board's own order.
+        from openfactory.adapters.board.base import Rankable
+
+        landed = [r for r in out if r.ok]
+        rankable = isinstance(board, Rankable)
+        anchor: str | None = None
+        for result in landed:
+            if not rankable:
+                result.ranked = "unrankable"
+                continue
+            card = canonical_ref(result.ref)
+            try:
+                kept = bool(board.place_after(issue=card, issue_url=self._issue_url(tracker, card),
+                                              after=anchor, column=queue))
+            except Exception:  # noqa: BLE001 — the card is queued; only its place is unknown
+                log.warning("could not rank %s in %r after %r", card, queue, anchor,
+                            exc_info=True)
+                kept = False
+            result.ranked = "kept" if kept else "not_kept"
+            anchor = card if kept else anchor
+        if landed and rankable:
+            from openfactory.product.board import forget_board
+
+            forget_board(getattr(self.project, "name", ""))
         return out
 
     def reorder(self, numbers: list[str], *, actor: str, board=None) -> list[WriteResult]:

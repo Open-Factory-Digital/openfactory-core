@@ -1881,6 +1881,27 @@ _QUEUED = {
     "pt-BR": "Coloquei na fila, nesta ordem: {items}. A fábrica começa pelo primeiro.",
     "en": "Queued, in this order: {items}. The factory starts with the first.",
 }
+#: A queue whose order did not reach the board (#512), by why. "A fábrica começa pelo primeiro"
+#: is true only where `promote` ranked every card it names (`WriteResult.ranked`): the poller pulls
+#: in board order, and before #512 nothing wrote that order — so the sentence above promised it on
+#: every board. A board that keeps no order this platform can write says so here and only here;
+#: one that ranks and refused a card's place says the order did not land, and the team was told
+#: (the module's watched board reports the refused write).
+_QUEUED_OUT_OF_ORDER = {
+    "unrankable": {
+        "pt-BR": ("Coloquei na fila: {items}. Este quadro não aceita uma ordem gravada daqui, "
+                  "então a fábrica os pega na ordem do próprio quadro."),
+        "en": ("Queued: {items}. This board does not take an order from here, so the factory "
+               "takes them in the board's own order."),
+    },
+    "not_kept": {
+        "pt-BR": ("Coloquei na fila: {items}, mas não consegui gravar essa ordem no quadro — a "
+                  "fábrica os pega na ordem do próprio quadro. O time foi avisado e resolve."),
+        "en": ("Queued: {items}, but I could not write that order on the board — the factory "
+               "takes them in the board's own order. The team has been told and will sort it "
+               "out."),
+    },
+}
 #: Why a card `promote` or `reorder` was asked to move did not (#497). They were Portuguese literals
 #: in the module, so an English conversation read "1 did not go in: o quadro recusou a
 #: movimentação" — and the two that name the card wrote `#{number}`, which on Jira is `#CONT-412`,
@@ -1968,16 +1989,21 @@ def queue_proposal(readiness, proposal, *, titles: dict[str, str] | None = None,
     return "\n".join(lines)
 
 
-def queued(numbers: list[str], *, language: str | None = None, agent_name: str = "") -> str:
+def queued(numbers: list[str], *, language: str | None = None, agent_name: str = "",
+           ranked: str = "kept") -> str:
     """The cards a confirmed queue moved, named AS THE TRACKER SPELLS THEM (#491).
 
     `ref_label`, never `f"#{n}"`: `#12` on GitHub, as it always read, and `CONT-412` on Jira —
-    not `#CONT-412`, which nobody there writes and nobody can paste back."""
+    not `#CONT-412`, which nobody there writes and nobody can paste back.
+
+    `ranked` IS WHETHER THE ORDER REACHED THE BOARD (#512, `WriteResult.ranked`): `kept` says the
+    factory starts with the first; `unrankable` and `not_kept` say it takes them in the board's
+    own order, and why."""
     from openfactory.contracts.refs import ref_label
 
     sig = f"{agent_name.strip()}: " if agent_name.strip() else ""
-    return sig + _pick(_QUEUED, language).format(
-        items=", ".join(ref_label(n) for n in numbers))
+    said = _QUEUED_OUT_OF_ORDER.get(ranked, _QUEUED)
+    return sig + _pick(said, language).format(items=", ".join(ref_label(n) for n in numbers))
 
 
 _SITUATION = {

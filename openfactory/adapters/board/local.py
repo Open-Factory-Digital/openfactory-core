@@ -7,11 +7,15 @@ here one turn tighter: the columns and the cards are rows in the same file, so a
 connection would be a second reader of one truth. `BOARDS` receives no tracker instance, so the row
 builds one — exactly as the Jira row does.
 
-RANKABLE IS NOT IMPLEMENTED, and that is a statement rather than an omission. `Rankable` is a
-second protocol precisely so a board without a writable backlog order says so by not claiming it;
-`ProductModule.reorder` then answers in one sentence instead of an `AttributeError` in a chat. The
-column a card sits in is the only order this file keeps today, and inventing a rank column that
-nothing reads would be a promise with no mechanism behind it.
+RANKABLE, BY A POSITION IN THE COLUMN (#512). This board kept no order of its own and said so by
+not claiming `Rankable`, and the poller was served the queue by card number: a queue a person
+confirmed as #9, #3 started on #3, under a reply saying "a fábrica começa pelo primeiro". Not
+claiming a rank was honest about the order a person could WRITE; it said nothing about the order
+the factory READ, which was the one that spent. Now each card has a `position` in its column
+(`board_db`): a card that enters a column joins it at the bottom, whoever moved it there, and
+`place_after` rewrites the column in the order a person gave — the confirmed queue (`promote`) or
+the backlog order (`reorder`). `items_in_status`, the poller's read, serves that order and no
+other.
 """
 
 from __future__ import annotations
@@ -180,7 +184,11 @@ class LocalBoard:
         """Refs sitting in one column, in board order — the pickup queue.
 
         BY NAME, because that is what the caller has: the poller resolves the column through
-        `pickup_column()` or the deployment's `pickup_status`, both of which are names."""
+        `pickup_column()` or the deployment's `pickup_status`, both of which are names.
+
+        IN THE ORDER A PERSON SET, NEVER BY NUMBER (#512): each card's `position` in its column —
+        where it joined, or where `place_after` put it. The number only breaks a tie, and only
+        cards already on a board when the position was added can tie."""
         wanted = (status or "").strip()
         if not wanted:
             return []
@@ -190,7 +198,7 @@ class LocalBoard:
                     "SELECT c.ref AS ref FROM cards c JOIN columns col "
                     "ON col.project = c.project AND col.key = c.column_key "
                     "WHERE c.project = ? AND c.state = 'open' AND col.name = ? "
-                    "ORDER BY c.ref ASC", (self.project, wanted)).fetchall()
+                    "ORDER BY c.position ASC, c.ref ASC", (self.project, wanted)).fetchall()
         except Exception:  # noqa: BLE001 — one bad read must not stop the tick
             log.warning("could not read %s's %r column", self.project, wanted, exc_info=True)
             return []
@@ -239,6 +247,49 @@ class LocalBoard:
         if not moved:
             log.warning("%s has no card %s to move", self.project, bare)
         return bool(moved)
+
+    def place_after(self, *, issue: str, issue_url: str, after: str | None, column: str) -> bool:
+        """Put `issue` right after `after` in `column` — the top when `after` is None (see
+        `Rankable`, #512).
+
+        THE WHOLE COLUMN IS NUMBERED AGAIN, in one write transaction: the column is read in its
+        order, the card is taken out and put back after its anchor, and every open card in it is
+        given its place, 1 to n. A midpoint between two neighbours — what Azure Boards writes,
+        because a hosted call per card is what it costs there — halves a gap every time a person
+        puts one card first, and a column re-arranged often enough runs out of halves. Here the
+        column is a handful of rows in a file on this machine.
+
+        THE CARD AND ITS ANCHOR MUST BE IN `column`, by the name this board gives it, as for
+        `set_column`. A place is an order among the cards in one column; a card in another one has
+        no place here to be given, and `False` says so in the log rather than writing a position
+        nobody reads."""
+        wanted = (column or "").strip()
+        bare = canonical_ref(issue)
+        anchor = canonical_ref(after) if after else ""
+        if not wanted or not bare.isdigit() or (after and not anchor.isdigit()):
+            log.warning("%s cannot place %r after %r in %r — not a card of this board",
+                        self.project, issue, after, column)
+            return False
+        with connect(self._db(), write=True) as conn:
+            col = conn.execute("SELECT key FROM columns WHERE project = ? AND name = ?",
+                               (self.project, wanted)).fetchone()
+            if col is None:
+                log.warning("%s's board has no column named %r — nothing was placed",
+                            self.project, wanted)
+                return False
+            order = [int(r["ref"]) for r in conn.execute(
+                "SELECT ref FROM cards WHERE project = ? AND state = 'open' AND column_key = ? "
+                "ORDER BY position ASC, ref ASC", (self.project, col["key"]))]
+            card = int(bare)
+            rest = [ref for ref in order if ref != card]
+            if card not in order or (anchor and int(anchor) not in rest):
+                log.warning("%s cannot place %s after %r: %s is not in %r", self.project, bare,
+                            after, bare if card not in order else anchor, wanted)
+                return False
+            rest.insert(rest.index(int(anchor)) + 1 if anchor else 0, card)
+            conn.executemany("UPDATE cards SET position = ? WHERE project = ? AND ref = ?",
+                             [(place, self.project, ref) for place, ref in enumerate(rest, 1)])
+        return True
 
     def set_status(self, *, issue: str, issue_url: str, state: JobState,
                    needs_person: bool | None = None) -> bool:

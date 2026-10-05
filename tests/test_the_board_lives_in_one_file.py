@@ -392,13 +392,21 @@ def test_the_pickup_column_is_the_boards_own_name_for_it(board, db):
     assert brd.pickup_column() == "A Fazer", "the name that is actually on their board"
 
 
-def test_the_board_declares_no_rank_it_cannot_write(board):
-    """`Rankable` is a second protocol precisely so a board without a writable backlog order says
-    so by not claiming it — `ProductModule.reorder` then answers in a sentence."""
+def test_the_board_ranks_by_a_position_in_the_column(board):
+    """`Rankable` is a second protocol so a board without a writable order says so by not claiming
+    it. This one did not claim it, and served its queue by card number (#512): it ranks now, by a
+    position in the column, and the queue is read in it — the whole of it is
+    `test_the_queue_runs_in_the_order_a_person_approved.py`."""
     from openfactory.adapters.board.base import Rankable
 
-    _, brd = board
-    assert not isinstance(brd, Rankable)
+    tracker, brd = board
+    refs = [tracker.create_ticket(title=t, body="") for t in ("one", "two", "three")]
+    for ref in refs:
+        assert brd.set_column(issue=ref, issue_url="", name="TO-DO") is True
+    assert isinstance(brd, Rankable)
+    assert brd.place_after(issue="3", issue_url="", after=None, column="TO-DO") is True
+    assert brd.place_after(issue="1", issue_url="", after="3", column="TO-DO") is True
+    assert brd.items_in_status("TO-DO") == ["3", "1", "2"]
 
 
 # ── creating it ─────────────────────────────────────────────────────────────────────────────────

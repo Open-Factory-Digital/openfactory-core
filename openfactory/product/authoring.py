@@ -122,6 +122,15 @@ class WriteResult:
     #: work exists and links it, and never says who asked: the act carries no person to say.
     just_asked: bool = False
 
+    #: WHERE A CARD `promote` QUEUED STANDS IN THE ORDER A PERSON APPROVED (#512), and `""` for
+    #: every other write. `kept`: the board ranked it in its place; `unrankable`: the board keeps
+    #: no order this platform can write (`Rankable`), so the factory takes it in the board's own;
+    #: `not_kept`: the board ranks, and refused or failed this card's place. The reply promises
+    #: "a fábrica começa pelo primeiro" only when every card it names was `kept`
+    #: (`voice.queued`): the poller pulls in board order, and a sentence about an order nothing
+    #: wrote is a promise with nothing behind it.
+    ranked: str = ""
+
 
 def next_number(corpus: Corpus) -> int:
     """One past the highest number ever used — INCLUDING superseded ones.
