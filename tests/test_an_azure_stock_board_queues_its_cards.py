@@ -16,8 +16,11 @@ withdrawal, a removal, for a card in ANY column nobody maps, including one a per
 from under its job. A column that is no stage has no state to allow anything. So the refusal
 stands, and what changed is what it says — the option THIS board reads and the one line that
 makes the column the backlog, in the project's language — and `openfactory doctor` says the same
-before the first card. The line it names is the whole repair: with `columns: {"backlog": "New"}`
-the stock card is queued, and a filed card lands in `New`.
+before the first card. The line it names is the whole repair: with `columns: '{"backlog": "New"}'`
+the stock card is queued, and a filed card lands in `New`. QUOTED, a string of JSON — the registry's
+options are strings, and the line the sentences first printed unquoted was a mapping the registry
+refuses (review of #521) — so the line the sentence prints is pasted into a registry file, read by
+the real loader, and the column it names is asked of the board it builds.
 
 Driven here, against the REAL `AzureBoardsBoard` built by the registry row from a project's
 tracker options, over a fake Azure DevOps at the one seam the board talks through (`_client`),
@@ -151,12 +154,12 @@ def _tmp(project):
 @pytest.mark.parametrize("language, said", [
     ("en", "#412 is in 'New', which is not a column this platform maps, so it cannot tell where "
            "the card is in its life. Nothing was changed. Map it with the project's tracker "
-           "option `columns` — if cards wait there to be queued, `columns: {\"backlog\": "
-           "\"New\"}` makes it the backlog — and try again."),
+           "option `columns` — if cards wait there to be queued, `columns: '{\"backlog\": "
+           "\"New\"}'` makes it the backlog — and try again."),
     ("pt-BR", "O #412 está em 'New', que não é uma coluna que esta plataforma mapeia, então não "
               "há como saber em que ponto da vida o cartão está. Nada foi alterado. Mapeie a "
               "coluna com a opção `columns` do tracker do projeto — se é nela que um cartão "
-              "espera para entrar na fila, `columns: {\"backlog\": \"New\"}` faz dela o backlog "
+              "espera para entrar na fila, `columns: '{\"backlog\": \"New\"}'` faz dela o backlog "
               "— e tente de novo."),
 ])
 def test_a_card_in_the_stock_new_column_is_refused_with_the_line_that_maps_it(azure, language,
@@ -243,6 +246,67 @@ def test_a_card_filed_on_a_board_with_no_backlog_is_placed_nowhere_until_new_is_
                                           board=board) == (True, "New")
 
 
+# ── the line the person is handed, pasted where they would paste it ─────────────────────────────
+
+#: A registry file as a person keeps it, with the line the sentence printed pasted, as printed,
+#: under the tracker's `options` — the place `docs/setup/azure-devops.md` says to put it.
+PASTED = """\
+projects:
+  stock:
+    name: stock
+    repo_path: {path}
+    tracker:
+      kind: azure_devops
+      repo: factory
+      options:
+        organization: acme
+        {line}
+"""
+
+
+def _said(where: str, azure) -> str:
+    """The sentence a person reads, from where they read it."""
+    from openfactory import doctor
+    from tests.pinned_probes import a_fully_pinned_probe_set
+
+    project, board, _site = azure(MAPPED, language=where.split(":")[-1])
+    if where.startswith("refusal"):
+        return _promote(project, board).detail
+    if where.startswith("pickup"):
+        # the board's own pickup remedy, on a board whose queue nobody named: the same kind of line
+        report = doctor.diagnose(a_fully_pinned_probe_set(board_columns=lambda: list(STOCK),
+                                                          pickup_column=lambda: "To Do"))
+        [line] = [f for f in report.findings if f.check == "board_columns"]
+        return line.remedy.replace("<your column>", "Approved")
+    return _stages_line(project)[0].message
+
+
+@pytest.mark.parametrize("where, column, stage", [
+    ("refusal:en", "New", "backlog"), ("refusal:pt-BR", "New", "backlog"),
+    ("doctor:en", "New", "backlog"), ("pickup:en", "Approved", "todo"),
+])
+def test_the_line_the_sentence_prints_is_a_line_the_registry_takes(azure, tmp_path, where,
+                                                                   column, stage):
+    """THE REPAIR, TRIED THE WAY A PERSON TRIES IT. The line is taken out of the sentence exactly
+    as printed, pasted into a registry file, read back by the real loader, and the board built from
+    that entry is asked about the column. Unquoted, the line is a mapping where
+    `ProviderRef.options` holds strings, and the registry refuses the project — the repair a person
+    was handed broke the project it was meant to fix. The doctor's pickup remedy printed the same
+    kind of line, the same way."""
+    from openfactory.adapters.board import build_board
+    from openfactory.adapters.board.base import stage_key
+    from openfactory.registry import ProjectRegistry
+
+    line = re.search(r"`(columns: [^`]+)`", _said(where, azure)).group(1)
+    pasted = tmp_path / "pasted.yaml"
+    pasted.write_text(PASTED.format(path=tmp_path, line=line))
+
+    project = ProjectRegistry(pasted).get("stock")
+    board = build_board(project, token="t")
+
+    assert stage_key(board, column) == stage, line
+
+
 # ── the door: a column that is no stage has no state ────────────────────────────────────────────
 
 @pytest.mark.parametrize("columns", [MAPPED, {"backlog": "Approved", "todo": "Committed"}])
@@ -275,7 +339,7 @@ def test_the_door_names_the_option_THIS_row_reads():
                  columns={"DAR-9": "Arquivado"}).seen("DAR-9")
 
     assert seen.state is None
-    assert "`status_map: {\"backlog\": \"Arquivado\"}`" in seen.cannot_tell, seen.cannot_tell
+    assert "`status_map: '{\"backlog\": \"Arquivado\"}'`" in seen.cannot_tell, seen.cannot_tell
     assert "`columns`" not in seen.cannot_tell, seen.cannot_tell
 
 
@@ -300,8 +364,8 @@ def test_the_doctor_names_the_stock_column_no_stage_is_and_the_line_that_maps_it
     assert line.ok and report.ok, "a column a client's board legitimately has failed the doctor"
     assert "'New' is no stage this platform maps" in line.message, line.message
     assert "no column is the backlog" in line.message, line.message
-    assert '`columns: {"backlog": "New"}` makes it the backlog' in line.message, line.message
-    assert line.note and line.note in line.message, "the verdict does not repeat the repair"
+    assert "`columns: '{\"backlog\": \"New\"}'` makes it the backlog" in line.message, line.message
+    assert line.note == line.message, "the verdict does not repeat the line, consequence and all"
 
 
 def test_and_once_the_line_is_there_it_says_the_board_is_whole(azure):
@@ -330,7 +394,7 @@ def test_the_command_prints_it(azure, monkeypatch):
     out = CliRunner().invoke(app, ["doctor", "acme"]).output
 
     assert "board_stages" in out and "'New' is no stage this platform maps" in out, out
-    assert 'columns: {"backlog": "New"}' in out, out
+    assert "columns: '{\"backlog\": \"New\"}'" in out, out
 
 
 def test_a_board_whose_row_declares_no_option_is_not_handed_one():
@@ -362,3 +426,20 @@ def test_a_board_that_could_not_be_read_is_not_reported_as_one_with_no_backlog(a
         live.board_stages()
     report = doctor.diagnose(a_fully_pinned_probe_set(board_stages=live.board_stages))
     assert "board_stages" not in [f.check for f in report.findings]
+
+
+def test_a_board_with_no_backlog_whose_first_column_is_the_queue_is_not_read_as_harmless():
+    """#536, SAID AND NOT REPAIRED HERE: on an Azure board with the Basic process every column is
+    mapped, none is the backlog, and the board creates a card in its first column — the pickup
+    column. The line must not read as a board that is merely missing a nicety."""
+    from openfactory import doctor
+    from tests.pinned_probes import a_fully_pinned_probe_set
+
+    basic = {"To Do": "todo", "Doing": "in_progress", "In review": "in_review",
+             "Needs Action": "needs_action", "Done": "done"}
+    report = doctor.diagnose(a_fully_pinned_probe_set(board_stages=lambda: (basic, "columns")))
+    [line] = [f for f in report.findings if f.check == "board_stages"]
+
+    assert "no column is the backlog" in line.message, line.message
+    assert "the board's first column, 'To Do', which is the pickup column (#536)" in line.message
+    assert line.note == line.message, "the verdict drops what the repair is for"

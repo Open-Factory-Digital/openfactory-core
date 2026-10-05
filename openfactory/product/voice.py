@@ -3827,13 +3827,13 @@ _CARD_UNMAPPED = {
     "en": ("{ref} is in {column!r}, which is not a column this platform maps, so it cannot tell "
            "where the card is in its life. Nothing was changed. {repair}"),
 }
+#: `{line}` is `board.base.option_line`'s — a STRING of JSON, quoted for YAML, because the
+#: registry's options are strings and the unquoted form is a mapping it refuses.
 _CARD_UNMAPPED_REPAIR = {
     "pt-BR": ("Mapeie a coluna com a opção `{option}` do tracker do projeto — se é nela que um "
-              "cartão espera para entrar na fila, `{option}: {{\"backlog\": \"{column}\"}}` faz "
-              "dela o backlog — e tente de novo."),
+              "cartão espera para entrar na fila, `{line}` faz dela o backlog — e tente de novo."),
     "en": ("Map it with the project's tracker option `{option}` — if cards wait there to be "
-           "queued, `{option}: {{\"backlog\": \"{column}\"}}` makes it the backlog — and try "
-           "again."),
+           "queued, `{line}` makes it the backlog — and try again."),
 }
 #: A row that declares no option of its own: naming one it does not read would send the person to
 #: edit something that changes nothing (`board.base.stage_option`).
@@ -3849,9 +3849,12 @@ def card_unmapped(*, ref: str, column: str, option: str = "", language: str | No
     """Why nothing can happen to card `ref` while it sits in `column`, a column no stage is — and
     the one line of configuration that maps it, under the tracker option `option` that THIS
     board reads (`""` when its row declares none)."""
+    from openfactory.adapters.board.base import option_line
+
     option = (option or "").strip()
-    repair = (_pick(_CARD_UNMAPPED_REPAIR, language).format(option=option, column=column)
-              if option else _pick(_CARD_UNMAPPED_SOMEWHERE, language))
+    repair = (_pick(_CARD_UNMAPPED_REPAIR, language).format(
+        option=option, line=option_line(option, {"backlog": column}))
+        if option else _pick(_CARD_UNMAPPED_SOMEWHERE, language))
     return _pick(_CARD_UNMAPPED, language).format(ref=ref_label(ref), column=column,
                                                   repair=repair)
 

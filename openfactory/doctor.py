@@ -1440,6 +1440,8 @@ def credential_missing_remedy(env: str = "") -> str:
 
 
 def _board(p: Probes) -> Finding:
+    from openfactory.adapters.board.base import option_line
+
     try:
         columns = p.board_columns()
     except BoardUnreadable as exc:
@@ -1464,9 +1466,10 @@ def _board(p: Probes) -> Finding:
         f"and nothing will say why (found: {', '.join(columns) or 'none'})",
         # NOT "rename your column". C-14 settled that the names belong to the client, and this
         # line was still asking them to rename a board the platform itself had just created.
-        "declare the mapping in the project's tracker options — "
-        '`columns: {"todo": "<your column>"}` — or set `pickup_status` to name it directly. '
-        "Renaming the board is the last resort, not the first.",
+        # QUOTED, a string of JSON (#521): the unquoted line is a mapping the registry refuses.
+        f"declare the mapping in the project's tracker options — "
+        f"`{option_line('columns', {'todo': '<your column>'})}` — or set `pickup_status` to name "
+        f"it directly. Renaming the board is the last resort, not the first.",
     )
 
 
@@ -1513,14 +1516,35 @@ def _board_stages(p: Probes) -> list[Finding]:
                     f"closed through it")
     if not backlog:
         said.append("no column is the backlog, so a card filed through the platform is placed "
-                    "in none and stays where the board created it")
+                    "in none and stays in "
+                    + (_first_is_the_queue(stages) or "the column the board created it in"))
     repair = _stages_repair(unmapped, backlog=bool(backlog), option=option)
-    return [Finding("board_stages", True, f"{'; and '.join(said)} — {repair}", note=repair)]
+    # THE VERDICT REPEATS THE WHOLE LINE, not the repair alone: "OK — can run a ticket" followed by
+    # a line of configuration reads as a nicety, and what it is a repair FOR is the part that
+    # must not be lost between the findings and the verdict (#536).
+    line = f"{'; and '.join(said)} — {repair}"
+    return [Finding("board_stages", True, line, note=line)]
+
+
+def _first_is_the_queue(stages: dict[str, str]) -> str:
+    """Where a filed card stays on a board with no backlog, when the board's first column is the
+    queue — `""` otherwise, and the caller says only that it stays where it was created (#536).
+
+    SAID, NEVER JUDGED HERE. A hosted board creates a card in its process's first state — the
+    first column — and on an Azure board with the Basic process that is `To Do`, the pickup
+    column: a card filed there is in the queue the moment it exists. That is #536's to repair; this
+    line only refuses to let the doctor read as though a board with no backlog were harmless."""
+    first, key = next(iter(stages.items()), ("", ""))
+    if key != "todo":
+        return ""
+    return f"the board's first column, {first!r}, which is the pickup column (#536)"
 
 
 def _stages_repair(unmapped: list[str], *, backlog: bool, option: str) -> str:
     """The line that maps the columns `_board_stages` named — by the option THIS board reads,
-    because telling a Jira deployment to set `columns` is a remedy that changes nothing (#231)."""
+    because telling a Jira deployment to set `columns` is a remedy that changes nothing (#231),
+    and as the quoted string the registry takes (`board.base.option_line`)."""
+    from openfactory.adapters.board.base import option_line
     from openfactory.adapters.board.columns import BOARD_ORDER
 
     them = "them" if len(unmapped) > 1 else "it"
@@ -1531,18 +1555,17 @@ def _stages_repair(unmapped: list[str], *, backlog: bool, option: str) -> str:
                 f"documents its column names")
     if backlog:
         return (f"map each with the project's tracker option `{option}` by the stage it is — "
-                f"`{option}: {{\"<stage>\": \"{unmapped[0]}\"}}`, the stage one of "
+                f"`{option_line(option, {'<stage>': unmapped[0]})}`, the stage one of "
                 f"{', '.join(BOARD_ORDER)}")
     if not unmapped:
         return (f"map the column where cards wait to be queued with the project's tracker option "
-                f"`{option}` — `{option}: {{\"backlog\": \"<column>\"}}`; a board with no such "
-                f"column needs one first")
+                f"`{option}` — `{option_line(option, {'backlog': '<column>'})}`; a board with no "
+                f"such column needs one first")
     first = unmapped[0]
     others = ", and any other by the stage it is" if len(unmapped) > 1 else ""
     return (f"map {them} with the project's tracker option `{option}` — if cards wait in "
-            f"{first!r} to be queued, "
-            f"`{option}: {{\"backlog\": \"{first}\"}}` makes it the backlog, where a filed card "
-            f"lands{others}")
+            f"{first!r} to be queued, `{option_line(option, {'backlog': first})}` makes it the "
+            f"backlog, where a filed card lands{others}")
 
 
 def _post_merge(p: Probes) -> Finding:

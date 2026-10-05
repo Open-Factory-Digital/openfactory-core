@@ -15,12 +15,19 @@ The claims, one row or more each:
   3. THE DOCTOR SAYS IT BEFORE THE FIRST CARD: it asks at all (row 6), it asks the row rather
      than the platform's own names (row 7), it says an unreadable board once and not as a board
      with no backlog (rows 8-9), it names a board with no backlog (row 10), it never fails a
-     column a client's board legitimately has (row 11), the verdict repeats the repair (row 12),
+     column a client's board legitimately has (row 11), the verdict repeats the whole line, what
+     the repair is for included (row 12),
      and a row that declares no option is not handed one (row 13).
+  4. THE LINE IS ONE THE REGISTRY TAKES (review of #521): a string of JSON, quoted for YAML,
+     because `ProviderRef.options` holds strings and the unquoted line is a mapping the registry
+     refuses — wherever it is printed: the one helper (row 14), the refusal (row 15), the doctor's
+     stages line (row 16) and its pickup remedy (row 17). And a board with no backlog whose first
+     column is the queue is not said as though it were harmless (row 18, #536).
 """
 
 TEST = "tests/test_an_azure_stock_board_queues_its_cards.py"
 
+BASE = "openfactory/adapters/board/base.py"
 PORTS = "openfactory/lifecycle/ports.py"
 VOICE = "openfactory/product/voice.py"
 CATALOG = "openfactory/actions/catalog.py"
@@ -84,19 +91,42 @@ MUTATIONS = [
      "    if not backlog:\n        said.append(",
      "    if False:\n        said.append("),
 
+    # re-pinned 2026-10-05: the verdict repeats the whole line now, consequence and repair, so
+    # both rows anchor on the one return (review of #521, #536)
     ("a column a client's board legitimately has FAILS the doctor, so a project that runs its "
      "tickets is told it is not ready", DOCTOR,
-     "    return [Finding(\"board_stages\", True, f\"{'; and '.join(said)} — {repair}\", "
-     "note=repair)]",
-     "    return [Finding(\"board_stages\", False, f\"{'; and '.join(said)} — {repair}\", "
-     "repair)]"),
+     "    return [Finding(\"board_stages\", True, line, note=line)]",
+     "    return [Finding(\"board_stages\", False, line, line)]"),
 
-    ("the verdict does not repeat the repair", DOCTOR,
-     "{repair}\", note=repair)]",
-     "{repair}\", note=\"\")]"),
+    ("the verdict repeats the repair and drops what it is a repair FOR", DOCTOR,
+     "    return [Finding(\"board_stages\", True, line, note=line)]",
+     "    return [Finding(\"board_stages\", True, line, note=repair)]"),
 
     ("a row that declares no option is handed one anyway, an empty pair of backticks to edit",
      DOCTOR,
      "    if not option:\n",
      "    if False:\n"),
+
+    # ── 4. the line is one the registry takes ──────────────────────────────────────────────────
+    ("THE REVIEW'S FINDING: the line is printed as a mapping, which the registry refuses where "
+     "its options are strings", BASE,
+     "    return f\"{option}: '{value.replace(chr(39), chr(39) * 2)}'\"",
+     "    return f\"{option}: {value}\""),
+
+    ("the refusal spells its own line, unquoted, past the helper", VOICE,
+     "        option=option, line=option_line(option, {\"backlog\": column}))",
+     "        option=option, line=option + ': {\"backlog\": \"' + column + '\"}')"),
+
+    ("the doctor's stages line spells its own line, unquoted, past the helper", DOCTOR,
+     "`{option_line(option, {'backlog': first})}` makes it the",
+     "`{option}: {{\\\"backlog\\\": \\\"{first}\\\"}}` makes it the"),
+
+    ("the doctor's pickup remedy prints its line unquoted again", DOCTOR,
+     "        f\"`{option_line('columns', {'todo': '<your column>'})}` — or set",
+     "        f'`columns: {{\"todo\": \"<your column>\"}}` — or set' f\""),
+
+    ("#536: a board with no backlog whose first column is the queue is said as one that merely "
+     "lacks a backlog", DOCTOR,
+     "    if key != \"todo\":\n        return \"\"",
+     "    if True:\n        return \"\""),
 ]
