@@ -2318,7 +2318,13 @@ def preflight_cmd(
 
 
 @app.command("doctor")
-def doctor_cmd(name: str) -> None:
+def doctor_cmd(
+    name: str,
+    as_json: bool = typer.Option(
+        False, "--json",
+        help="Emit the versioned report document (openfactory.doctor/1) instead of the human "
+             "report."),
+) -> None:
     """Check every prerequisite and say which one is missing.
 
     `conformance` asks whether the MANIFEST is complete. This asks whether the machine, the
@@ -2347,6 +2353,14 @@ def doctor_cmd(name: str) -> None:
     # restart without `--build` re-runs the previous one and every line below is that build's
     # opinion (measured on the pilot, three identical outputs across two fixes, 2026-08-14).
     code, built = namespace.build_stamp()
+    if as_json:
+        # THE DOCUMENT AND NOTHING ELSE ON STDOUT (#356): a reader parses the whole stream, and one
+        # line of prose above it — the build banner, the notifier line — is a document that does
+        # not parse. The build stamp travels INSIDE it instead. Same exit code as the report.
+        typer.echo(doc.as_json(doc.as_document(report, project=name, build=(code, built))))
+        if not report.ok:
+            raise typer.Exit(1)
+        return
     if code:
         typer.echo(f"· this worker runs build {code}, from {built} — `docker compose "
                    f"--env-file .env.compose up -d --build` is what replaces it after a pull")
@@ -2387,42 +2401,16 @@ def doctor_cmd(name: str) -> None:
             if f.ok and f.note:
                 typer.echo(f"  · {f.note}")
         return
-    # "NOT READY" AND "SOMETHING IS BROKEN" ARE DIFFERENT SENTENCES, and printing the second when
-    # the first is true sends somebody to fix what is merely not written yet. Registering a
-    # project (ONBOARDING §2) cannot produce a manifest — the environment session in §3 does —
-    # so at that exact point three checks are red BY CONSTRUCTION, and the pilot operator quite
-    # reasonably went looking for the defect (2026-08-13).
-    # EXPECTED means every red line is answered by a step the SEQUENCE still has ahead of it —
-    # the manifest by §3, the box proof by §5 — not that the deployment is fine. Adding the box
-    # gate to doctor (2026-08-14) would otherwise have taken this sentence away from every
-    # operator at §2, where nothing has been proven yet BY CONSTRUCTION, which is the exact
-    # confusion it was written to end.
-    # DERIVED FROM THE FINDINGS, not from a list of names. The list was
-    # `{"manifest", "quality_floor", "merge_policy", "box_proof"}`, and the next manifest-derived
-    # check added anywhere in `doctor.py` — `post_merge`, 2026-08-16 — dropped straight out of it
-    # and turned an operator's §2 report back into "fix the FAIL lines above", which is the exact
-    # sentence this branch exists to stop. A check that could not run because the manifest is not
-    # written yet SAYS so in its remedy; that is the fact, and the fact is what to read.
-    # TWO WAYS A RED LINE IS ANSWERED BY A STEP AHEAD, and they are different facts (see
-    # `doctor.Finding`): `awaiting` is downstream — it clears when the check it names clears —
-    # while `not_yet` is a line that is true, will stay true after that step, and describes a
-    # guarantee nothing needs until then. Reading only the first told a stranger at §2 to "fix
-    # the FAIL lines above" about an API budget his machine cannot read and nothing is spending
-    # (2026-08-24, the same accident `post_merge` produced in 2026-08-16).
-    answered_later = {f.check for f in report.findings
-                      if not f.ok and (f.awaiting or f.not_yet
-                                       or f.check in ("manifest", "box_proof"))}
-    failed = {f.check for f in report.findings if not f.ok}
-    if failed <= answered_later and failed & {"manifest", "box_proof"}:
-        # THE STEP COMES FROM THE FINDING, never composed here: this line hedged ("if onboard
-        # already proposed it…") about a fact `doctor` had just looked up one screen away.
-        nxt = next((f.next_step for f in report.findings if not f.ok and f.next_step),
-                   f"see the FAIL lines above, then re-run `openfactory doctor {name}`")
+    # "NOT READY" AND "SOMETHING IS BROKEN" ARE DIFFERENT SENTENCES — and which one this is lives
+    # in `doctor.verdict` (#356), the one rule the closing line and `--json` both read, with the
+    # history of why it is derived from the findings rather than from a list of names.
+    said = doc.verdict(report, name)
+    if said.kind == "expected":
         typer.echo("\nNOT ready — and at this point in the sequence that is EXPECTED: "
                    "everything the previous steps can settle is green, and the rest is what the "
                    "steps ahead answer.\n"
-                   f"Next: {nxt}. Then run this again; it is the same command that says when "
-                   "you are ready.")
+                   f"Next: {said.next_step}. Then run this again; it is the same command that "
+                   "says when you are ready.")
     else:
         typer.echo("\nNOT ready — fix the FAIL lines above")
     raise typer.Exit(1)

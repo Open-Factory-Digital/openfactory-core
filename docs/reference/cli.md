@@ -53,6 +53,11 @@ Run this first. Before the first ticket there is no invariant protecting you —
 column, an App without Projects permission and a missing harness all produce the same symptom,
 which is nothing happening.
 
+`--json` prints the same report as a versioned document (`openfactory.doctor/1`): one object per
+check with its `id`, `result` (`ok` or `fail`), `detail` and `remedy`, the closing `verdict`
+(`ok`, `expected`, `not_ready`) and the build that answered. Nothing else is printed, and the exit
+code is the report's.
+
 ### `openfactory conformance <project>`
 
 Whether the **manifest** is complete: the floor requires `validate.test` and `validate.security`.
