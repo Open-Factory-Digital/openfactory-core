@@ -10,7 +10,10 @@ environment, the doctor's own words, the preflight's, the box proof's advisory o
 
 NOTHING HERE READS THIS MACHINE. The doctor and the preflight run on pinned probes, docker answers
 a fixed digest, the foreign repository's checkout is a local directory, and the working directory
-is a temporary one holding a `.env.compose` at mode 0600 outside any git repository.
+is a temporary one holding a `.env.compose` at mode 0600 outside any git repository. The forge
+(`forge_answers`) is the REAL GitHub row with its `gh` transport answered per route — the
+recorded shapes of a branch a ruleset protects, a classic token's scopes, the releases list — and
+a `gh` that would actually run fails the test.
 """
 
 from __future__ import annotations
@@ -154,6 +157,8 @@ def build(tmp_path: Path, monkeypatch) -> Path:
         work_dir=lambda: "/home/mariana.souza/.local/share/openfactory/work",
         sandbox_image=lambda: f"registry.castello.com.br/{ORG}/box:2"))
 
+    forge_answers(monkeypatch)
+
     deploy = tmp_path / "deploy"
     deploy.mkdir()
     env_file = deploy / ".env.compose"
@@ -161,6 +166,89 @@ def build(tmp_path: Path, monkeypatch) -> Path:
     env_file.chmod(0o600)
     monkeypatch.chdir(deploy)
     return deploy
+
+
+#: The `X-OAuth-Scopes` a classic token without `workflow` is sent back with, as `gh api --include`
+#: prints the response: the status line, the headers, a blank line, the body.
+SCOPES = "repo, read:org"
+
+#: The platform's releases as GitHub lists them, newest first: a pre-release and a draft that are
+#: not releases, then three that are.
+RELEASES = [
+    {"tag_name": "v0.6.0-rc.1", "draft": False, "prerelease": True},
+    {"tag_name": "v0.7.0", "draft": True, "prerelease": False},
+    {"tag_name": "v0.5.1", "draft": False, "prerelease": False},
+    {"tag_name": "v0.5.0", "draft": False, "prerelease": False},
+    {"tag_name": "v0.4.2", "draft": False, "prerelease": False},
+]
+
+
+def answered(body, *, returncode=0, stderr=""):
+    """What `gh` hands back: stdout, stderr and an exit status."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(returncode=returncode, stderr=stderr,
+                           stdout=body if isinstance(body, str) else json.dumps(body))
+
+
+def refused(message: str, status: int):
+    """An HTTP error the way `gh api` reports it: the sentence on stderr, exit status 1."""
+    return answered({"message": message, "status": str(status)}, returncode=1,
+                    stderr=f"gh: {message} (HTTP {status})")
+
+
+def scopes_answer(scopes: str | None):
+    """`gh api --include rate_limit`: the headers, then the body. `None` sends no scope header."""
+    headers = ["HTTP/2.0 200 OK", "Content-Type: application/json; charset=utf-8"]
+    if scopes is not None:
+        headers.append(f"X-Oauth-Scopes: {scopes}")
+    return answered("\r\n".join(headers) + "\r\n\r\n" + json.dumps({"resources": {}}))
+
+
+def forge_answers(monkeypatch, **over):
+    """Every GitHub read certify makes, answered per route; `over` replaces one by its key —
+    `rules`, `branch`, `protection`, `settings`, `scopes`, `releases` — with a body or a refusal.
+
+    THE RECORDED SHAPES (`test_the_doctor_names_the_gates_only_a_person_settles.py`): the ruleset
+    rules of a live repository's `main`, and that branch as `branches/main` shows it — gated by a
+    ruleset, no classic protection beside it."""
+    from openfactory.adapters.forge.github import GitHubForge
+    from openfactory.certify.pack import releases_home
+    from tests.test_the_doctor_names_the_gates_only_a_person_settles import BRANCH, RULES
+
+    home = releases_home().removeprefix("https://github.com/")
+    answers = {"rules": RULES, "branch": BRANCH, "protection": refused("Not Found", 404),
+               "settings": {"allow_auto_merge": True},
+               "scopes": scopes_answer(SCOPES), "releases": RELEASES, **over}
+
+    def gh_read(self, args, what):
+        import pytest
+
+        route = " ".join(args)
+        if route == "api --include rate_limit":
+            key = "scopes"
+        elif route == f"api repos/{home}/releases?per_page=100":
+            key = "releases"
+        elif args[0] == "api" and len(args) == 2 and args[1].endswith("/rules/branches/main"):
+            key = "rules"
+        elif args[0] == "api" and len(args) == 2 and args[1].endswith("/branches/main"):
+            key = "branch"
+        elif args[0] == "api" and len(args) == 2 and args[1].endswith("/main/protection"):
+            key = "protection"
+        elif args[0] == "api" and len(args) == 2 and args[1].count("/") == 2:
+            key = "settings"
+        else:
+            pytest.fail(f"certify asked the forge something this bed did not record: {route}")
+        got = answers[key]
+        return got if hasattr(got, "returncode") else answered(got)
+
+    def no_gh(self, args, timeout=120):
+        import pytest
+
+        pytest.fail(f"certify ran `gh {' '.join(args)}` for real")
+
+    monkeypatch.setattr(GitHubForge, "_gh_read", gh_read)
+    monkeypatch.setattr(GitHubForge, "_gh", no_gh)
 
 
 def files_of(output: str) -> dict[str, str]:

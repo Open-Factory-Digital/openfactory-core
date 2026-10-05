@@ -150,8 +150,15 @@ e-mail addresses, paths and credentials are dropped; the practitioner is the one
 `--dry-run` prints every file and writes nothing; without `--yes` nothing is written. `pack.json`
 validates against `openfactory/certify/pack.schema.json` (`openfactory.certify/1`).
 
-Not built yet, and said in every pack: the signature, the forge reads (C-WORKFLOWS, C-BRANCH), the
-releases read (C-VERSION), the outcome aggregates, and offline verification of a pack.
+Three controls ask the forge, read-only, through the project's own forge row: C-BRANCH (the base
+branch requires a pull request, keeps history linear, blocks force pushes and allows auto-merge),
+C-WORKFLOWS (the credential a job holds cannot write the CI definitions) and C-VERSION (the running
+version is the latest published release or the one before). What the forge cannot answer — a
+credential without the scope to ask, a vendor that does not publish it, no network — reads
+`unknown`, never `pass`.
+
+Not built yet, and said in every pack: the signature, the outcome aggregates, and offline
+verification of a pack.
 
 ---
 

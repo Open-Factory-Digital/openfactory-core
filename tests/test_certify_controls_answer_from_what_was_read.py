@@ -3,15 +3,21 @@ could read is `unknown` — never `pass` (#356).
 
 `controls.evaluate` is pure: it takes a `Reading` and returns one answer per control. So every
 branch is exercised here with no registry, no Docker and no network — pass, fail, `unknown` and
-`n/a` for each control this slice computes, and the profile table that decides which are required.
+`n/a` for each control, and the profile table that decides which are required. The three controls
+that read the forge have their own file, `test_certify_reads_the_forge.py`.
 """
 
 from __future__ import annotations
 
 import pytest
 
+from openfactory.adapters.forge.base import BranchProtection
 from openfactory.certify import controls as c
 from openfactory.contracts import Manifest
+
+#: A branch every fact of C-BRANCH holds for, as a forge row reads one.
+PROTECTED = BranchProtection(pr_required=True, linear_history=True, force_push_blocked=True,
+                             auto_merge_enabled=True)
 
 
 class Names(c.Pseudonyms):
@@ -32,7 +38,7 @@ def _manifest(**over) -> Manifest:
 def _repo(manifest=None, **over) -> c.RepositoryReading:
     base = dict(project="p", identity="o/r", default=True, key="p",
                 manifest=manifest if manifest is not None else _manifest(),
-                box={"valid": True, "state": "valid"})
+                box={"valid": True, "state": "valid"}, protection=PROTECTED)
     base.update(over)
     return c.RepositoryReading(**base)
 
@@ -45,7 +51,9 @@ def _doctor(*red: str) -> dict:
 
 def _project(*repos, **over) -> c.ProjectReading:
     base = dict(name="p", forge_credential="minted", forge_mints=True, box_env_declared=True,
-                box_env_names=1, repositories=list(repos) or [_repo()], doctor=_doctor())
+                box_env_names=1, repositories=list(repos) or [_repo()], doctor=_doctor(),
+                permissions=frozenset({"contents:write"}),
+                ci_permissions=frozenset({"workflows:write"}))
     base.update(over)
     return c.ProjectReading(**base)
 
@@ -54,7 +62,8 @@ def _reading(**over) -> c.Reading:
     base = dict(version="0.6.0", build=("", ""), env={"OPENFACTORY_PANEL_TOKEN": "t"},
                 env_file=c.EnvFileReading(".env.compose", True, 0o600, False),
                 sandbox="container", identity="local", providers={}, projects=[_project()],
-                floor_protected=(".openfactory/**",), approvers=["ana"])
+                floor_protected=(".openfactory/**",), approvers=["ana"],
+                releases=["v0.6.0", "v0.5.1"])
     base.update(over)
     return c.Reading(**base)
 
@@ -84,18 +93,22 @@ def test_a_control_the_profile_does_not_require_reads_n_a_and_says_why():
     assert [x.id for x in c.evaluate(_reading(), "light", Names())] == list(c.CONTROL_IDS)
 
 
-def test_a_healthy_reading_passes_every_control_this_slice_can_read():
+def test_a_healthy_reading_passes_every_control():
     answers = {x.id: x.result for x in c.evaluate(_reading(), "standard", Names())}
 
-    assert {k: v for k, v in answers.items() if k not in c.NOT_BUILT} == {
-        **{k: "pass" for k in c.CONTROL_IDS if k not in c.NOT_BUILT},
-        "C-RISK": "n/a", "C-APPROVERS": "n/a"}
+    assert answers == {**{k: "pass" for k in c.CONTROL_IDS}, "C-RISK": "n/a",
+                       "C-APPROVERS": "n/a"}
 
 
 @pytest.mark.parametrize("profile", sorted(c.PROFILES))
-def test_the_reads_this_slice_does_not_make_never_pass(profile):
-    for control in c.NOT_BUILT:
-        assert _answer(control, _reading(), profile).result in ("unknown", "n/a")
+def test_a_forge_read_nobody_could_make_never_passes(profile):
+    """The forge's protection, the credential's grants and the releases list, each unread: the
+    controls built on them say `unknown` (or `n/a` where the profile does not ask), never `pass`."""
+    unread = _reading(projects=[_project(_repo(protection=None), permissions=None)],
+                      releases=None)
+
+    for control in ("C-WORKFLOWS", "C-BRANCH", "C-VERSION"):
+        assert _answer(control, unread, profile).result in ("unknown", "n/a"), control
 
 
 def test_many_answers_never_combine_into_a_pass_over_something_unread():

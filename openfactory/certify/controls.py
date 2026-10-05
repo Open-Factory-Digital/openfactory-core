@@ -2,11 +2,13 @@
 
 EVERY ANSWER IS READ, NEVER ASSUMED. A control is computed from what the deployment says about
 itself — its environment, its files, its registry, its manifests, its proofs, its doctor — and
-nothing else. Where this build cannot read the fact a control is about, the control says
-`unknown` and why, and `unknown` is never a pass: the forge's branch protection, the credential's
-permissions and the releases list are reads this slice does not make, so C-BRANCH, C-WORKFLOWS and
-C-VERSION read `unknown` on every deployment until they are built. A certificate that inferred them
-would certify something nobody looked at.
+nothing else. Where the fact a control is about could not be read, the control says `unknown`
+and why, and `unknown` is never a pass. Three controls read the FORGE (#356, slice 3): the
+branch's protection (C-BRANCH), what the credential is granted (C-WORKFLOWS) and the platform's
+published releases (C-VERSION), each through an optional capability of the project's forge row
+(`adapters/forge/base.py`) whose `None` — no such capability, a credential without the scope to
+ask, no network — is `unknown` here. A certificate that inferred them would certify something
+nobody looked at.
 
 THE PROFILE TABLE IS IN ONE PLACE (`PROFILES`). The partners page states the security controls and
 the thresholds every pack must meet; it does not publish a per-profile column. So the table below
@@ -22,8 +24,11 @@ reachable in a test with no registry, no Docker and no network, the reason `doct
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+
+from openfactory.adapters.forge.base import BranchProtection
 
 PASS, FAIL, NA, UNKNOWN, INFO = "pass", "fail", "n/a", "unknown", "info"
 
@@ -95,16 +100,6 @@ PROFILES: dict[str, frozenset[str]] = {
     "enterprise": frozenset(CONTROL_IDS),
 }
 
-#: The controls this build cannot read, and why. They answer `unknown` on every deployment —
-#: never `pass` — until the read is built.
-NOT_BUILT = {
-    "C-WORKFLOWS": "the forge read of the App's permissions and the token's scopes is not built "
-                   "yet, so nothing here can say whether the credential reaches workflows",
-    "C-BRANCH": "the forge read of the default branch's protection is not built yet",
-    "C-VERSION": "the releases read is not built yet; the running version is recorded in "
-                 "`platform.version`",
-}
-
 #: The engine history the partners page asks a deployment to keep.
 RETENTION_FLOOR_DAYS = 30
 
@@ -140,6 +135,9 @@ class RepositoryReading:
     box: dict | None = None
     box_lines: list[str] = field(default_factory=list)
     box_error: str = ""
+    #: What protects the branch the platform merges into (the manifest's `base_branch`), as the
+    #: forge row read it — None when it could not be read, or the branch is not known.
+    protection: BranchProtection | None = None
 
 
 @dataclass
@@ -160,6 +158,12 @@ class ProjectReading:
     repositories: list[RepositoryReading] = field(default_factory=list)
     doctor: dict | None = None
     doctor_error: str = ""
+    #: What that credential is GRANTED, in the vendor's own words, as the forge row read it — None
+    #: when it could not be (`forge/base.py::credential_permissions_of`).
+    permissions: frozenset[str] | None = None
+    #: The grants the row says reach the CI definitions (`ci_write_permissions_of`) — empty when
+    #: the row cannot say, which is never read as "none of them does".
+    ci_permissions: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -192,6 +196,9 @@ class Reading:
     approvers: list[str] | None
     preflight: dict | None = None
     preflight_error: str = ""
+    #: The platform's published releases (tags), read through a forge row — None when no row this
+    #: deployment uses could list them, or the network did not answer.
+    releases: list[str] | None = None
     #: What the redactor must hide, collected while reading: `{category: {identity: aliases}}`
     #: (`redact.Redactor`), the values of every credential-shaped variable, and the NAMES of the
     #: variables the registry declares that are not the platform's own — `ACME_ADO_PAT` names its
@@ -249,10 +256,6 @@ def evaluate(reading: Reading, profile: str, names: Pseudonyms) -> list[Control]
         if spec.id not in required:
             out.append(Control(spec.id, spec.title, False, NA, spec.source,
                                f"not required by the {profile} profile"))
-            continue
-        if spec.id in NOT_BUILT:
-            out.append(Control(spec.id, spec.title, True, UNKNOWN, spec.source,
-                               NOT_BUILT[spec.id]))
             continue
         result, detail, pointers = _READERS[spec.id](reading, names)
         out.append(Control(spec.id, spec.title, True, result, spec.source, detail, pointers))
@@ -551,20 +554,140 @@ def _doctor(r: Reading, n: Pseudonyms) -> Answer:
     return combined(results), "; ".join(said), pointers
 
 
+def _workflows(r: Reading, n: Pseudonyms) -> Answer:
+    """The credential a job holds may not write the CI definitions: none of what it is granted is
+    among the grants its forge row names as reaching them. A grant nobody could read, or a row
+    that cannot say which of its grants reach them, is `unknown`."""
+    if not r.projects:
+        return UNKNOWN, "no project is registered here, so no forge credential is in use", []
+    results, said = [], []
+    for p in r.projects:
+        who = n.project(p.name)
+        if p.permissions is None:
+            results.append(UNKNOWN)
+            said.append(f"{who}: what the credential is granted could not be read — a "
+                        f"credential without the scope to ask, or a forge that does not publish "
+                        f"it to the credential")
+            continue
+        granted = ", ".join(f"`{g}`" for g in sorted(p.permissions)) or "nothing"
+        if not p.ci_permissions:
+            results.append(UNKNOWN)
+            said.append(f"{who}: granted {granted}, and the forge does not say which grants "
+                        f"reach the CI definitions")
+            continue
+        reach = sorted(p.permissions & p.ci_permissions)
+        if reach:
+            results.append(FAIL)
+            said.append(f"{who}: granted {', '.join(f'`{g}`' for g in reach)}, which can write "
+                        f"the CI definitions")
+        else:
+            results.append(PASS)
+            said.append(f"{who}: granted {granted}; none of it writes the CI definitions")
+    return combined(results), "; ".join(said), []
+
+
+#: The four facts C-BRANCH requires of a protected branch, each with how the evidence says it.
+_PROTECTION = (("pr_required", "a pull request is required"),
+               ("linear_history", "history is linear"),
+               ("force_push_blocked", "force pushes are blocked"),
+               ("auto_merge_enabled", "auto-merge is enabled"))
+
+
+def _branch(r: Reading, n: Pseudonyms) -> Answer:
+    """Every repository's base branch requires a pull request, keeps history linear, blocks force
+    pushes and allows auto-merge. A fact read as off fails; a fact nobody could read is
+    `unknown`, and so is a branch whose protection could not be read at all.
+
+    THE BRANCH IS NEVER NAMED in the evidence: a branch is named by its team, sometimes after
+    the customer, and the manifest's `base_branch` is what it is."""
+    if not any(p.repositories for p in r.projects):
+        return UNKNOWN, "no repository is registered here", []
+    results, said = [], []
+    for p in r.projects:
+        for repo in p.repositories:
+            who = n.repository(repo.identity)
+            if repo.manifest is None:
+                results.append(UNKNOWN)
+                said.append(f"{who}: the manifest could not be read, so the branch it merges "
+                            f"into is not known")
+                continue
+            got = repo.protection
+            if got is None:
+                results.append(UNKNOWN)
+                said.append(f"{who}: the protection of its base branch could not be read")
+                continue
+            off = [words for fact, words in _PROTECTION if getattr(got, fact) is False]
+            unread = [words for fact, words in _PROTECTION if getattr(got, fact) is None]
+            results.append(FAIL if off else UNKNOWN if unread else PASS)
+            words = [f"not: {', '.join(off)}"] if off else []
+            words += [f"not read: {', '.join(unread)}"] if unread else []
+            said.append(f"{who}: " + ("; ".join(words) if words else
+                                      "its base branch requires a pull request, keeps history "
+                                      "linear, blocks force pushes and allows auto-merge"))
+    return combined(results), "; ".join(said), []
+
+
+#: A RELEASE is `X.Y.Z`, with or without the `v` a tag carries. A candidate (`0.6.0rc1`,
+#: `v0.6.0-rc.1`) and a development build (`0.6.0.dev0`) are not one.
+_RELEASE = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
+
+
+def _release(text: str) -> tuple[int, int, int] | None:
+    m = _RELEASE.fullmatch((text or "").strip())
+    return (int(m[1]), int(m[2]), int(m[3])) if m else None
+
+
+def _version(r: Reading, _n: Pseudonyms) -> Answer:
+    """The running version is the latest published release or the one before it, by version
+    order — never the order a forge happens to list them in. Unread releases are `unknown`, and so
+    is a list that holds no release: there is nothing to measure against."""
+    pointer = ["platform.version"]
+    if r.releases is None:
+        return UNKNOWN, (f"the platform's published releases could not be read — no forge this "
+                         f"deployment uses could list them, or the network did not answer; "
+                         f"the running version, {r.version}, is recorded in `platform.version`"), \
+            pointer
+    published = sorted({v for v in map(_release, r.releases) if v}, reverse=True)
+    if not published:
+        return UNKNOWN, "the releases were read and none of them is a published release", pointer
+
+    def name(v: tuple[int, int, int]) -> str:
+        return ".".join(map(str, v))
+
+    running = _release(r.version)
+    latest = name(published[0])
+    if running is None:
+        return FAIL, (f"the running version, {r.version}, is not a release (the latest is "
+                      f"{latest})"), pointer
+    if running == published[0]:
+        return PASS, f"the running version, {r.version}, is the latest release", pointer
+    if len(published) > 1 and running == published[1]:
+        return PASS, (f"the running version, {r.version}, is the release before the latest "
+                      f"({latest})"), pointer
+    if running not in published:
+        return FAIL, (f"the running version, {r.version}, is not among the published releases "
+                      f"(the latest is {latest})"), pointer
+    return FAIL, (f"the running version, {r.version}, is older than the release before the "
+                  f"latest ({latest})"), pointer
+
+
 _READERS: dict[str, Callable[[Reading, Pseudonyms], Answer]] = {
     "C-PANEL": _panel,
     "C-ENVFILE": _envfile,
     "C-FORGE-CRED": _forge_cred,
+    "C-WORKFLOWS": _workflows,
     "C-BOX-ENV": _box_env,
     "C-TEST": _test,
     "C-SECURITY": _security,
     "C-MERGE": _merge,
     "C-RISK": _risk,
     "C-PROTECT": _protect,
+    "C-BRANCH": _branch,
     "C-CONCURRENCY": _concurrency,
     "C-RETENTION": _retention,
     "C-POSTMERGE": _postmerge,
     "C-APPROVERS": _approvers,
     "C-PROOF": _proof,
+    "C-VERSION": _version,
     "C-DOCTOR": _doctor,
 }
