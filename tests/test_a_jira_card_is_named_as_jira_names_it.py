@@ -586,8 +586,8 @@ def test_the_card_acts_answer_on_jira_in_the_conversations_language(monkeypatch,
 ])
 def test_a_release_that_did_not_go_out_is_said_in_the_conversations_language(
         monkeypatch, language, not_waiting, failed):
-    """`release()` answered `o #DAR-9 não está mais esperando…` on every project, and "Nada subiu"
-    in an English one."""
+    """`release()` answered every project in Portuguese, naming the card `#DAR-9`, and said that
+    nothing was released in Portuguese in an English project too."""
     from openfactory.product import release as rel
 
     project = NS(name=ROOM, language=language)
