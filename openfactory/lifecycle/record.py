@@ -152,15 +152,27 @@ def read(sink, project: str, card: str) -> History:
     return _parse(sink.records_under(project, _card_key(card)), card)
 
 
-def cards(sink, project: str) -> dict[str, History]:
-    """Every card of `project` with a history, and its history — what the sweep walks."""
+def histories(rows: list[dict]) -> dict[str, History]:
+    """Every card ONE project's `rows` hold a history for, and its history — `cards` over rows a
+    caller has already read. Rows that are not this record's are skipped by their key, so a scan
+    of the project's whole partition may be handed in as it came.
+
+    PUBLIC AND READ-ONLY (#356, and #85's autonomy reading, which adds this same function): the
+    outcome aggregates measure the record from the rows one scan of the store already holds, and
+    the one parse of a key is this module's — a second copy of it elsewhere would be the first
+    place an effect's outcome got read as a transition."""
     by_card: dict[str, list[dict]] = {}
-    for raw in sink.records_under(project, _PREFIX):
+    for raw in rows:
         sk = str(raw.get("sk") or "")
         card = str(raw.get("ticket") or "")
         if card and sk.startswith(_card_key(card)):
             by_card.setdefault(card, []).append(raw)
-    return {card: _parse(rows, card) for card, rows in by_card.items()}
+    return {card: _parse(mine, card) for card, mine in by_card.items()}
+
+
+def cards(sink, project: str) -> dict[str, History]:
+    """Every card of `project` with a history, and its history — what the sweep walks."""
+    return histories(sink.records_under(project, _PREFIX))
 
 
 def write(sink, project: str, row: Row) -> bool:

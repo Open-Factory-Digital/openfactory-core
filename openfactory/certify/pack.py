@@ -33,25 +33,25 @@ from openfactory.certify.schema import PACK_SCHEMA, validate
 
 log = logging.getLogger("openfactory.certify")
 
-#: The window the outcome aggregates will cover, when they are measured.
+#: The window the outcome aggregates cover.
 DEFAULT_WINDOW_DAYS = 90
 
 #: Why `pack.json` says `"signature": null`, in the pack's own words.
 UNSIGNED_BECAUSE = ("minisign signing is not built yet: this pack carries no pack.sig, so nothing "
                     "in it is attested by the partner's key")
 
-#: Why `outcomes` says `not_measured` — never zeros, which would read as a deployment that did
-#: nothing.
-OUTCOMES_REASON = ("the outcome aggregates over the window (jobs run, merged, parked by class, "
-                   "medians for cost and time to pull request, the oldest Needs Action age) come "
-                   "from the metrics sink and the journals, and that read is not built yet")
+#: Why `outcomes` says `not_measured` when nothing was bound to read them — never zeros, which
+#: would read as a deployment that did nothing.
+OUTCOMES_UNREAD = ("the outcome aggregates were not read for this pack: nothing bound the "
+                   "deployment's journals and metrics store to it")
 
 #: What a reader must not look for in this pack, said in the pack.
 NOT_YET = (
     "a signature: minisign signing is not built yet, so there is no pack.sig",
     "the forge-read controls: C-WORKFLOWS and C-BRANCH read `unknown`",
     "the releases read: C-VERSION reads `unknown`",
-    "the outcome aggregates: `outcomes` is `not_measured`",
+    "every outcome aggregate that could not be read: each is null in `outcomes`, with its "
+    "reason in `outcomes.not_measured`",
     "the env check and conformance diagnostics",
 )
 
@@ -113,7 +113,18 @@ def gather(*, cwd: Path | None = None) -> c.Reading:
     reading.identifiers = _identifiers(rows, projects, approvers or [], env)
     reading.secrets = _secret_values(rows, env)
     reading.variables = _variable_names(rows)
+    reading.outcomes = _outcomes_of([p.name for p in rows])
     return reading
+
+
+def _outcomes_of(names: list[str]):
+    """The outcome aggregates' reader for these projects, read as one deployment — asked by
+    `assemble` over the pack's window, because the window is the pack's to decide (#356)."""
+    def read(since, until) -> dict:
+        from openfactory.observability.query import outcomes
+
+        return outcomes(names, since, until)
+    return read
 
 
 def _project(project, build: tuple[str, str]) -> c.ProjectReading:
@@ -451,6 +462,9 @@ def assemble(reading: c.Reading, *, profile: str, partner: str, practitioner: st
     for control in results:
         control.detail = redactor.scrub(control.detail, where="pack.json")
 
+    since, until = when - timedelta(days=window_days), when
+    measured = _measured(reading, since, until)
+
     code, built = reading.build
     document = {
         "schema": PACK_SCHEMA,
@@ -460,11 +474,10 @@ def assemble(reading: c.Reading, *, profile: str, partner: str, practitioner: st
         "partner": partner,
         "profile": profile,
         "practitioner": practitioner,
-        "window": {"days": window_days, "since": _iso(when - timedelta(days=window_days)),
-                   "until": _iso(when)},
+        "window": {"days": window_days, "since": _iso(since), "until": _iso(until)},
         "providers": redactor.scrub_document(reading.providers, where="pack.json"),
         "controls": [r.as_entry() for r in results],
-        "outcomes": {"status": "not_measured", "reason": OUTCOMES_REASON},
+        "outcomes": measured,
         "proofs": proofs,
         "consent": ({"by": redactor.person(consented[0]),
                      "role": redactor.scrub(consented[1], where="pack.json"),
@@ -493,6 +506,25 @@ def assemble(reading: c.Reading, *, profile: str, partner: str, practitioner: st
         raise Unsafe("the pack would carry what it must not — " + "; ".join(leaked))
     return Pack(files=ordered, document=document, controls=results, salt_id=redactor.salt_id,
                 when=when, notes=notes)
+
+
+def _measured(reading: c.Reading, since: datetime, until: datetime) -> dict:
+    """The outcome aggregates over the pack's window — read through the reader `gather` bound,
+    or `not_measured` with the reason, never zeros. A read that FAILS is the same `not_measured`:
+    the pack is still worth writing without its outcomes, and the reason says they are missing."""
+    from openfactory.observability.query import MEASURES
+
+    def unread(reason: str) -> dict:
+        return {"status": "not_measured", "reason": reason, "projects": len(reading.projects),
+                **dict.fromkeys(MEASURES), "not_measured": dict.fromkeys(MEASURES, reason)}
+
+    if reading.outcomes is None:
+        return unread(OUTCOMES_UNREAD)
+    try:
+        return reading.outcomes(since, until)
+    except Exception as exc:  # noqa: BLE001 — the pack says the outcomes are missing, and why
+        log.warning("the outcome aggregates could not be read (%s)", str(exc)[:200])
+        return unread("the outcome aggregates could not be read on this deployment")
 
 
 def _survivors(redactor: Redactor, files: dict[str, str]) -> list[str]:
@@ -549,8 +581,6 @@ def render_summary(document: dict, *, notes: list[str], pseudonyms: dict[str, st
         "",
         f"Signature: none. {UNSIGNED_BECAUSE}.",
         "",
-        f"Outcomes: {document['outcomes']['status']}. {document['outcomes']['reason']}.",
-        "",
         "## Controls",
         "",
         "| Control | Required | Result | Evidence |",
@@ -565,6 +595,7 @@ def render_summary(document: dict, *, notes: list[str], pseudonyms: dict[str, st
         tally[x["result"]] += 1
     lines += ["", f"{len(required)} control(s) required by the {document['profile']} profile: "
               + ", ".join(f"{n} {result}" for result, n in sorted(tally.items())) + "."]
+    lines += ["", "## Outcomes over the window", "", *_outcome_lines(document["outcomes"])]
     lines += ["", "## Box proofs", ""]
     if document["proofs"]:
         lines += ["| Project | Repository | Status |", "|---|---|---|"]
@@ -589,6 +620,28 @@ def render_summary(document: dict, *, notes: list[str], pseudonyms: dict[str, st
     if notes:
         lines += ["", "## Notes", "", *[f"- {cell(n)}" for n in notes]]
     return "\n".join(lines) + "\n"
+
+
+def _outcome_lines(block: dict) -> list[str]:
+    """The outcome aggregates for a person: every measure, and for each one not measured, why."""
+    from openfactory.observability.query import MEASURES
+
+    def shown(measure: str) -> str:
+        value = block.get(measure)
+        if value is None:
+            return f"not measured — {block['not_measured'].get(measure, 'no reason given')}"
+        return _shown(value)
+
+    return [f"Status: {block['status']}. {block['reason']}.", "",
+            *[f"- {m.replace('_', ' ')}: {shown(m)}" for m in MEASURES]]
+
+
+def _shown(value) -> str:
+    if isinstance(value, dict):
+        return ", ".join(f"{k.replace('_', ' ')} {_shown(v)}" for k, v in value.items())
+    if isinstance(value, list):
+        return "; ".join(_shown(item) for item in value) or "none"
+    return str(value)
 
 
 # ── 3. the tarball ──────────────────────────────────────────────────────────────────────────────

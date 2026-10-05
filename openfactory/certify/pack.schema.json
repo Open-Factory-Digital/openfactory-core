@@ -52,12 +52,116 @@
       "items": {"$ref": "#/$defs/control"}
     },
     "outcomes": {
+      "description": "What the factory did over the window, from observability/query.py's outcomes(): counts and medians only. Every measure is a value or null, and every null has its reason in not_measured.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "reason"],
+      "required": ["status", "reason", "projects", "jobs", "ended", "past_the_merge",
+                   "without_a_recorded_ending", "parks", "cost_per_merged_ticket_usd",
+                   "pickup_to_pr_open_seconds", "review_rejections", "repair_passes",
+                   "needs_action", "versions", "proof_expiries", "reproofs", "not_measured"],
       "properties": {
-        "status": {"const": "not_measured"},
-        "reason": {"type": "string", "minLength": 1}
+        "status": {"enum": ["measured", "not_measured"]},
+        "reason": {"type": "string", "minLength": 1},
+        "projects": {"$ref": "#/$defs/count"},
+        "jobs": {"type": ["integer", "null"], "minimum": 0},
+        "ended": {
+          "type": ["object", "null"],
+          "required": ["merged", "done", "on_hold", "skipped", "failed"],
+          "additionalProperties": {"$ref": "#/$defs/count"}
+        },
+        "past_the_merge": {"type": ["integer", "null"], "minimum": 0},
+        "without_a_recorded_ending": {"type": ["integer", "null"], "minimum": 0},
+        "parks": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["transient", "credential", "environment", "requirement", "code", "policy",
+                       "project", "tree", "gate", "unknown"],
+          "properties": {
+            "transient": {"$ref": "#/$defs/count"}, "credential": {"$ref": "#/$defs/count"},
+            "environment": {"$ref": "#/$defs/count"}, "requirement": {"$ref": "#/$defs/count"},
+            "code": {"$ref": "#/$defs/count"}, "policy": {"$ref": "#/$defs/count"},
+            "project": {"$ref": "#/$defs/count"}, "tree": {"$ref": "#/$defs/count"},
+            "gate": {"$ref": "#/$defs/count"}, "unknown": {"$ref": "#/$defs/count"}
+          }
+        },
+        "cost_per_merged_ticket_usd": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["median", "p90", "tickets", "unpriced"],
+          "properties": {
+            "median": {"type": "number", "minimum": 0},
+            "p90": {"type": "number", "minimum": 0},
+            "tickets": {"type": "integer", "minimum": 1},
+            "unpriced": {"$ref": "#/$defs/count"}
+          }
+        },
+        "pickup_to_pr_open_seconds": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["median", "jobs"],
+          "properties": {
+            "median": {"type": "number", "minimum": 0},
+            "jobs": {"type": "integer", "minimum": 1}
+          }
+        },
+        "review_rejections": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["total", "median_per_job", "jobs"],
+          "properties": {
+            "total": {"$ref": "#/$defs/count"},
+            "median_per_job": {"type": "number", "minimum": 0},
+            "jobs": {"type": "integer", "minimum": 1}
+          }
+        },
+        "repair_passes": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["total", "median_per_job", "jobs", "unrecorded"],
+          "properties": {
+            "total": {"$ref": "#/$defs/count"},
+            "median_per_job": {"type": "number", "minimum": 0},
+            "jobs": {"type": "integer", "minimum": 1},
+            "unrecorded": {"$ref": "#/$defs/count"}
+          }
+        },
+        "needs_action": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["cards", "oldest_days"],
+          "properties": {
+            "cards": {"$ref": "#/$defs/count"},
+            "oldest_days": {"type": "number", "minimum": 0}
+          }
+        },
+        "versions": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["seen", "unstamped"],
+          "properties": {
+            "seen": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["version", "build", "attempts"],
+                "properties": {
+                  "version": {"type": "string", "pattern": "^[0-9A-Za-z][0-9A-Za-z.+-]{0,39}$"},
+                  "build": {"type": "string", "pattern": "^[0-9a-f]{0,64}$"},
+                  "attempts": {"type": "integer", "minimum": 1}
+                }
+              }
+            },
+            "unstamped": {"$ref": "#/$defs/count"}
+          }
+        },
+        "proof_expiries": {"type": ["integer", "null"], "minimum": 0},
+        "reproofs": {"type": ["integer", "null"], "minimum": 0},
+        "not_measured": {
+          "type": "object",
+          "additionalProperties": {"type": "string", "minLength": 1}
+        }
       }
     },
     "proofs": {"type": "array", "items": {"$ref": "#/$defs/proof"}},
@@ -81,6 +185,7 @@
     }
   },
   "$defs": {
+    "count": {"type": "integer", "minimum": 0},
     "instant": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
     "control": {
       "type": "object",

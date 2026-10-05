@@ -21,6 +21,7 @@ from typer.testing import CliRunner
 from openfactory.certify import controls as c
 from openfactory.certify import pack
 from openfactory.certify.schema import validate
+from openfactory.observability.query import MEASURES
 from tests import certify_bed as bed
 
 FULL = ["--partner", "altiva", "--profile", "standard", "--practitioner", bed.PRACTITIONER]
@@ -149,12 +150,17 @@ def test_what_the_pack_does_not_contain_is_said_in_it(tmp_path, monkeypatch):
     document = bed.pack_json(files)
 
     assert document["signature"] is None and document["unsigned_because"].strip()
-    assert document["outcomes"]["status"] == "not_measured", (
+    # THIS BED KEEPS NO METRICS STORE AND NO JOURNAL HERE: every outcome is unmeasured, and says
+    # why — a pack of zeros would read as a deployment that did nothing.
+    outcomes = document["outcomes"]
+    assert outcomes["status"] == "not_measured", (
         "outcomes were reported as measured — zeros read as a deployment that did nothing")
-    assert document["outcomes"]["reason"].strip()
+    assert outcomes["reason"].strip()
+    assert [m for m in MEASURES if outcomes[m] is not None] == []
+    assert all(outcomes["not_measured"][m].strip() for m in MEASURES)
     summary = files["summary.md"]
     assert "## What this pack does not contain yet" in summary
-    for gap in ("signature", "C-WORKFLOWS", "C-BRANCH", "C-VERSION", "outcome aggregates"):
+    for gap in ("signature", "C-WORKFLOWS", "C-BRANCH", "C-VERSION", "outcome aggregate"):
         assert gap in summary, f"the summary does not say the pack lacks {gap}"
     assert summary.index("does not contain yet") < summary.index("## Controls"), (
         "what is missing is said after the results, where a reader has already decided")

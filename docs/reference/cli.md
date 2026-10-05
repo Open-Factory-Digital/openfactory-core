@@ -150,8 +150,16 @@ e-mail addresses, paths and credentials are dropped; the practitioner is the one
 `--dry-run` prints every file and writes nothing; without `--yes` nothing is written. `pack.json`
 validates against `openfactory/certify/pack.schema.json` (`openfactory.certify/1`).
 
+The pack's `outcomes` cover `--window-days` (90 by default): jobs run and how each ended (read
+from the line the workflow writes in the job's journal when it ends, never from the job's last
+progress), parks by the tech-lead's classes, the median and p90 cost per merged ticket, the median
+time from pickup to `pr_open`, review rejections and repair passes per job, the oldest card in
+Needs Action, the platform versions the jobs ran on, and the `box prove` runs. Counts and medians
+only; a measure that cannot be read (no metrics store, no journals where certify ran, a card
+record that began inside the window) is `null`, and `outcomes.not_measured` says why.
+
 Not built yet, and said in every pack: the signature, the forge reads (C-WORKFLOWS, C-BRANCH), the
-releases read (C-VERSION), the outcome aggregates, and offline verification of a pack.
+releases read (C-VERSION), and offline verification of a pack.
 
 ---
 
