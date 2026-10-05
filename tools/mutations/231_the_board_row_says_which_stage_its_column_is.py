@@ -84,12 +84,10 @@ MUTATIONS = [
      "nothing", CATALOG,
      # RE-PINNED 2026-10-02 (#414): `card_move`'s own gate names the option the same way, so
      # the anchor carries the sentence that is `_stage`'s alone
-     "        named = stage_option(board)\n"
-     "        repair = (f\"Map it with the project's tracker option `{named}`\" if named else\n"
-     "                  \"Map it in the project's tracker options, the way",
-     "        named = \"columns\"\n"
-     "        repair = (f\"Map it with the project's tracker option `{named}`\" if named else\n"
-     "                  \"Map it in the project's tracker options, the way"),
+     # re-pinned 2026-10-05: `_stage` says the door's own sentence, `voice.card_unmapped`, and
+     # hands it the option THIS board reads — the claim is unchanged (#521)
+     "            ref=issue, column=column, option=stage_option(board),\n",
+     "            ref=issue, column=column, option=\"columns\",\n"),
 
     ("a row that declares no option has one invented for it", BASE,
      "    return named.strip() if isinstance(named, str) else \"\"",

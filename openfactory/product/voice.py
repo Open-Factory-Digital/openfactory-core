@@ -3812,6 +3812,50 @@ def card_raced(*, ref: str, language: str | None = None) -> str:
     return _pick(_CARD_RACED, language).format(ref=ref_label(ref))
 
 
+#: A CARD IN A COLUMN NO STAGE IS (#521). The door cannot tell where such a card is in its life, and
+#: it refuses rather than guesses — that stays. What the refusal said about it was *"map it in the
+#: project's tracker options"*, in English to every conversation, naming neither the option nor
+#: the stage: and on an Azure board with a stock process it is the FIRST thing a person meets,
+#: because Azure files every new work item into `New`, which no stage is by default, so the first
+#: queueing of the first card was refused that way. The repair is the deployment's one line, and
+#: the sentence now says it — the option the board's own row reads (`board.base.stage_option`:
+#: `columns`, `status_map` on Jira), and the stage a card a person queues waits in. A column that
+#: is some other stage is the person's to name; the backlog is only the example, said as one.
+_CARD_UNMAPPED = {
+    "pt-BR": ("O {ref} está em {column!r}, que não é uma coluna que esta plataforma mapeia, então "
+              "não há como saber em que ponto da vida o cartão está. Nada foi alterado. {repair}"),
+    "en": ("{ref} is in {column!r}, which is not a column this platform maps, so it cannot tell "
+           "where the card is in its life. Nothing was changed. {repair}"),
+}
+_CARD_UNMAPPED_REPAIR = {
+    "pt-BR": ("Mapeie a coluna com a opção `{option}` do tracker do projeto — se é nela que um "
+              "cartão espera para entrar na fila, `{option}: {{\"backlog\": \"{column}\"}}` faz "
+              "dela o backlog — e tente de novo."),
+    "en": ("Map it with the project's tracker option `{option}` — if cards wait there to be "
+           "queued, `{option}: {{\"backlog\": \"{column}\"}}` makes it the backlog — and try "
+           "again."),
+}
+#: A row that declares no option of its own: naming one it does not read would send the person to
+#: edit something that changes nothing (`board.base.stage_option`).
+_CARD_UNMAPPED_SOMEWHERE = {
+    "pt-BR": ("Mapeie a coluna nas opções do tracker do projeto, do jeito que o fornecedor deste "
+              "quadro documenta os nomes das colunas, e tente de novo."),
+    "en": ("Map it in the project's tracker options, the way this board's provider documents its "
+           "column names, and try again."),
+}
+
+
+def card_unmapped(*, ref: str, column: str, option: str = "", language: str | None = None) -> str:
+    """Why nothing can happen to card `ref` while it sits in `column`, a column no stage is — and
+    the one line of configuration that maps it, under the tracker option `option` that THIS
+    board reads (`""` when its row declares none)."""
+    option = (option or "").strip()
+    repair = (_pick(_CARD_UNMAPPED_REPAIR, language).format(option=option, column=column)
+              if option else _pick(_CARD_UNMAPPED_SOMEWHERE, language))
+    return _pick(_CARD_UNMAPPED, language).format(ref=ref_label(ref), column=column,
+                                                  repair=repair)
+
+
 #: WHAT THE PRODUCT ROLE OWES, AS ONE LINE ON THE CARD ITSELF (ADR-0055 D11). The person cannot act
 #: on a promise, so it is not on the list of what waits on them; it is on the card it is about.
 _CARD_OWED = {

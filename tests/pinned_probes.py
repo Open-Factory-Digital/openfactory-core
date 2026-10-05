@@ -97,6 +97,11 @@ GREEN_ANSWERS: dict[str, Any] = {
     "board_columns": lambda: ["Backlog", "TO-DO", "In progress", "In review", "Needs Action",
                               "Done"],
     "pickup_column": lambda: "TO-DO",
+    # The same six columns, each the stage the platform's own board names it (#521) — the board
+    # `board_columns` lists, read as the card's door reads it.
+    "board_stages": lambda: ({"Backlog": "backlog", "TO-DO": "todo", "In progress": "in_progress",
+                              "In review": "in_review", "Needs Action": "needs_action",
+                              "Done": "done"}, "columns"),
     "floor_enforced": lambda: True,
     "harness_kind": lambda: "claude_code",
     "product_link": _no_product_module,
