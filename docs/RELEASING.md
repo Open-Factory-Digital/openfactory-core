@@ -259,9 +259,13 @@ as an issue or an ordinary pull request:
 
 ## One-time setup (done once per repository, by an admin)
 
-- **A ruleset on `release/*`** with the rules `main` has: no deletion, no force-push, linear
-  history, and changes only through a reviewed pull request. Creating a `release/*` branch is
-  restricted to the release manager and the deputy, not forbidden, or the cut itself is blocked.
+- **A ruleset on `release/*`**: no deletion, no force-push, and changes only through a reviewed
+  pull request, merged by squash. Creating a `release/*` branch is restricted to the release
+  manager and the deputy, not forbidden, or the cut itself is blocked.
+  - **No "Require linear history" rule.** GitHub checks it over the whole history of a branch being
+    created. `main`'s history holds one merge commit, `dd8072e` (#1, from before `main` had the
+    rule), so that rule refused the cut of `release/0.5` and would refuse every later one.
+    Squash-only merges keep the line linear without it.
 - **A tag ruleset on `v*`:** creation restricted to the release manager and the deputy; update
   and deletion forbidden to everybody (a published release is frozen).
 - **The labels** `release-blocker` and `backport-x.y` (one per supported line).
