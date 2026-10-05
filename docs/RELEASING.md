@@ -12,7 +12,7 @@ dates.
 
 | when | what happens | who | what it means |
 |---|---|---|---|
-| **the cycle** (three weeks) | Pull requests merge into `main`, each with the milestone of the version it ships in (`0.5.0`). | everybody; the reviewer approves | The milestone is the list of what the version will contain, and its **due date is the release date** (2026-10-07). |
+| **the cycle** (one week) | Pull requests merge into `main`, each with the milestone of the version it ships in (`0.5.0`). | everybody; the reviewer approves | The milestone is the list of what the version will contain, and its **due date is the release date** (2026-10-07). |
 | **the cut** (2026-10-05, two days before) | `release/0.5` is created from a green commit of `main`, and `main` starts declaring `0.6.0.dev0`. | the release manager | The content of 0.5.0 is now **frozen**. New work keeps merging into `main`, for 0.6.0. Only fixes reach `release/0.5`, copied from `main`. |
 | **a candidate** (2026-10-05) | `v0.5.0-rc.1` is tagged on `release/0.5` and published **as a pre-release**. | the release manager tags it; the reviewer approves its version pull request | A real release, with images and a wheel, that **only somebody who names it** installs. Everything that resolves "the newest version" (the one-line install, `install.sh` without `--version`, an install of the wheel without a version, the `:0.5` and `:0` images) keeps giving the last final release, so nobody gets a candidate by accident. |
 | **testing** (2026-10-05 → 2026-10-07) | The candidate is installed and used: the upgrade rehearsal, a fresh install, the end-to-end bed, and a real deployment. | the release manager, and whoever tests it | A defect found here is fixed on `main`, copied to `release/0.5`, and becomes `v0.5.0-rc.2`, whose testing starts again. |
@@ -76,7 +76,7 @@ The whole session is then the agent:
 
 | phase | ask |
 |---|---|
-| before the cut | "Audit milestone 0.5.0 for the cut on Friday." / "Draft the release notes for 0.5.0." |
+| before the cut | "Audit milestone 0.6.0 for Monday's cut." / "Draft the release notes for 0.6.0." |
 | the cut | "Cut release/0.5." |
 | a candidate | "Prepare 0.5.0-rc.1." / "Verify v0.5.0-rc.1." |
 | fixes | "Backport the pull requests labelled backport-0.5." |
@@ -95,7 +95,7 @@ yours or the next release manager's, reads the issue and continues from it.
 done, in plain words:
 
 ```
-@agent-release-manager audit milestone 0.5.0 for the cut on Friday
+@agent-release-manager audit milestone 0.6.0 for Monday's cut
 ```
 
 That runs it as a subagent. A subagent works to the end and returns a report; it cannot wait for
@@ -165,14 +165,31 @@ release/0.5          ●───●─────●────●───�
 
 ## The cycle
 
-A cycle is **three weeks** by default. The release manager sets the **release date** as the **due
-date of the milestone** when the milestone opens, so the date is visible next to the scope. The cut
-comes before it, **two days before by default**, so the first candidate is tested for that long
-before the final (section 4). What is merged on `main` by the cut ships; what is not moves to the
-next milestone and ships in the next train, without holding this one. A `release-blocker` label marks the few issues the cut waits for; the
-release manager decides what earns it.
+**One release a week**, decided by the release manager on 2026-10-05:
 
-### 1. Before the cut (the last days of the cycle)
+```
+Monday     the cut: release/x.y from a green main, and its first candidate (rc.1)
+Mon → Wed  the candidate is tested
+Wednesday  the final, when nothing found in a candidate is open
+```
+
+| version | cut and rc.1 | final |
+|---|---|---|
+| 0.5.0 | Monday 2026-10-05 | Wednesday 2026-10-07 |
+| 0.6.0 | Monday 2026-10-12 | Wednesday 2026-10-14 |
+| 0.7.0 | Monday 2026-10-19 | Wednesday 2026-10-21 |
+
+- **The milestone's due date is the release date**, the Wednesday, set when the milestone opens, so
+  the date is visible next to the scope.
+- **The cut comes two days before it**, so the first candidate is tested for that long (section 4).
+- **It is a train.** What is merged on `main` by Monday's cut ships that Wednesday. What is not
+  moves to the next milestone and ships the week after, without holding this one.
+- **`main` never stops.** Between the cut and the final, new work keeps merging into `main` for the
+  next version; only fixes reach the release branch.
+- A `release-blocker` label marks the few issues the cut waits for; the release manager decides
+  what earns it.
+
+### 1. Before the cut (the days before Monday's cut)
 
 - Audit the milestone: open issues, open pull requests, their review state, and every
   `release-blocker`. The agent produces this list.
