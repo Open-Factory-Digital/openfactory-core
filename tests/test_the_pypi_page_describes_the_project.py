@@ -304,22 +304,29 @@ def test_the_metadata_beside_the_page_says_where_to_read_more_and_where_it_runs(
 # ── rendered as the index renders it ────────────────────────────────────────────────────────────
 
 def test_the_page_renders_the_way_the_index_renders_it():
-    """The index renders a markdown description with `readme_renderer` (GitHub-flavoured, through
-    `cmarkgfm`) and SANITISES the result; `twine check` asks the same library. A description that
+    """The index renders a markdown description with `readme_renderer` (GitHub-flavoured) and
+    SANITISES the result; `twine check` asks the same library. A description that
     fails to render is shown as nothing at all, and a link the sanitiser strips is a word that no
     longer goes anywhere — neither is visible from the source.
 
     `readme-renderer[md]` IS IN THE `dev` EXTRA, so CI — which installs `dev` — runs this. It is
     still SKIPPED BY NAME where the library is absent: a venv made before it joined `dev`, or one
-    that cannot reach an index to fetch it, says so here rather than failing on an import."""
+    that cannot reach an index to fetch it, says so here rather than failing on an import.
+
+    SKIPPED BY CAPABILITY, NEVER BY A BACKEND'S NAME (review of #542). This skipped on `cmarkgfm`,
+    and readme-renderer 46 renders GitHub-flavoured markdown through `comrak` instead: with `dev`
+    installed the guard skipped everywhere, CI included, and checked nothing. It now asks the
+    renderer to render, and skips only when the renderer itself cannot be imported."""
     markdown = pytest.importorskip(
         "readme_renderer.markdown",
         reason="readme_renderer is not installed — the renderer the index uses, in the `dev` "
                "extra (`readme-renderer[md]`); reinstall `dev` where this guard must run")
-    pytest.importorskip("cmarkgfm", reason="cmarkgfm is not installed — readme_renderer's "
-                                           "GitHub-flavoured variant needs it (`readme-renderer[md]`)")
     text = _page()
-    html = markdown.render(text, variant="GFM")
+    try:
+        html = markdown.render(text, variant="GFM")
+    except ImportError as exc:      # the GFM backend of this readme-renderer is absent
+        pytest.skip(f"readme_renderer cannot render GitHub-flavoured markdown here ({exc}) — "
+                    f"reinstall `dev`, whose `readme-renderer[md]` brings the backend")
 
     assert html, "the description does not render — the index would show it as nothing"
     stripped = [t for t in _links(text) if f'href="{t}"' not in html and f'src="{t}"' not in html]
