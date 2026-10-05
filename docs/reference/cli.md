@@ -138,6 +138,23 @@ the records are.
 
 ---
 
+## Partner certification
+
+`openfactory certify deployment --partner <slug> --profile <light|standard|enterprise>
+--practitioner "<name>"` gathers an evidence pack from the deployment it runs on, for the
+implementation partner program: one entry per control (pass, fail, `n/a` where the profile does
+not require it, `unknown` where it could not be read), the box proof of every repository, the
+sanitised `preflight`, `doctor` and `box status` diagnostics, and `redactions.json`. Every
+organisation, repository, project and person is a pseudonym from a per-pack salt; URLs, hosts,
+e-mail addresses, paths and credentials are dropped; the practitioner is the one name kept.
+`--dry-run` prints every file and writes nothing; without `--yes` nothing is written. `pack.json`
+validates against `openfactory/certify/pack.schema.json` (`openfactory.certify/1`).
+
+Not built yet, and said in every pack: the signature, the forge reads (C-WORKFLOWS, C-BRANCH), the
+releases read (C-VERSION), the outcome aggregates, and offline verification of a pack.
+
+---
+
 ## The rest
 
 | | |

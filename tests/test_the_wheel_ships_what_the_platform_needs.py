@@ -96,6 +96,9 @@ MUST_SHIP = [
     "openfactory/org_defaults/profiles/prototype.yaml",
     "openfactory/org_defaults/profiles/regulated.yaml",
     "openfactory/api/panel.html",
+    # THE EVIDENCE PACK'S PUBLISHED SCHEMA (#356). `certify deployment` validates every pack
+    # against it before writing; absent from a wheel, no pip install could write a pack.
+    "openfactory/certify/pack.schema.json",
 ]
 
 

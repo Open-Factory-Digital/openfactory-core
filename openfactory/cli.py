@@ -2362,6 +2362,96 @@ def doctor_cmd(
     raise typer.Exit(1)
 
 
+certify_app = typer.Typer(help="Evidence packs for the implementation partner program.")
+app.add_typer(certify_app, name="certify")
+
+
+# The partner program's evidence pack, issue 356 — kept out of the `--help` screen a stranger
+# reads, like every other card reference.
+@certify_app.command("deployment")
+def certify_deployment_cmd(
+    partner: str = typer.Option(None, "--partner",
+                                help="The partner slug this pack is submitted under."),
+    profile: str = typer.Option(None, "--profile",
+                                help="The profile the pack claims: light, standard or enterprise."),
+    practitioner: str = typer.Option(
+        None, "--practitioner",
+        help="The partner's engineer responsible for this deployment — the one personal name the "
+             "pack keeps."),
+    window_days: int = typer.Option(90, "--window-days",
+                                    help="The window the outcome aggregates cover, in days."),
+    consent: str = typer.Option(None, "--consent",
+                                help='The customer\'s recorded consent: "<name>, <role>, <date>". '
+                                     "The name is replaced by a pseudonym like every other."),
+    dry_run: bool = typer.Option(False, "--dry-run",
+                                 help="Print every file the pack would contain; write nothing."),
+    yes: bool = typer.Option(False, "--yes",
+                             help="Write the pack. Without it this prints the summary, writes "
+                                  "nothing, and exits 2."),
+    out: str = typer.Option(None, "--out",
+                            help="Where to write it (default: "
+                                 "openfactory-evidence-<pack id>-<date>.tgz here)."),
+) -> None:
+    """Gather an anonymised evidence pack from THIS deployment for partner certification.
+
+    Reads what the platform already knows about itself — environment, secrets file, registry,
+    manifests, box proofs, doctor, preflight — and never a ticket, a pull request, a commit or a
+    file inside a repository beyond its manifest. Every organisation, repository, project and
+    person is replaced by a pseudonym; URLs, hosts, e-mail addresses and credentials are dropped.
+
+    This build does not sign the pack, read the forge's protection and permissions, ask the
+    releases API, or measure outcomes: the pack says so, and those controls read `unknown`."""
+    from openfactory.certify import pack as certify
+    from openfactory.cli_refusals import certify_deployment_refusal
+
+    refused = certify_deployment_refusal(partner=partner, profile=profile,
+                                         practitioner=practitioner, window_days=window_days,
+                                         consent=consent)
+    if refused:
+        typer.echo(refused, err=True)
+        raise typer.Exit(2)
+    try:
+        reading = certify.gather()
+        built = certify.assemble(reading, profile=profile, partner=partner,
+                                 practitioner=practitioner.strip(), window_days=window_days,
+                                 consent=consent or "")
+    except certify.Unsafe as exc:
+        # OUR DEFECT, NEVER THE DEPLOYMENT'S, and said as such: the pack was assembled and the
+        # check that runs before anything is written found something it must not carry.
+        typer.echo(f"✗ no pack was written: {exc}. This is a defect in `openfactory certify`, "
+                   f"not in this deployment — please report it with this line.", err=True)
+        raise typer.Exit(1) from None
+    except ValueError as exc:
+        # THE REGISTRY OR THE FLOOR COULD NOT BE READ — the two things every pack is built from.
+        typer.echo(f"✗ no pack was written: {exc}", err=True)
+        raise typer.Exit(1) from None
+
+    target = Path(out) if out else Path(built.default_name)
+    if dry_run:
+        for path, text in built.files.items():
+            typer.echo(f"── {path} ──")
+            typer.echo(text.rstrip("\n"))
+            typer.echo("")
+        typer.echo(f"— --dry-run: nothing was written. With --yes this writes {target}.")
+        return
+    if not yes:
+        typer.echo(built.files["summary.md"].rstrip("\n"))
+        typer.echo(f"\nNothing was written. Re-run with --yes to write {target}, or with "
+                   f"--dry-run to read every file the pack would contain first.")
+        raise typer.Exit(2)
+    if target.exists():
+        typer.echo(f"✗ {target} already exists — nothing was replaced. Pass another --out, or "
+                   f"move that file first.", err=True)
+        raise typer.Exit(1)
+    certify.write(built, target)
+    required = [c for c in built.controls if c.required]
+    tally = ", ".join(f"{sum(1 for c in required if c.result == r)} {r}"
+                      for r in ("pass", "fail", "unknown", "info", "n/a")
+                      if any(c.result == r for c in required))
+    typer.echo(f"✓ wrote {target} — {len(built.files)} files; {len(required)} required "
+               f"control(s): {tally}. Unsigned: signing is not built yet.")
+
+
 preview_app = typer.Typer(help="A preview of the product, before a pull request merges.")
 app.add_typer(preview_app, name="preview")
 
