@@ -134,6 +134,9 @@ usage() {
 # Without it `preflight` reports "the Docker daemon did not answer" one line after this script has
 # just proved on the host that it does — two diagnostics disagreeing on the first screen of a first
 # install, which is the disease `openfactory/onboarding/readiness.py` exists to cure.
+#
+# AND THE RIGHT GROUP IS THE ONE A CONTAINER SEES, which on Docker Desktop is not the host file's
+# (#529) — `resolve_the_socket_group_a_container_sees` has the measurement.
 # WHERE A JOB'S FILES WILL LIVE, RESOLVED ON THE HOST — because only the host can answer it.
 #
 # `openfactory init` RUNS IN A CONTAINER, and a container's `$HOME` describes nothing about this
@@ -238,6 +241,47 @@ resolve_the_docker_socket() {
     # `--group-add` is passed — a wrong group is worse than none.
     DOCKER_SOCKET_GID=$(stat -c '%g' "$DOCKER_SOCKET" 2>/dev/null \
         || stat -f '%g' "$DOCKER_SOCKET" 2>/dev/null || true)
+}
+
+# THE GROUP A CONTAINER SEES, WHICH IS NOT ALWAYS THE GROUP THE HOST FILE HAS (#529). On Docker
+# Desktop the daemon lives in a VM, and a bind of `~/.docker/run/docker.sock` hands the container
+# the VM's socket rather than the host file. Measured on macOS with Docker Desktop (engine 29.1.3,
+# context `desktop-linux`), 2026-10-05:
+#
+#   on the host        ~/.docker/run/docker.sock   501:20  0755   (20 is `staff`)
+#   in a container     /var/run/docker.sock        0:0     0660
+#   -u 501:20 --group-add 20   permission denied while trying to connect to the docker API
+#   -u 501:20 --group-add 0    linux/arm64
+#
+# So the gid read off the host granted nothing, and preflight told the person to "start Docker"
+# one step after this script had pulled the images through that very daemon — with the two checks
+# that need it skipped. On a Linux host both answers are the same number, because a bind mount of
+# a real file keeps its group; that is why `verify_the_install` never saw it.
+#
+# SO THE GROUP IS ASKED WHERE IT IS USED. A container from the cli image this script has just
+# pulled — no third host is contacted — `stat`s the socket it is handed and prints its gid.
+# `stat` needs no access to the socket, only to `/var/run`, so it runs as YOU like every other
+# container here; nothing runs as root and nothing on the host is chmodded.
+#
+# GROUP 0 IS NOT ROOT, AND IT GIVES NOTHING THE SOCKET DOES NOT. The uid stays yours, and a file
+# the container writes keeps your ownership (measured: `--group-add 0` changes nothing about what
+# lands in a bind mount). The socket is the daemon's root already — whoever may use it may do
+# anything a supplementary group could, and more.
+#
+# NO ANSWER KEEPS THE HOST'S GID, so this only ever replaces a group with one measured where it
+# matters. Anything but a number is no answer. Skipped by --dry-run, where the image was not pulled
+# and `docker run` would pull it.
+resolve_the_socket_group_a_container_sees() {
+    [ "$DRY_RUN" -eq 1 ] && return 0
+    [ -n "$DOCKER_SOCKET" ] || return 0
+    seen=$(docker run --rm -u "$(id -u):$(id -g)" --entrypoint stat \
+               -v "${DOCKER_SOCKET}:/var/run/docker.sock" \
+               "${REGISTRY}/openfactory-cli:${VERSION}" -c '%g' /var/run/docker.sock \
+               2>/dev/null || true)
+    case "$seen" in
+        ''|*[!0-9]*) ;;
+        *) DOCKER_SOCKET_GID="$seen" ;;
+    esac
 }
 
 parse_arguments() {
@@ -784,6 +828,8 @@ main() {
     prepare_directory
     fetch_assets
     pull_images
+    # AFTER THE PULL, because it asks the cli image; before the first `_cli`, which uses its answer.
+    resolve_the_socket_group_a_container_sees
     run_preflight
     run_init
     wait_for_images

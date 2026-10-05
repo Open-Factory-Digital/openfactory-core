@@ -812,12 +812,12 @@ def _could_not(sentence: str, *, act: str, cause: object = "", ref: str = "") ->
     return WriteResult(ok=False, ref=ref, detail=sentence)
 
 
-#: What the client is told when the board cannot be read for an act about ONE card. The three that
-#: need to find the card first (`refine`, `close_card`, `align_card`) say it with one voice: a third
+#: What the client is told when the board cannot be read for an act about ONE card is
+#: `voice.card_said("board_unreadable")`: the acts that need to find the card first (`refine`,
+#: `close_card`, the removal, `correct_card`, `align_card`) say it with one voice — a third
 #: hand-written copy is where wording drifts, and the one that never had a sentence at all returned
-#: `read_board`'s operator prose — English, naming the repository — into the channel verbatim.
-_BOARD_UNREADABLE = ("não consegui abrir o quadro agora para ler esse cartão, então não mexi nele. "
-                     "O time foi avisado.")
+#: `read_board`'s operator prose — English, naming the repository — into the channel verbatim. It
+#: lived here as a Portuguese literal until #513, so an English conversation read it in Portuguese.
 
 
 class _CorpusNoted:
@@ -884,8 +884,8 @@ class _WatchedWrites:
 
     #: What actually changes something — and the only evidence that CLOSES the impediment. A read
     #: coming back is the forge answering; a write landing is the capability the ticket names.
-    #: `place_after` is the backlog order a person confirmed (#511): a rank the board refused is
-    #: the platform not doing what it said, exactly like a column it refused.
+    #: `place_after` is the backlog order a person confirmed (#511), and the queue's (#512): a rank
+    #: the board refused is the platform not doing what it said, exactly like a column it refused.
     _WRITES = frozenset({"create_ticket", "comment", "close_ticket", "update_body", "update_title",
                          "add_label", "remove_ticket",
                          "remove_label", "set_assignees", "set_state", "link_child",
@@ -2481,6 +2481,9 @@ class ProductModule:
         branch under the same N. `seen` is the sequence the staged draft's check saw: a
         requirement saved since, by another conversation, that is the same request is linked
         instead of written again."""
+        from openfactory.product.voice import just_asked_for_a_requirement, record_said
+
+        lang = getattr(self.project, "language", None)
         ctx = self.context()
         if not ctx.available:
             return self._cannot_see_the_product()
@@ -2489,12 +2492,8 @@ class ProductModule:
         if not answer.ok or answer.draft is None:
             # `answer.error` is the ROLE's diagnosis — "the codex harness's draft could not be read
             # (JSONDecodeError)" — and it used to be handed over as the client's sentence.
-            return _could_not("não consegui transformar isso num texto de requisito que se "
-                              "sustentasse, então não registrei nada. Me diga de outro jeito e eu "
-                              "tento de novo.",
+            return _could_not(record_said("undrafted", language=lang),
                               act="draft a requirement", cause=answer.error)
-
-        from openfactory.product.voice import just_asked_for_a_requirement
 
         cfg = self.project.product
         docs = ctx.link.docs_repo
@@ -2527,11 +2526,9 @@ class ProductModule:
                     ok=False, existed=True, just_asked=True, ref=item.ref,
                     number=_req_number(item.ref),
                     detail=just_asked_for_a_requirement(
-                        number=_req_number(item.ref), title=item.text,
-                        language=getattr(self.project, "language", None))))
+                        number=_req_number(item.ref), title=item.text, language=lang)))
         except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
-            return _could_not("não consegui registrar esse requisito agora. Nada foi escrito — o "
-                              "time foi avisado e resolve.",
+            return _could_not(record_said("propose_failed", language=lang),
                               act="propose a requirement", cause=exc)
 
     # ---- filing work ---------------------------------------------------------------------------
@@ -2575,7 +2572,9 @@ class ProductModule:
         decorates it at all — the file names the person as the platform knows them.
         """
         from openfactory.product.authoring import accept_requirement
+        from openfactory.product.voice import record_said, requirement_not_found
 
+        lang = getattr(self.project, "language", None)
         ctx = self.context()
         if not ctx.available:
             return self._cannot_see_the_product()
@@ -2583,18 +2582,18 @@ class ProductModule:
             return WriteResult(ok=False, detail=unauthorized_message(self.project))
         req = ctx.corpus.by_number(number)
         if req is None:
-            return WriteResult(ok=False,
-                               detail=f"não encontrei o requisito {number} escrito na base")
+            return WriteResult(ok=False, detail=requirement_not_found(number=number,
+                                                                      language=lang))
         if req.status == "accepted":
             # `nothing_to_build` HERE TOO: a second acceptance is the catalog's retry door — it
             # runs the breakdown again — so a reading of the code has to answer the same the
             # second time, or the second click files what the first one rightly did not (#182).
             return WriteResult(ok=True, existed=True, ref=req.path,
-                               detail="esse já estava acordado",
+                               detail=record_said("already_agreed", language=lang),
                                nothing_to_build=req.came_from_the_code)
         cfg = getattr(self.project, "product", None)
         refused = _not_the_requester(cfg, actor=actor, requester=getattr(req, "asked_by", ""),
-                                     language=getattr(self.project, "language", None))
+                                     language=lang)
         if refused:
             return WriteResult(ok=False, detail=refused)
         try:
@@ -2621,8 +2620,7 @@ class ProductModule:
                 result.nothing_to_build = req.came_from_the_code
             return result
         except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
-            return _could_not(f"não consegui registrar o acordo do requisito {number} agora. Nada "
-                              f"mudou — o time foi avisado e resolve.",
+            return _could_not(record_said("accept_failed", number=number, language=lang),
                               act=f"accept requirement {number}", cause=exc)
 
     def drop(self, number: int, *, actor: str, reason: str = "") -> WriteResult:
@@ -2638,7 +2636,9 @@ class ProductModule:
         human-readable record is written.
         """
         from openfactory.product.authoring import drop_requirement
+        from openfactory.product.voice import record_said, requirement_not_found
 
+        lang = getattr(self.project, "language", None)
         ctx = self.context()
         if not ctx.available:
             return self._cannot_see_the_product()
@@ -2646,8 +2646,8 @@ class ProductModule:
             return WriteResult(ok=False, detail=unauthorized_message(self.project))
         req = ctx.corpus.by_number(number)
         if req is None:
-            return WriteResult(ok=False,
-                               detail=f"não encontrei o requisito {number} escrito na base")
+            return WriteResult(ok=False, detail=requirement_not_found(number=number,
+                                                                      language=lang))
         cfg = getattr(self.project, "product", None)
         try:
             return self._corpus_changed(self._checked_write(
@@ -2660,8 +2660,7 @@ class ProductModule:
                     base=getattr(cfg, "docs_branch", "main")),
                 saved=_saved_in_the_repository))
         except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
-            return _could_not(f"não consegui registrar o abandono do requisito {number} agora. "
-                              f"Nada mudou — o time foi avisado e resolve.",
+            return _could_not(record_said("drop_failed", number=number, language=lang),
                               act=f"drop requirement {number}", cause=exc)
 
     def confirm_capability(self, slug: str, *, actor: str) -> WriteResult:
@@ -2684,7 +2683,9 @@ class ProductModule:
             confirm_in_repository,
             is_slug,
         )
+        from openfactory.product.voice import record_said
 
+        lang = getattr(self.project, "language", None)
         ctx = self.context()
         if not ctx.available:
             return self._cannot_see_the_product()
@@ -2693,15 +2694,14 @@ class ProductModule:
         wanted = (slug or "").strip().lower()
         if not is_slug(wanted):
             # A NAME, NEVER A PATH: the slug is typed by a person and names the file written
-            return WriteResult(ok=False, detail="esse nome não é o de uma capacidade")
+            return WriteResult(ok=False, detail=record_said("not_a_capability", language=lang))
         docs = Path(ctx.docs_path)
         flows = read_flows(docs / OKF_DIRNAME / FLOWS_DIRNAME)
         flow = flows.by_slug(wanted) if flows is not None else None
         written = (docs / CAPABILITIES_DIR / f"{wanted}.md").is_file()
         if flow is None and not written:
             return WriteResult(ok=False,
-                               detail="não encontrei essa capacidade entre as observadas nem entre "
-                                      "as escritas")
+                               detail=record_said("capability_not_found", language=lang))
         cfg = getattr(self.project, "product", None)
         try:
             return self._corpus_changed(self._checked_write(
@@ -2713,8 +2713,7 @@ class ProductModule:
                     base=getattr(cfg, "docs_branch", "main")),
                 saved=_saved_in_the_repository))
         except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
-            return _could_not(f"não consegui registrar a confirmação da capacidade {wanted} "
-                              f"agora. Nada mudou — o time foi avisado e resolve.",
+            return _could_not(record_said("capability_failed", term=wanted, language=lang),
                               act=f"confirm capability {wanted}", cause=exc)
 
     def record_decision(self, number: int, *, decision: str, actor: str,
@@ -2729,7 +2728,9 @@ class ProductModule:
         nobody is executing records a decision where nobody will look for it.
         """
         from openfactory.product.authoring import record_decision
+        from openfactory.product.voice import record_said, requirement_not_found
 
+        lang = getattr(self.project, "language", None)
         ctx = self.context()
         if not ctx.available:
             return self._cannot_see_the_product()
@@ -2737,13 +2738,11 @@ class ProductModule:
             return WriteResult(ok=False, detail=unauthorized_message(self.project))
         req = ctx.corpus.by_number(number)
         if req is None:
-            return WriteResult(ok=False,
-                               detail=f"não encontrei o requisito {number} escrito na base")
+            return WriteResult(ok=False, detail=requirement_not_found(number=number,
+                                                                      language=lang))
         if not req.is_live:
-            return WriteResult(ok=False,
-                               detail=f"o requisito {number} já não vale, então registrar uma "
-                                      f"decisão nele guardaria isso onde ninguém vai procurar. "
-                                      f"Me diga em qual requisito isso deve entrar.")
+            return WriteResult(ok=False, detail=record_said("decision_on_retired", number=number,
+                                                            language=lang))
         cfg = getattr(self.project, "product", None)
         try:
             # SAVED AT CONFIRMATION, UNDER THE SEMAPHORE (ADR-0051 D7, D10): two decisions saved at
@@ -2754,7 +2753,8 @@ class ProductModule:
                 text=f"REQ-{number:04d}: {decision}", seen=seen,
                 found=lambda item: WriteResult(ok=True, existed=True, just_asked=True,
                                                ref=self._requirement_path(req),
-                                               detail="essa decisão acabou de ser registrada"),
+                                               detail=record_said("decision_just_recorded",
+                                                                  language=lang)),
                 write=lambda: record_decision(
                     docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
                     path=self._requirement_path(req), number=number,
@@ -2762,8 +2762,7 @@ class ProductModule:
                     base=getattr(cfg, "docs_branch", "main")),
                 saved=_saved_in_the_repository))
         except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
-            return _could_not(f"não consegui registrar essa decisão no requisito {number} agora. "
-                              f"Nada mudou — o time foi avisado e resolve.",
+            return _could_not(record_said("decision_failed", number=number, language=lang),
                               act=f"record a decision on requirement {number}", cause=exc)
 
     def record_answer(self, *, about: str, question: str, answer: str, said_by: str,
@@ -2784,7 +2783,9 @@ class ProductModule:
         context already holds is answered with `existed=True` — the caller reads that as recorded,
         which it is."""
         from openfactory.product.authoring import record_decision, record_fact
+        from openfactory.product.voice import record_said
 
+        lang = getattr(self.project, "language", None)
         ctx = self.context()
         if not ctx.available:
             return self._cannot_see_the_product()
@@ -2814,19 +2815,19 @@ class ProductModule:
                 # rule, which this sentence missed: it is posted on the card, to its requester,
                 # and whoever told the context this term is not theirs to learn from it
                 return WriteResult(ok=False, existed=True,
-                                   detail=f"já tenho isto anotado sobre {term!r}: "
-                                          f"{existing.body[:160]}")
+                                   detail=record_said("fact_known", term=term,
+                                                      body=existing.body[:160], language=lang))
             return self._checked_write(
                 act="record an answer given on the card", kind="fact", text=term, seen=None,
                 found=lambda item: WriteResult(ok=False, existed=True,
-                                               detail=f"isto acabou de ser anotado sobre {term!r}"),
+                                               detail=record_said("answer_just_noted", term=term,
+                                                                  language=lang)),
                 write=lambda: record_fact(
                     docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
                     term=term, body=text, said_by=who, where=where, base=base),
                 saved=_saved_in_the_repository)
         except Exception as exc:  # noqa: BLE001 — the sweep reads the result; never a traceback
-            return _could_not(f"não consegui registrar a resposta sobre {about!r} agora. Nada foi "
-                              f"escrito — o time foi avisado e resolve.",
+            return _could_not(record_said("answer_failed", term=about, language=lang),
                               act="record an answer given on the card", cause=exc)
 
     def file_issues(self, requirement, *, actor: str, tracker=None, board=_UNSET,
@@ -2844,6 +2845,9 @@ class ProductModule:
             return [self._cannot_see_the_product()]
         if not may_act(self.project, actor, via=self._via):
             return [WriteResult(ok=False, detail=unauthorized_message(self.project))]
+        from openfactory.product.voice import breakdown_said
+
+        lang = getattr(self.project, "language", None)
 
         # THE BOARD, READ ONCE AND USED TWICE. `_role()` puts it in the decomposition's prompt and
         # this set verifies every `already_on_board` the decomposition answers with. Priming
@@ -2871,8 +2875,7 @@ class ProductModule:
             sources=self._sources())
         if not drafts.ok:
             # the ROLE's own words about its harness, and they used to be the client's sentence
-            return [_could_not("não consegui quebrar esse requisito em frentes de trabalho que se "
-                               "sustentassem, então não registrei nada.",
+            return [_could_not(breakdown_said("unbroken", language=lang),
                                act="break a requirement into work", cause=drafts.error)]
 
         tracker = tracker or self._tracker()
@@ -2887,10 +2890,8 @@ class ProductModule:
                 # PAST THE BUDGET, NOTHING NEW IS STARTED (review of #390): the fronts not reached
                 # are said, and nothing of them was written — asking again files what is missing
                 results.append(_could_not(
-                    f"não deu tempo de revisar e abrir a frente “{draft.title.strip()[:80]}” "
-                    f"nesta rodada — nada dela foi escrito; peça a quebra de novo para abrir as "
-                    f"que faltam.", act="break a requirement into work",
-                    cause="breakdown budget spent"))
+                    breakdown_said("out_of_time", title=draft.title.strip()[:80], language=lang),
+                    act="break a requirement into work", cause="breakdown budget spent"))
                 continue
             results.append(self._file_one(draft, requirement, tracker, board, vet=vet,
                                           known_open=known_open, by=actor))
@@ -3195,8 +3196,9 @@ class ProductModule:
         (never `confirmado` from a chat message — domain.py's discipline), so recording this hands
         nothing new to the factory to defend."""
         from openfactory.product.authoring import record_fact
-        from openfactory.product.voice import just_noted
+        from openfactory.product.voice import just_noted, record_said
 
+        lang = getattr(self.project, "language", None)
         ctx = self.context()
         if not ctx.available:
             return self._cannot_see_the_product()
@@ -3206,14 +3208,14 @@ class ProductModule:
             # another conversation, and its teller is not this person's to learn from a refusal
             return WriteResult(
                 ok=False, existed=True,
-                detail=f"já tenho isto anotado sobre {term!r}: {existing.body[:160]}")
+                detail=record_said("fact_known", term=term, body=existing.body[:160],
+                                   language=lang))
         try:
             return self._checked_write(
                 act="record a fact", kind="fact", text=term, seen=seen,
                 found=lambda item: WriteResult(
                     ok=False, existed=True, just_asked=True,
-                    detail=just_noted(term=term,
-                                      language=getattr(self.project, "language", None))),
+                    detail=just_noted(term=term, language=lang)),
                 write=lambda: record_fact(
                     docs_repo=ctx.link.docs_repo,
                     clone_url=self._clone_url(ctx.link.docs_repo),
@@ -3221,8 +3223,7 @@ class ProductModule:
                     base=getattr(self.project.product, "docs_branch", "main")),
                 saved=_saved_in_the_repository)
         except Exception as exc:  # noqa: BLE001
-            return _could_not(f"não consegui anotar o que você me disse sobre {term!r} agora. Nada "
-                              f"foi escrito — o time foi avisado e resolve.",
+            return _could_not(record_said("fact_failed", term=term, language=lang),
                               act="record a fact", cause=exc)
 
     def record_distillate(self, *, path: str, text: str, after: str) -> WriteResult:
@@ -3235,6 +3236,7 @@ class ProductModule:
         a decision or a requirement except by a person's confirmation (ADR-0053 D14) — which is
         why it is declared among the writes that do not ask `may_act` (the module's docstring)."""
         from openfactory.product.authoring import record_distillate
+        from openfactory.product.voice import record_said
 
         ctx = self.context()
         if not ctx.available:
@@ -3250,7 +3252,8 @@ class ProductModule:
                     base=getattr(cfg, "docs_branch", "main")),
                 saved=_saved_in_the_repository)
         except Exception as exc:  # noqa: BLE001 — the pass reads it again at the next tick
-            return _could_not("não consegui guardar o resumo da conversa agora.",
+            return _could_not(record_said("distillate_failed",
+                                          language=getattr(self.project, "language", None)),
                               act="distil a conversation", cause=exc)
 
     def file_document(self, *, name: str, data: bytes, brought_by: str,
@@ -3263,6 +3266,7 @@ class ProductModule:
 
         from openfactory.product.authoring import file_document
         from openfactory.product.index.items import conversation_digest
+        from openfactory.product.voice import record_said
 
         ctx = self.context()
         if not ctx.available:
@@ -3282,7 +3286,8 @@ class ProductModule:
                     base=getattr(cfg, "docs_branch", "main")),
                 saved=_saved_in_the_repository)
         except Exception as exc:  # noqa: BLE001 — nothing was filed, and the person is told
-            return _could_not("I could not file that document just now — nothing was written.",
+            return _could_not(record_said("document_failed",
+                                          language=getattr(self.project, "language", None)),
                               act="file a document", cause=exc)
 
     def baseline(self, *, areas: list[str] | None = None) -> WriteResult:
@@ -3299,20 +3304,21 @@ class ProductModule:
         and this method is the only place they meet."""
         from openfactory.product.authoring import propose_baseline
         from openfactory.product.brownfield import milestone_files
+        from openfactory.product.voice import record_said
 
+        lang = getattr(self.project, "language", None)
         ctx = self.context()
         if not ctx.available:
             return self._cannot_see_the_product()
 
         sandbox, workspace = self._source_workspace()
         if workspace is None:
-            return WriteResult(ok=False, detail="não consegui obter uma cópia do código para ler")
+            return WriteResult(ok=False, detail=record_said("no_code_copy", language=lang))
 
         answer = self._role().survey(sandbox=sandbox, workspace=workspace,
                                      areas=areas or [], layout=self._layout_hint(workspace))
         if not answer.ok or answer.baseline is None:
-            return _could_not("li o produto e não consegui escrever um levantamento que se "
-                              "sustentasse, então não registrei nada.",
+            return _could_not(record_said("unsurveyed", language=lang),
                               act="survey the product", cause=answer.error)
 
         baseline = answer.baseline
@@ -3336,8 +3342,7 @@ class ProductModule:
                 observations=len(baseline.observations), covered=baseline.covered,
                 base=getattr(self.project.product, "docs_branch", "main"))
         except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
-            return _could_not("não consegui escrever o levantamento agora. Nada foi registrado — o "
-                              "time foi avisado e resolve.",
+            return _could_not(record_said("survey_failed", language=lang),
                               act="write the baseline", cause=exc)
 
     def _source_workspace(self):
@@ -3585,20 +3590,23 @@ class ProductModule:
 
     def _file_one(self, draft, requirement, tracker, board,
                   *, known_open: set[str] | None = None, vet=None, by: str = "") -> WriteResult:
+        from openfactory.product.voice import breakdown_said
+
+        lang = getattr(self.project, "language", None)
         reused = self._reused_card(draft, requirement, tracker, known_open)
         if reused:
             return WriteResult(ok=True, ref=f"#{reused}", existed=True,
-                               detail=f"essa frente já está no #{reused} — apontei o requisito "
-                                      f"para lá em vez de abrir um cartão novo")
+                               detail=breakdown_said("already_carried", ref=reused,
+                                                     language=lang))
         # EVERY CARD OF A REQUIREMENT IS CHECKED BEFORE THE BOARD SEES IT (#392) — the floor and
         # the judge a requested card and a defect already pass; one the judge still blocks after a
         # redraft is not filed, and the breakdown says which front and why
         if vet is not None:
             vetted, why = vet(draft)
             if vetted is None:
-                return _could_not(f"a frente “{draft.title.strip()[:80]}” não passou na revisão "
-                                  f"automática, então não abri esse cartão — as outras seguiram. "
-                                  f"O que falta: {why}", act="vet a requirement's card", cause=why)
+                return _could_not(breakdown_said("not_vetted", title=draft.title.strip()[:80],
+                                                 why=why, language=lang),
+                                  act="vet a requirement's card", cause=why)
             draft = vetted
         title = draft.title.strip()
         where, elsewhere = self._filing_repo(draft, tracker)
@@ -3608,13 +3616,12 @@ class ProductModule:
             existing = tracker.find_ticket(title=title) or self._titled_in(where, title)
             if existing:
                 return WriteResult(ok=True, ref=str(existing), existed=True,
-                                   detail="já existe um cartão com esse título")
+                                   detail=breakdown_said("title_exists", language=lang))
             ref = tracker.create_ticket(
                 title=title, body=self._issue_body(draft, requirement, tracker),
                 **({"repo": where} if where else {}))
         except Exception as exc:  # noqa: BLE001 — one bad issue must not lose the others
-            return _could_not(f"não consegui registrar “{title}” agora. O time foi avisado e "
-                              f"resolve — as outras frentes seguiram.",
+            return _could_not(breakdown_said("file_failed", title=title, language=lang),
                               act=f"file work: {title[:60]}", cause=exc)
 
         if board is not None:
@@ -3635,8 +3642,7 @@ class ProductModule:
                 log.warning("OPENFACTORY_PRODUCT_CARD_NOT_PLACED ref=%r reason=no-ref — the "
                             "tracker answered no ref for the card it filed", ref)
                 return WriteResult(ok=True, ref=str(ref),
-                                   detail="criado, mas o quadro não aceitou a colocação — o "
-                                          "cartão está sem coluna e o time foi avisado.")
+                                   detail=breakdown_said("unplaced_no_ref", language=lang))
         placed, column = self._filed_through_the_door(str(ref), by=by, tracker=tracker,
                                                       board=board)
         if board is not None and not placed:
@@ -3644,8 +3650,7 @@ class ProductModule:
                         "but has no column, so the queue cannot see it until a person places it",
                         ref, column)
             return WriteResult(ok=True, ref=str(ref),
-                               detail="criado, mas o quadro recusou a colocação — o cartão "
-                                      "está sem coluna e o time foi avisado.")
+                               detail=breakdown_said("unplaced", language=lang))
         return WriteResult(ok=True, ref=str(ref), detail=elsewhere)
 
     def _filed_through_the_door(self, ref: str, *, by: str, tracker, board,
@@ -3704,6 +3709,7 @@ class ProductModule:
         before this existed, and said."""
         from openfactory.adapters.tracker.base import files_elsewhere
         from openfactory.product.config import repo_match
+        from openfactory.product.voice import breakdown_said
 
         target = str(getattr(draft, "target_repo", "") or "").strip().strip("/")
         default = self._source_repo()
@@ -3714,11 +3720,11 @@ class ProductModule:
             log.warning("OPENFACTORY_PRODUCT_TARGET_OUTSIDE_SOURCES project=%s target=%s — not a "
                         "repository of this product; the card is filed in %s",
                         getattr(self.project, "name", "?"), target, default or "its default")
-            return "", (f"o cartão foi aberto em `{default or 'o repositório padrão'}`: "
-                        f"`{target}` não está entre os repositórios deste produto.")
+            return "", breakdown_said("outside_sources", default=default, target=target,
+                                      language=getattr(self.project, "language", None))
         if not files_elsewhere(tracker):
-            return "", (f"o cartão foi aberto em `{default or 'o repositório padrão'}`: este "
-                        f"quadro registra todo cartão num lugar só, e ele é de `{home}`.")
+            return "", breakdown_said("one_place", default=default, home=home,
+                                      language=getattr(self.project, "language", None))
         return home, ""
 
     def _titled_in(self, repo: str, title: str) -> str | None:
@@ -3924,15 +3930,19 @@ class ProductModule:
         the second yes is given on it. A requirement that is off the table gets nothing.
 
         `conversation` and `requester` are handed to the filing (`file_issues`)."""
+        from openfactory.product.voice import breakdown_said, requirement_not_found
+
+        lang = getattr(self.project, "language", None)
         ctx = self.context()
         if not ctx.available:
             return [self._cannot_see_the_product()]
         requirement = ctx.corpus.by_number(number)
         if requirement is None:
-            return [WriteResult(ok=False, detail=f"não encontrei o requisito {number}")]
+            return [WriteResult(ok=False, detail=requirement_not_found(number=number,
+                                                                       language=lang))]
         if not requirement.is_live:
-            return [WriteResult(ok=False, detail=f"o requisito {number} já não vale — não abri "
-                                                 f"nenhum cartão para ele")]
+            return [WriteResult(ok=False, detail=breakdown_said("retired", number=number,
+                                                                language=lang))]
         return self.file_issues(requirement, actor=actor, tracker=tracker, board=board,
                                 conversation=conversation, requester=requester)
 
@@ -3947,7 +3957,7 @@ class ProductModule:
         agreement stands; the copy is a courtesy, never the act."""
         from datetime import UTC, datetime
 
-        from openfactory.product.voice import acceptance_stamp
+        from openfactory.product.voice import acceptance_stamp, breakdown_said
 
         if not may_act(self.project, actor, via=self._via):
             return [WriteResult(ok=False, detail=unauthorized_message(self.project))]
@@ -3968,9 +3978,10 @@ class ProductModule:
                 results.append(WriteResult(ok=True, ref=str(ref)))
             except Exception as exc:  # noqa: BLE001 — one card's comment must not lose the others
                 # the agreement stands in the requirement; only this card does not show it
-                results.append(_could_not(f"não consegui registrar o aceite no {ref}",
-                                          act=f"stamp the acceptance on {ref}", cause=exc,
-                                          ref=str(ref)))
+                results.append(_could_not(
+                    breakdown_said("unstamped", ref=ref,
+                                   language=getattr(self.project, "language", None)),
+                    act=f"stamp the acceptance on {ref}", cause=exc, ref=str(ref)))
         return results
 
     def break_down(self, number: int, *, actor: str, asked_for: bool, board=_UNSET,
@@ -3994,16 +4005,21 @@ class ProductModule:
         THE SINK ASKS AS WELL AS THE DOORS. Both acceptance doors already read the acceptance's
         own `nothing_to_build` and never get here. This is what stops the door nobody has written
         yet, and an older panel starting the workflow against a newer worker."""
+        from openfactory.product.voice import requirement_not_found
+
+        lang = getattr(self.project, "language", None)
         ctx = self.context()
         if not ctx.available:
             return [self._cannot_see_the_product()]
         requirement = ctx.corpus.by_number(number)
         if requirement is None:
-            return [WriteResult(ok=False, detail=f"não encontrei o requisito {number}")]
+            return [WriteResult(ok=False, detail=requirement_not_found(number=number,
+                                                                       language=lang))]
         if not requirement.is_promise:
             # A proposal or a reading of the code is not something to build. Filing work from one
             # would commit the factory to a decision nobody has made.
-            return [WriteResult(ok=False, detail=_not_a_promise(number, requirement))]
+            return [WriteResult(ok=False, detail=_not_a_promise(number, requirement,
+                                                                language=lang))]
         if requirement.came_from_the_code and not asked_for:
             from openfactory.product.voice import nothing_to_build
 
@@ -4044,7 +4060,9 @@ class ProductModule:
             readiness,
             whole_batches,
         )
+        from openfactory.product.voice import queue_said
 
+        lang = getattr(self.project, "language", None)
         ctx = self.context()
         if not ctx.available:
             return None, None, ctx.reason
@@ -4078,7 +4096,7 @@ class ProductModule:
                 titles={t.number: t.title for t in tickets},
                 total_candidates=len(candidates)))
         if not isinstance(answer, dict):
-            return state, None, "não consegui montar a proposta"
+            return state, None, queue_said("unproposed", language=lang)
 
         proposal = QueueProposal(**answer)
         # never propose something that is not a candidate: a model naming a ticket that is parked,
@@ -4092,9 +4110,9 @@ class ProductModule:
         proposal.items, cut = whole_batches(proposal.items, limit)
         if cut:
             # NAMED, never a silent truncation. "What happened to the rest?" is the first question
-            # a proposed queue gets, and an omission with no sentence reads as an oversight.
-            left = ", ".join(f"#{i.ticket}" for i in cut)
-            trailer = (f"Deixei para a próxima rodada o que não cabia inteiro agora: {left}.")
+            # a proposed queue gets, and an omission with no sentence reads as an oversight. Named
+            # as their tracker names them, in the conversation's language (#513).
+            trailer = queue_said("left_for_later", cards=[i.ticket for i in cut], language=lang)
             proposal.note = f"{proposal.note} {trailer}".strip() if proposal.note else trailer
         return state, proposal, ""
 
@@ -4104,6 +4122,12 @@ class ProductModule:
         Gated on the allowlist, and ordered: they are moved in the sequence given, because the
         poller pulls in board order and an approved sequence that arrives shuffled is not the
         sequence anybody approved.
+
+        AND RANKED IN IT (#512), because moving them in sequence is not what orders them: the local
+        board served its queue by card number, and on Jira a card keeps its rank when it changes
+        status, so the poller took whichever card the board already put first — under a reply
+        saying "a fábrica começa pelo primeiro". Each card that went in is placed after the one
+        before it, the first at the top of the queue.
 
         WHAT IT ANSWERS IS SAID IN THE CONVERSATION'S LANGUAGE, the card named as its tracker names
         it (`voice.board_move_said`, #497): `CONT-412` on Jira, never `#CONT-412`."""
@@ -4163,6 +4187,43 @@ class ProductModule:
                 # carrying the mutation and the board's field ids.
                 out.append(_could_not(board_move_said("queue_failed", ref=number, language=lang),
                                       act="queue approved work", cause=exc, ref=f"#{number}"))
+        # IN THE ORDER APPROVED (#512), and said on each card what came of it
+        # (`WriteResult.ranked`), so the reply promises an order only where it holds.
+        #
+        # A BOARD WRITE, NOT A CARD'S TRANSITION: the door moved each card into the queue; where it
+        # stands among the cards there is no state of the card, and it is written as `reorder`
+        # writes the backlog's (#511) — `Rankable.place_after`, through this module's own watched
+        # board, so a rank the board refused or that raised is reported like a refused column.
+        #
+        # THE FIRST TO THE TOP OF THE QUEUE, ahead of anything already waiting there, and each next
+        # one right after the one before it: "a fábrica começa pelo primeiro" names the card the
+        # poller takes next, and a card queued yesterday that nobody re-approved does not outrank
+        # the order a person just gave. A card whose place was refused leaves the anchor where it
+        # was, so the rest still follow the last one placed. A board that cannot rank is said to,
+        # for that board only (`voice.queued`): its cards are queued, in the board's own order.
+        from openfactory.adapters.board.base import Rankable
+
+        landed = [r for r in out if r.ok]
+        rankable = isinstance(board, Rankable)
+        anchor: str | None = None
+        for result in landed:
+            if not rankable:
+                result.ranked = "unrankable"
+                continue
+            card = canonical_ref(result.ref)
+            try:
+                kept = bool(board.place_after(issue=card, issue_url=self._issue_url(tracker, card),
+                                              after=anchor, column=queue))
+            except Exception:  # noqa: BLE001 — the card is queued; only its place is unknown
+                log.warning("could not rank %s in %r after %r", card, queue, anchor,
+                            exc_info=True)
+                kept = False
+            result.ranked = "kept" if kept else "not_kept"
+            anchor = card if kept else anchor
+        if landed and rankable:
+            from openfactory.product.board import forget_board
+
+            forget_board(getattr(self.project, "name", ""))
         return out
 
     def reorder(self, numbers: list[str], *, actor: str, board=None) -> list[WriteResult]:
@@ -4303,7 +4364,9 @@ class ProductModule:
         # test that fails silently on the difference.
         number = canonical_ref(number)
         from openfactory.product.queue import has_criteria
+        from openfactory.product.voice import card_said, criteria_counted
 
+        lang = getattr(self.project, "language", None)
         ctx = self.context()
         if not ctx.available:
             return self._cannot_see_the_product()
@@ -4317,13 +4380,15 @@ class ProductModule:
             # client's whole reply on the ordinary transient this deployment lives with, a
             # throttled quota. The two siblings below already said this in pt-BR; refine is the one
             # that had never been given a sentence.
-            return _could_not(_BOARD_UNREADABLE, act=f"refine #{number}", cause=error)
+            return _could_not(card_said("board_unreadable", language=lang),
+                              act=f"refine #{number}", cause=error)
         ticket = next((t for t in tickets if t.number == number), None)
         if ticket is None:
-            return WriteResult(ok=False, detail=f"não encontrei o #{number}")
+            return WriteResult(ok=False, detail=card_said("not_found", number=number,
+                                                          language=lang))
         if has_criteria(ticket):
             return WriteResult(ok=True, ref=f"#{number}", existed=True,
-                               detail="esse já diz quando estaria pronto — não mexi")
+                               detail=card_said("has_criteria", language=lang))
         from openfactory.adapters.tracker.parse import criteria_heading
 
         if criteria_heading(ticket.body or "") is not None:
@@ -4332,7 +4397,7 @@ class ProductModule:
             from openfactory.product.voice import refine_would_be_ignored
 
             return WriteResult(ok=False, ref=f"#{number}", detail=refine_would_be_ignored(
-                number=number, language=getattr(self.project, "language", None)))
+                number=number, language=lang))
 
         sandbox, ws = self._workspace()
         answer = self._role().ask_json(
@@ -4345,10 +4410,9 @@ class ProductModule:
         criteria = (answer or {}).get("criteria") or []
         if not isinstance(answer, dict) or not criteria:
             return WriteResult(ok=False, ref=f"#{number}",
-                               detail="não consegui escrever critérios que se sustentassem")
+                               detail=card_said("no_criteria", language=lang))
 
-        body = _with_criteria(ticket.body, answer, agent=self._name(),
-                              language=getattr(self.project, "language", None))
+        body = _with_criteria(ticket.body, answer, agent=self._name(), language=lang)
         tracker = tracker or self._tracker()
         # TWO WRITES, TWO OUTCOMES — the rule `close_card` states, and the third card writer to
         # need it. One `try` around both makes a note that failed report the REWRITE as a failure,
@@ -4360,8 +4424,7 @@ class ProductModule:
         try:
             tracker.update_body(f"#{number}", body)
         except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
-            return _could_not(f"não consegui escrever os critérios no #{number} agora. Nada mudou "
-                              f"no cartão — o time foi avisado e resolve.",
+            return _could_not(card_said("refine_failed", number=number, language=lang),
                               act=f"refine #{number}", cause=exc, ref=f"#{number}")
         from openfactory.product.board import forget_board
 
@@ -4369,7 +4432,7 @@ class ProductModule:
         # exists, and `has_criteria` is read from that snapshot. Leaving the invalidation behind a
         # write that can fail is what turns a lost note into a duplicated set of criteria.
         forget_board(getattr(self.project, "name", ""))
-        detail = f"{len(criteria)} critérios"
+        detail = criteria_counted(len(criteria), language=lang)
         try:
             tracker.comment(f"#{number}", _refine_note(answer, agent=self._name()))
         except Exception as exc:  # noqa: BLE001 — the criteria landed; the note only repeats them
@@ -4380,9 +4443,7 @@ class ProductModule:
             log.warning("OPENFACTORY_PRODUCT_REFINE_UNEXPLAINED card=#%s (%s) — the criteria were "
                         "written "
                         "and the comment attributing them was not", number, exc)
-            detail = (f"escrevi os critérios no #{number}, mas não consegui deixar o comentário "
-                      f"dizendo que fui eu — isso está escrito no próprio item. O time foi "
-                      f"avisado.")
+            detail = card_said("refine_unnoted", number=number, language=lang)
         return WriteResult(ok=True, ref=f"#{number}", detail=detail)
 
     # ---- maintaining the cards themselves --------------------------------------------------------
@@ -4431,37 +4492,36 @@ class ProductModule:
         for a card the factory already finished (Done), closed from the card itself: that work DID
         ship, and recording it as withdrawn would drop it from every account of what was delivered
         — the board's own close decides the same way (`catalog._card_close`, #162)."""
+        from openfactory.product.voice import card_said
+
+        lang = getattr(self.project, "language", None)
         tickets, error = self._read_board()
         if error:
-            return _could_not(_BOARD_UNREADABLE, act=f"close #{number}", cause=error)
+            return _could_not(card_said("board_unreadable", language=lang),
+                              act=f"close #{number}", cause=error)
         card = next((t for t in tickets if t.number == number), None)
         if card is None:
-            return WriteResult(ok=False, detail=f"não encontrei o cartão #{number} no quadro")
+            return WriteResult(ok=False, detail=card_said("not_found", number=number,
+                                                          language=lang))
         if card.state != "open":
             # A BUSINESS ANSWER, NOT A BREAKAGE. Somebody got there first — say so and stop; the
             # confirmation that authorised this was about a card that no longer needs it.
             return WriteResult(ok=False, existed=True, ref=f"#{number}",
-                               detail=f"o #{number} já estava fechado — não mexi nele")
+                               detail=card_said("already_closed", number=number, language=lang))
 
         survivor = None
         if in_favour_of is not None:
             survivor = next((t for t in tickets if t.number == in_favour_of), None)
             if survivor is None:
-                return WriteResult(
-                    ok=False,
-                    detail=f"não encontrei o #{in_favour_of} no quadro, então não fechei o "
-                           f"#{number}: mandar quem ler procurar um cartão que não existe é pior "
-                           f"do que deixar os dois abertos.")
+                return WriteResult(ok=False, detail=card_said(
+                    "survivor_missing", number=number, other=in_favour_of, language=lang))
             if survivor.state != "open":
                 # THE BOARD IS READ WITH `--state all`, so a card closed last month is on this list
                 # and passes the check above. Folding work into it closes both and the work is
                 # tracked nowhere — worse than the dangling pointer refused just above, because
                 # this one reads as correct on the way past. `_orphans` applies the same rule.
-                return WriteResult(
-                    ok=False,
-                    detail=f"o #{in_favour_of} também já está fechado, então não fechei o "
-                           f"#{number}: os dois fechados quer dizer que ninguém está olhando esse "
-                           f"trabalho. Me digam qual cartão fica com ele.")
+                return WriteResult(ok=False, detail=card_said(
+                    "survivor_closed", number=number, other=in_favour_of, language=lang))
 
         tracker = self._tracker()
         # NOT A DELIVERY. This act takes an item off the list of work — "deixa de ser algo a
@@ -4482,8 +4542,7 @@ class ProductModule:
         if moved.refused:
             return WriteResult(ok=False, existed=True, ref=f"#{number}", detail=moved.refused)
         if moved.outcome("close").startswith("failed") and not moved.recorded:
-            return _could_not(f"não consegui fechar o #{number} agora. Nada mudou — o time foi "
-                              f"avisado e resolve.",
+            return _could_not(card_said("close_failed", number=number, language=lang),
                               act=f"close #{number}", cause=RuntimeError(moved.outcome("close")),
                               ref=f"#{number}")
         detail = ""
@@ -4495,8 +4554,8 @@ class ProductModule:
                 log.warning("OPENFACTORY_PRODUCT_CLOSE_UNLINKED closed=#%s survivor=#%s (%s) — the "
                             "surviving card does not say what was folded into it", number,
                             in_favour_of, exc)
-                detail = (f"fechei o #{number}, mas não consegui deixar o registro disso no "
-                          f"#{in_favour_of}. O time foi avisado.")
+                detail = card_said("close_unlinked", number=number, other=in_favour_of,
+                                   language=lang)
         return WriteResult(ok=True, ref=f"#{number}", detail=detail)
 
     def withdraw_card(self, number: str, *, actor: str, reason: str, remove: bool = False,
@@ -4570,17 +4629,20 @@ class ProductModule:
     def _remove_one(self, number: str, *, actor: str, reason: str) -> WriteResult:
         """Remove one card through the tracker's own removal, or close it where the row has none —
         and say which, because only one of the two leaves the card in a tracker's history."""
-        from openfactory.product.voice import card_withdrawn_result
+        from openfactory.product.voice import card_said, card_withdrawn_result
 
+        lang = getattr(self.project, "language", None)
         tickets, error = self._read_board()
         if error:
-            return _could_not(_BOARD_UNREADABLE, act=f"remove #{number}", cause=error)
+            return _could_not(card_said("board_unreadable", language=lang),
+                              act=f"remove #{number}", cause=error)
         card = next((t for t in tickets if t.number == number), None)
         if card is None:
-            return WriteResult(ok=False, detail=f"não encontrei o cartão #{number} no quadro")
+            return WriteResult(ok=False, detail=card_said("not_found", number=number,
+                                                          language=lang))
         if card.state != "open":
             return WriteResult(ok=False, existed=True, ref=f"#{number}",
-                               detail=f"o #{number} já estava fechado — não mexi nele")
+                               detail=card_said("already_closed", number=number, language=lang))
         # THROUGH THE CARD'S DOOR (ADR-0055): the tracker's own removal, then what a removal means
         # for the promise, the requester, the preview and the snapshot
         from openfactory.lifecycle import CardEvent, transition
@@ -4591,13 +4653,12 @@ class ProductModule:
         if moved.refused:
             return WriteResult(ok=False, existed=True, ref=f"#{number}", detail=moved.refused)
         if moved.outcome("remove").startswith("failed") and not moved.recorded:
-            return _could_not(f"não consegui remover o #{number} agora. Nada mudou — o time foi "
-                              f"avisado e resolve.",
+            return _could_not(card_said("remove_failed", number=number, language=lang),
                               act=f"remove #{number}", cause=RuntimeError(moved.outcome("remove")),
                               ref=f"#{number}")
         return WriteResult(ok=True, ref=f"#{number}", detail=card_withdrawn_result(
             ref=number, how="removed" if moved.outcome("remove") == "removed" else "only_closed",
-            language=getattr(self.project, "language", None)))
+            language=lang))
 
     def correct_card(self, number: str, *, actor: str, text: str = "",
                      title: str = "", criteria: list[str] | tuple[str, ...] = (),
@@ -4639,7 +4700,12 @@ class ProductModule:
         """
         from openfactory.adapters.board.base import stage_key
         from openfactory.adapters.board.columns import has_finished, has_started
-        from openfactory.product.voice import correction_note, correction_refused
+        from openfactory.product.voice import (
+            card_said,
+            correction_note,
+            correction_refused,
+            criteria_counted,
+        )
 
         number = canonical_ref(number)
         text, title = (text or "").strip(), (title or "").strip()
@@ -4656,7 +4722,8 @@ class ProductModule:
 
         tickets, error = self._read_board()
         if error:
-            return _could_not(_BOARD_UNREADABLE, act=f"correct #{number}", cause=error)
+            return _could_not(card_said("board_unreadable", language=lang),
+                              act=f"correct #{number}", cause=error)
         card = next((t for t in tickets if t.number == number), None)
         if card is None:
             return WriteResult(ok=False, detail=correction_refused("not_found", number=number,
@@ -4794,7 +4861,8 @@ class ProductModule:
         # A MEASURE, NOT A RESIDUE (`confirm._unfinished`): how many criteria went with the old
         # text, which the reply turns into the offer to write new ones.
         return WriteResult(ok=True, ref=f"#{number}",
-                           detail=f"{removed} critérios" if removed is not None else "")
+                           detail=("" if removed is None
+                                   else criteria_counted(removed, language=lang)))
 
     # ---- another pass on a change that waits on its requester (#448) ---------------------------
 
@@ -5152,7 +5220,9 @@ class ProductModule:
         # test that fails silently on the difference.
         number = canonical_ref(number)
         from openfactory.product.role import IssueDraft
+        from openfactory.product.voice import card_said, criteria_counted, requirement_not_found
 
+        lang = getattr(self.project, "language", None)
         ctx = self.context()
         if not ctx.available:
             return self._cannot_see_the_product()
@@ -5160,22 +5230,24 @@ class ProductModule:
             return WriteResult(ok=False, detail=unauthorized_message(self.project))
         req = ctx.corpus.by_number(requirement)
         if req is None:
-            return WriteResult(ok=False,
-                               detail=f"não encontrei o requisito {requirement} escrito na base")
+            return WriteResult(ok=False, detail=requirement_not_found(number=requirement,
+                                                                      language=lang))
         if not req.is_promise:
             # Aligning onto a retired text is the very defect this method repairs, performed on
             # purpose — and the printed rule on the card would then order the old promise built.
             # Aligning onto a text nobody has agreed to is the same act one step earlier: the card
             # would carry criteria derived from a proposal, under a rule saying nothing may go
             # beyond it, while the client may still say no. `break_down` refuses both.
-            return WriteResult(ok=False, detail=_not_a_promise(requirement, req))
+            return WriteResult(ok=False, detail=_not_a_promise(requirement, req, language=lang))
 
         tickets, error = self._read_board()
         if error:
-            return _could_not(_BOARD_UNREADABLE, act=f"align #{number}", cause=error)
+            return _could_not(card_said("board_unreadable", language=lang),
+                              act=f"align #{number}", cause=error)
         card = next((t for t in tickets if t.number == number), None)
         if card is None:
-            return WriteResult(ok=False, detail=f"não encontrei o cartão #{number} no quadro")
+            return WriteResult(ok=False, detail=card_said("not_found", number=number,
+                                                          language=lang))
 
         sandbox, ws = self._workspace()
         answer = self._role().ask_json(
@@ -5193,8 +5265,8 @@ class ProductModule:
         criteria = (answer or {}).get("criteria") or []
         if not isinstance(answer, dict) or not criteria:
             return WriteResult(ok=False, ref=f"#{number}",
-                               detail=f"não consegui escrever critérios que se sustentassem a "
-                                      f"partir do requisito {requirement} — não mexi no cartão")
+                               detail=card_said("no_criteria_from", requirement=requirement,
+                                                language=lang))
 
         # `issue_body` renders it, as it rendered the card in the first place. The draft carries
         # only what the rewritten sections need: everything else in the card — its objective,
@@ -5235,22 +5307,20 @@ class ProductModule:
         try:
             tracker.update_body(f"#{number}", body)
         except Exception as exc:  # noqa: BLE001
-            return _could_not(f"não consegui reescrever o #{number} agora. O time foi avisado e "
-                              f"resolve.",
+            return _could_not(card_said("align_failed", number=number, language=lang),
                               act=f"align #{number} to REQ-{requirement:04d}", cause=exc,
                               ref=f"#{number}")
         from openfactory.product.board import forget_board
 
         forget_board(getattr(self.project, "name", ""))
-        detail = f"{len(criteria)} critérios"
+        detail = criteria_counted(len(criteria), language=lang)
         try:
             tracker.comment(f"#{number}", _align_note(requirement, answer, agent=self._name()))
         except Exception as exc:  # noqa: BLE001 — the card was rewritten; the note explains it
             log.warning("OPENFACTORY_PRODUCT_ALIGN_UNEXPLAINED card=#%s requirement=%s (%s) — the "
                         "criteria were replaced and nothing on the card says so", number,
                         requirement, exc)
-            detail = (f"alinhei o #{number}, mas não consegui deixar escrito nele que o texto "
-                      f"anterior foi substituído. O time foi avisado.")
+            detail = card_said("align_unnoted", number=number, language=lang)
         return WriteResult(ok=True, ref=f"#{number}", detail=detail)
 
     def orphaned_cards(self) -> list[tuple[str, int, int]]:
@@ -5299,6 +5369,9 @@ class ProductModule:
         IDEMPOTENT BY CONSTRUCTION rather than by a guard: a card citing a live requirement is not
         an orphan, so the second run has nothing to find.
         """
+        from openfactory.product.voice import card_said
+
+        lang = getattr(self.project, "language", None)
         ctx = self.context()
         tracker = None            # built only if there is something to write
         results: list[WriteResult] = []
@@ -5312,8 +5385,7 @@ class ProductModule:
                 tracker.update_body(f"#{card.number}", body)
             except Exception as exc:  # noqa: BLE001 — one card must not lose the others
                 results.append(_could_not(
-                    f"não consegui atualizar o #{card.number} — ele continua apontando para o "
-                    f"texto antigo, e o time foi avisado.",
+                    card_said("repoint_failed", number=card.number, language=lang),
                     act=f"repoint #{card.number} to REQ-{successor:04d}", cause=exc,
                     ref=f"#{card.number}"))
                 continue
@@ -5333,7 +5405,8 @@ class ProductModule:
                             "citation moved and nothing on the card warns that what it asks for "
                             "was written against the replaced text", card.number, successor, exc)
             results.append(WriteResult(ok=True, ref=f"#{card.number}",
-                                       detail=f"passou a executar o requisito {successor}"))
+                                       detail=card_said("repointed", requirement=successor,
+                                                        language=lang)))
         if results:
             from openfactory.product.board import forget_board
 
@@ -5619,7 +5692,7 @@ def _successor(corpus, number: int) -> int | None:
     return current.number if current is not None else None
 
 
-def _not_a_promise(number: int, requirement) -> str:
+def _not_a_promise(number: int, requirement, *, language: str | None = None) -> str:
     """Why the factory may not be aimed at this text, in the client's terms — ONE sentence for the
     two acts that aim it (`break_down` files work from a requirement, `align_card` rewrites a card
     against one), because a person told two different things about one rule learns the rule is
@@ -5628,19 +5701,14 @@ def _not_a_promise(number: int, requirement) -> str:
     Three answers, not one, and the difference is what the person can do next: a retired text has a
     replacement to ask about, a proposal needs a yes, and a reading of the code was never a promise
     at all — telling somebody "it is not agreed" about a brownfield observation invites them to
-    agree to a description of the bugs the product already has."""
+    agree to a description of the bugs the product already has. Which one is decided here, on the
+    requirement; the words are the voice's, in the conversation's language (#513)."""
     from openfactory.product.corpus import OBSERVED
+    from openfactory.product.voice import not_a_promise
 
-    if not requirement.is_live:
-        return (f"o requisito {number} já não vale, então mandar construir a partir dele seria "
-                f"pedir um texto aposentado. Me diga qual requisito vale hoje e eu sigo com esse.")
-    if requirement.status == OBSERVED:
-        return (f"o {number} é o que eu li que o sistema já faz hoje, não algo que vocês pediram — "
-                f"construir a partir dele seria transformar o comportamento actual em promessa, "
-                f"defeitos inclusive. Se é isso que tem de valer, me digam e eu registro primeiro.")
-    return (f"o requisito {number} ainda não foi acordado, então não dá para virar trabalho: "
-            f"enquanto ele for só uma proposta, construir a partir dele seria decidir por vocês. "
-            f"Me confirmem esse requisito e eu sigo.")
+    reason = ("retired" if not requirement.is_live
+              else "observed" if requirement.status == OBSERVED else "proposed")
+    return not_a_promise(reason, number=number, language=language)
 
 
 def _closing_note(*, in_favour_of: str | None, actor: str, reason: str,
@@ -5651,7 +5719,7 @@ def _closing_note(*, in_favour_of: str | None, actor: str, reason: str,
 
     who = actor or "o time"
     note = f"{signature(agent)} fechado a pedido de {who}"
-    note += (f", em favor do #{in_favour_of}: o trabalho passa a ser acompanhado lá."
+    note += (f", em favor do {ref_label(in_favour_of)}: o trabalho passa a ser acompanhado lá."
              if in_favour_of else ".")
     if reason:
         note += f"\n\n{reason.strip()}"
@@ -5664,8 +5732,8 @@ def _survivor_note(*, closed: str, actor: str, agent: str = "") -> str:
     from openfactory.product.voice import signature
 
     who = actor or "o time"
-    return (f"{signature(agent)} o #{closed} foi fechado em favor deste, a pedido de {who}. Se "
-            f"havia algo escrito lá que não está aqui, vale trazer antes de começar.")
+    return (f"{signature(agent)} o {ref_label(closed)} foi fechado em favor deste, a pedido de "
+            f"{who}. Se havia algo escrito lá que não está aqui, vale trazer antes de começar.")
 
 
 def _align_note(requirement: int, answer: dict, *, agent: str = "") -> str:

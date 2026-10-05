@@ -406,6 +406,17 @@ jobs:
       - name: collect the assets a pinned install fetches
         run: sh scripts/collect-release-assets.sh dist
 
+      # THE PAGE SAYS HOW TO INSTALL WHAT IT IS (#531). A candidate is installed only by naming it,
+      # so its page prints its own installer and `--version`; a final prints the one-line install.
+      # The page used to print the one-line install for every tag, and v0.5.0-rc.1's told its
+      # testers to install v0.4.2. A script, so the suite runs it (`scripts/release-page-body.sh`).
+      - name: write the top of the release page
+        env:
+          TAG: ${{ github.ref_name }}
+          # the page names the wheel only when this run publishes it (the `pypi` job's gate)
+          WHEEL_PUBLISHED: ${{ vars.PYPI_TRUSTED_PUBLISHER == 'true' }}
+        run: sh scripts/release-page-body.sh "$TAG" > release-page.md
+
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
@@ -418,21 +429,8 @@ jobs:
           # the pairing for the reader rather than adding a second guarantee.
           prerelease: ${{ contains(github.ref_name, '-') }}
           make_latest: ${{ !contains(github.ref_name, '-') }}
-          # GENERATED NOTES, PLUS THE ONE LINE A RELEASE PAGE OWES A READER: which images this tag
-          # published, so somebody landing here from a `docker pull` that failed can see whether
-          # the tag they typed exists.
+          # GENERATED NOTES, UNDER WHAT A RELEASE PAGE OWES A READER: how to install this release,
+          # and which images this tag published, so somebody landing here from a `docker pull` that
+          # failed can see whether the tag they typed exists (the step above writes both).
           generate_release_notes: true
-          body: |
-            ### Install
-
-            ```bash
-            curl -fsSL https://openfactory.digital/install.sh | sh
-            ```
-
-            Images published for this tag (`linux/amd64`, `linux/arm64`):
-
-            - `ghcr.io/open-factory-digital/openfactory-worker:${{ github.ref_name }}`
-            - `ghcr.io/open-factory-digital/openfactory-sandbox:${{ github.ref_name }}`
-            - `ghcr.io/open-factory-digital/openfactory-cli:${{ github.ref_name }}`
-
-            Verify the assets below with `sha256sum -c SHA256SUMS --ignore-missing`.
+          body_path: release-page.md

@@ -65,9 +65,11 @@ class Rankable(Protocol):
     can be read and every card can be moved between columns; not every board has a rank a client
     of this platform is allowed to write, and a capability bolted onto the base protocol would make
     every double, every conformance fake and every client's own adapter claim it or fail
-    `isinstance`. The three boards shipped here all rank (Azure Boards by `StackRank`, GitHub
-    Projects by item position, Jira by the Agile rank endpoint); a board that does not is told so
-    by `ProductModule.reorder` in one sentence, never by an `AttributeError` in a chat.
+    `isinstance`. The four boards shipped here all rank (Azure Boards by `StackRank`, GitHub
+    Projects by item position, Jira by the Agile rank endpoint, the local board by a position in
+    the column, #512); a board that does not is told so by `ProductModule.reorder` in one
+    sentence, never by an `AttributeError` in a chat — and `promote` says, for that board only,
+    that the factory takes the queue in the board's own order.
     """
 
     def place_after(self, *, issue: str, issue_url: str, after: str | None, column: str) -> bool:
@@ -201,7 +203,12 @@ class BoardAdapter(Protocol):
         """`{ticket ref: column name}` for the whole board.
 
         `None` = COULD NOT READ. `{}` = read fine, nothing on it. Callers depend on the
-        distinction; see the module docstring."""
+        distinction; see the module docstring.
+
+        IN BOARD ORDER, where the board keeps one: within a column, the cards come in the order
+        `items_in_status` serves them — Jira's rank, a Projects item's position, Azure's
+        `StackRank`, the local board's position (#512). The panel draws each column in it, so the
+        queue a person sees is the queue the factory picks up from."""
         ...
 
     def column_names(self) -> list[str] | None:

@@ -220,6 +220,17 @@ def _daemon(p: Probes) -> Finding:
     reachable, detail = p.daemon()
     if reachable:
         return _ok("docker_daemon", f"the Docker daemon answers ({detail})", on=LOCAL)
+    # A SOCKET THIS PROCESS MAY NOT USE IS NOT A STOPPED DAEMON, and the remedies are opposite
+    # (#529). On Docker Desktop the installer's container was refused the socket while the daemon
+    # was serving the very pulls of that install, and the sentence it read was "start Docker".
+    if "permission denied" in detail.lower():
+        return _fail(
+            "docker_daemon",
+            f"the Docker socket is there and this process may not use it: {detail}",
+            "give this process the group the socket has WHERE IT RUNS — in a container, "
+            "`docker run --group-add <gid>` with the gid `stat -c %g /var/run/docker.sock` prints "
+            "inside it (Docker Desktop shows the socket as 0:0 there, whatever the host file "
+            "says); on a Linux host, `sudo usermod -aG docker $USER` and log in again", on=LOCAL)
     return _fail(
         "docker_daemon", f"the Docker daemon did not answer: {detail}",
         "start Docker (Docker Desktop, or `sudo systemctl start docker`) and run this again — "
@@ -438,12 +449,38 @@ def _run(argv: list[str], timeout: int = 20) -> tuple[int, str]:
         return 127, f"{argv[0]}: not found on PATH"
     except subprocess.TimeoutExpired:
         return 124, f"{' '.join(argv)} did not answer within {timeout}s"
-    return done.returncode, (done.stdout or done.stderr).strip()
+    # A BLANK LINE ON STDOUT IS NO ANSWER, and it used to hide the one that was on stderr (#529).
+    # Refused the socket, `docker version --format …` prints its empty template — a lone `\n` — to
+    # stdout and the cause to stderr; `(stdout or stderr)` took the newline, stripped it to nothing,
+    # and the person read "docker gave no answer" instead of "permission denied" (measured on
+    # Docker Desktop, 2026-10-05).
+    return done.returncode, (done.stdout.strip() or done.stderr.strip())
 
 
 def _probe_daemon() -> tuple[bool, str]:
     code, out = _run(["docker", "version", "--format", "{{.Server.Os}}/{{.Server.Arch}}"])
-    return (code == 0 and bool(out)), out or "docker gave no answer"
+    if code == 0 and out:
+        return True, out
+    if "permission denied" in out.lower():
+        out = f"{out} ({_the_socket_as_this_process_sees_it()})"
+    return False, out or "docker gave no answer"
+
+
+def _the_socket_as_this_process_sees_it() -> str:
+    """Who owns the socket HERE, and who is asking — the two numbers a permission refusal is about.
+
+    `stat` and not `open`: it needs no access to the socket itself, so it answers exactly when the
+    connection was refused. Inside a container these are the container's numbers, which on Docker
+    Desktop are not the host file's (#529) — and the difference is the whole diagnosis."""
+    host = os.environ.get("DOCKER_HOST", "")
+    path = host.removeprefix("unix://") if host.startswith("unix://") else "/var/run/docker.sock"
+    try:
+        found = os.stat(path)
+    except OSError as exc:
+        return f"{path} cannot be read here: {exc.strerror or exc}"
+    groups = ",".join(str(g) for g in sorted({os.getgid(), *os.getgroups()}))
+    return (f"{path} is {found.st_uid}:{found.st_gid} mode {found.st_mode & 0o7777:o} here, "
+            f"and this process is uid {os.getuid()} in groups {groups}")
 
 
 def _probe_compose() -> tuple[bool, str]:

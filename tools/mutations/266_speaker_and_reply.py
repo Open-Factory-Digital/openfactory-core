@@ -181,10 +181,15 @@ MUTATIONS = [
      '                "never authoritative — when you use one, say it is what you were told in a "',
      '                "ATTRIBUTED, never authoritative — say who told you when you use one. When '
      'you use one, say it is what you were told in a "'),
+    # re-pinned 2026-10-05: the sentence is the voice's `record_said("fact_known")` now, and the
+    # name goes in with what the module hands it (#513)
     ("the card sweep's \"already noted\" names who said it", MODULE,
-     '                                   detail=f"já tenho isto anotado sobre {term!r}: "',
-     '                                   detail=f"já tenho isto anotado sobre {term!r} (por '
-     '{existing.source}): "'),
+     '                                   detail=record_said("fact_known", term=term,\n'
+     '                                                      body=existing.body[:160], '
+     'language=lang))',
+     '                                   detail=record_said("fact_known", term=term,\n'
+     '                                                      body=f"(por {existing.source}) '
+     '{existing.body[:160]}", language=lang))'),
     ("a click is recorded under the proposal's key, not in its conversation", CONFIRM,
      "    where = conversation_of(key, entry)", "    where = key"),
 ]

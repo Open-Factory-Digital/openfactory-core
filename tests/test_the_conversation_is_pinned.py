@@ -1305,7 +1305,7 @@ _BY_NUMBER = {r.number: r for r in BASE}
 
 
 @pytest.mark.parametrize("requirement, refusal", [
-    (4, _not_a_promise(4, _BY_NUMBER[4])),
+    (4, _not_a_promise(4, _BY_NUMBER[4], language=LANG)),
     (7, voice.align_refused(number="12", requirement=7, successor=5, language=LANG)),
     (6, voice.align_refused(number="12", requirement=6, language=LANG)),
     (8, voice.align_to_unagreed(number="12", requirement=8, successor=4, language=LANG)),
