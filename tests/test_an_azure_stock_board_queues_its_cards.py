@@ -183,7 +183,9 @@ def test_with_the_line_it_names_the_stock_card_is_queued_into_the_deployments_ow
     queued = _promote(project, board)
 
     assert (queued.ok, queued.detail) == (True, ""), queued.detail
-    assert site.patched == [(412, "Approved")] and site.state["412"] == "Approved"
+    # the move into the queue, and then, since #512, its rank in the order the person approved
+    assert site.patched[0] == (412, "Approved") and site.state["412"] == "Approved", site.patched
+    assert all(isinstance(value, float) for _ref, value in site.patched[1:]), site.patched
 
 
 # ── the panel's move ────────────────────────────────────────────────────────────────────────────
