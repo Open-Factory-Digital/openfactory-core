@@ -155,7 +155,7 @@ its administrator named — and localised — everything in it:
                options: { site: "https://acme.atlassian.net", email: bot@acme.ai,
                           token_env: ACME_JIRA_TOKEN,
                           issue_type: Tarefa,                # default `Task`
-                          status_map: '{"todo": "A Fazer", "in_progress": "Em andamento", "done": "Concluído"}',
+                          status_map: '{"backlog": "A Fazer", "todo": "Pronto", "in_progress": "Em andamento", "done": "Concluído"}',
                           not_delivered_resolution: "Won't Do" } }
 ```
 
@@ -167,6 +167,16 @@ its columns, so `status_map` is how it knows a card in `Concluído` is delivered
 somebody tries to edit or close that card. **`columns` is not read on a Jira row**: it is the
 option the GitHub, Azure Boards and local rows take (below), and the two maps are never both
 consulted — each board answers for its own columns.
+
+**The queue needs a status of its own.** Jira creates a new issue in its workflow's first status,
+and its create cannot be told another — so where `todo` names that status (`To Do`, `A Fazer`, on
+the templates a project starts from), every card the factory files would be picked up and built,
+and paid for, with nobody queueing it. Nothing files a card there: the product role, the board's
+own `card_create`, a split that keeps its children in the backlog, the factory's impediment and
+`preview propose --as-card` each refuse and say why, and `openfactory doctor` fails `board_intake`
+with the line that repairs it — add a status of the To Do category for the queue (`Pronto` above)
+and map the first status as `backlog`, as the example does. The first status is read off the
+project's statuses for the `issue_type`: the first of the To Do category.
 
 `not_delivered_resolution` is the **resolution** this site gives a card that was closed
 *without* the work being done — a duplicate, a withdrawn request. With it, such a close carries

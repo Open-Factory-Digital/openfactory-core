@@ -1163,7 +1163,15 @@ def card_body(proposal: PreviewProposal, repo: str) -> str:
 
 
 def _as_card(project, repo: str, proposal: PreviewProposal) -> Outcome:
-    """File the questions as a card on the project's board, instead of a pull request."""
+    """File the questions as a card on the project's board, instead of a pull request.
+
+    IT WAITS FOR A PERSON TO QUEUE IT, and is not created where it would not (#543): the outcome
+    says "move it to the queue when it should run", and on a board where a new card is born in the
+    pickup column the poller would take it first — the factory's executor building a card nobody
+    queued (ADR-0019 §5). The question is every new card's (`board.base.intake_held`); a board that
+    could not say holds it too, and the line names the doctor, which names the board's repair."""
+    from openfactory.adapters.board import build_board
+    from openfactory.adapters.board.base import intake_held
     from openfactory.adapters.tracker.registry import build_tracker
     from openfactory.credentials import deployment_tracker_token, tracker_token_for
 
@@ -1172,8 +1180,16 @@ def _as_card(project, repo: str, proposal: PreviewProposal) -> Outcome:
                                          "the repository; there is nothing to ask.")
     title = f"Describe how {repo} runs for a preview"
     try:
-        tracker = build_tracker(project, token=tracker_token_for(project)
-                                or deployment_tracker_token(project))
+        token = tracker_token_for(project) or deployment_tracker_token(project)
+        tracker = build_tracker(project, token=token)
+        born = intake_held(tracker, build_board(project, token=token))
+        if born is not None:
+            where = (f"a new card on this board is born in {born.column!r}, the column the "
+                     f"factory picks work up from, so it would be built with nobody queueing it"
+                     if born.queued else "the board could not be read to see where a new card "
+                                         "is born")
+            return Outcome(repo=repo, detail=f"the card was not filed: {where}. `openfactory "
+                                             f"doctor {project.name}` names the board's line.")
         ref = tracker.create_ticket(title=title, body=card_body(proposal, repo))
     except Exception as exc:  # noqa: BLE001 — a tracker that refused is an outcome, said
         return Outcome(repo=repo, detail=f"the card was not filed: {str(exc)[:200]}")

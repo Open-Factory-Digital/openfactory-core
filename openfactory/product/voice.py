@@ -1942,6 +1942,36 @@ def filing_held(reason: str, *, column: str = "", language: str | None = None) -
     return _pick(_FILING_HELD[reason], language).format(column=column)
 
 
+#: Why the board's own `card_create` opened nothing where a new card is born in the queue (#543).
+#: The person on the board CAN queue a card — opening it in the queue is theirs to choose, the one
+#: gesture that spends (ADR-0019 §5) — so this one says that way too, beside who repairs the board.
+_CARD_OPEN_HELD = {
+    "queue": {"pt-BR": ("Nada foi aberto: neste quadro um cartão novo nasce em '{column}', "
+                        "a coluna de onde a fábrica pega trabalho, então ele começaria a ser "
+                        "construído — e a custar — sem ninguém colocá-lo na fila. Para começar "
+                        "agora, abra-o em '{column}'; para que espere, quem opera esta fábrica "
+                        "define onde os cartões novos esperam — o `openfactory doctor` diz a "
+                        "linha."),
+              "en": ("Nothing was opened: on this board a new card starts in '{column}', the "
+                     "column the factory picks work up from, so it would start being built — and "
+                     "paid for — without anybody queueing it. To start it now, open it in "
+                     "'{column}'; for it to wait, whoever runs this factory sets where new cards "
+                     "wait — `openfactory doctor` names the line.")},
+    "unread": {"pt-BR": ("Nada foi aberto: não consegui ler o quadro para saber onde um cartão "
+                         "novo nasce, e um que nasce na coluna de onde a fábrica pega trabalho é "
+                         "construído sem ninguém colocá-lo na fila. Tente de novo daqui a pouco."),
+               "en": ("Nothing was opened: the board could not be read to see where a new card "
+                      "starts, and one that starts in the column the factory picks work up from is "
+                      "built without anybody queueing it. Try again in a moment.")},
+}
+
+
+def card_open_held(reason: str, *, column: str = "", language: str | None = None) -> str:
+    """Why the board opened no card, in the project's language (#543) — `queue` when a card opened
+    now would be born in the pickup column `column`, `unread` when the board could not say."""
+    return _pick(_CARD_OPEN_HELD[reason], language).format(column=column)
+
+
 #: The header over a group that only means something whole. Written as WHAT THE CLIENT WILL BE ABLE
 #: TO DO, because that is the decision they are being asked to make — not "these three tickets are
 #: related", which they cannot act on.

@@ -24,6 +24,7 @@ first, which is the opposite of what a groomed backlog means.
 
 from __future__ import annotations
 
+import json
 import logging
 import urllib.parse
 
@@ -185,6 +186,70 @@ class JiraProjectBoard:
                     seen.append(name)
         return seen
 
+    def intake_column(self, state: str = "") -> str | None:
+        """The status an issue the tracker creates is in before anybody moves it — `""` for the
+        one Jira gives a new issue, its workflow's INITIAL status (#543). See `board.base.intake`.
+
+        THE SAME DEFECT AS AZURE'S (#536), ON THE ROW THAT CANNOT CHOOSE. A Jira project's
+        statuses are its columns and a new issue is born in its workflow's first one — `To Do`,
+        `A Fazer` on the templates a team starts from — which the deployment maps as its queue
+        (`status_map: '{"todo": "A Fazer"}'`, the shape `docs/reference/configuration.md` shows).
+        The door's `filed` then asked for a `Backlog` the workflow does not offer, the card stayed,
+        and the poller took it; where it does offer one, the card sat in the queue until the move.
+        `JiraTracker.intake_state` says why the create cannot carry a status of its own.
+
+        READ, NOT DECLARED, FROM THE ISSUE TYPE THE TRACKER CREATES (`issue_type`): the first of
+        its statuses in the To Do category (`new`), the first listed when the site names no
+        category. Atlassian documents no order for `project/{key}/statuses` and no read of a
+        workflow's initial status short of administering it, so this is the read with the fewest
+        assumptions, NOT a measured one: a type with ONE status of the To Do category — every
+        template above — is answered whatever the order; with several, the first the site lists
+        is taken, which no live site has yet been read to confirm.
+
+        `None` = the statuses could not be read — never "no such column", for the reason
+        `AzureBoardsBoard.intake_column` gives — and a type that lists none has not said either.
+        A DECLARED `state` is its status by name, without case, `""` when the type has none."""
+        statuses = self._statuses_of_the_type()
+        if not statuses:
+            return None
+        wanted = (state or "").strip().casefold()
+        if wanted:
+            return next((n for n, _c in statuses if n.casefold() == wanted), "")
+        return next((n for n, c in statuses if c == "new"), statuses[0][0])
+
+    def intake_remedy(self, column: str) -> str:
+        """The line that takes a filed card out of the queue `column` on this row — what
+        `openfactory doctor` hands the operator (#543), as the registry takes it: QUOTED, a string
+        of JSON, the deployment's whole `status_map` with the two keys changed — on Jira that map
+        names every stage, and a line naming two would unmap the rest.
+
+        A QUEUE OF ITS OWN, the shape the Azure row's line asks for too: `column` stays where Jira
+        files a new issue and becomes the backlog, so a card a PERSON creates on the board waits
+        there as well, and the poller reads a status nobody's create lands in."""
+        named = dict(getattr(self._tracker, "status_map", None) or {})
+        line = json.dumps({**named, "backlog": column, "todo": "Ready"}, ensure_ascii=False)
+        quoted = line.replace("'", "''")   # YAML's own escape inside single quotes: `Won't Do`
+        return ("add a status of the To Do category for the queue — `Ready`, say — to the "
+                f"project's workflow, with a transition into it from `{column}`, and declare under "
+                f"the tracker's options `status_map: '{quoted}'` — a new issue then waits in "
+                f"`{column}` until a person queues it")
+
+    def _statuses_of_the_type(self) -> list[tuple[str, str]] | None:
+        """`(name, category key)` of each status of the issue type the tracker creates, in the
+        site's order — every type's, when that one is not listed — or None when unreadable."""
+        try:
+            types = self._tracker._call("GET", f"project/{self.project_key}/statuses")
+        except Exception as exc:  # noqa: BLE001 — unreadable is NOT "born on no column"
+            log.warning("could not read the statuses of %s (%s) — where a new issue is born is "
+                        "unknown, and unknown is never read as out of the queue",
+                        self.project_key, str(exc)[:200])
+            return None
+        listed = [t for t in types if isinstance(t, dict)] if isinstance(types, list) else []
+        kind = str(getattr(self._tracker, "issue_type", "") or "").strip().casefold()
+        mine = [t for t in listed if str(t.get("name") or "").strip().casefold() == kind] or listed
+        return [(str(s.get("name")), str((s.get("statusCategory") or {}).get("key") or ""))
+                for t in mine for s in (t.get("statuses") or []) if s.get("name")]
+
     def items_in_status(self, status: str) -> list[str]:
         """The pickup queue, in the backlog's OWN rank order.
 
@@ -242,6 +307,14 @@ class JiraProjectBoard:
         match = next((t for t in transitions
                       if str((t.get("to") or {}).get("name", "")).lower() == target.lower()
                       or str(t.get("name", "")).lower() == target.lower()), None)
+        if match is None and self._status_now(issue).lower() == target.lower():
+            # ALREADY THERE IS PLACED (#543). A workflow offers no transition into the status an
+            # issue is in, so a card born in the backlog — what a Jira project whose queue has a
+            # status of its own does with every new issue — had its `filed` refused as a move the
+            # workflow does not offer, said to the person, and asked again by the hourly round
+            # for ever. Every other row writes a column it is already in as a no-op; this one now
+            # answers the same.
+            return True
         if match is None:
             log.error("OPENFACTORY_BOARD_MOVE_FAILED %s issue=%s -> %r: the project's workflow "
                       "offers no "
@@ -256,6 +329,16 @@ class JiraProjectBoard:
                       self.project_key, issue, target, str(exc)[:200])
             return False
         return True
+
+    def _status_now(self, issue: str) -> str:
+        """The status `issue` is in, `""` when it could not be read — asked only of a move the
+        workflow does not offer, so an ordinary move costs no second call."""
+        try:
+            fields = self._tracker._call("GET", f"issue/{issue}").get("fields") or {}
+        except Exception as exc:  # noqa: BLE001 — unread is "not known to be there": the move fails
+            log.info("could not read where %s is (%s)", issue, str(exc)[:200])
+            return ""
+        return self._status_of({"fields": fields})
 
     def _transitions(self, issue: str) -> list[dict] | None:
         try:

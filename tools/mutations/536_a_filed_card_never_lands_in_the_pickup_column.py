@@ -71,12 +71,14 @@ MUTATIONS = [
      '        return Intake(column="", queue="", queued=False)\n    said = '),
 
     # 4. the product role asks before it writes
-    ("the role files wherever the card is born", MODULE,
-     "        if born is None or (born.column is not None and not born.queued):",
-     "        if True:"),
-    ("an unread board is read as safe to file on", MODULE,
-     "        if born is None or (born.column is not None and not born.queued):",
-     "        if born is None or not born.queued:"),
+    # two rows re-pinned 2026-10-05: the decision moved to `board.base.intake_held`, which every
+    # writer of a new card asks (#543)
+    ("the role files wherever the card is born", BASE,
+     "    if born is None or (born.column is not None and not born.queued):",
+     "    if True:"),
+    ("an unread board is read as safe to file on", BASE,
+     "    if born is None or (born.column is not None and not born.queued):",
+     "    if born is None or not born.queued:"),
     ("a card asked for is filed without asking where it is born", MODULE,
      '        held = self._born_in_the_queue(tracker, board, act="file a ticket")\n'
      "        if held is not None:\n            return held\n",

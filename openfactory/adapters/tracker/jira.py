@@ -483,6 +483,20 @@ class JiraTracker:
         self._call("PUT", f"issue/{ref}",
                    {"update": {"labels": [{"remove": self.jira_label(label)}]}})
 
+    def intake_state(self) -> str:
+        """`""`, always: a Jira issue is born in its workflow's INITIAL status, whatever this
+        deployment calls its backlog (#543). See `board.base.intake`.
+
+        JIRA'S CREATE TAKES NO STATUS. `POST issue` has no field for one; the `transition` it also
+        accepts is applied to the issue once it exists, by an id only an existing issue's
+        transitions name (Atlassian's documentation — not tried against a live site) — a move
+        AFTER the create, which is what #536 refused on Azure: the card sits in the initial status
+        between the two, and stays there whenever the move fails. So this row cannot do what the
+        Azure row does with `state_map`, and says so: the board names the initial status
+        (`JiraProjectBoard.intake_column`), and where that is the queue the deployment gives the
+        queue a status of its own — the line `openfactory doctor` hands over."""
+        return ""
+
     def create_ticket(self, *, title: str, body: str) -> str:
         created = self._call("POST", "issue", {
             "fields": {

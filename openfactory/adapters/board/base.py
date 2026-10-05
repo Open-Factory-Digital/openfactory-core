@@ -462,3 +462,29 @@ def intake(tracker, board) -> Intake | None:
     remedy = offer(column) if queued and callable(offer) else ""
     return Intake(column=column, queue=queue, queued=queued,
                   remedy=remedy if isinstance(remedy, str) else "")
+
+
+def intake_held(tracker, board) -> Intake | None:
+    """Why a card must NOT be created now — the `Intake` that says it would be born in the queue,
+    or one whose `column` is `None` because the board could not say — and `None` when it may be
+    (#543). The one decision every writer that creates a card asks before it writes.
+
+    SEVEN WRITERS CREATE A CARD, AND ONE ASKED. #536 taught the product role's three filing
+    writers to ask `intake` before they write; the panel's `card_create`, a split's children, the
+    factory's own impediment card and the card onboarding proposes still created theirs where the
+    vendor puts a new one — the pickup column, on a board with no backlog of its own — and the
+    poller took them with nobody queueing them (ADR-0019 §5). Each now asks this, so the rule is
+    said once: two copies of "is this safe to file" are how one of them would come to differ.
+
+    UNSURE IS NOT "SAFE TO SPEND": a question that raised, or a board that could not be read,
+    holds the card too — whether filing now starts spending is unknown, and filing is asked for
+    again in a moment. A row whose new card sits on no column until it is placed (`intake` answers
+    `None`), or one born out of the queue, files as before."""
+    try:
+        born = intake(tracker, board)
+    except Exception as exc:  # noqa: BLE001 — unsure is not "safe to spend"
+        log.info("could not tell where a card created now would start (%s)", exc)
+        return Intake(column=None, queue="", queued=False)
+    if born is None or (born.column is not None and not born.queued):
+        return None
+    return born

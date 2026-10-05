@@ -4377,6 +4377,14 @@ async def _card_create(*, project: str, title: str, by: Actor, body: str = "",
         key, bad = await asyncio.to_thread(_operators_column, proj, board, wanted)
         if bad:
             return bad
+    # …AND WHERE IT WOULD BE BORN (#543): a card opened to wait, on a board where a new card is
+    # born in the pickup column, is one the poller takes with nobody queueing it (ADR-0019 §5) —
+    # the product role's filing was held there by #536, and this is the same board. A card the
+    # person opens IN the queue is not asked: that is the one gesture that spends, and theirs.
+    if key == "backlog":
+        bad = await asyncio.to_thread(_born_in_the_queue, proj, tracker, board)
+        if bad:
+            return bad
 
     def _open() -> str:
         # THE REQUESTER IS WHOEVER FILED IT (ADR-0049 D7). A row whose namespace is the platform's
@@ -4412,6 +4420,26 @@ async def _card_create(*, project: str, title: str, by: Actor, body: str = "",
     said, gate = _as_pickup_would(line, await asyncio.to_thread(_pickup_says, tracker, ref))
     out = done(said, project=proj.name, issue=str(ref), url=tracker.ticket_url(ref), **gate)
     return out if moved.refused else _after_the_door(moved, out)
+
+
+def _born_in_the_queue(proj, tracker, board) -> Outcome | None:
+    """The refusal to open a card that would be born in the pickup column, or on a board that
+    could not say where it would be — `None` when it may be opened (#543).
+
+    THE DECISION IS `board.base.intake_held`, the one every writer of a new card asks; the sentence
+    is the product's, in the project's language, because the person reading it is on the board —
+    and it names the way they DO have: opening the card in the queue themselves."""
+    from openfactory.adapters.board.base import intake_held
+    from openfactory.product.voice import card_open_held
+
+    born = intake_held(tracker, board)
+    if born is None:
+        return None
+    lang = getattr(proj, "language", None)
+    if born.queued:
+        return refused(CONFLICT, card_open_held("queue", column=str(born.column), language=lang),
+                       project=proj.name, column=str(born.column))
+    return refused(UNAVAILABLE, card_open_held("unread", language=lang), project=proj.name)
 
 
 def _operators_column(proj, board, wanted: str) -> tuple[str, Outcome | None]:

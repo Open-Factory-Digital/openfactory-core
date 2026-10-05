@@ -103,6 +103,12 @@ class _Site:
             return _Answer({"isLast": True, "issues": [
                 {"key": k, "fields": {"status": {"name": i["status"]}}}
                 for k, i in self.issues.items() if not wanted or i["status"] == wanted.group(1)]})
+        if (method, route) == ("GET", f"project/{KEY}/statuses"):
+            # WHERE A NEW ISSUE IS BORN, asked before one is filed (#543): `Aberto`, first
+            return _Answer([{"name": "Task", "statuses": [
+                {"name": n, "statusCategory": {"key": "done" if n == DONE else
+                                               "indeterminate" if n in (DOING, WAITING) else "new"}}
+                for n in (OPENED, PENDING, TODO, READY, DOING, WAITING, DONE)]}])
         if (method, route) == ("POST", "issue"):
             key = f"{KEY}-{len(self.issues) + 1}"
             self.put(key, OPENED, summary=body["fields"]["summary"])

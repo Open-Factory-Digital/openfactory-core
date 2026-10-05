@@ -3678,16 +3678,15 @@ class ProductModule:
 
         AN UNREAD BOARD REFUSES TOO. The question is whether filing starts spending, and a board
         that could not say has not said no; the filing is asked for again in a moment. A board the
-        tracker creates no card on by itself (`intake` answers `None`) files as before."""
-        from openfactory.adapters.board.base import Intake, intake
+        tracker creates no card on by itself (`intake` answers `None`) files as before.
+
+        THE DECISION IS `board.base.intake_held`, the one every writer that creates a card asks
+        (#543); this says it in the conversation."""
+        from openfactory.adapters.board.base import intake_held
         from openfactory.product.voice import filing_held
 
-        try:
-            born = intake(tracker, board)
-        except Exception as exc:  # noqa: BLE001 — unsure is not "safe to spend"
-            log.info("could not tell where a card filed now would start (%s)", exc)
-            born = Intake(column=None, queue="", queued=False)
-        if born is None or (born.column is not None and not born.queued):
+        born = intake_held(tracker, board)
+        if born is None:
             return None
         lang = getattr(getattr(self, "project", None), "language", None)
         if born.queued:

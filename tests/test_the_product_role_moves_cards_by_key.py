@@ -87,6 +87,12 @@ class _Site:
         self.requests.append((method, path, body))
         if (method, path) == ("POST", "search/jql"):        # `find_ticket`: nothing filed before
             return _Answer({"isLast": True, "issues": []})
+        if (method, path) == ("GET", f"project/{KEY}/statuses"):
+            # WHERE A NEW ISSUE IS BORN, asked before one is filed (#543): `Aberto`, first
+            return _Answer([{"name": "Task", "statuses": [
+                {"name": n, "statusCategory": {"key": "done" if n == DONE else
+                                               "indeterminate" if n == DOING else "new"}}
+                for n in (OPENED, PENDING, TODO, DOING, DONE)]}])
         if (method, path) == ("POST", "issue"):
             key = f"{KEY}-{len(self.status) + 1}"
             self.status[key] = OPENED
