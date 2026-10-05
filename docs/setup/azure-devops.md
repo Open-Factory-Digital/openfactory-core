@@ -16,11 +16,12 @@ The five differences from the GitHub path, up front:
 2. The credential is one PAT in **`AZURE_DEVOPS_PAT`** (or any variable your registry names),
    or, on a hosted worker, the identity its machine already has (§1). There is no App
    equivalent to create — this page is shorter than the GitHub App one.
-3. Two board **states** the platform uses do not exist in a stock process — §3 creates them
+3. Three board **states** the platform uses do not exist in a stock process — §3 creates them
    once per organisation.
 4. The work item **type** depends on your project's process (§4) — the wrong one is a `400` at
    the first ticket.
-5. The pickup column is **`To Do`** (Azure's spelling), not `TO-DO`.
+5. The pickup column is **`Ready`**, a state of its own (§3). Azure files every new work item in
+   `To Do`, so `To Do` is the **backlog**: a card filed there waits until a person queues it.
 
 ---
 
@@ -117,40 +118,76 @@ worker — including variables you invent.
 
 ## 3 · The board states, once per organisation
 
-The platform moves cards through five states; a stock process is missing two of them:
+The platform moves cards through six states; a stock process is missing three of them:
 
-| lifecycle | state it looks for (default) | stock process has it? |
+| lifecycle | state it looks for | stock process has it? |
 |---|---|---|
-| pickup | **To Do** | yes (Basic; Agile/Scrum equivalents resolve by category) |
+| backlog — where a filed card waits | **To Do** (declared, step 5) | yes — **required** |
+| pickup — the queue the factory takes work from | **Ready** (declared, step 5) | **no — create it** |
 | in progress | **Doing** | yes (Basic) |
 | in review | **In review** | **no — create it** |
 | needs action | **Needs Action** | **no — create it** |
 | done | **Done** | yes |
+
+**The backlog is required, and it is not the queue.** Azure gives a new work item its type's
+first state — `To Do` on Basic — and nothing the platform sends changes where a person's own new
+card lands. On a board where `To Do` is also the pickup column, every card the product role
+files is picked up and paid for with nobody queueing it (#536). So the queue gets a state of its
+own, `Ready`, and `To Do` is the backlog: a card the factory files, and one a person creates on
+the board, waits there until a person moves it to `Ready` — or asks the product role to queue it.
+`openfactory doctor` **fails** `board_intake` on a board where a filed card would start in the
+pickup column, naming this fix, and until it is fixed the product role files nothing there and
+says why in the conversation.
 
 System processes cannot be edited, so this is done once with an **inherited process**:
 
 1. Organization settings → Boards → **Process** → your process (e.g. Basic) → *"…" →
    **Create inherited process*** — name it, say, `OpenFactory Basic`.
 2. Open the inherited process → the work item type you will use (§4) → **States** → *New state*:
+   - `Ready` — in the **Proposed** category, after `To Do`. This is the queue.
    - `In review` — in the **Resolved** category. The platform finds review states **by
      category**, so the category is the part that matters; the name is yours.
    - `Needs Action` — in the **In Progress** category. Azure has no category for "a human must
      look at this", so this one state the platform finds **by name** (it also recognises
      `Blocked`, `On hold`, `Waiting`, `Impediment` and their pt-BR forms).
 3. Project settings → Overview → **Process** → switch the project to the inherited process.
-
-Your own state names are fine — declare them in the registry entry and nothing else changes:
+4. The team's board → Board settings → **Columns**: a `Ready` column right after `To Do`, mapped
+   to the `Ready` state. Every column must map to one of the six states above — a card in a
+   column the platform does not map cannot be queued, edited or closed through it.
+5. In the project's registry entry (§5), under the tracker's `options` — quoted, each a string of
+   JSON:
 
 ```yaml
 tracker:
   options:
-    state_map: '{"in_review": "Em revisão", "needs_action": "Bloqueado"}'
-    columns:   '{"todo": "A Fazer", "done": "Concluído"}'   # board column labels, if renamed
+    columns:   '{"backlog": "To Do", "todo": "Ready"}'     # the board's columns
+    state_map: '{"backlog": "To Do", "todo": "Ready"}'     # the states the tracker writes
 ```
 
+`columns` is what the poller reads and where a card is placed; `state_map` is what the tracker
+writes: a filed card is **created** in the `backlog` state, a stopped or skipped card goes back
+to it, and an answered question puts a card back in `todo`. Both are needed — without
+`state_map` the tracker has no state for the backlog at all.
+
+Your own state names are fine — declare them the same way and nothing else changes:
+
+```yaml
+tracker:
+  options:
+    state_map: '{"backlog": "A Fazer", "todo": "Pronto", "in_review": "Em revisão", "needs_action": "Bloqueado"}'
+    columns:   '{"backlog": "A Fazer", "todo": "Pronto", "done": "Concluído"}'   # board column labels
+```
+
+A backlog state of its own works too — `Backlog` in the Proposed category, a column for it, and
+`state_map: '{"backlog": "Backlog"}'` with `columns: '{"backlog": "Backlog"}'`: the product role
+then asks Azure to create its cards directly in `Backlog`. A card a person creates on the board
+still starts in `To Do`, which is then the queue, so the shape above is the one to prefer.
+
 `state_map` always beats the by-name search. A state the platform cannot find is a card that
-stops moving **with the reason logged** — `openfactory doctor` checks the pickup column; the
-first parked ticket exercises the rest.
+stops moving **with the reason logged** — `openfactory doctor` checks the pickup column and where
+a filed card starts; the first parked ticket exercises the rest. **Upgrading a deployment set up
+before this section had the backlog row:** until the two lines are in, `doctor` fails
+`board_intake` and the product role files nothing.
 
 ## 4 · The work item type
 
@@ -202,7 +239,8 @@ projects:
         work_item_type: "User Story"
         # token_env: ACME_ADO_PAT # only when this project has its own credential
         # team: "DSK Core"            # a specific team's board; default: the project's default team
-        # state_map / columns / areas # §3 and §7
+        # columns / state_map         # §3 — REQUIRED: the backlog and the queue, apart
+        # areas                       # §7
     forge:
       kind: azure_devops
       repo: dsk-api                   # the git REPOSITORY inside the project
@@ -236,7 +274,7 @@ against a checkout, `box prove`, `env rehearse`) is walked in the same section.
 
 Create a work item of the §4 type with an **objective** and **acceptance criteria** in its
 description (English or Portuguese — headings are matched by meaning), and move it to
-**`To Do`**. The factory takes it from there: branch and pull request in Azure Repos, your own
+**`Ready`**. The factory takes it from there: branch and pull request in Azure Repos, your own
 `validate:` gates, an independent review, and your pipelines observed after the merge.
 
 ```markdown

@@ -80,7 +80,11 @@ _UNKNOWN_FIELD = "TF51005"
 #: (`columns:`), exactly as the Jira and GitHub boards already do: the STATES stay closed, only
 #: the LABELS open (C-14). There is no `backlog` key because `STATE_KEYS` never asks for one and
 #: an Azure Boards board has no such column by default — inventing one here would have
-#: `set_status` aiming at a column that is not on the client's board.
+#: `set_status` aiming at a column that is not on the client's board. AND THAT ABSENCE SPENT MONEY
+#: (#536): a new work item is born in its type's first state, `To Do`, which is this row's queue,
+#: so a card the product role filed was picked up with nobody queueing it. The deployment declares
+#: where filed cards wait (`intake_column`, `docs/setup/azure-devops.md` §3); the product role
+#: files nothing until it has.
 DEFAULT_COLUMNS: dict[str, str] = {
     "todo": "To Do",
     "in_progress": "Doing",
@@ -287,6 +291,50 @@ class AzureBoardsBoard:
         from openfactory.adapters.board.columns import name_for
 
         return name_for(key, renamed=self._names)
+
+    def intake_column(self, state: str = "") -> str | None:
+        """The column a work item created in `state` sits in before anybody moves it — `""` for
+        the state Azure DevOps gives an item created without one, which this board shows in its
+        INCOMING column (#536). See `board.base.intake`.
+
+        `None` = the columns could not be read, never "no such column": the caller is deciding
+        whether a card it is about to file starts in the pickup queue, and an unread board must not
+        answer that it does not. `""` = no column shows that state.
+
+        THE INCOMING COLUMN IS AZURE'S OWN ANSWER, read off `columnType` (recorded live: the first
+        column, `To Do`, says `incoming`), not inferred from a name. A board whose columns report
+        no type is read by its first column, which is where Azure DevOps puts the incoming one.
+        A DECLARED state is found the way `set_column` finds one — through the columns' own
+        `stateMappings`, matched without case, for whichever work item type maps it."""
+        cols = self._board_columns()
+        if cols is None:
+            return None
+        wanted = (state or "").strip().casefold()
+        if not wanted:
+            incoming = next((c for c in cols if str(c.get("columnType") or "") == "incoming"),
+                            cols[0])
+            return str(incoming.get("name") or "")
+        return next((str(c.get("name") or "") for c in cols
+                     if any(str(s).strip().casefold() == wanted
+                            for s in (c.get("stateMappings") or {}).values())), "")
+
+    def intake_remedy(self, column: str) -> str:
+        """The line that takes a filed card out of the pickup column `column` on this row — what
+        `openfactory doctor` hands the operator (#536), as the registry takes it: QUOTED, a string
+        of JSON (review of #521).
+
+        THE SHAPE `docs/setup/azure-devops.md` §3 BUILDS, and the one proved against rc.1: a queue
+        of its own, so the state Azure files a new item in is the backlog. A backlog state the
+        card is CREATED in works too (`state_map: '{"backlog": …}'`), and the guide says so; this
+        line names the one that also keeps a card a PERSON creates on the board out of the queue."""
+        cols = self._board_columns() or []
+        state = next((str(next(iter((c.get("stateMappings") or {}).values()), "") or "")
+                      for c in cols if str(c.get("name") or "") == column), "") or column
+        return ("add a state of the Proposed category for the queue — `Ready`, say — to the work "
+                "item type in the inherited process, give the board a `Ready` column mapped to it, "
+                f"and declare under the tracker's options `columns: '{{\"backlog\": \"{column}\", "
+                f"\"todo\": \"Ready\"}}'` and `state_map: '{{\"backlog\": \"{state}\", \"todo\": "
+                f"\"Ready\"}}'` — docs/setup/azure-devops.md §3")
 
     def _board_columns(self) -> list[dict] | None:
         """The columns as Azure DevOps reports them, in board order. None = could not read."""

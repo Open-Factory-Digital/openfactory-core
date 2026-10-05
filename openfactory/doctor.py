@@ -364,6 +364,11 @@ class Probes:
     #: repository; the text alone cannot (#350). None = an older Probes, or no checkout at hand:
     #: the line then reads the manifest's text and says so.
     checkout: Callable[[], pathlib.Path | None] | None = None
+    #: Where a card the product role files is BORN on the board — `board.base.Intake` — or None
+    #: when the question does not arise: no board, or a row whose new card sits on no column until
+    #: it is placed (#536). Raises `BoardUnreadable` when the board could not be read, which
+    #: `board_columns` already reports. None = an older Probes, too; the check is skipped.
+    board_intake: Callable[[], object] | None = None
 
 
 #: The remedy every check inherits when it could not run because the manifest is not written yet.
@@ -443,6 +448,7 @@ def diagnose(probes: Probes) -> Report:
         *([_guarded("box_identity", lambda: Finding("box_identity", *probes.box_identity()))]
           if probes.box_identity else []),
         _guarded("board_columns", lambda: _board(probes)),
+        *_intake_findings(probes),
         *([_guarded("merge_gates", lambda: _merge_gates(probes))] if probes.merge_gates else []),
         _guarded("post_merge", lambda: _post_merge(probes)),
         _guarded("product_link", lambda: _product(probes)),
@@ -1461,6 +1467,49 @@ def _board(p: Probes) -> Finding:
     )
 
 
+#: What to do when a card is born in the queue and the row offers no line of its own (#536).
+INTAKE_REMEDY = ("declare, in the project's tracker options, a backlog the pickup column is not — "
+                 "the column a new card waits in until a person queues it")
+
+
+def _intake_findings(p: Probes) -> list[Finding]:
+    """`board_intake`, or nothing where the question does not arise (#536).
+
+    A FAIL, NOT A WARNING, because what it finds spends: on a board where a new card is born in
+    the column the poller reads, every card the product role filed was picked up and built with
+    nobody queueing it (ADR-0019 §5), and since #536 the role files nothing there at all — so a
+    deployment that sees this line green and then files is the one this check exists for.
+
+    NOTHING WHERE `board_columns` HAS SPOKEN: an unreadable board is said there, once, and a second
+    line here would be the same cause reported as two problems."""
+    if p.board_intake is None:
+        return []
+    try:
+        born = p.board_intake()
+    except BoardUnreadable:
+        return []
+    except Exception as exc:  # noqa: BLE001 — a failed probe is a finding, not a crash
+        return [Finding("board_intake", False, f"could not check board_intake: {exc}",
+                        "re-run with the underlying tool by hand to see the raw error")]
+    if born is None:
+        return []
+    column, queue = getattr(born, "column", "") or "", getattr(born, "queue", "") or ""
+    if getattr(born, "queued", False):
+        return [Finding(
+            "board_intake", False,
+            f"a card the product role files is created in {column!r}, the column the poller "
+            f"picks work up from — it would be built, and paid for, without anybody queueing it, "
+            f"so the product role files nothing on this board until it has a backlog (#536)",
+            getattr(born, "remedy", "") or INTAKE_REMEDY)]
+    if not column:
+        return [Finding("board_intake", True,
+                        f"a card the product role files starts on no column of its own, out of "
+                        f"{queue!r} — the door places it in the backlog")]
+    return [Finding("board_intake", True,
+                    f"a card the product role files starts in {column!r}, out of {queue!r}, the "
+                    f"column the poller reads")]
+
+
 def _post_merge(p: Probes) -> Finding:
     """What happens after a merge — stated, never assumed.
 
@@ -2071,6 +2120,25 @@ def probes_for(project) -> Probes:
         board = build_board(project, token_provider=_board_credential(project))
         return board.pickup_column() if board is not None else ""
 
+    def _intake() -> object:
+        """Where a card the product role files is born — the same `intake` the role asks before it
+        files (#536). Two answers to one question is how the two would drift.
+
+        THE TRACKER IS BUILT ONLY FOR A BOARD THAT CAN SAY: a row whose new card sits on no column
+        answers nothing, and building its tracker to learn that would be a credential resolved
+        for no question."""
+        from openfactory.adapters.board.base import intake
+        from openfactory.adapters.board.factory import build_board
+        from openfactory.adapters.tracker.registry import build_tracker
+
+        board = build_board(project, token_provider=_board_credential(project))
+        if board is None or not callable(getattr(board, "intake_column", None)):
+            return None
+        born = intake(build_tracker(project, token_provider=_board_credential(project)), board)
+        if born is not None and born.column is None:
+            raise BoardUnreadable(_board_coordinates(project), remedy=_board_remedy(project))
+        return born
+
     def _merge_gates_probe() -> list[dict] | Exception | None:
         """Asked of the forge's ROW, with the static token only — never minted, for the reason
         `_forge` states: a diagnostic that mints spends. With only a minting credential the read
@@ -2493,6 +2561,7 @@ def probes_for(project) -> Probes:
         forge_remedy=_forge_remedy,
         board_columns=_columns,
         pickup_column=_pickup_column,
+        board_intake=_intake,
         merge_gates=_merge_gates_probe,
         floor_enforced=floor_is_enforced,
         harness_kind=lambda: harness_kind(project, "executor"),

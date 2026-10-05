@@ -97,6 +97,9 @@ GREEN_ANSWERS: dict[str, Any] = {
     "board_columns": lambda: ["Backlog", "TO-DO", "In progress", "In review", "Needs Action",
                               "Done"],
     "pickup_column": lambda: "TO-DO",
+    # A card the product role files is born in the backlog, out of the queue the poller reads
+    # (#536) — the board above. A test about a board whose new card is born in the queue names it.
+    "board_intake": lambda: _born_in_the_backlog(),
     "floor_enforced": lambda: True,
     "harness_kind": lambda: "claude_code",
     "product_link": _no_product_module,
@@ -148,6 +151,12 @@ GREEN_ANSWERS: dict[str, Any] = {
     # `ok` finding. A test about a link committed in the repository builds a real one and names it.
     "checkout": lambda: None,
 }
+
+
+def _born_in_the_backlog():
+    from openfactory.adapters.board.base import Intake
+
+    return Intake(column="Backlog", queue="TO-DO", queued=False)
 
 
 def _no_operator_guidelines():
