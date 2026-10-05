@@ -1511,82 +1511,28 @@ def _credential_reached(probes) -> bool | None:
 def box_status_cmd(
     name: str,
     repo: str = typer.Option(None, help="owner/name — another of this product's repositories"),
+    as_json: bool = typer.Option(
+        False, "--json",
+        help="Emit the versioned status document (openfactory.box-status/1): the proof's digest, "
+             "the toolchain it is pinned to, and whether it is still valid."),
 ) -> None:
     """Whether this project's box has a VALID proof — and if not, exactly what moved."""
-    from openfactory.box_prove import (
-        _current_digest,
-        _hash_commands,
-        component_gates,
-        load,
-    )
-    from openfactory.loader import load_manifest
-    from openfactory.runtime import toolbox as tb
+    from openfactory import box_prove
 
     project = _get_project(name)
-    proof_key, view = name, project
-    if repo:
-        # the key comes from the view — box prove's rule, for the same bare-name reason
-        from openfactory.runtime.card_repo import _runner_view
-
-        view, proof_key = _runner_view(project, f"{repo}#0")
-    proof = load(proof_key)
-    if proof is None:
-        run_it = f"openfactory box prove {name}" + (f" --repo {repo}" if repo else "")
-        typer.echo(f"{proof_key}: no proof — run `{run_it}`")
-        raise typer.Exit(1)
-
-    if repo:
-        from openfactory.factory import resolve_repo_path
-
-        manifest = load_manifest(view, repo_root=resolve_repo_path(view, cache_key=proof_key))
+    # `box_prove.status` judges freshness with `_freshness_reason`, THE SAME FUNCTION THE POLLER
+    # ASKS — this command used to reproduce the rules inline, and would have said EXPIRED about a
+    # proof the factory was happily picking cards up on (2026-08-15). One status, two renderings.
+    st = box_prove.status(project, repo=repo or "")
+    if as_json:
+        typer.echo(box_prove.status_json(st))
     else:
-        manifest = load_manifest(view)
-    from openfactory.orchestrator.validation import gate_commands
-
-    # BOTH HALVES OF FRESHNESS, the two bugs this command shipped with (found by the onboard
-    # fact-finding pass, 2026-08-13): it hashed WITHOUT the per-component gates — so a component
-    # gaining a gate never expired the proof here while `gate_reason` held pickup, two answers
-    # for one question — and it compared the proof's digest AGAINST ITSELF, which can never
-    # detect an image change (firstrun.py had already named it "cli.py's bug").
-    current = _hash_commands(list(manifest.setup), gate_commands(manifest.validation),
-                             component_gates(manifest))
-    variant = (tb.read_stamp() or {}).get("variant", "")
-    live_digest = _current_digest(proof.image) or proof.digest
-
-    # THE SAME FUNCTION THE POLLER ASKS, not a second opinion assembled here. This command used
-    # to reproduce the freshness rules — and the moment the gate learned that a REBUILD with the
-    # same toolchain is not a change, the two would have disagreed: `box status` saying EXPIRED
-    # about a proof the factory was happily picking cards up on. Two answers to one question is
-    # the bug this file's own comment above records paying for twice already (2026-08-15).
-    from openfactory.box_prove import _freshness_reason
-
-    run_it = f"run `openfactory box prove {name}" + (f" --repo {repo}`" if repo else "`")
-    why = (None if not proof.ok else
-           _freshness_reason(proof, digest=live_digest, variant=variant, commands=current,
-                             run_it=run_it))
-    if proof.ok and why is None:
-        typer.echo(f"{proof_key}: proven at {proof.at} on {proof.image} ({proof.digest[:19]}…)")
-        # WHAT IT IS PINNED TO, because that is what decides whether the next rebuild expires it
-        # — and an operator who cannot see it cannot tell a proof that will survive an update
-        # from one that will not.
-        if proof.toolchain:
-            typer.echo("  toolchain " + " · ".join(proof.toolchain.split("\n")))
-            typer.echo("  a rebuild that leaves these unchanged does NOT expire this proof")
-        else:
-            typer.echo("  this image carries no toolchain line, so any rebuild expires the proof "
-                       "— rebuild the box image to get one (`up -d --build`)")
-        if proof.findings is None:
-            typer.echo("  advisory findings were not recorded for this proof — "
-                       "re-prove to record them")
-        else:
-            for adv in proof.advisories():
-                typer.echo(f"  warn  {adv.check}  {adv.message}")
+        for line in st.lines():
+            typer.echo(line)
+    if st.valid:
         return
-    typer.echo(f"{proof_key}: the proof has EXPIRED — "
-               f"{'the last proof FAILED' if not proof.ok else why}")
-    if proof.ok:
+    if st.state == "expired":
         return _exit_expired()
-    typer.echo(f"  {run_it}")
     raise typer.Exit(1)
 
 
