@@ -136,11 +136,12 @@ MUTATIONS = [
      "    needs: images",
      "    needs: [images, pypi]"),
 
+    # re-pinned 2026-10-05: the page's top is written by scripts/release-page-body.sh (#531), which
+    # names a candidate's wheel only when the run publishes it
     ("the release notes advertise a wheel this run declined to publish",
-     WORKFLOW,
-     "            Verify the assets below with `sha256sum -c SHA256SUMS --ignore-missing`.",
-     "            Also on PyPI: `pip install openfactory`.\n\n"
-     "            Verify the assets below with `sha256sum -c SHA256SUMS --ignore-missing`."),
+     "scripts/release-page-body.sh",
+     '        if [ -n "$wheel" ] && [ "${WHEEL_PUBLISHED:-false}" = true ]; then',
+     '        if [ -n "$wheel" ]; then'),
 
     # ── nothing downstream may claim the wheel while the publish is gated ───────────────────────
     ("the README offers the core by name again while no index serves it",
