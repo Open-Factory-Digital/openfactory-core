@@ -1,0 +1,19 @@
+# A WORKED EXAMPLE, not a project anybody runs: `docs/developer-guide.md` shows what
+# `openfactory explain` prints for it, and the suite runs those commands and compares the output
+# with the page (`tests/test_the_developer_guide_runs.py`). Change a file here and the guide has to
+# change with it — which is the point.
+version: 1
+base_branch: main
+merge_policy: human
+
+# What this project IS: the shop's internal tools, still exploratory. The profile lives beside this
+# file, in `.openfactory/profiles/house-style.yaml`, and it acts on the GUIDELINES only.
+profile: house-style
+
+validate:
+  test: "pytest -q"
+
+docs:
+  constraints: docs/adr/**            # inlined in full, on every pass
+  architecture: docs/architecture/**  # indexed: title and summary, read on demand
+  guidelines: [HOUSE-RULES.md]        # inlined after the framework's and the operator's
