@@ -121,14 +121,20 @@ ALLOWED: dict[CardEvent, frozenset[State]] = {
     CardEvent.STOPPED: frozenset({State.BACKLOG, State.TODO, State.RUNNING,
                                   State.WAITING_ON_A_PERSON}),
     # a close of a card a job may hold is the engine's to refuse (`_withdraw_refusal`, #191): a
-    # card in Needs Action is often one no job is on, and refusing it here would strand it there
+    # card in Needs Action is often one no job is on, and refusing it here would strand it there.
+    # So is a card the record holds merged or at a stage (#448 slice 6, review of #524): a close
+    # seen on the vendor's screen is judged against the record's latest move (D8), and refusing it
+    # would leave its promise open for ever, refused again on every round
     CardEvent.CLOSED: frozenset({State.BACKLOG, State.TODO, State.RUNNING,
-                                 State.WAITING_ON_A_PERSON, State.DELIVERED}),
+                                 State.WAITING_ON_A_PERSON, State.MERGED, State.STAGED,
+                                 State.DELIVERED}),
     CardEvent.WITHDRAWN: frozenset({State.BACKLOG, State.TODO, State.RUNNING,
                                     State.WAITING_ON_A_PERSON}),
-    # never once the factory finished it: what was done and said on it is history (#384)
+    # never once the factory finished it: what was done and said on it is history (#384). A card
+    # merged or at a stage is not finished — its delivery is still to come — and, as for a close,
+    # a deletion seen on the vendor's screen is judged on the record (review of #524)
     CardEvent.REMOVED: frozenset({State.BACKLOG, State.TODO, State.RUNNING,
-                                  State.WAITING_ON_A_PERSON}),
+                                  State.WAITING_ON_A_PERSON, State.MERGED, State.STAGED}),
     # a card closed as not delivered, or one closed as delivered — and only once it IS closed
     # (`ONLY_ON_A_CLOSED_CARD`): a finished card nobody closed is `delivered` too, and open
     CardEvent.REOPENED: frozenset({State.CLOSED, State.DELIVERED}),

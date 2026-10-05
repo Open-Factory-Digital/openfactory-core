@@ -87,11 +87,13 @@ MUTATIONS = [
      "    **{event: frozenset(State) for event in CardEvent},",
      TABLE_TEST),
 
+    # re-pinned 2026-10-05: the row also holds a card merged or at a stage (review of #524)
     ("a card the factory finished is removed, erasing what was done and said on it (#384)", TABLE,
      "    CardEvent.REMOVED: frozenset({State.BACKLOG, State.TODO, State.RUNNING,\n"
-     "                                  State.WAITING_ON_A_PERSON}),",
+     "                                  State.WAITING_ON_A_PERSON, State.MERGED, State.STAGED}),",
      "    CardEvent.REMOVED: frozenset({State.BACKLOG, State.TODO, State.RUNNING,\n"
-     "                                  State.WAITING_ON_A_PERSON, State.DELIVERED}),",
+     "                                  State.WAITING_ON_A_PERSON, State.MERGED, State.STAGED,\n"
+     "                                  State.DELIVERED}),",
      TABLE_TEST),
 
     # ── the door ───────────────────────────────────────────────────────────────────────────────

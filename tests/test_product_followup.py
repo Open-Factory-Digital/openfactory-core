@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import pytest
+
 from openfactory.memory.ledger import DELIVERY, QUESTION, open_loop
 from openfactory.product.followup import (
     Question,
@@ -120,6 +122,43 @@ def test_a_requirement_that_produced_no_work_opens_no_delivery_loop(monkeypatch)
                                  [WriteResult(ok=False, detail="refused"),
                                   WriteResult(ok=True, ref="#")])
     assert handed == []
+
+
+@pytest.mark.parametrize("carries", [set(), {"#501"}])
+def test_a_promise_no_card_recorded_is_said_lost_once_and_only_then(carries, monkeypatch, caplog):
+    """The review of #524: with the record store down mid-filing, every card's door raised and
+    each warning said "the requirement's other cards still open its promise", while none did. The
+    warning per card says only what it knows; once every door was asked, a promise no card carries
+    is said lost, once, as it was before #414."""
+    import logging
+    from types import SimpleNamespace
+
+    from openfactory import lifecycle
+    from openfactory.lifecycle import ports
+    from openfactory.product.authoring import WriteResult
+    from openfactory.product.module import ProductModule
+
+    def transition(project, ref, event, **_k):
+        if ref not in carries:
+            raise RuntimeError("the record store is down")
+        return SimpleNamespace(refused="", failed=[])
+
+    monkeypatch.setattr(lifecycle, "transition", transition)
+    monkeypatch.setattr(ports, "Ports", lambda *a, **k: object())
+    fake = SimpleNamespace(project=SimpleNamespace(name="books"),
+                           _track_requirement=lambda *a, **k: {"subject": "7"})
+    with caplog.at_level(logging.WARNING, logger="openfactory.product"):
+        ProductModule._open_delivery(fake, SimpleNamespace(number=7),
+                                     [WriteResult(ok=True, ref="#500"),
+                                      WriteResult(ok=True, ref="#501")])
+
+    said = [r.getMessage() for r in caplog.records]
+    assert not [s for s in said if "other cards" in s], said
+    lost = [s for s in said if "nobody will announce" in s]
+    if carries:
+        assert lost == [], "a promise a card carries was said lost"
+    else:
+        assert len(lost) == 1 and "#500, #501" in lost[0], said
 
 
 def test_a_delivery_is_not_opened_twice_for_one_requirement(monkeypatch):

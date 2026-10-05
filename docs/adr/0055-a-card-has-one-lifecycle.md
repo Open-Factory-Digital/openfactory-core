@@ -450,3 +450,8 @@ the cheap moment.
   review). D8 gives the event its door; each row's capability to observe it is that row's change.
 - A person's edits to a card's text outside the platform, on a hosted row: whether `edited` is
   observed like the state changes of D8, or left to the tracker's own history.
+- The platform's own writes to a card's text that carry no transition: `refine`, `align_card` and
+  `repoint_orphans` in `product/module.py` (2026-10-05, review of #524). D9's guard sees a
+  text write only in a function that goes through the door, outside the transition's `act=`, so
+  these three are not on the exemption list and are not counted. Whether each becomes `edited`,
+  another event, or stays a write outside the lifecycle is open.

@@ -546,6 +546,50 @@ def test_an_observed_reopen_is_judged_from_the_close_the_record_holds():
     assert not [c for c in ports.calls if c[0] in _WRITES], ports.calls
 
 
+def _reachable() -> set[State]:
+    """Every state a decided event can leave a card in, read from `after` over every fact it reads
+    — not from the rows of `ALLOWED`, which is what a test of those rows must not start from."""
+    facts = [{}, {"delivered": True}, {"needs_person": True}, {"gate": "last"},
+             {"column": "todo"}, {"column": ""}, *({"before": s.value} for s in State)]
+    return {s for event in DECIDED for f in facts if (s := after(event, f)) is not None}
+
+
+@pytest.mark.parametrize("event", [CardEvent.CLOSED, CardEvent.REMOVED])
+def test_every_state_a_transition_leaves_a_card_in_can_still_be_ended(event):
+    """A card is never un-endable (review of #524): whatever the record holds it as, the vendor's
+    own interface can still report it closed or deleted (D8). A refused observed end leaves the
+    promise open, tells nobody, and is refused again on every round. The two derived tests above
+    cannot see a missing state, because both start from the rows this one checks."""
+    reachable = _reachable()
+    assert {State.MERGED, State.STAGED} <= reachable, sorted(reachable)
+    stuck = sorted(s.value for s in reachable
+                   if s not in (State.CLOSED, State.REMOVED, State.DELIVERED)
+                   and allowed(s, event, open_card=True) is not None)
+    assert not stuck, (f"a card the record holds in {stuck} cannot be {event.value}: an observed "
+                       f"end is refused, the promise stays open and nobody is told")
+
+
+@pytest.mark.parametrize("held", [State.MERGED, State.STAGED, State.WAITING_ON_A_PERSON])
+@pytest.mark.parametrize("event", [CardEvent.CLOSED, CardEvent.REMOVED])
+def test_a_merged_or_staged_card_ended_on_the_vendors_screen_is_followed_like_a_parked_one(held,
+                                                                                          event):
+    """The case the review of #524 drove: the record holds the card merged (or at a production
+    gate, or parked), and it is closed as not planned or deleted on the vendor's own screen. Its
+    promise is cancelled, the requester is told, and nothing is written to the card."""
+    sink = InMemoryMetricsSink()
+    ports = Ports(Seen(state=State.CLOSED, open=False), sink_=sink)
+    record.write(sink, "acme", record.Row(card="12", seq=1, event_id="w", event="parked",
+                                          by="worker", before="running", after=held.value))
+
+    moved = transition(Project(), "#12", event, by=OBSERVED, ports=ports,
+                       facts={"delivered": False})
+
+    assert moved.ok and moved.before is held, moved
+    assert ("loops", "12", "cancel") in ports.calls
+    assert ("tell", "12", "will_not_be_built") in ports.calls
+    assert not [c for c in ports.calls if c[0] in _WRITES], ports.calls
+
+
 # ── 9. the job's tellings, splits, questions and deliveries (#414, part B1) ──────────────────
 
 def test_a_card_split_into_others_is_closed_and_keeps_its_promise():

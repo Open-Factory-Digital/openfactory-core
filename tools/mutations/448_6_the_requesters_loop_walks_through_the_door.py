@@ -26,7 +26,9 @@
     handed to a transition as `act=`;
   · THE SCENARIO, on real parts: every step recorded where it should be and told where they asked;
     the reading walks all seven steps; nothing is left for the converge; the delivery is announced
-    once, with its "did it work?".
+    once, with its "did it work?";
+  · A CARD HELD MERGED OR STAGED CAN STILL BE ENDED (review of #524): a close or a deletion seen on
+    the vendor's screen is judged on the record, and refusing it would strand the promise.
 """
 
 TEST = "tests/test_the_requesters_loop_walks_through_the_door.py"
@@ -281,4 +283,19 @@ MUTATIONS = [
      "                if not (id(node) in in_lambda_acts\n"
      "                        or any(f.name in acts for f in around(node.lineno))):\n",
      "                if True:\n", GUARD_TEST),
+    # ── the review of #524: a card the record holds merged or staged can still be ended ───────
+    ("a merged or staged card closed on the vendor's screen is refused, and its promise stranded",
+     TABLE,
+     "                                 State.WAITING_ON_A_PERSON, State.MERGED, State.STAGED,\n"
+     "                                 State.DELIVERED}),",
+     "                                 State.WAITING_ON_A_PERSON,\n"
+     "                                 State.DELIVERED}),",
+     "tests/test_the_card_lifecycle_does_what_its_table_says.py"),
+    ("a merged or staged card deleted on the vendor's screen is refused, and its promise stranded",
+     TABLE,
+     "    CardEvent.REMOVED: frozenset({State.BACKLOG, State.TODO, State.RUNNING,\n"
+     "                                  State.WAITING_ON_A_PERSON, State.MERGED, State.STAGED}),",
+     "    CardEvent.REMOVED: frozenset({State.BACKLOG, State.TODO, State.RUNNING,\n"
+     "                                  State.WAITING_ON_A_PERSON}),",
+     "tests/test_the_card_lifecycle_does_what_its_table_says.py"),
 ]

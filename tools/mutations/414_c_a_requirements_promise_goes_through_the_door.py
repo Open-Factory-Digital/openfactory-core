@@ -24,7 +24,9 @@ THE CLAIMS, one or more rows each:
   5. a promise MOVES NOTHING: it writes nothing to the card, leaves its state as it was, reads no
      board — and the record's word on where a card is is its latest MOVE, so the sweep still
      places a filing a promise followed, an observed change is judged against the last move, and
-     a card whose work stopped still says so once a requirement reused it.
+     a card whose work stopped still says so once a requirement reused it;
+  6. a promise NO card recorded, because every door raised, is said lost once; one a card carries
+     never is (review of #524).
 """
 
 TEST = "tests/test_the_life_of_a_card.py"
@@ -143,4 +145,13 @@ MUTATIONS = [
     ("a card whose work stopped no longer says so once a requirement reused it", CARD,
      "                             canonical_ref(card)).latest_move\n",
      "                             canonical_ref(card)).latest\n"),
+    # ── the review of #524: a promise no card carries is said lost, once, and only then ────────
+    ("a promise no card recorded is never said lost", MODULE,
+     "        if unrecorded and not carried:\n",
+     "        if False:\n",
+     "tests/test_product_followup.py"),
+    ("a promise a card carries is said lost when another card's door raised", MODULE,
+     "            carried = True\n",
+     "            pass\n",
+     "tests/test_product_followup.py"),
 ]

@@ -3451,6 +3451,11 @@ class ProductModule:
                         getattr(requirement, "number", "?"), exc)
             return
         name = getattr(self.project, "name", "") or ""
+        # WHETHER ANY CARD CARRIES THE PROMISE is known only once every door was asked (review of
+        # #524): a door that raises says so for its card, and only when NO card carries it, and
+        # one did raise, is the promise said lost — once, as before #414. A promise every door
+        # refused is left unsaid: its cards are gone, so it would never close
+        carried, unrecorded = False, []
         for card in cards:
             ref = refs[card]
             try:
@@ -3460,16 +3465,22 @@ class ProductModule:
                                    event_id=_promised_id(name, ref, owed), ports=ports)
             except Exception as exc:  # noqa: BLE001 — one card must not cost the others' promise
                 log.warning("OPENFACTORY_PRODUCT_PROMISE_UNRECORDED ref=%s req=%s (%s) — the "
-                            "card's door could not be gone through; the requirement's other "
-                            "cards still open its promise", ref, requirement.number, exc)
+                            "card's door could not be gone through", ref, requirement.number, exc)
+                unrecorded.append(str(ref))
                 continue
             if moved.refused:
                 log.info("REQ-%s: #%s was not promised — %s", requirement.number,
                          str(ref).lstrip("#"), moved.refused)
-            elif moved.failed:
+                continue
+            carried = True
+            if moved.failed:
                 log.warning("OPENFACTORY_PRODUCT_PROMISE_NOT_OPENED ref=%s req=%s (%s) — the "
                             "hourly round opens it again", ref, requirement.number,
                             "; ".join(moved.failed))
+        if unrecorded and not carried:
+            log.warning("could not start tracking the delivery of REQ-%s: no card of it recorded "
+                        "its promise (%s) — the work exists, but nobody will announce when it is "
+                        "done", requirement.number, ", ".join(unrecorded))
 
     def _reused_card(self, draft, requirement, tracker,
                      known_open: set[str] | None) -> str | None:
