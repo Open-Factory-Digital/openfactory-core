@@ -9,12 +9,15 @@ tokens are long-lived; Jira uses API tokens), each in their own adapter.
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from datetime import datetime
 
 import httpx
 import jwt
+
+log = logging.getLogger("openfactory.github_app")
 
 
 def token_from_env() -> str | None:
@@ -77,6 +80,7 @@ def installation_permissions(
         )
         data = r.json() if r.status_code == 200 else None
     except Exception:  # noqa: BLE001 — every failure here is the same answer: not read
+        log.info("the App installation's permissions could not be read", exc_info=True)
         return None
     granted = data.get("permissions") if isinstance(data, dict) else None
     if not isinstance(granted, dict):
