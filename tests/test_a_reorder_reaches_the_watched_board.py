@@ -27,9 +27,10 @@ OWN board through the registry, so the order goes through the wrapper or nowhere
     and tracker capabilities beside them, an adapter that satisfies it satisfies it wrapped, and
     one that does not, does not.
 
-The order marker reads digits only (`role._ORDER_RE`), so a Jira key cannot reach this verb from
-the conversation at all; the hosted row driven here is therefore the one whose refs a person can
-actually say in chat.
+The order marker read digits only (`role._ORDER_RE`) when this was written, so a Jira key could not
+reach this verb from the conversation; the hosted row driven here is therefore GitHub's. Since #515
+the marker reads a key as Jira spells it, and the Jira row is driven from the conversation in
+`test_an_order_of_jira_keys_is_written_from_the_conversation.py`.
 """
 
 from __future__ import annotations
