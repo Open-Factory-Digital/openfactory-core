@@ -300,8 +300,16 @@ def _confirm_queue(project, entry, *, module, user, lang) -> str:
                 else _said(lang)["not_queued"])
     from openfactory.product.voice import queued
 
+    # THE ORDER IS PROMISED ONLY WHERE IT WAS WRITTEN (#512): "a fábrica começa pelo primeiro"
+    # names the card the poller takes next, and only a board that ranked every card named makes
+    # that true. One card the board would not place, or a board that keeps no order, and the reply
+    # says the factory takes them in the board's own order. A module that says nothing of the order
+    # (`ranked` empty — a double, or one written before #512) is read as it always was.
+    ranks = {getattr(r, "ranked", "") or "kept" for r in results if r.ok and r.ref}
+    ranked = next((why for why in ("unrankable", "not_kept") if why in ranks), "kept")
     cfg = getattr(project, "product", None)
-    out = queued(landed, language=lang, agent_name=getattr(cfg, "agent_name", "") or "")
+    out = queued(landed, language=lang, agent_name=getattr(cfg, "agent_name", "") or "",
+                 ranked=ranked)
     if failed:
         # the partial-failure line reads the SAME detail the total-failure branch above already
         # sanitises — one raw and one clean was the sibling divergence, found by the sweep

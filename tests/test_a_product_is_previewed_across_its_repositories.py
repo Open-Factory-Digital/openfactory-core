@@ -1105,8 +1105,9 @@ def _module(monkeypatch, tracker):
     ("ACME/api", "acme/api", ""),
     ("acme/web", "", ""),
     ("", "", ""),
-    ("evil/api", "", "o cartão foi aberto em `acme/web`: `evil/api` não está entre os "
-                     "repositórios deste produto."),
+    # said in the project's language, English (#513): it was this sentence in Portuguese
+    ("evil/api", "", "the card was opened in `acme/web`: `evil/api` is not one of the places "
+                     "this product's code lives."),
 ])
 def test_a_card_goes_to_the_repository_the_role_named_only_within_sources(monkeypatch, target,
                                                                           filed, said):
@@ -1131,7 +1132,8 @@ def test_a_tracker_that_files_in_one_place_is_asked_for_that_place_and_it_is_sai
     done = mod._file_one(IssueDraft(title="t", objective="o", target_repo="acme/api", cites=12),
                          _requirement(12), tracker, None)
     assert done.ok and tracker.filed == [{"title": "t", "repo": None}]
-    assert "registra todo cartão num lugar só, e ele é de `acme/api`" in done.detail
+    assert "this board keeps every card in one place, and this one belongs to `acme/api`" in \
+        done.detail, done.detail
 
 
 def test_a_retried_filing_in_another_repository_finds_the_card_it_already_filed(monkeypatch):

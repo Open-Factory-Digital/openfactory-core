@@ -226,8 +226,19 @@ def test_a_deliberately_unpublished_wheel_never_makes_the_release_run_red():
 
 def test_nothing_in_the_release_claims_a_wheel_that_may_not_exist():
     """The release notes are read by people deciding what they can install. While publishing is
-    gated, a line promising PyPI would be a claim the same workflow declines to make true."""
-    body = str(yaml.safe_load(WORKFLOW.read_text())["jobs"]["release"]["steps"][-1]["with"]["body"])
+    gated, a line promising PyPI would be a claim the same workflow declines to make true.
+
+    The page's top is written by `scripts/release-page-body.sh` since #531, which names a
+    candidate's wheel only when the run publishes it (`WHEEL_PUBLISHED`, the `pypi` job's gate);
+    here, with the gate off, for both kinds of tag."""
+    import os
+    import subprocess
+
+    body = "".join(
+        subprocess.run(["sh", str(ROOT / "scripts" / "release-page-body.sh"), tag],
+                       capture_output=True, text=True, check=True,
+                       env={**os.environ, "WHEEL_PUBLISHED": "false"}).stdout
+        for tag in ("v0.5.0", "v0.5.0-rc.1"))
 
     assert "pypi" not in body.lower() and "pip install" not in body.lower(), (
         f"the release body advertises the wheel while the publish is gated:\n{body}")

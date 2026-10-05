@@ -20,6 +20,7 @@ the pass down with it.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterable
 
 log = logging.getLogger("openfactory.refs")
@@ -135,6 +136,27 @@ def qualify_ref(repo: str, ref: object, default_repo: str = "") -> str:
     if not repo or repo == default_repo:
         return bare
     return f"{repo}#{bare}"
+
+
+#: A CARD REF AS A PERSON WRITES ONE (#515) — `#12` or `12` on a numbered tracker, `CONT-412` on
+#: Jira, `acme/web#1` on a product of several repositories (`split_repo_ref`). A pattern for TEXT a
+#: model or a person wrote, never for a ref already in hand: that is `canonical_ref`'s. The order
+#: marker read `[#\d]` and nothing else, so on Jira — where no card has a number — an order said in
+#: the conversation matched nothing, nothing was staged, and the marker reached the person as
+#: written.
+REF_AS_WRITTEN = (r"(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#\d{1,12}"    # acme/web#1
+                  r"|[A-Za-z][A-Za-z0-9_]*-\d{1,12}"               # CONT-412
+                  r"|#?\d{1,12})")                                  # #12, 12
+
+
+def refs_written(text: object) -> list[str]:
+    """Every card ref in `text`, IN THE ORDER WRITTEN, each once, in its one spelling
+    (`canonical_ref`) — `"DAR-7, #3, acme/web#1, 3"` is `["DAR-7", "3", "acme/web#1"]`.
+
+    NEVER SORTED, which is the difference from `canonical_refs`: what reads this is an order a
+    person gave, and the order is the whole content. A ref said twice keeps its first place."""
+    found = (canonical_ref(m) for m in re.findall(REF_AS_WRITTEN, str(text or "")))
+    return list(dict.fromkeys(ref for ref in found if ref))
 
 
 def ref_label(ref: object) -> str:
