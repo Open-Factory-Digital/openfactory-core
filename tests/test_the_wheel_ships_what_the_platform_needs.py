@@ -19,6 +19,7 @@ Slow by nature (it builds a wheel), so it is one test, not a suite.
 
 from __future__ import annotations
 
+import email.parser
 import importlib.metadata
 import re
 import shutil
@@ -112,9 +113,24 @@ def _pristine_source(into: str) -> Path:
     src.mkdir()
     shutil.copytree(ROOT / "openfactory", src / "openfactory",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    for f in ("pyproject.toml", "LICENSE", "NOTICE", "README.md"):
+    for f in ("pyproject.toml", "LICENSE", "NOTICE", "README.md", *_the_declared_description()):
+        (src / f).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / f, src / f)
     return src
+
+
+def _the_declared_description() -> list[str]:
+    """The long-description file `pyproject.toml` declares, as a path to copy — read off the
+    declaration, because it is something the backend legitimately reads (#368).
+
+    A COPY WITHOUT IT DOES NOT FAIL, AND THAT IS THE TRAP. Measured with setuptools 80.9: the
+    backend warns that the file "cannot be found", writes `Description-Content-Type:
+    text/markdown` all the same, and ships an EMPTY description — a wheel that looks declared and
+    shows the index nothing. So the body is compared below, not only the content type."""
+    readme = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"].get("readme")
+    if isinstance(readme, dict) and readme.get("file"):
+        return [readme["file"]]
+    return [readme] if isinstance(readme, str) else []
 
 
 @pytest.mark.slow
@@ -173,6 +189,30 @@ def test_every_runtime_data_file_is_inside_the_built_wheel():
         scripts = re.findall(r"^(\w+)\s*=", declared.split("[console_scripts]", 1)[1], re.M)
         assert scripts == ["openfactory"], (
             f"`pip install` delivers these console scripts: {scripts} — the product has one name")
+
+        # THE PAGE THE INDEX SHOWS IS THE ONE IN THE WHEEL'S METADATA (#368), and nowhere else:
+        # the upload carries METADATA, not `pyproject.toml`, so a declaration that never reaches
+        # the artefact is the 0.4.0 page again — "The author of this package has not provided a
+        # project description". Read out of the built wheel, as the index reads it: the content
+        # type, so the page renders as markdown and not as plain text, and the body, so it is the
+        # page that was written for the index and not some other file.
+        metadata_file = next((n for n in shipped if n.endswith(".dist-info/METADATA")), None)
+        assert metadata_file, f"the wheel carries no METADATA: {sorted(shipped)[:8]}…"
+        metadata = email.parser.Parser().parsestr(
+            zipfile.ZipFile(wheels[0]).read(metadata_file).decode("utf-8"))
+        content_type = (metadata.get("Description-Content-Type") or "").split(";")[0].strip()
+        assert content_type == "text/markdown", (
+            f"the wheel's METADATA says Description-Content-Type {content_type!r} — the index "
+            f"shows the page as plain text, or not at all")
+        declared = _the_declared_description()
+        assert len(declared) == 1, (
+            f"pyproject.toml declares {declared} as the long description — one page, written for "
+            f"the index, is what the guards in test_the_pypi_page_describes_the_project.py hold")
+        page = (ROOT / declared[0]).read_text(encoding="utf-8")
+        body = metadata.get_payload() or metadata.get("Description") or ""
+        assert body.strip() == page.strip(), (
+            f"the wheel's description is not {declared[0]} — the index shows {len(body)} "
+            f"characters beginning {body[:80]!r}")
 
     missing = [f for f in MUST_SHIP if f not in shipped]
     assert not missing, (

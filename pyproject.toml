@@ -2,6 +2,15 @@
 name = "openfactory"
 version = "0.6.0.dev0"
 description = "A framework to run software tickets autonomously with coding agents — policies authorize actions, humans evaluate results."
+# THE PAGE PyPI SHOWS, WRITTEN FOR PyPI (#368). Until 0.4.0 the project declared no long
+# description, and the index said "The author of this package has not provided a project
+# description" to everybody who arrived there. README.md cannot simply be pointed at: its links are
+# relative, which the index cannot resolve, and its one-machine door starts from `git clone` — a
+# visitor on the index already has the other door, `pip install`. So the page is its own file,
+# every link in it absolute, and `tests/test_the_pypi_page_describes_the_project.py` holds that,
+# its commands against the CLI and its extras against the table below; the wheel guard reads the
+# description back out of a built wheel's METADATA.
+readme = { file = "docs/pypi.md", content-type = "text/markdown" }
 # APACHE-2.0, and the choice has a reason rather than a preference behind it. The patent grant is
 # the point: MIT is permissive enough but gives none, so it offers a fork LESS protection while
 # gaining nothing on adoption. BSL/SSPL would contradict the positioning — they defend against a
@@ -13,11 +22,17 @@ description = "A framework to run software tickets autonomously with coding agen
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "The OpenFactory Authors" }]
-urls = { Homepage = "https://openfactory.digital", Repository = "https://github.com/Open-Factory-Digital/openfactory-core", Issues = "https://github.com/Open-Factory-Digital/openfactory-core/issues" }
+urls = { Homepage = "https://openfactory.digital", Documentation = "https://github.com/Open-Factory-Digital/openfactory-core/blob/main/docs/README.md", Repository = "https://github.com/Open-Factory-Digital/openfactory-core", Changelog = "https://github.com/Open-Factory-Digital/openfactory-core/releases", Issues = "https://github.com/Open-Factory-Digital/openfactory-core/issues", Security = "https://github.com/Open-Factory-Digital/openfactory-core/blob/main/SECURITY.md" }
 keywords = ["sdlc", "agents", "automation", "devops", "ai"]
+# THE OPERATING SYSTEMS ARE THE POSIX ONES, AND NOT AS A GUESS (#368): `openfactory/registry.py`
+# imports `fcntl` at module scope, which does not exist on Windows, so the CLI cannot register a
+# project there. `Environment :: Console` because the CLI is the first thing a visitor runs.
 classifiers = [
     "Development Status :: 4 - Beta",
+    "Environment :: Console",
     "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Build Tools",
