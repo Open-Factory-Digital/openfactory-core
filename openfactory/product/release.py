@@ -31,6 +31,11 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
+# WHAT THE RELEASE ANSWERS WHEN NOTHING WENT OUT IS THE VOICE'S (#513), imported with the module and
+# not inside `release`'s guard: its failure branch says it, so the sentence must already be here
+# when everything else has gone wrong — and the voice imports nothing that could fail at a call
+from openfactory.product.voice import release_said
+
 log = logging.getLogger("openfactory.product")
 
 #: How the version is derived when the client releases. The panel lets an operator type one; a
@@ -226,6 +231,7 @@ def release(project, issue: str, *, approver: str, comment: str = "") -> tuple[b
     sentence as any other approval that could not be delivered.
     """
     name = getattr(project, "name", "") or ""
+    lang = getattr(project, "language", None)
 
     async def _run() -> tuple[bool, str]:
         from openfactory.runtime.temporal.view import approve_job
@@ -233,10 +239,9 @@ def release(project, issue: str, *, approver: str, comment: str = "") -> tuple[b
         client = await _client()
         if not await _awaiting(client, name, issue):
             # Not a failure of ours and not something to hide: the client answered honestly and the
-            # world moved. Saying so is what keeps "I released it" a sentence that means something.
-            return False, (f"o #{str(issue).lstrip('#')} não está mais esperando essa liberação — "
-                           f"ou já subiu, ou a janela de espera fechou. Não mexi em nada; me diga "
-                           f"e eu verifico em que pé está.")
+            # world moved. Saying so is what keeps "I released it" a sentence that means something
+            # — in the conversation's language, the card named as its tracker names it (#513)
+            return False, release_said("not_waiting", ref=issue, language=lang)
         await approve_job(client, name, str(issue).lstrip("#"),
                           version=version_for(issue), approver=approver, comment=comment)
         return True, ""
@@ -255,5 +260,4 @@ def release(project, issue: str, *, approver: str, comment: str = "") -> tuple[b
         log.error("OPENFACTORY_RELEASE_SIGNAL_FAILED project=%s issue=%s approver=%s (%s) — the "
                   "client "
                   "approved and the job was not told", name, issue, approver, str(exc)[:200])
-        return False, ("não consegui levar a sua liberação até a esteira agora. **Nada subiu** — "
-                       "o time já foi avisado e eu volto a você assim que resolver.")
+        return False, release_said("failed", language=lang)

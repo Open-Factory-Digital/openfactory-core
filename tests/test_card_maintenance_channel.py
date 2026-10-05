@@ -1484,7 +1484,7 @@ def test_the_refusal_for_an_UNAGREED_requirement_is_the_MODULE_S_OWN_SENTENCE():
     reply = chat_turn(project, text="alinha o #288 ao requisito 7", user="UADM", thread="C1",
                       channel="C1", module=_Module(req))
 
-    assert _not_a_promise(7, req) in reply, reply
+    assert _not_a_promise(7, req, language=project.language) in reply, reply
 
 
 def test_a_replacement_NOBODY_HAS_AGREED_TO_YET_is_not_reported_as_a_BROKEN_BASE(caplog):
