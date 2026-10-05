@@ -23,13 +23,15 @@ MUTATIONS = [
      "    from openfactory.contracts.refs import ref_numbers\n"
      "    landed = ref_numbers(r.ref for r in results if r.ok and r.ref)\n"),
 
+    # re-pinned 2026-10-05: the sentence is picked by whether the order reached the board (#512)
     ("the sentence decorates every ref as GitHub does: #DAR-9", VOICE,
-     '        items=", ".join(ref_label(n) for n in numbers))',
-     '        items=", ".join(f"#{n}" for n in numbers))'),
+     'format(items=", ".join(ref_label(n) for n in numbers))',
+     'format(items=", ".join(f"#{n}" for n in numbers))'),
 
+    # re-pinned 2026-10-05: the sentence is picked by whether the order reached the board (#512)
     ("the sentence names every ref bare, so a numbered board's #1 reads as 1", VOICE,
-     '        items=", ".join(ref_label(n) for n in numbers))',
-     '        items=", ".join(str(n) for n in numbers))'),
+     'format(items=", ".join(ref_label(n) for n in numbers))',
+     'format(items=", ".join(str(n) for n in numbers))'),
 
     # retired 2026-10-04: "the refs are kept as promote decorated them" is an equivalent mutation
     # since #497 — `ref_label` strips a typed `#` from a key too, so `queued` names `#DAR-9` as

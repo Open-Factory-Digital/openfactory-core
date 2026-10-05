@@ -896,8 +896,8 @@ def test_a_queue_is_read_back_in_the_order_it_was_approved(monkeypatch, tmp_path
     the sentence that confirms it. Driven on the local row, a numbered board, through the yes.
 
     The sentence reads back what `promote` did. Which card the board then hands the factory first
-    is the board's own ordering — the local board's is by ref — and not this sentence's to
-    settle."""
+    was the board's own ordering — the local board's was by ref — until #512 ranked the queue in
+    the order approved (`test_the_queue_runs_in_the_order_a_person_approved.py`)."""
     from openfactory.adapters.board import build_board
     from openfactory.adapters.board_setup.local import LocalBoardSetup
     from openfactory.adapters.tracker.registry import build_tracker
@@ -931,6 +931,6 @@ def test_a_queue_is_read_back_in_the_order_it_was_approved(monkeypatch, tmp_path
 
     said = _yes(project, module, "queue", ["3", "1", "2"])
 
-    assert sorted(build_board(project).items_in_status(QUEUE)) == ["1", "2", "3"]
+    assert build_board(project).items_in_status(QUEUE) == ["3", "1", "2"]
     assert said == ("Nina: Coloquei na fila, nesta ordem: #3, #1, #2. "
                     "A fábrica começa pelo primeiro."), said
