@@ -271,13 +271,37 @@ _CARD_EDIT_NOTE_PARTS = {
            "section": "the section “{name}”"},
 }
 _CARD_CLOSE_NOTE = {
-    "pt-BR": "_Fechado por {who}._ {reason}",
-    "en": "_Closed by {who}._ {reason}",
+    "pt-BR": "_Fechado {by_who}._ {reason}",
+    "en": "_Closed {by_who}._ {reason}",
 }
 _CARD_REOPEN_NOTE = {
-    "pt-BR": "_Reaberto por {who}._",
-    "en": "_Reopened by {who}._",
+    "pt-BR": "_Reaberto {by_who}._",
+    "en": "_Reopened {by_who}._",
 }
+#: WHO DID IT, WHEN IT WAS THE PLATFORM (#546). A card's note names whoever caused the change:
+#: a person by their name, and the platform by these — never by the internal English name the
+#: code passes as `by=` ("_Fechado por the workflow._"). Two forms each: the SUBJECT ("a fábrica
+#: disse") and the AGENT, with its preposition, because Portuguese contracts it ("pela fábrica",
+#: never "por a fábrica") and a template cannot contract a word it does not know (#550's lesson).
+#: Every literal the code passes to the card's door is listed here, and a guard holds it
+#: (`tests/test_a_card_note_names_the_platform_in_the_project_s_language.py`).
+_PLATFORM_ACTORS = {
+    "the workflow": {"pt-BR": ("a fábrica", "pela fábrica"),
+                     "en": ("the factory", "by the factory")},
+    "the factory": {"pt-BR": ("a fábrica", "pela fábrica"),
+                    "en": ("the factory", "by the factory")},
+    "the job": {"pt-BR": ("a fábrica", "pela fábrica"),
+                "en": ("the factory", "by the factory")},
+    "the tech-lead's round": {"pt-BR": ("a ronda do tech-lead", "pela ronda do tech-lead"),
+                              "en": ("the tech-lead's round", "by the tech-lead's round")},
+    "the product role": {"pt-BR": ("o papel de produto", "pelo papel de produto"),
+                         "en": ("the product role", "by the product role")},
+    "observed": {"pt-BR": ("alguém no próprio quadro", "por alguém no próprio quadro"),
+                 "en": ("someone on the board itself", "by someone on the board itself")},
+    "a person": {"pt-BR": ("uma pessoa", "por uma pessoa"),
+                 "en": ("a person", "by a person")},
+}
+_BY_A_PERSON = {"pt-BR": "por {name}", "en": "by {name}"}
 #: What a tracker row leaves on a card it closed as NOT delivered when the vendor gave it no way to
 #: record that (#203). It names no vendor — the row that says it knows which one it is — and carries
 #: no markdown, because the first row to need it writes plain text. HERE, not in the row: a sentence
@@ -308,16 +332,35 @@ def card_edit_note(*, who: str, parts: list[str], language: str | None = None) -
     `parts` are the neutral names of what changed — `title`, and the sections
     `tracker.parse.changed_sections` reports — so the call site never spells a word a reader
     sees, and the note says WHICH part of the card moved rather than that the card was touched."""
+    named = actor(who, language=language)
+    if (who or "").strip() in _PLATFORM_ACTORS:   # it opens the sentence; a person's name is as is
+        named = named[:1].upper() + named[1:]
     return _pick(_CARD_EDIT_NOTE, language).format(
-        who=who, what=card_edit_parts(parts, language=language))
+        who=named, what=card_edit_parts(parts, language=language))
+
+
+def actor(who: str, *, language: str | None = None) -> str:
+    """Who caused a change, as the SUBJECT of a sentence — a person by their name, the platform by
+    its words in the project's language, never by the name the code passes (#546)."""
+    named = _PLATFORM_ACTORS.get((who or "").strip())
+    return _pick(named, language)[0] if named else who
+
+
+def by_actor(who: str, *, language: str | None = None) -> str:
+    """Who caused a change, as the AGENT, with its preposition — "por Ana", "pela fábrica"."""
+    named = _PLATFORM_ACTORS.get((who or "").strip())
+    if named:
+        return _pick(named, language)[1]
+    return _pick(_BY_A_PERSON, language).format(name=who)
 
 
 def card_close_note(*, who: str, reason: str, language: str | None = None) -> str:
-    return _pick(_CARD_CLOSE_NOTE, language).format(who=who, reason=reason)
+    return _pick(_CARD_CLOSE_NOTE, language).format(
+        by_who=by_actor(who, language=language), reason=reason)
 
 
 def card_reopen_note(*, who: str, language: str | None = None) -> str:
-    return _pick(_CARD_REOPEN_NOTE, language).format(who=who)
+    return _pick(_CARD_REOPEN_NOTE, language).format(by_who=by_actor(who, language=language))
 
 
 def closed_not_delivered_note(*, status: str, language: str | None = None) -> str:
@@ -4271,59 +4314,59 @@ def card_withdrawn(*, ref: str, title: str = "", removed: bool = False,
 # drops, and the stop's own sentence was English on a Portuguese board. The door writes these.
 _CARD_NOTE = {
     "pt-BR": {
-        "discarded": ("_Pull request fechado sem merge por {who}._{why} Nada foi entregue: o "
+        "discarded": ("_Pull request fechado sem merge {by_who}._{why} Nada foi entregue: o "
                       "cartão voltou para o backlog, e o branch e os commits dele estão intactos."),
-        "skipped": ("_Pulado por {who}._{why} A fábrica parou de trabalhar nele e a fila está "
+        "skipped": ("_Pulado {by_who}._{why} A fábrica parou de trabalhar nele e a fila está "
                     "livre. Nada foi entregue: o cartão voltou para o backlog."),
-        "stopped": ("_Parado por {who}._{why} O job foi encerrado no motor; nada foi mergeado e "
+        "stopped": ("_Parado {by_who}._{why} O job foi encerrado no motor; nada foi mergeado e "
                     "nenhum branch foi apagado. O cartão voltou para o backlog e pode ser "
                     "retomado."),
-        "question_answered": "_Respondido por {who}._{why}",
+        "question_answered": "_Respondido {by_who}._{why}",
         "parked": "_Parado à espera de uma pessoa._{why}",
         "delivered": "_Entregue._{why}",
-        "adjusted": "_Mais uma passagem, pedida por {who}._{why}",
-        "filed": "_Registrado por {who}._{why}",
-        "promoted": "_Colocado na fila por {who}._{why}",
-        "reordered": "_Tirado da fila por {who}: voltou para o backlog._{why}",
-        "edited": "_Editado por {who}._{why}",
-        "question_asked": "_Perguntado por {who}: o cartão espera a resposta._{why}",
+        "adjusted": "_Mais uma passagem, pedida {by_who}._{why}",
+        "filed": "_Registrado {by_who}._{why}",
+        "promoted": "_Colocado na fila {by_who}._{why}",
+        "reordered": "_Tirado da fila {by_who}: voltou para o backlog._{why}",
+        "edited": "_Editado {by_who}._{why}",
+        "question_asked": "_Perguntado {by_who}: o cartão espera a resposta._{why}",
         "refused": "_Devolvido para refinamento: a fábrica não o constrói como está escrito._{why}",
         "pr_opened": "_A mudança está num pull request._{why}",
         "merged": "_Mergeado._{why}",
-        "promised": "_Faz parte da entrega de um requisito, por {who}._{why}",
-        "resumed": "_Devolvido para mais uma passagem por {who}._{why}",
-        "accepted": "_Aceito por {who}: é o que foi pedido._{why}",
+        "promised": "_Faz parte da entrega de um requisito, {by_who}._{why}",
+        "resumed": "_Devolvido para mais uma passagem {by_who}._{why}",
+        "accepted": "_Aceito {by_who}: é o que foi pedido._{why}",
         "staged": "_Num estágio, esperando ser experimentado antes de chegar a todos._{why}",
         "stage_rejected": "_Ainda não, disse {who} no estágio._{why}",
-        "released": "_Liberado para produção por {who}._{why}",
+        "released": "_Liberado para produção {by_who}._{why}",
     },
     "en": {
-        "discarded": ("_Pull request closed without merging by {who}._{why} Nothing was "
+        "discarded": ("_Pull request closed without merging {by_who}._{why} Nothing was "
                       "delivered: the card is back in the backlog, and its branch and commits are "
                       "untouched."),
-        "skipped": ("_Skipped by {who}._{why} The factory stopped working on it and the queue is "
+        "skipped": ("_Skipped {by_who}._{why} The factory stopped working on it and the queue is "
                     "free. Nothing was delivered: the card is back in the backlog."),
-        "stopped": ("_Stopped by {who}._{why} The job was terminated in the engine; nothing was "
+        "stopped": ("_Stopped {by_who}._{why} The job was terminated in the engine; nothing was "
                     "merged and no branch was deleted. The card is back in the backlog and can be "
                     "picked up again."),
-        "question_answered": "_Answered by {who}._{why}",
+        "question_answered": "_Answered {by_who}._{why}",
         "parked": "_Parked, waiting on a person._{why}",
         "delivered": "_Delivered._{why}",
-        "adjusted": "_One more pass, asked for by {who}._{why}",
-        "filed": "_Filed by {who}._{why}",
-        "promoted": "_Queued by {who}._{why}",
-        "reordered": "_Taken out of the queue by {who}: back in the backlog._{why}",
-        "edited": "_Edited by {who}._{why}",
-        "question_asked": "_Asked by {who}: the card waits on the answer._{why}",
+        "adjusted": "_One more pass, asked for {by_who}._{why}",
+        "filed": "_Filed {by_who}._{why}",
+        "promoted": "_Queued {by_who}._{why}",
+        "reordered": "_Taken out of the queue {by_who}: back in the backlog._{why}",
+        "edited": "_Edited {by_who}._{why}",
+        "question_asked": "_Asked {by_who}: the card waits on the answer._{why}",
         "refused": "_Sent back to be refined: the factory does not build it as written._{why}",
         "pr_opened": "_The change is in a pull request._{why}",
         "merged": "_Merged._{why}",
-        "promised": "_Part of what a requirement delivers, by {who}._{why}",
-        "resumed": "_Sent back for another pass by {who}._{why}",
-        "accepted": "_Accepted by {who}: it is what was asked for._{why}",
+        "promised": "_Part of what a requirement delivers, {by_who}._{why}",
+        "resumed": "_Sent back for another pass {by_who}._{why}",
+        "accepted": "_Accepted {by_who}: it is what was asked for._{why}",
         "staged": "_On a stage, waiting to be tried before it reaches everyone._{why}",
         "stage_rejected": "_Not yet, said {who} at the stage._{why}",
-        "released": "_Released to production by {who}._{why}",
+        "released": "_Released to production {by_who}._{why}",
     },
 }
 _CARD_NOTE_WHY = {"pt-BR": " Motivo: {why}", "en": " Reason: {why}"}
@@ -4337,7 +4380,8 @@ def card_note(event: str, *, who: str, why: str = "", language: str | None = Non
     if event == "reopened":
         return card_reopen_note(who=who, language=language)
     said = _pick(_CARD_NOTE_WHY, language).format(why=why) if why else ""
-    return _pick(_CARD_NOTE, language)[event].format(who=who, why=said)
+    return _pick(_CARD_NOTE, language)[event].format(
+        who=actor(who, language=language), by_who=by_actor(who, language=language), why=said)
 
 
 #: What the requester's conversation is told when the work on their card stopped, and when a card
