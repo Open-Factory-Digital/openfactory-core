@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 
 from openfactory.certify import pack
 from openfactory.certify.schema import validate
+from openfactory.observability.query import MEASURES
 from tests import certify_bed as bed
 
 FULL = ["--partner", "altiva", "--profile", "standard", "--practitioner", bed.PRACTITIONER]
@@ -90,7 +91,7 @@ def test_dry_run_prints_the_entire_pack_and_writes_nothing(tmp_path, monkeypatch
     assert _listing(tmp_path) == before, "a dry run wrote something"
     files = bed.files_of(result.output)
     document = bed.pack_json(files)
-    assert set(document["checksums"]) | {"pack.json"} == set(files), (
+    assert set(document["checksums"]) | {"pack.json", pack.SUMS_FILE} == set(files), (
         "the dry run did not print every file the pack holds")
     assert "nothing was written" in result.output
     assert not list(deploy.glob("*.tgz"))
@@ -124,7 +125,14 @@ def test_yes_writes_a_tarball_that_validates_and_whose_checksums_hold(tmp_path, 
                               f"{document['generated_at'][:10]}.tgz"
     for name, digest in document["checksums"].items():
         assert digest == "sha256:" + hashlib.sha256(files[name]).hexdigest(), name
-    assert set(files) == set(document["checksums"]) | {"pack.json"}
+    assert set(files) == set(document["checksums"]) | {"pack.json", pack.SUMS_FILE}
+    # SHA256SUMS COVERS WHAT pack.json's LIST CANNOT: pack.json itself, and every other file —
+    # in `sha256sum -c`'s own format.
+    sums = dict(reversed(line.split("  ", 1))
+                for line in files[pack.SUMS_FILE].decode().splitlines())
+    assert set(sums) == set(files) - {pack.SUMS_FILE}
+    for name, digest in sums.items():
+        assert digest == hashlib.sha256(files[name]).hexdigest(), name
     assert "pack.sig" not in files, "a signature this slice cannot make"
 
 
@@ -148,12 +156,17 @@ def test_what_the_pack_does_not_contain_is_said_in_it(tmp_path, monkeypatch):
     document = bed.pack_json(files)
 
     assert document["signature"] is None and document["unsigned_because"].strip()
-    assert document["outcomes"]["status"] == "not_measured", (
+    # THIS BED KEEPS NO METRICS STORE AND NO JOURNAL HERE: every outcome is unmeasured, and says
+    # why — a pack of zeros would read as a deployment that did nothing.
+    outcomes = document["outcomes"]
+    assert outcomes["status"] == "not_measured", (
         "outcomes were reported as measured — zeros read as a deployment that did nothing")
-    assert document["outcomes"]["reason"].strip()
+    assert outcomes["reason"].strip()
+    assert [m for m in MEASURES if outcomes[m] is not None] == []
+    assert all(outcomes["not_measured"][m].strip() for m in MEASURES)
     summary = files["summary.md"]
     assert "## What this pack does not contain yet" in summary
-    for gap in ("signature", "outcome aggregates"):
+    for gap in ("signature", "outcome aggregate"):
         assert gap in summary, f"the summary does not say the pack lacks {gap}"
     assert not [g for g in document["not_in_this_pack"] if "C-" in g], (
         "the pack still says a control is not read — the forge and releases reads are built")

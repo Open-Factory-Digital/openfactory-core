@@ -231,3 +231,15 @@ def certify_deployment_refusal(*, partner: str | None, profile: str | None,
                            'pass it as `--consent "<name>, <role>, <date>"` — who consented, in '
                            'what role, and when')
     return None
+
+
+def certify_verify_refusal(*, profile: str | None) -> str | None:
+    """Why `certify verify` cannot start with these flags, or None when it can — asked before the
+    pack is opened."""
+    from openfactory.certify.controls import PROFILES
+
+    if profile is not None and profile not in PROFILES:
+        return refuse_flag("--profile", f"{profile!r} is not a profile",
+                           f"pass one of: {', '.join(PROFILES)}, or leave it out to verify "
+                           f"against the profile the pack claims")
+    return None

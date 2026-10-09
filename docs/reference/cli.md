@@ -167,6 +167,14 @@ e-mail addresses, paths and credentials are dropped; the practitioner is the one
 `--dry-run` prints every file and writes nothing; without `--yes` nothing is written. `pack.json`
 validates against `openfactory/certify/pack.schema.json` (`openfactory.certify/1`).
 
+The pack's `outcomes` cover `--window-days` (90 by default): jobs run and how each ended (read
+from the line the workflow writes in the job's journal when it ends, never from the job's last
+progress), parks by the tech-lead's classes, the median and p90 cost per merged ticket, the median
+time from pickup to `pr_open`, review rejections and repair passes per job, the oldest card in
+Needs Action, the platform versions the jobs ran on, and the `box prove` runs. Counts and medians
+only; a measure that cannot be read (no metrics store, no journals where certify ran, a card
+record that began inside the window) is `null`, and `outcomes.not_measured` says why.
+
 Three controls ask the forge, read-only, through the project's own forge row: C-BRANCH (the base
 branch requires a pull request, keeps history linear, blocks force pushes and allows auto-merge),
 C-WORKFLOWS (the credential a job holds cannot write the CI definitions) and C-VERSION (the running
@@ -174,8 +182,18 @@ version is the latest published release or the one before). What the forge canno
 credential without the scope to ask, a vendor that does not publish it, no network — reads
 `unknown`, never `pass`.
 
-Not built yet, and said in every pack: the signature, the outcome aggregates, and offline
-verification of a pack.
+`openfactory certify verify <pack.tgz> [--profile <p>] [--thresholds <file>]` checks a pack
+offline, the way the submissions bot does: every member a regular file, `pack.json` against its
+schema, `SHA256SUMS` and `pack.json`'s own checksums against the files, the signature, and every
+threshold in `openfactory/certify/thresholds.yaml` (or the `--thresholds` file, which replaces it
+whole), each reported by id. Exit 0 when everything holds, 1 with one finding per failure, 2 when
+the pack or the thresholds file cannot be read. An `unknown` control is never a pass, and an
+outcome the pack did not measure fails its threshold as "not measured", never as zero.
+`--allow-unsigned` stops an unsigned pack being a finding, for a rehearsal; the submissions bot
+never passes it.
+
+Not built yet, and said in every pack: the signature, so every pack is a `signature` finding
+without `--allow-unsigned`.
 
 ---
 

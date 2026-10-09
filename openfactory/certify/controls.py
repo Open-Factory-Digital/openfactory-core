@@ -207,6 +207,11 @@ class Reading:
     identifiers: dict[str, dict[str, set[str]]] = field(default_factory=dict)
     secrets: set[str] = field(default_factory=set)
     variables: set[str] = field(default_factory=set)
+    #: The outcome aggregates' reader, bound by `pack.gather` to this deployment's projects and
+    #: ASKED BY `assemble` over the pack's window — the one read the pack's window decides
+    #: (`query.outcomes(projects, since, until)`). None: nothing was bound, and the pack says the
+    #: outcomes were not measured.
+    outcomes: Callable[[object, object], dict] | None = None
 
 
 # ── the answers ─────────────────────────────────────────────────────────────────────────────────

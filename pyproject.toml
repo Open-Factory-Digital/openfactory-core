@@ -226,8 +226,10 @@ include = ["openfactory*"]
 # builds a wheel and reads what is inside it, which is the only place the answer was ever knowable.
 # `certify/*.json` IS THE EVIDENCE PACK'S PUBLISHED SCHEMA (#356): `certify deployment` validates
 # every pack against it before writing, and a wheel without it could not write one at all.
+# `certify/*.yaml` IS THE THRESHOLDS `certify verify` HOLDS A PACK TO (#356): without it, no pip
+# install could verify a pack against the numbers the submissions bot uses.
 openfactory = ["presets/*.yaml", "org_defaults/**/*.md", "org_defaults/**/*.yaml", "api/*.html",
-               "certify/*.json"]
+               "certify/*.json", "certify/*.yaml"]
 
 [tool.ruff]
 target-version = "py312"

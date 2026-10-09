@@ -91,6 +91,22 @@ def record_job(*, project: str, issue: str, ts: str, state: str = "", title: str
         sink.record(MetricRecord(
             project=project, ticket=issue, ts=ts, kind="job", role="_job_",
             state=state, title=title, wall_s=wall_s, total_cost_usd=total_cost_usd,
-            pr_url=pr_url, knowledge=knowledge))
+            pr_url=pr_url, knowledge=knowledge, extra={"platform": platform_stamp()}))
     except Exception as exc:  # noqa: BLE001 — telemetry is additive; never fail the job
         log.info("job telemetry for %s#%s was not recorded (%s)", project, issue, str(exc)[:160])
+
+
+def platform_stamp() -> dict[str, str]:
+    """WHICH PLATFORM RAN THE ATTEMPT: the package's version and the image's build code (`""`
+    outside a built image), on every `job` row (#356).
+
+    NOTHING RECORDED IT. A deployment that stays current is one of the partner program's
+    thresholds, and "which versions ran here over the last ninety days" was answerable only from
+    the operator's memory: the build stamp lived in one file the image writes, read by whoever
+    asked at that moment, and no row of what a job did said which code did it. The outcome
+    aggregates read this back (`query.outcomes`); a row written before it carries none and is
+    counted as UNSTAMPED, never as some version."""
+    from openfactory import __version__, namespace
+
+    code, _built = namespace.build_stamp()
+    return {"version": __version__, "build": code}

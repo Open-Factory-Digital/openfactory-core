@@ -232,9 +232,11 @@ MUTATIONS = [
      "            elif extra is False:",
      "            elif extra is None:", SCH),
 
-    ("outcomes are reported as measured zeros", PACK,
-     '        "outcomes": {"status": "not_measured", "reason": OUTCOMES_REASON},',
-     '        "outcomes": {"status": "measured", "reason": "0 jobs"},', CMD),
+    # re-pinned 2026-10-05: the outcomes are read by `query.outcomes` now (#356 slice 2); the
+    # bed keeps no metrics store and no journal, so every measure there must stay null (#356)
+    ("outcomes are reported as measured zeros", "openfactory/observability/query.py",
+     "    block: dict = {m: None for m in MEASURES}",
+     "    block: dict = {m: 0 for m in MEASURES}", CMD),
 
     ("the pack claims a signature it does not carry", PACK,
      '        "signature": None,',

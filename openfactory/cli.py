@@ -2480,10 +2480,11 @@ def certify_deployment_cmd(
     file inside a repository beyond its manifest. Every organisation, repository, project and
     person is replaced by a pseudonym; URLs, hosts, e-mail addresses and credentials are dropped.
 
-    The forge is asked, read-only, what protects each repository's base branch, what the
-    credential a job holds is granted, and which releases of the platform are published; what it
-    cannot answer reads `unknown`, never `pass`. This build does not sign the pack or measure
-    outcomes, and the pack says so."""
+    The outcomes over the window are read from the job journals and the metrics store; one that
+    cannot be read is null, with the reason. The forge is asked, read-only, what protects each
+    repository's base branch, what the credential a job holds is granted, and which releases of
+    the platform are published; what it cannot answer reads `unknown`, never `pass`. This build
+    does not sign the pack, and the pack says so."""
     from openfactory.certify import pack as certify
     from openfactory.cli_refusals import certify_deployment_refusal
 
@@ -2533,6 +2534,68 @@ def certify_deployment_cmd(
                       if any(c.result == r for c in required))
     typer.echo(f"✓ wrote {target} — {len(built.files)} files; {len(required)} required "
                f"control(s): {tally}. Unsigned: signing is not built yet.")
+
+
+@certify_app.command("verify")
+def certify_verify_cmd(
+    pack_file: str = typer.Argument(..., metavar="PACK.tgz",
+                                    help="The evidence pack `certify deployment` wrote."),
+    profile: str = typer.Option(None, "--profile",
+                                help="The profile to verify against (default: the one the pack "
+                                     "claims)."),
+    thresholds: str = typer.Option(None, "--thresholds",
+                                   help="A thresholds file that replaces the core's own "
+                                        "(openfactory/certify/thresholds.yaml) whole."),
+    allow_unsigned: bool = typer.Option(
+        False, "--allow-unsigned",
+        help="Do not count an unsigned pack as a finding — for a rehearsal. The submissions bot "
+             "never passes this."),
+) -> None:
+    """Check an evidence pack offline: its schema, its checksums, its signature and every
+    threshold, each reported by id.
+
+    Exits 0 when everything holds, 1 with one finding per failure, and 2 when the pack (or the
+    thresholds file) cannot be read. The submissions bot runs exactly this, so its answer can be
+    read before submitting. Signing is not built yet: every pack is unsigned, and that is a
+    finding unless --allow-unsigned is given."""
+    from openfactory.certify import verify as v
+    from openfactory.cli_refusals import certify_verify_refusal
+
+    refused = certify_verify_refusal(profile=profile)
+    if refused:
+        typer.echo(refused, err=True)
+        raise typer.Exit(2)
+    try:
+        held_to = v.load_thresholds(Path(thresholds) if thresholds else None)
+    except v.ThresholdsError as exc:
+        typer.echo(f"✗ --thresholds cannot be used: {exc}. No pack was judged.", err=True)
+        raise typer.Exit(2) from None
+    try:
+        bundle = v.read(Path(pack_file))
+    except v.Unreadable as exc:
+        typer.echo(f"✗ the pack cannot be read: {exc}. Nothing was verified.", err=True)
+        raise typer.Exit(2) from None
+
+    document = bundle.document
+    claimed = str(document.get("profile") or "?")
+    judged = profile or claimed
+    typer.echo(f"{bundle.name}: {document.get('schema', '?')}, partner "
+               f"{document.get('partner', '?')}, profile {claimed}"
+               + (f" (verified as {judged})" if judged != claimed else "")
+               + f", generated {document.get('generated_at', '?')}")
+    results = v.verify(bundle, thresholds=held_to, profile=judged,
+                       allow_unsigned=allow_unsigned)
+    width = max(len(r.id) for r in results)
+    for r in results:
+        mark = "–" if r.skipped else ("✓" if r.ok else "✗")
+        typer.echo(f"{mark} {r.id.ljust(width)}  {r.message}")
+    found = v.findings(results)
+    if found:
+        typer.echo(f"\n✗ {len(found)} finding(s): this pack does not meet the thresholds.")
+        raise typer.Exit(1)
+    typer.echo("\n✓ the pack meets every threshold"
+               + (" — its signature was not checked (--allow-unsigned)." if allow_unsigned
+                  else "."))
 
 
 preview_app = typer.Typer(help="A preview of the product, before a pull request merges.")

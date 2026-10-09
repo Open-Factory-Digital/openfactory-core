@@ -102,6 +102,9 @@ MUST_SHIP = [
     # THE EVIDENCE PACK'S PUBLISHED SCHEMA (#356). `certify deployment` validates every pack
     # against it before writing; absent from a wheel, no pip install could write a pack.
     "openfactory/certify/pack.schema.json",
+    # THE THRESHOLDS `certify verify` HOLDS A PACK TO (#356). Absent from a wheel, verify could
+    # not judge a pack by the numbers the submissions bot uses.
+    "openfactory/certify/thresholds.yaml",
 ]
 
 
