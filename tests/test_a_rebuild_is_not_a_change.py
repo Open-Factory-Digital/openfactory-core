@@ -179,10 +179,15 @@ def test_box_status_asks_the_same_function_the_poller_asks():
 
     from openfactory import cli
 
-    src = inspect.getsource(cli.box_status_cmd)
-    assert "_freshness_reason" in src, "the command judges freshness by its own rules again"
-    assert "proof.commands_hash != current" not in src, "a second copy of the rules is back"
-    assert "proof.toolbox != variant" not in src
+    # THE STATUS MOVED INTO `box_prove.status` (#356), which `box status`, `box status --json` and
+    # `certify` all read — so the question is asked of it, and the command must still call it.
+    command = inspect.getsource(cli.box_status_cmd)
+    assert "box_prove.status(" in command, "the command assembles a status of its own again"
+    for src in (inspect.getsource(bp.status), command):
+        assert "proof.commands_hash != current" not in src, "a second copy of the rules is back"
+        assert "proof.toolbox != variant" not in src
+    assert "_freshness_reason" in inspect.getsource(bp.status), (
+        "the status judges freshness by its own rules again")
 
 
 def test_box_status_says_what_the_proof_is_pinned_to(tmp_path, monkeypatch, capsys):

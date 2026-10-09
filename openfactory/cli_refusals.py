@@ -167,3 +167,67 @@ def as_a_sentence(exc: BaseException, *, doing: str) -> str:
     return (f"could not {doing}: {what}.\n\n"
             f"  {remedy}\n\n"
             f"The provider said: {words[:300]}")
+
+
+# ── what the PERSON did not say: a flag the command cannot go on without (#356) ────────────────
+#
+# THE OTHER HALF OF A COMMAND LINE'S REFUSALS. Everything above answers "what did the provider
+# say"; this answers "what did the person not say" — and it holds the same rule: one cause, one
+# remedy, and the remedy is something to type. Typer's own `Missing option '--practitioner'` names
+# the flag and stops; it cannot say why no default exists, which is the half that stops somebody
+# inventing a value to get past it.
+
+
+def refuse_flag(flag: str, cause: str, remedy: str) -> str:
+    """A refusal that NAMES THE FLAG, says why the command cannot go on without it, and what to
+    type instead. Exit 2 is the caller's — a usage answer, like every other one in this CLI."""
+    return f"✗ {flag} {cause}. Nothing was read and nothing was written.\n\n  {remedy}"
+
+
+#: `certify deployment`'s flags that have no default, and why none can be guessed: (flag, cause,
+#: remedy). ORDERED — the first one missing is the one named, so a person fixing them one at a
+#: time meets them in the order the command line reads.
+CERTIFY_REQUIRED: tuple[tuple[str, str, str], ...] = (
+    ("--partner", "is required: it is the partner slug this pack is submitted under, and no "
+                  "deployment can know which partner is running it",
+     "pass the slug you were given when you applied — `--partner <slug>`"),
+    ("--profile", "is required: the profile a pack claims decides which controls must pass, and "
+                  "claiming one is the partner's decision",
+     "pass `--profile light`, `--profile standard` or `--profile enterprise`"),
+    ("--practitioner", "is required: it names the partner's engineer who answers for this "
+                       "deployment — the one personal name a pack keeps",
+     'pass `--practitioner "<name>"`'),
+)
+
+#: What a partner slug may be: the shape of a directory under `partners/` in the partners
+#: repository, which is where the pack is submitted.
+PARTNER_SLUG = re.compile(r"[a-z0-9][a-z0-9-]*")
+
+
+def certify_deployment_refusal(*, partner: str | None, profile: str | None,
+                               practitioner: str | None, window_days: int,
+                               consent: str | None) -> str | None:
+    """Why `certify deployment` cannot start with these flags, or None when it can. Asked BEFORE
+    anything is read, so a refusal costs nothing — not a doctor run, not a forge call."""
+    from openfactory.certify.controls import PROFILES
+    from openfactory.certify.pack import parse_consent
+
+    given = {"--partner": partner, "--profile": profile, "--practitioner": practitioner}
+    for flag, cause, remedy in CERTIFY_REQUIRED:
+        if not (given[flag] or "").strip():
+            return refuse_flag(flag, cause, remedy)
+    if not PARTNER_SLUG.fullmatch(partner or ""):
+        return refuse_flag("--partner", f"{partner!r} is not a partner slug: lowercase letters, "
+                                        f"digits and hyphens, starting with a letter or a digit",
+                           "pass the slug exactly as the partners repository spells it")
+    if profile not in PROFILES:
+        return refuse_flag("--profile", f"{profile!r} is not a profile",
+                           f"pass one of: {', '.join(PROFILES)}")
+    if window_days < 1:
+        return refuse_flag("--window-days", f"is {window_days}: a window has at least one day",
+                           "pass `--window-days 90`, or leave it out for the 90-day default")
+    if consent is not None and parse_consent(consent) is None:
+        return refuse_flag("--consent", f"{consent!r} is not a consent record",
+                           'pass it as `--consent "<name>, <role>, <date>"` — who consented, in '
+                           'what role, and when')
+    return None

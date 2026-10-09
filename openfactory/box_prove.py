@@ -1869,3 +1869,152 @@ def health(project) -> dict:
         "at": getattr(proof, "at", "") if proof else "",
         "detail": "" if not held else held,
     }
+
+
+# ── the proof of ONE repository, as a status and as a document (#356) ─────────────────────────
+#
+# MOVED OUT OF `cli.py`'s `box status`, which assembled this inline and printed it. `box status
+# --json` and `openfactory certify` need the same answer, and a third copy of "is this proof still
+# good" is the disagreement this module's comments keep recording the price of (`_freshness_reason`
+# exists because `box status` once judged freshness by its own rules).
+
+#: The shape `box status --json` emits. MOVES WHEN THE SHAPE MOVES — a reader that cannot tell
+#: version 1 from version 2 half-understands a document it believes it understands (the rule
+#: `preflight.SCHEMA` and `doctor.SCHEMA` state).
+STATUS_SCHEMA = "openfactory.box-status/1"
+
+#: What one repository's proof can be. `valid` is the only state that lets the gate open:
+#: `expired` is a proof that succeeded against a world that has since moved, `failed` is a proof
+#: whose last run went red, `unproven` is no proof recorded at all.
+VALIDITY = ("valid", "expired", "failed", "unproven")
+
+
+@dataclass
+class BoxStatus:
+    """Whether one (project, repository) box has a valid proof — and, when not, which fact moved.
+
+    `repository` is what was ASKED (`--repo`), `""` for the project's default; `key` is where the
+    proof is recorded (`card_repo._checkout_key`'s shape), which is what the text report names."""
+
+    project: str
+    repository: str
+    key: str
+    state: str
+    #: Why it is not valid, in `_freshness_reason`'s words — `""` when it is.
+    reason: str = ""
+    #: The command that re-proves it.
+    command: str = ""
+    proof: Proof | None = None
+
+    @property
+    def valid(self) -> bool:
+        return self.state == "valid"
+
+    def lines(self) -> list[str]:
+        """The human report, line by line — what `box status` prints, byte for byte."""
+        key, proof = self.key, self.proof
+        if proof is None:
+            return [f"{key}: no proof — run `{self.command}`"]
+        if self.valid:
+            out = [f"{key}: proven at {proof.at} on {proof.image} ({proof.digest[:19]}…)"]
+            # WHAT IT IS PINNED TO, because that is what decides whether the next rebuild
+            # expires it — and an operator who cannot see it cannot tell a proof that will
+            # survive an update from one that will not.
+            if proof.toolchain:
+                out.append("  toolchain " + " · ".join(proof.toolchain.split("\n")))
+                out.append("  a rebuild that leaves these unchanged does NOT expire this proof")
+            else:
+                out.append("  this image carries no toolchain line, so any rebuild expires the "
+                           "proof — rebuild the box image to get one (`up -d --build`)")
+            if proof.findings is None:
+                out.append("  advisory findings were not recorded for this proof — "
+                           "re-prove to record them")
+            else:
+                out.extend(f"  warn  {adv.check}  {adv.message}" for adv in proof.advisories())
+            return out
+        out = [f"{key}: the proof has EXPIRED — "
+               f"{'the last proof FAILED' if self.state == 'failed' else self.reason}"]
+        if self.state == "failed":
+            out.append(f"  run `{self.command}`")
+        return out
+
+    def as_document(self) -> dict:
+        """`box status --json`. The proof's DIGEST, the TOOLCHAIN it is pinned to (one pin per
+        line of the image's `/etc/openfactory-toolchain`) and its VALIDITY, for this repository.
+
+        `advisories` keeps `Proof.findings`' three states: `null` when nothing was recorded (no
+        proof, or one taken before findings were persisted), `[]` when the proof recorded none."""
+        proof = self.proof
+        recorded = proof is not None and proof.findings is not None
+        return {
+            "schema": STATUS_SCHEMA,
+            "project": self.project,
+            "repository": self.repository,
+            "key": self.key,
+            "valid": self.valid,
+            "state": self.state,
+            "reason": self.reason,
+            "remedy": "" if self.valid else f"run `{self.command}`",
+            "image": proof.image if proof else "",
+            "digest": proof.digest if proof else "",
+            "toolchain": [pin for pin in (proof.toolchain if proof else "").split("\n") if pin],
+            "proven_at": proof.at if proof else "",
+            "advisories": ([{"check": a.check, "message": a.message}
+                            for a in proof.advisories()] if recorded else None),
+        }
+
+
+def status(project, *, repo: str = "") -> BoxStatus:
+    """The proof of this project's box — or of `repo`, another of its repositories — judged by
+    THE SAME FUNCTION THE POLLER ASKS (`_freshness_reason`), never by a second opinion.
+
+    BOTH HALVES OF FRESHNESS, the two bugs `box status` shipped with (found by the onboard
+    fact-finding pass, 2026-08-13): it hashed WITHOUT the per-component gates — so a component
+    gaining a gate never expired the proof there while `gate_reason` held pickup, two answers for
+    one question — and it compared the proof's digest AGAINST ITSELF, which can never detect an
+    image change (firstrun.py had already named it "cli.py's bug").
+
+    A MANIFEST THAT CANNOT BE READ RAISES, as `box status` always has: the caller decides whether
+    that is a traceback (the command) or a stated unknown (`certify`)."""
+    from openfactory.loader import load_manifest
+    from openfactory.runtime import toolbox as tb
+
+    name = getattr(project, "name", "?")
+    proof_key, view = name, project
+    if repo:
+        # the key comes from the view — box prove's rule, for the same bare-name reason
+        from openfactory.runtime.card_repo import _runner_view
+
+        view, proof_key = _runner_view(project, f"{repo}#0")
+    command = f"openfactory box prove {name}" + (f" --repo {repo}" if repo else "")
+    proof = load(proof_key)
+    if proof is None:
+        return BoxStatus(name, repo, proof_key, "unproven", "the box has never been proven",
+                         command)
+    if repo:
+        from openfactory.factory import resolve_repo_path
+
+        manifest = load_manifest(view, repo_root=resolve_repo_path(view, cache_key=proof_key))
+    else:
+        manifest = load_manifest(view)
+    current = _hash_commands(list(manifest.setup), gate_commands(manifest.validation),
+                             component_gates(manifest))
+    variant = (tb.read_stamp() or {}).get("variant", "")
+    live_digest = _current_digest(proof.image) or proof.digest
+    if not proof.ok:
+        return BoxStatus(name, repo, proof_key, "failed", "the last proof FAILED", command,
+                         proof)
+    # THE SAME FUNCTION THE POLLER ASKS. `box status` used to reproduce the freshness rules — and
+    # the moment the gate learned that a REBUILD with the same toolchain is not a change, the two
+    # would have disagreed: `box status` saying EXPIRED about a proof the factory was happily
+    # picking cards up on (2026-08-15).
+    why = _freshness_reason(proof, digest=live_digest, variant=variant, commands=current,
+                            run_it=f"run `{command}`")
+    if why is None:
+        return BoxStatus(name, repo, proof_key, "valid", "", command, proof)
+    return BoxStatus(name, repo, proof_key, "expired", why, command, proof)
+
+
+def status_json(st: BoxStatus) -> str:
+    """Stable key order, so two runs of one deployment diff cleanly."""
+    return json.dumps(st.as_document(), indent=2, sort_keys=True)

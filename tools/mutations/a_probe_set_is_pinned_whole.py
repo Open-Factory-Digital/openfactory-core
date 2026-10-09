@@ -80,7 +80,9 @@ MUTATIONS += [
 
     # THE READER OF THAT ATTRIBUTION. `awaiting` alone is what the verdict used to consult, and
     # it cannot express "this is true and nothing needs it yet".
-    ("the verdict stops reading the attribution", CLI,
+    # re-pinned 2026-10-05: the verdict moved from `cli.py` into `doctor.verdict`, which the text
+    # report and `doctor --json` both read (#356)
+    ("the verdict stops reading the attribution", DOCTOR,
      "                      if not f.ok and (f.awaiting or f.not_yet\n"
      '                                       or f.check in ("manifest", "box_proof"))}',
      "                      if not f.ok and (f.awaiting\n"
