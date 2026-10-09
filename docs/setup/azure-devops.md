@@ -189,6 +189,13 @@ a filed card starts; the first parked ticket exercises the rest. **Upgrading a d
 before this section had the backlog row:** until the two lines are in, `doctor` fails
 `board_intake` and the product role files nothing.
 
+**A column no stage is.** Azure files every new work item in the board's first column — `New` on
+the stock Agile and Scrum processes — and no stage is `New` until you say so. A card there cannot
+be queued, edited or closed through the platform, and a card the product role files is placed in
+no column, until `columns` names it — `'{"backlog": "New"}'` beside whatever else you map, when
+`New` is where cards wait to be queued. `openfactory doctor` names every column no stage is
+(`board_stages`), with that line.
+
 ## 4 · The work item type
 
 | your project's process | pass at registration |

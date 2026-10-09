@@ -47,7 +47,16 @@ TEMPORAL_HINT = ("the durable engine is off: `temporal` is not on your PATH. Ins
 #: import that sat outside its `try`. Those now come from `runtime/temporal/vocabulary.py`, and
 #: `tests/test_the_panel_serves_without_the_engines_client.py` asks every GET route of the panel
 #: in an interpreter where the library cannot be found.
-RUNTIME_INSTALL = "`pip install -e '.[runtime]'` in the checkout you installed from"
+#:
+#: BOTH DOORS, SINCE #368. It named only the checkout's install, which a person who installed from
+#: an index or a wheel has no checkout to run — and that is the door the PyPI page documents. It
+#: does not spell the index's command with the package's name in it: while the publish is gated
+#: on a repository variable, `tests/test_the_remedy_a_refusal_hands_you_can_be_followed.py` reads
+#: the core as served by no index and forbids that command in every refusal. Repeating one's own
+#: `pip install` with the extra is right for an index install and for a wheel file alike.
+RUNTIME_INSTALL = ("`pip install -e '.[runtime]'` in the checkout you installed from, or, for an "
+                   "install from a package index or a wheel, the same `pip install` with "
+                   "`[runtime]` after the package's name")
 
 RUNTIME_HINT = ("the durable engine is off: `temporal` is on your PATH, but this install has no "
                 "`temporalio` — the `runtime` extra, which the worker runs on. Install it — "

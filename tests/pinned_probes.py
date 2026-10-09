@@ -100,6 +100,11 @@ GREEN_ANSWERS: dict[str, Any] = {
     # A card the product role files is born in the backlog, out of the queue the poller reads
     # (#536) — the board above. A test about a board whose new card is born in the queue names it.
     "board_intake": lambda: _born_in_the_backlog(),
+    # The same six columns, each the stage the platform's own board names it (#521) — the board
+    # `board_columns` lists, read as the card's door reads it.
+    "board_stages": lambda: ({"Backlog": "backlog", "TO-DO": "todo", "In progress": "in_progress",
+                              "In review": "in_review", "Needs Action": "needs_action",
+                              "Done": "done"}, "columns"),
     "floor_enforced": lambda: True,
     "harness_kind": lambda: "claude_code",
     "product_link": _no_product_module,

@@ -48,7 +48,16 @@ PROJECT_PROFILES_SUBDIR = Path(".openfactory") / "profiles"
 
 
 class ProfileError(Exception):
-    """A profile was named and could not be honoured. Never degraded into an absent profile."""
+    """A profile was named and could not be honoured. Never degraded into an absent profile.
+
+    `name` and `looked` are set when the name resolved NOWHERE: the profile asked for and every
+    path it was looked for at, in order, so a reader in another language — `openfactory explain`'s
+    pt-BR refusal (#81) — can say where without parsing this sentence."""
+
+    def __init__(self, message: str, *, name: str = "", looked: tuple[str, ...] = ()) -> None:
+        super().__init__(message)
+        self.name = name
+        self.looked = looked
 
 
 class ResolvedProfile:
@@ -214,7 +223,8 @@ def load_profile(name: str, *, project_dir: Path | None = None) -> Profile:
         raise ProfileError(
             f"the manifest declares `profile: {name}` and no such profile exists. Looked in: "
             + ", ".join(looked)
-            + f". Available here: {', '.join(available_profiles(project_dir)) or 'none'}")
+            + f". Available here: {', '.join(available_profiles(project_dir)) or 'none'}",
+            name=name, looked=tuple(looked))
     data = _read(path)
     declared = data.get("name")
     if declared is not None and str(declared).strip() != name:

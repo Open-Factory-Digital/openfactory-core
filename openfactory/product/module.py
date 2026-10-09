@@ -2710,7 +2710,7 @@ class ProductModule:
                 write=lambda: confirm_in_repository(
                     docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
                     slug=wanted, flow=flow, confirmed_by=actor,
-                    base=getattr(cfg, "docs_branch", "main")),
+                    base=getattr(cfg, "docs_branch", "main"), language=lang),
                 saved=_saved_in_the_repository))
         except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
             return _could_not(record_said("capability_failed", term=wanted, language=lang),
@@ -4413,7 +4413,7 @@ class ProductModule:
         # test that fails silently on the difference.
         number = canonical_ref(number)
         from openfactory.product.queue import has_criteria
-        from openfactory.product.voice import card_said, criteria_counted
+        from openfactory.product.voice import card_said, criteria_counted, refine_note
 
         lang = getattr(self.project, "language", None)
         ctx = self.context()
@@ -4483,7 +4483,9 @@ class ProductModule:
         forget_board(getattr(self.project, "name", ""))
         detail = criteria_counted(len(criteria), language=lang)
         try:
-            tracker.comment(f"#{number}", _refine_note(answer, agent=self._name()))
+            tracker.comment(f"#{number}", refine_note(
+                criteria=len(criteria), questions=answer.get("questions") or (), language=lang,
+                agent_name=self._name()))
         except Exception as exc:  # noqa: BLE001 — the criteria landed; the note only repeats them
             # `detail` ON AN OK RESULT MEANS WHAT THE WRITE DID NOT DO — the reading `close_card`
             # and `align_card` share, and the reason the reply that speaks it must not ALSO claim
@@ -4541,7 +4543,7 @@ class ProductModule:
         for a card the factory already finished (Done), closed from the card itself: that work DID
         ship, and recording it as withdrawn would drop it from every account of what was delivered
         — the board's own close decides the same way (`catalog._card_close`, #162)."""
-        from openfactory.product.voice import card_said
+        from openfactory.product.voice import card_said, closing_note, survivor_note
 
         lang = getattr(self.project, "language", None)
         tickets, error = self._read_board()
@@ -4585,8 +4587,9 @@ class ProductModule:
 
         moved = transition(self.project, f"#{number}", event, by=actor, why=reason,
                            facts={"delivered": delivered,
-                                  "note": _closing_note(in_favour_of=in_favour_of, actor=actor,
-                                                        reason=reason, agent=self._name())},
+                                  "note": closing_note(in_favour_of=in_favour_of, actor=actor,
+                                                       reason=reason, language=lang,
+                                                       agent_name=self._name())},
                            tracker=tracker)
         if moved.refused:
             return WriteResult(ok=False, existed=True, ref=f"#{number}", detail=moved.refused)
@@ -4598,7 +4601,8 @@ class ProductModule:
         if survivor is not None:
             try:
                 tracker.comment(f"#{in_favour_of}",
-                                _survivor_note(closed=number, actor=actor, agent=self._name()))
+                                survivor_note(closed=number, actor=actor, language=lang,
+                                              agent_name=self._name()))
             except Exception as exc:  # noqa: BLE001 — the close happened; only the pointer is lost
                 log.warning("OPENFACTORY_PRODUCT_CLOSE_UNLINKED closed=#%s survivor=#%s (%s) — the "
                             "surviving card does not say what was folded into it", number,
@@ -4678,7 +4682,7 @@ class ProductModule:
     def _remove_one(self, number: str, *, actor: str, reason: str) -> WriteResult:
         """Remove one card through the tracker's own removal, or close it where the row has none —
         and say which, because only one of the two leaves the card in a tracker's history."""
-        from openfactory.product.voice import card_said, card_withdrawn_result
+        from openfactory.product.voice import card_said, card_withdrawn_result, closing_note
 
         lang = getattr(self.project, "language", None)
         tickets, error = self._read_board()
@@ -4696,8 +4700,9 @@ class ProductModule:
         # for the promise, the requester, the preview and the snapshot
         from openfactory.lifecycle import CardEvent, transition
         moved = transition(self.project, f"#{number}", CardEvent.REMOVED, by=actor, why=reason,
-                           facts={"note": _closing_note(in_favour_of=None, actor=actor,
-                                                        reason=reason, agent=self._name())},
+                           facts={"note": closing_note(in_favour_of=None, actor=actor,
+                                                       reason=reason, language=lang,
+                                                       agent_name=self._name())},
                            tracker=self._tracker())
         if moved.refused:
             return WriteResult(ok=False, existed=True, ref=f"#{number}", detail=moved.refused)
@@ -5269,7 +5274,12 @@ class ProductModule:
         # test that fails silently on the difference.
         number = canonical_ref(number)
         from openfactory.product.role import IssueDraft
-        from openfactory.product.voice import card_said, criteria_counted, requirement_not_found
+        from openfactory.product.voice import (
+            align_note,
+            card_said,
+            criteria_counted,
+            requirement_not_found,
+        )
 
         lang = getattr(self.project, "language", None)
         ctx = self.context()
@@ -5333,7 +5343,8 @@ class ProductModule:
         # described — and `issue_body` renders no such section, so both go: what was
         # unresolved about the OLD text is not unresolved about this one, and the attribution stops
         # being true the moment the criteria are re-derived. The questions THIS pass could not
-        # answer go in the comment (`_align_note`), where nothing orders an executor to meet them.
+        # answer go in the comment (`voice.align_note`), where nothing orders an executor to meet
+        # them.
         canonical = issue_body(IssueDraft(acceptance_criteria=criteria,
                                           out_of_scope=answer.get("out_of_scope") or [],
                                           cites=requirement),
@@ -5364,7 +5375,9 @@ class ProductModule:
         forget_board(getattr(self.project, "name", ""))
         detail = criteria_counted(len(criteria), language=lang)
         try:
-            tracker.comment(f"#{number}", _align_note(requirement, answer, agent=self._name()))
+            tracker.comment(f"#{number}", align_note(
+                requirement=requirement, questions=answer.get("questions") or (), language=lang,
+                agent_name=self._name()))
         except Exception as exc:  # noqa: BLE001 — the card was rewritten; the note explains it
             log.warning("OPENFACTORY_PRODUCT_ALIGN_UNEXPLAINED card=#%s requirement=%s (%s) — the "
                         "criteria were replaced and nothing on the card says so", number,
@@ -5418,7 +5431,7 @@ class ProductModule:
         IDEMPOTENT BY CONSTRUCTION rather than by a guard: a card citing a live requirement is not
         an orphan, so the second run has nothing to find.
         """
-        from openfactory.product.voice import card_said
+        from openfactory.product.voice import card_said, repoint_note
 
         lang = getattr(self.project, "language", None)
         ctx = self.context()
@@ -5440,8 +5453,8 @@ class ProductModule:
                 continue
             try:
                 tracker.comment(f"#{card.number}",
-                                _repoint_note(cited=cited, successor=successor, actor=actor,
-                                              agent=self._name()))
+                                repoint_note(cited=cited, successor=successor, actor=actor,
+                                             language=lang, agent_name=self._name()))
             except Exception as exc:  # noqa: BLE001 — the citation moved; the warning did not
                 # SEPARATE FROM THE BODY WRITE, and here the cost of conflating them is permanent:
                 # the card has stopped being an orphan, so no later sweep comes back for the
@@ -5760,59 +5773,6 @@ def _not_a_promise(number: int, requirement, *, language: str | None = None) -> 
     return not_a_promise(reason, number=number, language=language)
 
 
-def _closing_note(*, in_favour_of: str | None, actor: str, reason: str,
-                  agent: str = "") -> str:
-    """What the closed card is left saying. Written for whoever opens it in six months and asks
-    why the work disappeared — so it names the decision, the person, and where the work went."""
-    from openfactory.product.voice import signature
-
-    who = actor or "o time"
-    note = f"{signature(agent)} fechado a pedido de {who}"
-    note += (f", em favor do {ref_label(in_favour_of)}: o trabalho passa a ser acompanhado lá."
-             if in_favour_of else ".")
-    if reason:
-        note += f"\n\n{reason.strip()}"
-    return note
-
-
-def _survivor_note(*, closed: str, actor: str, agent: str = "") -> str:
-    """The other half of the link. Without it the surviving card never learns it absorbed
-    something, and whoever picks it up works from half the conversation."""
-    from openfactory.product.voice import signature
-
-    who = actor or "o time"
-    return (f"{signature(agent)} o {ref_label(closed)} foi fechado em favor deste, a pedido de "
-            f"{who}. Se havia algo escrito lá que não está aqui, vale trazer antes de começar.")
-
-
-def _align_note(requirement: int, answer: dict, *, agent: str = "") -> str:
-    from openfactory.product.voice import signature
-
-    note = (f"{signature(agent)} este cartão passou a executar o requisito {requirement}, e "
-            f"reescrevi o que precisa ser verdade para dá-lo por pronto a partir dele — o texto "
-            f"que ele seguia antes foi substituído. Corrijam se eu entendi errado.")
-    if answer.get("questions"):
-        note += "\n\nO que eu não consegui determinar:\n" + "\n".join(
-            f"- {q}" for q in answer["questions"])
-    return note
-
-
-def _repoint_note(*, cited: int, successor: int, actor: str = "", agent: str = "") -> str:
-    """Says what changed AND what deliberately did not.
-
-    The second half is the one that matters: whoever picks this card up has to know that what it
-    asks for was written against the older text, or they will read the new citation and assume
-    somebody checked."""
-    from openfactory.product.voice import signature
-
-    who = f", a pedido de {actor}" if actor else ""
-    return (f"{signature(agent)} este cartão passou a executar o requisito {successor}{who}: o "
-            f"requisito {cited}, que ele citava, foi substituído por aquele.\n\n"
-            f"**O que está escrito aqui como \"pronto\" continua igual, e foi escrito a partir do "
-            f"texto antigo.** Não revisei nada disso: rever pode mudar o que vai ser construído, "
-            f"e essa é uma decisão de vocês, não uma arrumação minha.")
-
-
 #: What an EXISTING card is told when the breakdown reuses it for a new requirement (#160). It
 #: lands on the client's own card, unprompted — the link would otherwise live in one chat message
 #: and nowhere anybody will look.
@@ -5856,20 +5816,9 @@ def _with_criteria(body: str, answer: dict, *, agent: str = "",
         parts += ["", "## Out of scope", ""] + [f"- {c}" for c in answer["out_of_scope"]]
     if answer.get("questions"):
         parts += ["", "## Open questions", ""] + [f"- {q}" for q in answer["questions"]]
-    parts += ["", f"_{signature(agent)} {_pick(_CRITERIA_FROM_WHAT_WAS_THERE, language)}_"]
+    parts += ["", f"_{signature(agent, language=language)} "
+                  f"{_pick(_CRITERIA_FROM_WHAT_WAS_THERE, language)}_"]
     return "\n".join(parts)
-
-
-def _refine_note(answer: dict, *, agent: str = "") -> str:
-    from openfactory.product.voice import signature
-
-    note = (f"{signature(agent)} este item não dizia quando estaria pronto, então seria recusado "
-            f"na entrada. Escrevi {len(answer.get('criteria') or [])} critérios a partir do que já "
-            f"estava descrito — corrijam se eu entendi errado.")
-    if answer.get("questions"):
-        note += "\n\nO que eu não consegui determinar:\n" + "\n".join(
-            f"- {q}" for q in answer["questions"])
-    return note
 
 
 #: A card is a card: a request and a defect asked for the same thing are one piece of work, and

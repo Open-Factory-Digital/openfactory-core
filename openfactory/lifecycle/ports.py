@@ -125,8 +125,9 @@ class Ports:
 
         A REFUSAL NAMES THE CARD AS ITS TRACKER DOES (#497): `promote` answers a person with it
         since it queues through the door (#414), and nobody on Jira writes `#DAR-9`."""
-        from openfactory.adapters.board.base import stage_key
+        from openfactory.adapters.board.base import stage_key, stage_option
         from openfactory.contracts.refs import canonical_ref, ref_label
+        from openfactory.product.voice import card_unmapped
 
         try:
             ticket = self.tracker.get_ticket(card)
@@ -157,10 +158,17 @@ class Ports:
             return Seen(state=None, title=title, opened_by=opened_by)
         state = BY_COLUMN.get(stage_key(board, column))
         if state is None:
-            return Seen(title=title, cannot_tell=(
-                f"{ref_label(card)} is in {column!r}, which is not a column this platform "
-                f"maps, so it cannot tell where the card is in its life. Map it in the "
-                f"project's tracker options. Nothing was changed."))
+            # REFUSED, NEVER READ AS THE BACKLOG (#521). An Azure board on a stock process files
+            # every card in `New`, which no stage is, so a queueing from there is refused here —
+            # and reading the column as the backlog would let it through. It would also let an
+            # edit, a withdrawal or a removal through, on every row, for a card in ANY column
+            # nobody maps: one a person dragged out from under its job reads as unstarted. The
+            # table says what a state allows; a column that is no state has none to allow. What
+            # changed is the sentence, which names the one line that maps it, in the project's
+            # language and by the option THIS board reads.
+            return Seen(title=title, cannot_tell=card_unmapped(
+                ref=card, column=column, option=stage_option(board),
+                language=getattr(self.project, "language", None)))
         return Seen(state=state, title=title, opened_by=opened_by, column=column)
 
     def _closed_as(self, card: str, ticket) -> State:

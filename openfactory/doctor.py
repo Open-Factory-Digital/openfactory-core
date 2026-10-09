@@ -369,6 +369,14 @@ class Probes:
     #: it is placed (#536). Raises `BoardUnreadable` when the board could not be read, which
     #: `board_columns` already reports. None = an older Probes, too; the check is skipped.
     board_intake: Callable[[], object] | None = None
+    #: `({column: stage key}, option)` — which neutral stage THIS board says each of its columns
+    #: is, in board order, `""` for a column no stage is (`board.base.stage_key`), and the tracker
+    #: option that declares the map (`board.base.stage_option`, `""` when the row declares none)
+    #: — or None when the project has no board; `BoardUnreadable` when it could not be read
+    #: (#521). A PROBE for `pickup_column`'s reason: only the row knows its own map, and the
+    #: option is `columns` on one row and `status_map` on another. None = an older Probes; the
+    #: check is skipped rather than invented.
+    board_stages: Callable[[], tuple[dict[str, str], str] | None] | None = None
 
 
 #: The remedy every check inherits when it could not run because the manifest is not written yet.
@@ -449,6 +457,7 @@ def diagnose(probes: Probes) -> Report:
           if probes.box_identity else []),
         _guarded("board_columns", lambda: _board(probes)),
         *_intake_findings(probes),
+        *_board_stages(probes),
         *([_guarded("merge_gates", lambda: _merge_gates(probes))] if probes.merge_gates else []),
         _guarded("post_merge", lambda: _post_merge(probes)),
         _guarded("product_link", lambda: _product(probes)),
@@ -1437,6 +1446,8 @@ def credential_missing_remedy(env: str = "") -> str:
 
 
 def _board(p: Probes) -> Finding:
+    from openfactory.adapters.board.base import option_line
+
     try:
         columns = p.board_columns()
     except BoardUnreadable as exc:
@@ -1461,9 +1472,10 @@ def _board(p: Probes) -> Finding:
         f"and nothing will say why (found: {', '.join(columns) or 'none'})",
         # NOT "rename your column". C-14 settled that the names belong to the client, and this
         # line was still asking them to rename a board the platform itself had just created.
-        "declare the mapping in the project's tracker options — "
-        '`columns: {"todo": "<your column>"}` — or set `pickup_status` to name it directly. '
-        "Renaming the board is the last resort, not the first.",
+        # QUOTED, a string of JSON (#521): the unquoted line is a mapping the registry refuses.
+        f"declare the mapping in the project's tracker options — "
+        f"`{option_line('columns', {'todo': '<your column>'})}` — or set `pickup_status` to name "
+        f"it directly. Renaming the board is the last resort, not the first.",
     )
 
 
@@ -1508,6 +1520,101 @@ def _intake_findings(p: Probes) -> list[Finding]:
     return [Finding("board_intake", True,
                     f"a card the product role files starts in {column!r}, out of {queue!r}, the "
                     f"column the poller reads")]
+
+
+def _board_stages(p: Probes) -> list[Finding]:
+    """Which of the board's columns no stage is, and the line that maps them (#521) — `[]` when
+    there is no board to ask or it could not be read, which `board_columns` already says.
+
+    THE FIRST PLACE A STOCK AZURE BOARD SAID IT WAS A REFUSAL. Azure files every new work item in
+    its process's first column — `New` on Agile and Scrum — and no stage is `New` until the
+    deployment says so, so the card's door, which reads a card's state from its column, could not
+    tell where such a card was and refused to queue it. The refusal now names the repair
+    (`voice.card_unmapped`); this names it before the first card, for every column at once.
+
+    NEVER A FAIL. A column this platform does not know is a legitimate thing for a client's board
+    to have (`board.columns.key_for`), and a project whose queue column is right runs its tickets.
+    What such a column costs is said: a card in it cannot be queued, edited or closed through the
+    platform. A BOARD WITH NO BACKLOG is said with it, because the repair is the same line: a card
+    is filed into the backlog by the board's own name for it (`board.base.stage_column`), and on a
+    board that has none it is placed nowhere — it stays in the column the vendor created it in.
+    The verdict repeats the repair (`note`)."""
+    if p.board_stages is None:
+        return []
+    try:
+        read = p.board_stages()
+    except BoardUnreadable:
+        return []      # the board `board_columns` could not read either, and that line says why
+    except Exception as exc:  # noqa: BLE001 — a failed probe is a finding, not a crash
+        return [Finding("board_stages", False, f"could not check board_stages: {exc}",
+                        "re-run with the underlying tool by hand to see the raw error")]
+    if read is None:
+        return []      # no board: `board_columns` says so, and there is no column to map
+    stages, option = read
+    unmapped = [name for name, key in stages.items() if not key]
+    backlog = next((name for name, key in stages.items() if key == "backlog"), "")
+    if not unmapped and backlog:
+        return [Finding("board_stages", True, f"every column of the board is a stage this "
+                                              f"platform maps, and {backlog!r} is the backlog")]
+    said = []
+    if unmapped:
+        one = len(unmapped) == 1
+        said.append(f"the board's column{'' if one else 's'} "
+                    f"{', '.join(repr(name) for name in unmapped)} {'is' if one else 'are'} no "
+                    f"stage this platform maps, so a card there cannot be queued, edited or "
+                    f"closed through it")
+    if not backlog:
+        said.append("no column is the backlog, so a card filed through the platform is placed "
+                    "in none and stays in "
+                    + (_first_is_the_queue(stages) or "the column the board created it in"))
+    repair = _stages_repair(unmapped, backlog=bool(backlog), option=option)
+    # THE VERDICT REPEATS THE WHOLE LINE, not the repair alone: "OK — can run a ticket" followed by
+    # a line of configuration reads as a nicety, and what it is a repair FOR is the part that
+    # must not be lost between the findings and the verdict (#536).
+    line = f"{'; and '.join(said)} — {repair}"
+    return [Finding("board_stages", True, line, note=line)]
+
+
+def _first_is_the_queue(stages: dict[str, str]) -> str:
+    """Where a filed card stays on a board with no backlog, when the board's first column is the
+    queue — `""` otherwise, and the caller says only that it stays where it was created (#536).
+
+    SAID, NEVER JUDGED HERE. A hosted board creates a card in its process's first state — the
+    first column — and on an Azure board with the Basic process that is `To Do`, the pickup
+    column: a card filed there is in the queue the moment it exists. That is #536's to repair; this
+    line only refuses to let the doctor read as though a board with no backlog were harmless."""
+    first, key = next(iter(stages.items()), ("", ""))
+    if key != "todo":
+        return ""
+    return f"the board's first column, {first!r}, which is the pickup column (#536)"
+
+
+def _stages_repair(unmapped: list[str], *, backlog: bool, option: str) -> str:
+    """The line that maps the columns `_board_stages` named — by the option THIS board reads,
+    because telling a Jira deployment to set `columns` is a remedy that changes nothing (#231),
+    and as the quoted string the registry takes (`board.base.option_line`)."""
+    from openfactory.adapters.board.base import option_line
+    from openfactory.adapters.board.columns import BOARD_ORDER
+
+    them = "them" if len(unmapped) > 1 else "it"
+    if not option:
+        what = (f"map {them}" if unmapped else
+                "map the column where cards wait to be queued as the backlog")
+        return (f"{what} in the project's tracker options, the way this board's provider "
+                f"documents its column names")
+    if backlog:
+        return (f"map each with the project's tracker option `{option}` by the stage it is — "
+                f"`{option_line(option, {'<stage>': unmapped[0]})}`, the stage one of "
+                f"{', '.join(BOARD_ORDER)}")
+    if not unmapped:
+        return (f"map the column where cards wait to be queued with the project's tracker option "
+                f"`{option}` — `{option_line(option, {'backlog': '<column>'})}`; a board with no "
+                f"such column needs one first")
+    first = unmapped[0]
+    others = ", and any other by the stage it is" if len(unmapped) > 1 else ""
+    return (f"map {them} with the project's tracker option `{option}` — if cards wait in "
+            f"{first!r} to be queued, `{option_line(option, {'backlog': first})}` makes it the "
+            f"backlog, where a filed card lands{others}")
 
 
 def _post_merge(p: Probes) -> Finding:
@@ -2138,6 +2245,23 @@ def probes_for(project) -> Probes:
         if born is not None and born.column is None:
             raise BoardUnreadable(_board_coordinates(project), remedy=_board_remedy(project))
         return born
+    def _stages() -> tuple[dict[str, str], str] | None:
+        """Ask the board which stage each of its columns is (#521) — through `stage_key`, the one
+        place generic code asks, so this reads a column exactly as the card's door will.
+
+        ITS OWN READ, for `_pickup_column`'s reason: the probes stay independent, and a test can
+        exercise this one alone. The same three answers as `_columns`: None for no board, the
+        port's None as `BoardUnreadable`, and the map otherwise."""
+        from openfactory.adapters.board.base import stage_key, stage_option
+        from openfactory.adapters.board.factory import build_board
+
+        board = build_board(project, token_provider=_board_credential(project))
+        if board is None:
+            return None
+        names = board.column_names()
+        if names is None:
+            raise BoardUnreadable(_board_coordinates(project), remedy=_board_remedy(project))
+        return {name: stage_key(board, name) for name in names}, stage_option(board)
 
     def _merge_gates_probe() -> list[dict] | Exception | None:
         """Asked of the forge's ROW, with the static token only — never minted, for the reason
@@ -2562,6 +2686,7 @@ def probes_for(project) -> Probes:
         board_columns=_columns,
         pickup_column=_pickup_column,
         board_intake=_intake,
+        board_stages=_stages,
         merge_gates=_merge_gates_probe,
         floor_enforced=floor_is_enforced,
         harness_kind=lambda: harness_kind(project, "executor"),
