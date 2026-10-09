@@ -465,7 +465,9 @@ def test_aligning_says_out_loud_that_it_rewrote_the_criteria(world):
     mod.align_card(516, requirement=6, actor=ADMIN)
 
     _, note = world.tracker.comments[0]
-    assert "requisito 6" in note
+    # in the project's language (#538) — this one speaks the default, English — where the note was
+    # Portuguese on every project; the question is the model's own words, kept as it wrote them
+    assert "requirement 6" in note and "What I could not determine" in note
     assert "quem assina o aviso?" in note, "what she could not determine was dropped"
 
 
@@ -881,8 +883,9 @@ def test_the_comment_says_the_criteria_were_written_against_the_older_text(world
     mod.repoint_orphans()
 
     _, note = world.tracker.comments[0]
-    assert "requisito 6" in note and "requisito 4" in note
-    assert "texto antigo" in note
+    # in the project's language (#538): English, the default, where it was Portuguese everywhere
+    assert "requirement 6" in note and "requirement 4" in note
+    assert "written from the older text" in note
 
 
 def test_repointing_twice_changes_nothing_the_second_time(world):

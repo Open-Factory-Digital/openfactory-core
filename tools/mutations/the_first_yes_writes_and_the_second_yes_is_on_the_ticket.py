@@ -33,10 +33,11 @@ MUTATIONS = [
 
     # RE-PINNED 2026-09-24 (#266 slice 6): the stamp names the person as the platform knows them,
     # no longer in a chat vendor's mention syntax
+    # re-pinned 2026-10-05: the signature takes the card's language (#538)
     ("the stamp names nobody",
      "openfactory/product/voice.py",
-     '        sig=signature(agent_name), actor=bare_actor, day=day,\n',
-     '        sig=signature(agent_name), actor="", day=day,\n'),
+     '        sig=signature(agent_name, language=language), actor=bare_actor, day=day,\n',
+     '        sig=signature(agent_name, language=language), actor="", day=day,\n'),
 
     ("the card opened from a proposal does not say it awaits anybody",
      "openfactory/product/authoring.py",

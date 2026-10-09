@@ -244,9 +244,11 @@ MUTATIONS = [
      "        if False:\n"
      "            # A NAME, NEVER A PATH"),
 
+    # re-pinned 2026-10-05: the refusal is the voice's `not_a_capability` now (#538)
     ("a slug that climbs out of `capabilities/` reaches the write", CAPS,
      "    if not is_slug(slug):\n"
-     "        return WriteResult(ok=False, detail=\"esse nome não é o de uma capacidade\")\n"
+     "        return WriteResult(ok=False, detail=record_said(\"not_a_capability\", "
+     "language=language))\n"
      "    day = today",
      "    day = today"),
 

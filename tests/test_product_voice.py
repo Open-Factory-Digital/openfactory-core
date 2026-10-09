@@ -262,19 +262,26 @@ def test_without_a_name_it_introduces_itself_by_function():
 
 
 def test_a_signature_names_the_ROLE_as_well_as_the_person():
-    """The team reads these. "Nina" alone tells a new joiner nothing about why the comment exists."""
+    """The team reads these. "Nina" alone tells a new joiner nothing about why the comment exists.
+    And the role's name is prose, in the card's language (#538): "(produto)" headed every card."""
     from openfactory.product.voice import signature
 
-    assert signature("Nina") == "**Nina (produto):**"
-    assert signature("") == "**Produto:**"
+    assert signature("Nina", language="pt-BR") == "**Nina (produto):**"
+    assert signature("", language="pt-BR") == "**Produto:**"
+    assert signature("Nina", language="en") == "**Nina (product):**"
+    assert signature("", language="en") == "**Product:**"
 
 
-def test_ticket_comments_carry_the_name():
+@pytest.mark.parametrize(("language", "named", "unnamed"), [
+    ("pt-BR", "**Nina (produto):**", "**Produto:**"),
+    ("en", "**Nina (product):**", "**Product:**"),
+])
+def test_ticket_comments_carry_the_name(language, named, unnamed):
     from openfactory.product.needs_action import TECHNICAL, Verdict, hand_back_comment
 
     v = Verdict(ticket=1, cause=TECHNICAL, confidence="high")
-    assert hand_back_comment(v, agent_name="Nina").startswith("**Nina (produto):**")
-    assert hand_back_comment(v).startswith("**Produto:**")
+    assert hand_back_comment(v, agent_name="Nina", language=language).startswith(named)
+    assert hand_back_comment(v, language=language).startswith(unnamed)
 
 
 def test_the_role_is_TOLD_its_own_name():
