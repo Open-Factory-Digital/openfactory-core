@@ -58,6 +58,23 @@ check with its `id`, `result` (`ok` or `fail`), `detail` and `remedy`, the closi
 (`ok`, `expected`, `not_ready`) and the build that answered. Nothing else is printed, and the exit
 code is the report's.
 
+### `openfactory explain <checkout> [--language en|pt-BR] [--full]`
+
+Why an agent is given the instructions it is given: every block a planner or executor pass of the
+project at that checkout carries, one line each, in the order the job inlines them — the role
+prompt and the file it comes from, the constraints, each framework guideline with what the
+project's profile did to it (kept, waived, replaced), the operator's directory when
+`OPENFACTORY_GUIDELINES_DIR` is set, the project's own guidelines by the key that names them, and
+the index. A path the job refuses or cannot find is a row too. `--full` prints each block's text
+under its line, as the prompt carries it; `--language pt-BR` writes every label and refusal in
+Portuguese.
+
+The rows are the record the job's own `build_context` keeps while it assembles a context, so this
+cannot disagree with what a job inlines. It reads and writes nothing: no harness, forge or network
+is called, no card or registry is touched, and the card's own words are never printed. A missing
+manifest, a profile that does not resolve and an address instead of a path are each refused in one
+sentence, exit 1. Walked in [the developer's guide](../developer-guide.md).
+
 ### `openfactory conformance <project>`
 
 Whether the **manifest** is complete: the floor requires `validate.test` and `validate.security`.
@@ -159,6 +176,7 @@ releases read (C-VERSION), the outcome aggregates, and offline verification of a
 
 | | |
 |---|---|
+| `openfactory autonomy <project> [--days N] [--json]` | how many of the project's cards reached their merge with no repair pass and nobody stepping in, read from the card's record — beside it the code-writing passes per card, how many repair passes each card took (0, 1, 2, 3+) and why cards parked, classified from the recorded note. **Measurement starts with cards promoted from 0.5.0 on**: older cards are listed as *before the record* and never enter a rate, so do not quote a yield over them. Writes nothing. `--json` is the `autonomy` block of `GET /api/metrics`, which the cost dashboard shows; a store that cannot be read exits 2 with the cause and what to check |
 | `openfactory serve` | the panel, `--host`/`--port`. An unset `OPENFACTORY_PANEL_TOKEN` means **open** — fine on a laptop, wrong for anything reachable |
 | `openfactory bot-token` | mint a GitHub App installation token (~1h). On the onboarding path this is **the App smoke test** and nothing else: a printed `ghs_…` proves App ID, key and Installation ID agree, and there is nothing to save — the factory mints its own per job ([the guide](../setup/github.md) §5). The `export OPENFACTORY_BOT_TOKEN=$(openfactory bot-token)` form is for a shell that needs a token for a one-off `gh` command. Reads the key from `OPENFACTORY_GH_APP_KEY` (a path) or `OPENFACTORY_GH_APP_KEY_CONTENT` (the PEM itself) |
 | `openfactory knowledge build \| check` | build and inspect the Knowledge Layer bundle — a module map the agents are handed. On by default ([ADR-0035](../adr/0035-knowledge-layer-on-by-default.md)). For a project the factory cloned itself, `build --publish` pushes the map to the repository's knowledge branch — without it the map lands in a disposable clone and the command says so. `--repo owner/repo` targets a multi-repo product's other repositories |

@@ -341,52 +341,68 @@ def _carried(requirements, components, concepts) -> str:
 # ── the write: a person's confirmation ──────────────────────────────────────────────────────────
 
 def confirm_in_repository(*, docs_repo: str, clone_url: str, slug: str, flow: Flow | None,
-                          confirmed_by: str, base: str = "main", today: str | None = None):
+                          confirmed_by: str, base: str = "main", today: str | None = None,
+                          language: str | None = None):
     """Record that a person confirmed the capability `slug` — THE ONLY ACT THAT MAKES ONE CURATED.
 
     A file already under `capabilities/` is flipped to `confirmed` with who and when, its links
     kept as the person wrote them; with none, the observation `flow` is written as the capability,
     confirmed. Committed straight to the documentation branch, as an acceptance is
     (`authoring.accept_requirement`): what changes is one status, because an authorised person
-    said so. Never raises past its clone: every refusal is a `WriteResult` with a sentence."""
+    said so. Never raises past its clone: every refusal is a `WriteResult` with a sentence.
+
+    THE SENTENCE IS THE VOICE'S, IN THE CONVERSATION'S LANGUAGE (#538). `language` is what the
+    caller speaks — `ProductModule.confirm_capability` passes the project's, as every other write
+    of the product's record does (#513) — and every detail below is a `record_said` entry. They
+    were Portuguese literals here, so an English conversation read, in Portuguese, "that name is
+    not the name of a capability" beside the module's own English for the same refusal. A clone, a
+    commit or a push that failed is the team's to read, not the person's: its output goes to the
+    log, and the person reads that nothing changed — what `confirm_capability` already says when
+    the write raises."""
     import shutil
 
     from openfactory.product.authoring import WriteResult, _git, _scrub
+    from openfactory.product.voice import record_said
 
     if not is_slug(slug):
-        return WriteResult(ok=False, detail="esse nome não é o de uma capacidade")
+        return WriteResult(ok=False, detail=record_said("not_a_capability", language=language))
     day = today or datetime.now(UTC).date().isoformat()
     tmp = Path(tempfile.mkdtemp(prefix="openfactory-capability-"))
     rel = path_for(slug)
+
+    def failed(step: str, out: str) -> WriteResult:
+        log.warning("OPENFACTORY_PRODUCT_WRITE_FAILED act=confirm capability %s ref=%s — %s in "
+                    "%s: %s", slug, rel, step, docs_repo, _scrub(out)[-200:])
+        return WriteResult(ok=False, detail=record_said("capability_failed", term=slug,
+                                                        language=language))
+
     try:
         rc, out = _git(["clone", "--depth", "1", "--branch", base, clone_url, str(tmp)])
         if rc != 0:
-            return WriteResult(ok=False,
-                               detail=f"could not clone {docs_repo}: {_scrub(out)[-200:]}")
+            return failed("could not clone", out)
         target = tmp / rel
         if target.is_symlink():
-            return WriteResult(ok=False, ref=rel, detail="o arquivo dessa capacidade é um link — "
-                                                         "não escrevo através dele")
+            return WriteResult(ok=False, ref=rel,
+                               detail=record_said("capability_is_a_link", language=language))
         if target.is_file():
             cap, _ = parse_capability(target.read_text(encoding="utf-8"), path=rel)
             if cap is None:
                 return WriteResult(ok=False, ref=rel,
-                                   detail="não consegui ler o arquivo dessa capacidade")
+                                   detail=record_said("capability_unreadable", language=language))
             if cap.curated:
                 return WriteResult(ok=True, ref=rel, existed=True,
-                                   detail="essa capacidade já estava confirmada")
+                                   detail=record_said("capability_already_confirmed",
+                                                      language=language))
             if cap.status == RETIRED:
                 return WriteResult(ok=False, ref=rel,
-                                   detail="essa capacidade foi aposentada — confirmar de novo é "
-                                          "uma decisão a registrar por escrito, não um sim")
+                                   detail=record_said("capability_retired", language=language))
             cap = cap.model_copy(update={"status": CONFIRMED, "confirmed_by": confirmed_by,
                                          "confirmed_at": day})
         elif flow is not None:
             cap = from_flow(flow, confirmed_by=confirmed_by, confirmed_at=day)
         else:
             return WriteResult(ok=False, ref=rel,
-                               detail="não encontrei essa capacidade entre as observadas nem "
-                                      "entre as escritas")
+                               detail=record_said("capability_not_found", language=language))
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(render_capability(cap.model_copy(update={"path": rel})),
                           encoding="utf-8")
@@ -394,11 +410,10 @@ def confirm_in_repository(*, docs_repo: str, clone_url: str, slug: str, flow: Fl
         rc, out = _git(["commit", "-m", f"capacidade {slug}: confirmada por {confirmed_by}"],
                        cwd=tmp)
         if rc != 0:
-            return WriteResult(ok=False, detail=f"nothing to commit: {_scrub(out)[-200:]}")
+            return failed("could not commit", out)
         rc, out = _git(["push", clone_url, f"HEAD:{base}"], cwd=tmp)
         if rc != 0:
-            return WriteResult(ok=False, detail=f"o repositório não aceita registro direto "
-                                                f"({_scrub(out)[-120:]})")
+            return failed("the push was refused (no direct write to the branch?)", out)
         return WriteResult(ok=True, ref=rel)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

@@ -12,10 +12,9 @@ MUTATIONS = [
     ("the order is sorted where it is read",
      "openfactory/product/role.py",
      # re-pinned 2026-09-07: the expression wrapped when the "never sorted" comment went in
-     '        order = (list(dict.fromkeys(re.findall(r"\\d+", ordered.group("numbers"))))\n'
-     '                 if ordered else [])',
-     '        order = (sorted(set(re.findall(r"\\d+", ordered.group("numbers"))))\n'
-     '                 if ordered else [])'),
+     # re-pinned 2026-10-05: the marker reads each card as its tracker spells it (#515)
+     '        order = refs_written(ordered.group("numbers")) if ordered else []',
+     '        order = sorted(set(refs_written(ordered.group("numbers")))) if ordered else []'),
 
     ("the marker is read and never declared",
      "openfactory/product/role.py",

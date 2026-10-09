@@ -75,6 +75,9 @@ RUN mkdir -p -m 755 /etc/apt/keyrings \
 # shapes rather than read for the shape it happens to have.
 WORKDIR /opt/openfactory
 COPY pyproject.toml README.md LICENSE NOTICE ./
+# THE LONG DESCRIPTION pyproject.toml DECLARES, AT THE PATH IT DECLARES IT (#368). Without it
+# the backend warns and installs an empty description today; a newer one may refuse the build.
+COPY docs/pypi.md ./docs/pypi.md
 COPY openfactory ./openfactory
 COPY docker/install-addons.sh ./docker/install-addons.sh
 COPY addon[s] ./addons

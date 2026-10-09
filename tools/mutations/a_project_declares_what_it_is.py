@@ -79,18 +79,20 @@ MUTATIONS = [
      "        except ProfileError:\n            self._profile = None"),
 
     # ── the mechanism stops being read, while everything still runs ─────────────────────────────
+    # re-pinned 2026-10-05: the call carries the trace `openfactory explain` reads (#81)
     ("the class is resolved and never reaches the guidelines, so the POC and the bank are the same "
      "project again and the only symptom is a TDD mandate nobody asked for",
      "openfactory/orchestrator/context.py",
      "    guidelines = _org_defaults(profile, repo_path,\n"
-     "                               {p.name for p in operator.guideline_docs})",
-     "    guidelines = _org_defaults()"),
+     "                               {p.name for p in operator.guideline_docs}, trace)",
+     "    guidelines = _org_defaults(trace=trace)"),
 
     ("a waive is read and not applied, so the profile resolves, the panel would name the class, and "
      "the waived guideline is injected anyway — the declaration becomes decoration",
      "openfactory/orchestrator/context.py",
-     "        if p.name in waived:\n            continue",
-     "        if False:\n            continue"),
+     # re-pinned 2026-10-05: the waived file is traced before the skip (#81)
+     "        if p.name in waived:\n            _dropped(",
+     "        if False:\n            _dropped("),
 
     ("the merge gate stops asking the class, so a regulated project auto-merges a high-risk change "
      "exactly as it did before profiles existed",
@@ -130,8 +132,9 @@ MUTATIONS = [
     ("a project that declares NO class starts paying for the feature: the baseline it has always "
      "received is filtered through an empty profile, so the change is a migration in disguise",
      "openfactory/orchestrator/context.py",
-     "    if profile is None:\n        return [p.read_text()[:_MAX_DOC_CHARS] for p in baseline]",
-     "    if False:\n        return [p.read_text()[:_MAX_DOC_CHARS] for p in baseline]"),
+     # re-pinned 2026-10-05: the unprofiled baseline is read through the traced reader (#81)
+     "    if profile is None:\n        return _read_all(baseline, trace, FRAMEWORK)",
+     "    if False:\n        return _read_all(baseline, trace, FRAMEWORK)"),
 
     # ── the packaging twin, green on every developer's machine ───────────────────────────────────
     ("the one-level glob comes back, so the mechanism ships with no worked example: `prototype` "

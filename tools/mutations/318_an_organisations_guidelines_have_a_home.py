@@ -51,15 +51,16 @@ MUTATIONS = [
     ("the two tiers swap, so the DEPLOYMENT outranks the project instead of the other way round: "
      "a repository that deliberately replaces a central rule is overruled by the central one, and "
      "the manifest's last word — the property the cascade is built on — is gone",
+     # re-pinned 2026-10-05: both calls carry the trace `openfactory explain` reads (#81)
      "openfactory/orchestrator/context.py",
      "    guidelines = _org_defaults(profile, repo_path,\n"
-     "                               {p.name for p in operator.guideline_docs})\n"
+     "                               {p.name for p in operator.guideline_docs}, trace)\n"
      "    guidelines += _resolve_tier(operator.guideline_docs, profile, repo_path,\n"
-     "                                source=\"operator's own\")",
+     "                                source=\"operator's own\", layer=OPERATOR, trace=trace)",
      "    guidelines = _resolve_tier(operator.guideline_docs, profile, repo_path,\n"
-     "                               source=\"operator's own\")\n"
+     "                               source=\"operator's own\", layer=OPERATOR, trace=trace)\n"
      "    guidelines += _org_defaults(profile, repo_path,\n"
-     "                                {p.name for p in operator.guideline_docs})",
+     "                                {p.name for p in operator.guideline_docs}, trace)",
      "tests/test_context.py"),
 
     ("`reference/` is inlined instead of indexed, so a long central standard ships in full on "

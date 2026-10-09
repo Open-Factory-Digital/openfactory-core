@@ -37,7 +37,13 @@ from openfactory.product.corpus import Corpus, Requirement
 from openfactory.product.loader import ProductContext
 from openfactory.product.module import ProductModule, _with_criteria
 from openfactory.product.triage import Ticket
-from openfactory.product.voice import client_safe_detail, jargon_in
+from openfactory.product.voice import (
+    card_said,
+    client_safe_detail,
+    criteria_counted,
+    jargon_in,
+    not_a_promise,
+)
 
 DOCS = "acmecorp/acme-books-documentation"
 COMMIT = "c0ebc3c6620a1f"
@@ -349,7 +355,9 @@ def test_a_card_already_closed_is_an_answer_not_a_second_close(world):
 
     res = mod.close_card(601, actor=ADMIN)
 
-    assert res.ok is False and res.existed is True and "já estava fechado" in res.detail
+    assert res.ok is False and res.existed is True
+    assert res.detail == card_said("already_closed", number="601",
+                                   language=_project().language), res.detail
     assert world.tracker.closed == []
 
 
@@ -457,7 +465,9 @@ def test_aligning_says_out_loud_that_it_rewrote_the_criteria(world):
     mod.align_card(516, requirement=6, actor=ADMIN)
 
     _, note = world.tracker.comments[0]
-    assert "requisito 6" in note
+    # in the project's language (#538) — this one speaks the default, English — where the note was
+    # Portuguese on every project; the question is the model's own words, kept as it wrote them
+    assert "requirement 6" in note and "What I could not determine" in note
     assert "quem assina o aviso?" in note, "what she could not determine was dropped"
 
 
@@ -494,7 +504,7 @@ def test_both_acts_that_aim_the_factory_refuse_a_proposal_with_the_SAME_sentence
     filed = mod.break_down(9, actor=ADMIN, asked_for=True)
 
     assert aligned.detail == filed[0].detail
-    assert "acordado" in aligned.detail
+    assert aligned.detail == not_a_promise("proposed", number=9, language=_project().language)
     assert "proposed" not in aligned.detail, "the client was handed the machine's word for it"
 
 
@@ -654,7 +664,8 @@ def test_a_refinement_that_landed_is_not_undone_by_the_note_that_failed(world, c
     assert res.ok is True, "a refinement that landed was reported as a failure"
     assert [ref for ref, _ in world.tracker.bodies] == ["#288"]
     assert "- [ ] o lote fecha sem sobra" in world.tracker.bodies[0][1]
-    assert "não consegui deixar o comentário" in res.detail, \
+    assert res.detail == card_said("refine_unnoted", number="288",
+                                   language=_project().language), \
         "the missing note was computed for us and never offered to the person it concerns"
     assert client_safe_detail(res.detail)[1] == "", "the sentence cannot reach a client as written"
     assert "OPENFACTORY_PRODUCT_REFINE_UNEXPLAINED" in caplog.text, \
@@ -872,8 +883,9 @@ def test_the_comment_says_the_criteria_were_written_against_the_older_text(world
     mod.repoint_orphans()
 
     _, note = world.tracker.comments[0]
-    assert "requisito 6" in note and "requisito 4" in note
-    assert "texto antigo" in note
+    # in the project's language (#538): English, the default, where it was Portuguese everywhere
+    assert "requirement 6" in note and "requirement 4" in note
+    assert "written from the older text" in note
 
 
 def test_repointing_twice_changes_nothing_the_second_time(world):
@@ -1364,9 +1376,12 @@ def test_a_throttled_board_never_answers_a_refinement_in_the_platforms_own_words
 
     assert res.ok is False
     assert "AcmeCorp/acme-books" not in res.detail
-    assert "issues" not in res.detail and "could not" not in res.detail
+    assert "issues" not in res.detail
+    assert res.detail == card_said("board_unreadable", language=_project().language)
     assert client_safe_detail(res.detail, language="pt-BR") == (res.detail, "")
-    assert jargon_in(res.detail) == [], res.detail
+    # THE JARGON LIST IS READ IN PORTUGUESE, where "board" is the platform's loanword; the English
+    # sentence says "the board" as every English sentence of the role does (#513)
+    assert jargon_in(card_said("board_unreadable", language="pt-BR")) == []
     assert world.tracker.bodies == [], "a card was rewritten from a board nobody could read"
     assert "AcmeCorp/acme-books" in caplog.text, "the diagnosis reached nobody"
 
@@ -1574,7 +1589,7 @@ def test_the_criteria_written_from_the_old_text_go_with_it(world):
 
     res = mod.correct_card(702, actor=ADMIN, text="um relatório semanal das vendas")
 
-    assert res.ok and res.detail == "2 critérios", res.detail
+    assert res.ok and res.detail == criteria_counted(2, language=_project().language), res.detail
     [(_, body)] = world.tracker.bodies
     for gone in ("## Acceptance criteria", "## Out of scope", "## Open questions",
                  "o relatório sai todo mês"):

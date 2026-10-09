@@ -171,12 +171,18 @@ def install_run(tmp_path_factory):
 
     lines = log.read_text().splitlines() if log.exists() else []
     fetched = urls.read_text().splitlines() if urls.exists() else []
+    every_run = [line.split() for line in lines if line.startswith("run ")]
     yield {
         "returncode": done.returncode,
         "stdout": done.stdout,
         "stderr": done.stderr,
         "argv": lines,
-        "runs": [line.split() for line in lines if line.startswith("run ")],
+        # THE `openfactory` INVOCATIONS: every `docker run` whose entrypoint is the image's own.
+        # The one that replaces it asks which group the socket has inside a container (#529) and
+        # is held to its own shape below — where any other `--entrypoint` is refused, so this split
+        # cannot hide a second one.
+        "runs": [argv for argv in every_run if "--entrypoint" not in argv],
+        "asked": [argv for argv in every_run if "--entrypoint" in argv],
         "urls": fetched,
         "socket": str(socket_path),
         "target": target,
@@ -275,6 +281,143 @@ def test_the_socket_and_its_group_reach_docker_run(install_run):
         mounts = [flags[i + 1] for i, word in enumerate(flags) if word == "-v"]
         assert f"{install_run['socket']}:/var/run/docker.sock" in mounts, (
             f"the socket mounted is not the one `docker context inspect` reported: {mounts}")
+
+
+# ── Docker Desktop: the group a container sees is not the host file's (#529) ───────────────────
+#
+# Measured on macOS with Docker Desktop (2026-10-05): the context's socket is
+# `~/.docker/run/docker.sock`, `501:20 0755` on the host, and a container handed it sees
+# `/var/run/docker.sock` as `0:0 0660` — the VM's socket, not the file. `--group-add 20` was
+# refused, `--group-add 0` answered `linux/arm64`. The installer passed 20, preflight said "start
+# Docker" while the daemon was serving that install's pulls, and Linux (where the two numbers are
+# the same) never showed it.
+
+#: Docker Desktop as the installer can see it: a context naming a socket on the host, and a
+#: container that, asked about that socket, answers with the gid the TEST chose for the inside.
+_DESKTOP_DOCKER_STUB = """#!/bin/sh
+printf '%s\\n' "$*" >> "$ARGV_LOG"
+if [ "$1" = context ]; then echo "unix://${FAKE_SOCKET}"; fi
+case " $* " in *" --entrypoint stat "*) printf '%s\\n' "$SOCKET_GID_INSIDE" ;; esac
+exit 0
+"""
+
+
+def _an_install_where_a_container_sees_the_socket_as(tmp_path, inside: str, *args: str) -> dict:
+    """The real installer, with `docker` answering the socket question with `inside`.
+
+    THE HOST'S GID IS MADE TO DIFFER FROM `inside`, or the guard could not tell the group asked
+    for from the group read off the file — the module fixture's lesson about `id -g`, again. It
+    matters on the very machine #529 is about: macOS gives a new file its DIRECTORY's group, and
+    `/tmp` is `wheel`, 0 — the same number Docker Desktop answers with."""
+    binaries, target = tmp_path / "bin", tmp_path / "target"
+    binaries.mkdir()
+    target.mkdir()
+    log = tmp_path / "argv.log"
+    for name, body in (("docker", _DESKTOP_DOCKER_STUB), ("curl", _CURL_STUB)):
+        stub = binaries / name
+        stub.write_text(body)
+        stub.chmod(0o755)
+
+    import socket as socketlib
+
+    socket_home = _socket_dir()
+    socket_path = socket_home / "docker.sock"
+    try:
+        with socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM) as sock:
+            sock.bind(str(socket_path))
+            if str(os.stat(socket_path).st_gid) == inside:
+                mine = [g for g in (os.getgid(), *os.getgroups()) if str(g) != inside]
+                if os.geteuid() == 0 or mine:
+                    os.chown(socket_path, -1, mine[0] if mine else 4242)
+            host_gid = str(os.stat(socket_path).st_gid)
+            done = subprocess.run(
+                ["sh", str(INSTALLER), "--version", "v9.9.9", "--dir", str(target), *args],
+                cwd=tmp_path, capture_output=True, text=True, timeout=180,
+                env={**os.environ, "PATH": f"{binaries}:{os.environ['PATH']}",
+                     "ARGV_LOG": str(log), "URL_LOG": str(tmp_path / "url.log"),
+                     "OPENFACTORY_WORK_DIR": str(tmp_path / "work"),
+                     "FAKE_SOCKET": str(socket_path), "SOCKET_GID_INSIDE": inside})
+    finally:
+        shutil.rmtree(socket_home, ignore_errors=True)
+    lines = log.read_text().splitlines() if log.exists() else []
+    return {"done": done, "host_gid": host_gid, "argv": lines,
+            "runs": [line.split() for line in lines
+                     if line.startswith("run ") and "--entrypoint" not in line.split()]}
+
+
+def _groups_added(argv: list[str]) -> list[str]:
+    image = next(i for i, word in enumerate(argv) if "openfactory-cli:" in word)
+    return [argv[i + 1] for i, word in enumerate(argv[:image]) if word == "--group-add"]
+
+
+@needs_a_posix_shell
+def test_on_docker_desktop_every_cli_run_gets_the_group_a_container_sees(tmp_path):
+    """THE FIX, executed. The container answers 0, as Docker Desktop's did; the host file's group
+    (20 on that Mac) is the one that was refused, so it must not be what is passed."""
+    run = _an_install_where_a_container_sees_the_socket_as(tmp_path, "0")
+
+    assert run["done"].returncode == 0, run["done"].stdout + run["done"].stderr
+    assert run["host_gid"] != "0", "premise: the host's gid must differ from the one inside"
+    assert run["runs"], f"the installer ran nothing in the cli image: {run['argv']}"
+    for argv in run["runs"]:
+        assert _groups_added(argv) == ["0"], (
+            f"a cli run carries {_groups_added(argv)} where the container sees the socket as gid "
+            f"0 — on Docker Desktop the host's {run['host_gid']} grants nothing in there, and "
+            f"preflight says `start Docker` about a daemon that is serving this install: {argv}")
+
+
+@needs_a_posix_shell
+def test_an_answer_that_is_not_a_number_keeps_the_hosts_group(tmp_path):
+    """No answer keeps what Linux has always had, and a sentence on stdout is no answer: it would
+    otherwise reach `--group-add` and `docker run` would refuse the whole install over it."""
+    run = _an_install_where_a_container_sees_the_socket_as(
+        tmp_path, "stat: cannot statx '/var/run/docker.sock'")
+
+    assert run["done"].returncode == 0, run["done"].stdout + run["done"].stderr
+    for argv in run["runs"]:
+        assert _groups_added(argv) == [run["host_gid"]], (
+            f"an answer that is not a gid replaced the host's {run['host_gid']}: {argv}")
+
+
+@needs_a_posix_shell
+def test_the_socket_question_is_asked_as_you_of_the_socket_you_were_handed(install_run):
+    """The one `docker run` that is not `openfactory`, held to its shape: `stat` of the socket's
+    gid, run as the invoking user (never root), from this release's cli image (no third host),
+    with the socket `docker context inspect` named mounted where every cli run mounts it — and
+    BEFORE preflight, which is the first run that needs the answer."""
+    asked = install_run["asked"]
+
+    assert len(asked) == 1, (
+        f"expected exactly one `docker run` with its own entrypoint — the socket question — and "
+        f"found {len(asked)}: {asked}")
+    argv = asked[0]
+    image = next(i for i, word in enumerate(argv) if "openfactory-cli:" in word)
+    flags = argv[:image]
+
+    assert flags[flags.index("--entrypoint") + 1] == "stat", argv
+    assert argv[image].endswith("/openfactory-cli:v9.9.9"), argv
+    assert argv[image + 1:] == ["-c", "%g", "/var/run/docker.sock"], argv
+    assert "-u" in flags and flags[flags.index("-u") + 1] == f"{os.getuid()}:{os.getgid()}", (
+        f"the socket question is not asked as the invoking user: {argv}")
+    mounts = [flags[i + 1] for i, word in enumerate(flags) if word == "-v"]
+    assert mounts == [f"{install_run['socket']}:/var/run/docker.sock"], (
+        f"the socket asked about is not the one every cli run is handed: {mounts}")
+
+    order = [line for line in install_run["argv"] if line.startswith("run ")]
+    preflight_at = next(i for i, line in enumerate(order) if line.endswith(" preflight"))
+    assert order.index(" ".join(argv)) < preflight_at, (
+        f"the socket's group is asked after preflight has already run without it: {order}")
+
+
+@needs_a_posix_shell
+def test_a_dry_run_asks_no_container_anything(tmp_path):
+    """--dry-run pulled nothing, and `docker run` of an image that is not there PULLS it — so the
+    socket question would break the one promise that mode makes."""
+    run = _an_install_where_a_container_sees_the_socket_as(tmp_path, "0", "--dry-run")
+
+    assert run["done"].returncode == 0, run["done"].stdout + run["done"].stderr
+    assert not [line for line in run["argv"] if line.startswith(("run ", "pull "))], (
+        f"--dry-run ran or pulled an image: {run['argv']}")
 
 
 @needs_a_posix_shell

@@ -1935,6 +1935,14 @@ def board_view(project: str, card: str = "", pr: str = "") -> dict:
         cards = [{"ref": s.ref, "column": placed.get(s.ref, ""), "title": s.title,
                   "labels": list(s.labels or []), "updated_at": s.updated_at or ""}
                  for s in summaries]
+        # IN THE BOARD'S OWN ORDER (#512), which the page draws each column in. The tracker lists
+        # the most recently updated card first, so on the local board a queue confirmed as #3, #1
+        # was drawn #1, #3 while the poller picked #3. `columns()` comes in the board's order —
+        # the order `items_in_status` serves — and nothing is sorted here beyond following it: a
+        # hosted row keeps the order it returns. A card the board does not place keeps its place
+        # after the ones it does.
+        order = {ref: at for at, ref in enumerate(placed)}
+        cards.sort(key=lambda c: order.get(c["ref"], len(order)))
         cards += _delivered_cards(proj, board, tracker, placed=placed, names=names,
                                   shown={c["ref"] for c in cards})
 
@@ -2634,10 +2642,27 @@ def cost_metrics(project: str | None = None) -> dict:
     """The PER-PROJECT cost dashboard payload — spend by period / model / harness / role + a
     per-task table, from the metrics table (observability.metrics). `project` scopes it (defaults
     to the first project). Best-effort: empty series when the table is unset/unreadable, so the
-    Costs view renders 'no data yet' instead of erroring."""
+    Costs view renders 'no data yet' instead of erroring.
+
+    AND THE PROJECT'S AUTONOMY (#85), under `autonomy`, its sentences in the project's language —
+    a block of this route rather than a route of its own: what it measures is the operator's, like
+    the spend beside it, and this route is already withheld from the product role whole
+    (`product/model.py`, `EXCLUDED`)."""
     from openfactory.api.metrics_view import cost_dashboard
 
-    return cost_dashboard(project=project)
+    return cost_dashboard(project=project, language_of=_project_language)
+
+
+def _project_language(name: str) -> str | None:
+    """The language `name` speaks first, or `None` (English) for a project this registry does not
+    hold — the dashboard lists every project the store has rows for, de-registered ones among
+    them, and a sentence in the default language is better than no dashboard."""
+    try:
+        return getattr(ProjectRegistry().get(name), "language", None)
+    except Exception:  # noqa: BLE001 — an unknown or unreadable registry entry speaks the default
+        log.info("no registered project %r to take a language from — the dashboard speaks the "
+                 "default", name, exc_info=True)
+        return None
 
 
 @app.get("/api/jobs/{project}/{issue}/events")
