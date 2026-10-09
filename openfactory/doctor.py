@@ -211,6 +211,127 @@ class Report:
         return all(f.ok for f in self.findings)
 
 
+# ── the report as a DOCUMENT (#356) ─────────────────────────────────────────────────────────────
+#
+# `doctor --json` IS A PUBLIC CONTRACT FROM ITS FIRST COMMIT, for `preflight --json`'s reason one
+# layer in: `openfactory certify` puts this document in an evidence pack that a bot validates, so a
+# reader exists the moment it ships, and a reader that cannot tell version 1 from version 2 fails
+# by half-understanding a document it believes it understands. `SCHEMA` moves when the shape does,
+# and `tests/test_doctor_json_is_a_versioned_contract.py` pins the keys by EQUALITY.
+
+#: The shape `doctor --json` emits. MOVES WHEN THE SHAPE MOVES.
+SCHEMA = "openfactory.doctor/1"
+
+#: What a check's `result` may say — the two marks the text report prints, and no third one
+#: invented for the document. A check here is answered or it is not run at all (`_guarded` turns
+#: a check that raised into a red line); `warn`/`skip` would be states the human report does not
+#: have, and a document that says more than the screen is a second opinion about one machine.
+RESULTS = ("ok", "fail")
+
+#: The closing sentence's three meanings, as the document spells them: every line green; red only
+#: where a step AHEAD answers it (the manifest at §3, the box proof at §5); red for a real cause.
+VERDICTS = ("ok", "expected", "not_ready")
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """What the report means as a whole, and the step that changes it."""
+
+    kind: str
+    next_step: str = ""
+
+
+def verdict(report: Report, name: str) -> Verdict:
+    """`ok`, `expected` or `not_ready` — the rule the closing sentence prints, in ONE place.
+
+    MOVED HERE FROM `cli.py` (#356). The text report decided it inline, and `--json` needs the same
+    answer; two copies of one rule is how a document and the screen beside it come to disagree
+    about the same machine, which is the defect `readiness.py` was written to end.
+
+    "NOT READY" AND "SOMETHING IS BROKEN" ARE DIFFERENT SENTENCES, and printing the second when the
+    first is true sends somebody to fix what is merely not written yet. Registering a project
+    (ONBOARDING §2) cannot produce a manifest — the environment session in §3 does — so at that
+    exact point three checks are red BY CONSTRUCTION, and the pilot operator quite reasonably went
+    looking for the defect (2026-08-13).
+    EXPECTED means every red line is answered by a step the SEQUENCE still has ahead of it — the
+    manifest by §3, the box proof by §5 — not that the deployment is fine. Adding the box gate to
+    doctor (2026-08-14) would otherwise have taken this sentence away from every operator at §2,
+    where nothing has been proven yet BY CONSTRUCTION, which is the exact confusion it was written
+    to end.
+    DERIVED FROM THE FINDINGS, not from a list of names. The list was
+    `{"manifest", "quality_floor", "merge_policy", "box_proof"}`, and the next manifest-derived
+    check added anywhere in this module — `post_merge`, 2026-08-16 — dropped straight out of it and
+    turned an operator's §2 report back into "fix the FAIL lines above", which is the exact
+    sentence this branch exists to stop. A check that could not run because the manifest is not
+    written yet SAYS so in its remedy; that is the fact, and the fact is what to read.
+    TWO WAYS A RED LINE IS ANSWERED BY A STEP AHEAD, and they are different facts (see `Finding`):
+    `awaiting` is downstream — it clears when the check it names clears — while `not_yet` is a line
+    that is true, will stay true after that step, and describes a guarantee nothing needs until
+    then. Reading only the first told a stranger at §2 to "fix the FAIL lines above" about an API
+    budget his machine cannot read and nothing is spending (2026-08-24, the same accident
+    `post_merge` produced in 2026-08-16).
+    """
+    if report.ok:
+        return Verdict("ok")
+    answered_later = {f.check for f in report.findings
+                      if not f.ok and (f.awaiting or f.not_yet
+                                       or f.check in ("manifest", "box_proof"))}
+    failed = {f.check for f in report.findings if not f.ok}
+    if failed <= answered_later and failed & {"manifest", "box_proof"}:
+        # THE STEP COMES FROM THE FINDING, never composed by the caller: the closing line hedged
+        # ("if onboard already proposed it…") about a fact this module had just looked up one
+        # screen away.
+        return Verdict("expected", next(
+            (f.next_step for f in report.findings if not f.ok and f.next_step),
+            f"see the FAIL lines above, then re-run `openfactory doctor {name}`"))
+    return Verdict("not_ready")
+
+
+def as_document(report: Report, *, project: str, build: tuple[str, str] = ("", "")) -> dict:
+    """The report as `doctor --json` emits it. Versioned, flat, and complete — every check,
+    including the green ones, because "what is already fine" is half of what stops a reader from
+    proposing a step that has been taken (`preflight.Report.as_document`'s rule).
+
+    EVERY FIELD A FINDING CARRIES, under the document's names: a document that dropped `awaiting`
+    or `not_yet` would hand its reader a red line with no way to tell "broken" from "a step ahead
+    answers it" — the distinction the closing verdict exists for.
+
+    `build` is `namespace.build_stamp()`, passed in rather than read here so the document is a
+    function of what it is handed: `null` outside a built image, where the code on disk IS the
+    code running."""
+    said = verdict(report, project)
+    code, built = build
+    return {
+        "schema": SCHEMA,
+        "project": project,
+        "ok": report.ok,
+        "verdict": said.kind,
+        "next_step": said.next_step,
+        "build": {"code": code, "built": built} if code else None,
+        "checks": [
+            {
+                "id": f.check,
+                "result": "ok" if f.ok else "fail",
+                "detail": f.message,
+                "remedy": f.remedy,
+                "next_step": f.next_step,
+                "note": f.note,
+                "awaiting": f.awaiting,
+                "not_yet": f.not_yet,
+            }
+            for f in report.findings
+        ],
+    }
+
+
+def as_json(document: dict) -> str:
+    """Stable key order — a document a person diffs between two runs must not move its keys for
+    reasons that are not about their deployment (`preflight.as_json`)."""
+    import json
+
+    return json.dumps(document, indent=2, sort_keys=True)
+
+
 @dataclass
 class Probes:
     """Everything `diagnose` needs to know about the world, as callables it can be handed."""

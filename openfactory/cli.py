@@ -1511,82 +1511,28 @@ def _credential_reached(probes) -> bool | None:
 def box_status_cmd(
     name: str,
     repo: str = typer.Option(None, help="owner/name — another of this product's repositories"),
+    as_json: bool = typer.Option(
+        False, "--json",
+        help="Emit the versioned status document (openfactory.box-status/1): the proof's digest, "
+             "the toolchain it is pinned to, and whether it is still valid."),
 ) -> None:
     """Whether this project's box has a VALID proof — and if not, exactly what moved."""
-    from openfactory.box_prove import (
-        _current_digest,
-        _hash_commands,
-        component_gates,
-        load,
-    )
-    from openfactory.loader import load_manifest
-    from openfactory.runtime import toolbox as tb
+    from openfactory import box_prove
 
     project = _get_project(name)
-    proof_key, view = name, project
-    if repo:
-        # the key comes from the view — box prove's rule, for the same bare-name reason
-        from openfactory.runtime.card_repo import _runner_view
-
-        view, proof_key = _runner_view(project, f"{repo}#0")
-    proof = load(proof_key)
-    if proof is None:
-        run_it = f"openfactory box prove {name}" + (f" --repo {repo}" if repo else "")
-        typer.echo(f"{proof_key}: no proof — run `{run_it}`")
-        raise typer.Exit(1)
-
-    if repo:
-        from openfactory.factory import resolve_repo_path
-
-        manifest = load_manifest(view, repo_root=resolve_repo_path(view, cache_key=proof_key))
+    # `box_prove.status` judges freshness with `_freshness_reason`, THE SAME FUNCTION THE POLLER
+    # ASKS — this command used to reproduce the rules inline, and would have said EXPIRED about a
+    # proof the factory was happily picking cards up on (2026-08-15). One status, two renderings.
+    st = box_prove.status(project, repo=repo or "")
+    if as_json:
+        typer.echo(box_prove.status_json(st))
     else:
-        manifest = load_manifest(view)
-    from openfactory.orchestrator.validation import gate_commands
-
-    # BOTH HALVES OF FRESHNESS, the two bugs this command shipped with (found by the onboard
-    # fact-finding pass, 2026-08-13): it hashed WITHOUT the per-component gates — so a component
-    # gaining a gate never expired the proof here while `gate_reason` held pickup, two answers
-    # for one question — and it compared the proof's digest AGAINST ITSELF, which can never
-    # detect an image change (firstrun.py had already named it "cli.py's bug").
-    current = _hash_commands(list(manifest.setup), gate_commands(manifest.validation),
-                             component_gates(manifest))
-    variant = (tb.read_stamp() or {}).get("variant", "")
-    live_digest = _current_digest(proof.image) or proof.digest
-
-    # THE SAME FUNCTION THE POLLER ASKS, not a second opinion assembled here. This command used
-    # to reproduce the freshness rules — and the moment the gate learned that a REBUILD with the
-    # same toolchain is not a change, the two would have disagreed: `box status` saying EXPIRED
-    # about a proof the factory was happily picking cards up on. Two answers to one question is
-    # the bug this file's own comment above records paying for twice already (2026-08-15).
-    from openfactory.box_prove import _freshness_reason
-
-    run_it = f"run `openfactory box prove {name}" + (f" --repo {repo}`" if repo else "`")
-    why = (None if not proof.ok else
-           _freshness_reason(proof, digest=live_digest, variant=variant, commands=current,
-                             run_it=run_it))
-    if proof.ok and why is None:
-        typer.echo(f"{proof_key}: proven at {proof.at} on {proof.image} ({proof.digest[:19]}…)")
-        # WHAT IT IS PINNED TO, because that is what decides whether the next rebuild expires it
-        # — and an operator who cannot see it cannot tell a proof that will survive an update
-        # from one that will not.
-        if proof.toolchain:
-            typer.echo("  toolchain " + " · ".join(proof.toolchain.split("\n")))
-            typer.echo("  a rebuild that leaves these unchanged does NOT expire this proof")
-        else:
-            typer.echo("  this image carries no toolchain line, so any rebuild expires the proof "
-                       "— rebuild the box image to get one (`up -d --build`)")
-        if proof.findings is None:
-            typer.echo("  advisory findings were not recorded for this proof — "
-                       "re-prove to record them")
-        else:
-            for adv in proof.advisories():
-                typer.echo(f"  warn  {adv.check}  {adv.message}")
+        for line in st.lines():
+            typer.echo(line)
+    if st.valid:
         return
-    typer.echo(f"{proof_key}: the proof has EXPIRED — "
-               f"{'the last proof FAILED' if not proof.ok else why}")
-    if proof.ok:
+    if st.state == "expired":
         return _exit_expired()
-    typer.echo(f"  {run_it}")
     raise typer.Exit(1)
 
 
@@ -2399,7 +2345,13 @@ def explain_cmd(
 
 
 @app.command("doctor")
-def doctor_cmd(name: str) -> None:
+def doctor_cmd(
+    name: str,
+    as_json: bool = typer.Option(
+        False, "--json",
+        help="Emit the versioned report document (openfactory.doctor/1) instead of the human "
+             "report."),
+) -> None:
     """Check every prerequisite and say which one is missing.
 
     `conformance` asks whether the MANIFEST is complete. This asks whether the machine, the
@@ -2428,6 +2380,14 @@ def doctor_cmd(name: str) -> None:
     # restart without `--build` re-runs the previous one and every line below is that build's
     # opinion (measured on the pilot, three identical outputs across two fixes, 2026-08-14).
     code, built = namespace.build_stamp()
+    if as_json:
+        # THE DOCUMENT AND NOTHING ELSE ON STDOUT (#356): a reader parses the whole stream, and one
+        # line of prose above it — the build banner, the notifier line — is a document that does
+        # not parse. The build stamp travels INSIDE it instead. Same exit code as the report.
+        typer.echo(doc.as_json(doc.as_document(report, project=name, build=(code, built))))
+        if not report.ok:
+            raise typer.Exit(1)
+        return
     if code:
         typer.echo(f"· this worker runs build {code}, from {built} — `docker compose "
                    f"--env-file .env.compose up -d --build` is what replaces it after a pull")
@@ -2468,45 +2428,109 @@ def doctor_cmd(name: str) -> None:
             if f.ok and f.note:
                 typer.echo(f"  · {f.note}")
         return
-    # "NOT READY" AND "SOMETHING IS BROKEN" ARE DIFFERENT SENTENCES, and printing the second when
-    # the first is true sends somebody to fix what is merely not written yet. Registering a
-    # project (ONBOARDING §2) cannot produce a manifest — the environment session in §3 does —
-    # so at that exact point three checks are red BY CONSTRUCTION, and the pilot operator quite
-    # reasonably went looking for the defect (2026-08-13).
-    # EXPECTED means every red line is answered by a step the SEQUENCE still has ahead of it —
-    # the manifest by §3, the box proof by §5 — not that the deployment is fine. Adding the box
-    # gate to doctor (2026-08-14) would otherwise have taken this sentence away from every
-    # operator at §2, where nothing has been proven yet BY CONSTRUCTION, which is the exact
-    # confusion it was written to end.
-    # DERIVED FROM THE FINDINGS, not from a list of names. The list was
-    # `{"manifest", "quality_floor", "merge_policy", "box_proof"}`, and the next manifest-derived
-    # check added anywhere in `doctor.py` — `post_merge`, 2026-08-16 — dropped straight out of it
-    # and turned an operator's §2 report back into "fix the FAIL lines above", which is the exact
-    # sentence this branch exists to stop. A check that could not run because the manifest is not
-    # written yet SAYS so in its remedy; that is the fact, and the fact is what to read.
-    # TWO WAYS A RED LINE IS ANSWERED BY A STEP AHEAD, and they are different facts (see
-    # `doctor.Finding`): `awaiting` is downstream — it clears when the check it names clears —
-    # while `not_yet` is a line that is true, will stay true after that step, and describes a
-    # guarantee nothing needs until then. Reading only the first told a stranger at §2 to "fix
-    # the FAIL lines above" about an API budget his machine cannot read and nothing is spending
-    # (2026-08-24, the same accident `post_merge` produced in 2026-08-16).
-    answered_later = {f.check for f in report.findings
-                      if not f.ok and (f.awaiting or f.not_yet
-                                       or f.check in ("manifest", "box_proof"))}
-    failed = {f.check for f in report.findings if not f.ok}
-    if failed <= answered_later and failed & {"manifest", "box_proof"}:
-        # THE STEP COMES FROM THE FINDING, never composed here: this line hedged ("if onboard
-        # already proposed it…") about a fact `doctor` had just looked up one screen away.
-        nxt = next((f.next_step for f in report.findings if not f.ok and f.next_step),
-                   f"see the FAIL lines above, then re-run `openfactory doctor {name}`")
+    # "NOT READY" AND "SOMETHING IS BROKEN" ARE DIFFERENT SENTENCES — and which one this is lives
+    # in `doctor.verdict` (#356), the one rule the closing line and `--json` both read, with the
+    # history of why it is derived from the findings rather than from a list of names.
+    said = doc.verdict(report, name)
+    if said.kind == "expected":
         typer.echo("\nNOT ready — and at this point in the sequence that is EXPECTED: "
                    "everything the previous steps can settle is green, and the rest is what the "
                    "steps ahead answer.\n"
-                   f"Next: {nxt}. Then run this again; it is the same command that says when "
-                   "you are ready.")
+                   f"Next: {said.next_step}. Then run this again; it is the same command that "
+                   "says when you are ready.")
     else:
         typer.echo("\nNOT ready — fix the FAIL lines above")
     raise typer.Exit(1)
+
+
+certify_app = typer.Typer(help="Evidence packs for the implementation partner program.")
+app.add_typer(certify_app, name="certify")
+
+
+# The partner program's evidence pack, issue 356 — kept out of the `--help` screen a stranger
+# reads, like every other card reference.
+@certify_app.command("deployment")
+def certify_deployment_cmd(
+    partner: str = typer.Option(None, "--partner",
+                                help="The partner slug this pack is submitted under."),
+    profile: str = typer.Option(None, "--profile",
+                                help="The profile the pack claims: light, standard or enterprise."),
+    practitioner: str = typer.Option(
+        None, "--practitioner",
+        help="The partner's engineer responsible for this deployment — the one personal name the "
+             "pack keeps."),
+    window_days: int = typer.Option(90, "--window-days",
+                                    help="The window the outcome aggregates cover, in days."),
+    consent: str = typer.Option(None, "--consent",
+                                help='The customer\'s recorded consent: "<name>, <role>, <date>". '
+                                     "The name is replaced by a pseudonym like every other."),
+    dry_run: bool = typer.Option(False, "--dry-run",
+                                 help="Print every file the pack would contain; write nothing."),
+    yes: bool = typer.Option(False, "--yes",
+                             help="Write the pack. Without it this prints the summary, writes "
+                                  "nothing, and exits 2."),
+    out: str = typer.Option(None, "--out",
+                            help="Where to write it (default: "
+                                 "openfactory-evidence-<pack id>-<date>.tgz here)."),
+) -> None:
+    """Gather an anonymised evidence pack from THIS deployment for partner certification.
+
+    Reads what the platform already knows about itself — environment, secrets file, registry,
+    manifests, box proofs, doctor, preflight — and never a ticket, a pull request, a commit or a
+    file inside a repository beyond its manifest. Every organisation, repository, project and
+    person is replaced by a pseudonym; URLs, hosts, e-mail addresses and credentials are dropped.
+
+    This build does not sign the pack, read the forge's protection and permissions, ask the
+    releases API, or measure outcomes: the pack says so, and those controls read `unknown`."""
+    from openfactory.certify import pack as certify
+    from openfactory.cli_refusals import certify_deployment_refusal
+
+    refused = certify_deployment_refusal(partner=partner, profile=profile,
+                                         practitioner=practitioner, window_days=window_days,
+                                         consent=consent)
+    if refused:
+        typer.echo(refused, err=True)
+        raise typer.Exit(2)
+    try:
+        reading = certify.gather()
+        built = certify.assemble(reading, profile=profile, partner=partner,
+                                 practitioner=practitioner.strip(), window_days=window_days,
+                                 consent=consent or "")
+    except certify.Unsafe as exc:
+        # OUR DEFECT, NEVER THE DEPLOYMENT'S, and said as such: the pack was assembled and the
+        # check that runs before anything is written found something it must not carry.
+        typer.echo(f"✗ no pack was written: {exc}. This is a defect in `openfactory certify`, "
+                   f"not in this deployment — please report it with this line.", err=True)
+        raise typer.Exit(1) from None
+    except ValueError as exc:
+        # THE REGISTRY OR THE FLOOR COULD NOT BE READ — the two things every pack is built from.
+        typer.echo(f"✗ no pack was written: {exc}", err=True)
+        raise typer.Exit(1) from None
+
+    target = Path(out) if out else Path(built.default_name)
+    if dry_run:
+        for path, text in built.files.items():
+            typer.echo(f"── {path} ──")
+            typer.echo(text.rstrip("\n"))
+            typer.echo("")
+        typer.echo(f"— --dry-run: nothing was written. With --yes this writes {target}.")
+        return
+    if not yes:
+        typer.echo(built.files["summary.md"].rstrip("\n"))
+        typer.echo(f"\nNothing was written. Re-run with --yes to write {target}, or with "
+                   f"--dry-run to read every file the pack would contain first.")
+        raise typer.Exit(2)
+    if target.exists():
+        typer.echo(f"✗ {target} already exists — nothing was replaced. Pass another --out, or "
+                   f"move that file first.", err=True)
+        raise typer.Exit(1)
+    certify.write(built, target)
+    required = [c for c in built.controls if c.required]
+    tally = ", ".join(f"{sum(1 for c in required if c.result == r)} {r}"
+                      for r in ("pass", "fail", "unknown", "info", "n/a")
+                      if any(c.result == r for c in required))
+    typer.echo(f"✓ wrote {target} — {len(built.files)} files; {len(required)} required "
+               f"control(s): {tally}. Unsigned: signing is not built yet.")
 
 
 preview_app = typer.Typer(help="A preview of the product, before a pull request merges.")

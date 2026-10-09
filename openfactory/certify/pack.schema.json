@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "openfactory.certify/1",
+  "title": "OpenFactory deployment evidence pack (pack.json)",
+  "description": "What `openfactory certify deployment` writes. Every identifier is a pseudonym; the practitioner is the one personal name kept. Validated by openfactory/certify/schema.py, which enforces every keyword used here and refuses any it does not.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "generated_at", "platform", "partner", "profile", "practitioner",
+               "window", "providers", "controls", "outcomes", "proofs", "consent", "salt_id",
+               "signature", "unsigned_because", "not_in_this_pack", "checksums"],
+  "properties": {
+    "schema": {"const": "openfactory.certify/1"},
+    "generated_at": {"$ref": "#/$defs/instant"},
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "build"],
+      "properties": {
+        "version": {"type": "string", "minLength": 1},
+        "build": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["code", "built"],
+          "properties": {
+            "code": {"type": "string", "minLength": 1},
+            "built": {"type": "string"}
+          }
+        }
+      }
+    },
+    "partner": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "profile": {"enum": ["light", "standard", "enterprise"]},
+    "practitioner": {"type": "string", "minLength": 1},
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["days", "since", "until"],
+      "properties": {
+        "days": {"type": "integer", "minimum": 1},
+        "since": {"$ref": "#/$defs/instant"},
+        "until": {"$ref": "#/$defs/instant"}
+      }
+    },
+    "providers": {
+      "type": "object",
+      "additionalProperties": {"type": "array", "items": {"type": "string"}}
+    },
+    "controls": {
+      "type": "array",
+      "minItems": 18,
+      "maxItems": 18,
+      "items": {"$ref": "#/$defs/control"}
+    },
+    "outcomes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": {"const": "not_measured"},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "proofs": {"type": "array", "items": {"$ref": "#/$defs/proof"}},
+    "consent": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["by", "role", "date"],
+      "properties": {
+        "by": {"type": "string", "pattern": "^person-([0-9]+|unnamed)$"},
+        "role": {"type": "string"},
+        "date": {"type": "string", "minLength": 1}
+      }
+    },
+    "salt_id": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "signature": {"type": "null"},
+    "unsigned_because": {"type": "string", "minLength": 1},
+    "not_in_this_pack": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "checksums": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    }
+  },
+  "$defs": {
+    "instant": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "required", "result", "evidence"],
+      "properties": {
+        "id": {"enum": ["C-PANEL", "C-ENVFILE", "C-FORGE-CRED", "C-WORKFLOWS", "C-BOX-ENV",
+                        "C-TEST", "C-SECURITY", "C-MERGE", "C-RISK", "C-PROTECT", "C-BRANCH",
+                        "C-CONCURRENCY", "C-RETENTION", "C-POSTMERGE", "C-APPROVERS",
+                        "C-PROOF", "C-VERSION", "C-DOCTOR"]},
+        "title": {"type": "string", "minLength": 1},
+        "required": {"type": "boolean"},
+        "result": {"enum": ["pass", "fail", "n/a", "unknown", "info"]},
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "detail", "pointers"],
+          "properties": {
+            "source": {"enum": ["environment", "filesystem", "registry", "manifests", "policy",
+                                "proofs", "doctor", "forge", "releases"]},
+            "detail": {"type": "string", "minLength": 1},
+            "pointers": {"type": "array", "items": {"type": "string"}}
+          }
+        }
+      }
+    },
+    "proof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project", "repository", "status"],
+      "properties": {
+        "project": {"type": "string", "pattern": "^project-([0-9]+|unnamed)$"},
+        "repository": {"type": "string", "pattern": "^repo-([0-9]+|unnamed)$"},
+        "status": {"enum": ["valid", "expired", "failed", "unproven", "unknown"]}
+      }
+    }
+  }
+}

@@ -53,6 +53,11 @@ Run this first. Before the first ticket there is no invariant protecting you —
 column, an App without Projects permission and a missing harness all produce the same symptom,
 which is nothing happening.
 
+`--json` prints the same report as a versioned document (`openfactory.doctor/1`): one object per
+check with its `id`, `result` (`ok` or `fail`), `detail` and `remedy`, the closing `verdict`
+(`ok`, `expected`, `not_ready`) and the build that answered. Nothing else is printed, and the exit
+code is the report's.
+
 ### `openfactory explain <checkout> [--language en|pt-BR] [--full]`
 
 Why an agent is given the instructions it is given: every block a planner or executor pass of the
@@ -122,7 +127,9 @@ the real box and saves the verdict; `box status <name>` says whether it still ho
 if not, and **what the proof is pinned to** (the box's toolchain — a rebuild that leaves it
 unchanged does not expire the proof). Both take `--repo owner/repo` for a multi-repo product's
 other repositories — the proof and the pickup gate are per repository
-([ONBOARDING §5](../ONBOARDING.md)).
+([ONBOARDING §5](../ONBOARDING.md)). `box status --json` prints the same answer as a versioned
+document (`openfactory.box-status/1`): the proof's `digest`, its `toolchain` pins one per entry,
+its `state` (`valid`, `expired`, `failed`, `unproven`) and the remedy, with the same exit code.
 
 ---
 
@@ -145,6 +152,23 @@ the records are.
 | `openfactory preview logs <project> <unit> [service]` | the logs a preview kept — each service's and the build's, kept before every stop |
 | `openfactory preview ls` | every preview on this deployment's runtime, exited ones included, with who started it, when it ends and its disk |
 | `openfactory project set-preview <name>` | the operator's policy: `--required/--no-required`, `--hours`, `--env svc=NAME[=WORKER_NAME]`, `--build-arg`, `--network`, `--cpus`, `--memory`, `--clear-env`. `project show <name>` reads it back |
+
+---
+
+## Partner certification
+
+`openfactory certify deployment --partner <slug> --profile <light|standard|enterprise>
+--practitioner "<name>"` gathers an evidence pack from the deployment it runs on, for the
+implementation partner program: one entry per control (pass, fail, `n/a` where the profile does
+not require it, `unknown` where it could not be read), the box proof of every repository, the
+sanitised `preflight`, `doctor` and `box status` diagnostics, and `redactions.json`. Every
+organisation, repository, project and person is a pseudonym from a per-pack salt; URLs, hosts,
+e-mail addresses, paths and credentials are dropped; the practitioner is the one name kept.
+`--dry-run` prints every file and writes nothing; without `--yes` nothing is written. `pack.json`
+validates against `openfactory/certify/pack.schema.json` (`openfactory.certify/1`).
+
+Not built yet, and said in every pack: the signature, the forge reads (C-WORKFLOWS, C-BRANCH), the
+releases read (C-VERSION), the outcome aggregates, and offline verification of a pack.
 
 ---
 
