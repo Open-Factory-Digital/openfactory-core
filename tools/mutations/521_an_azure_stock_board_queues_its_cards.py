@@ -76,8 +76,10 @@ MUTATIONS = [
 
     ("an unreadable board is read as a board with no columns, so the doctor reports it as one "
      "with no backlog", DOCTOR,
+     "        if names is None:\n"
      "            raise BoardUnreadable(_board_coordinates(project), "
      "remedy=_board_remedy(project))",
+     "        if names is None:\n"
      "            return {}, stage_option(board)"),
 
     ("an unreadable board is said twice — once here, as a failure of a check that never ran",

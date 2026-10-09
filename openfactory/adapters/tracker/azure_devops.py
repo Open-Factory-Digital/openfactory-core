@@ -701,6 +701,17 @@ class AzureBoardsTracker:
         self._patch(ref, [{"op": "replace", "path": "/fields/System.Tags",
                            "value": "; ".join(remaining)}])
 
+    def intake_state(self) -> str:
+        """The state a work item this tracker creates is born in, as the deployment declared it —
+        its backlog, `state_map: '{"backlog": …}'` — or `""`: the type's own first state, the one
+        Azure DevOps gives an item created without one (#536).
+
+        THE BOARD SAYS WHICH COLUMN THAT IS (`AzureBoardsBoard.intake_column`), and only together
+        do they answer the money question: is a card filed now created in the column the poller
+        picks up from? On the process the setup guide builds, the type's first state is `To Do`,
+        and `To Do` is the pickup column."""
+        return self.state_map.get("backlog", "")
+
     def create_ticket(self, *, title: str, body: str, repo: str = "") -> str:
         """Create a work item in the project's intake state and return its ref.
 
@@ -710,13 +721,26 @@ class AzureBoardsTracker:
         `repo` (#265 §6.2) is said the way this board says a card's repository — its AREA PATH
         (`adapters/board/azure_devops.py::_repo_for_area`, the reader of it): the leaf named after
         the repository, or the area the `areas` option maps to it. The ref stays the id, which is
-        unique across the organisation; the repository travels on the item."""
+        unique across the organisation; the repository travels on the item.
+
+        BORN IN THE BACKLOG THE DEPLOYMENT DECLARED (#536). Created with no `System.State`, an item
+        gets its type's first state — `To Do` on the Basic process, which is the pickup column —
+        and the door's `filed` placed it in `Backlog`, a column that board does not have. The
+        placement failed, the card stayed in the queue, and the poller started work nobody had
+        queued (ADR-0019 §5). So the state the deployment calls its backlog goes on the create
+        itself, and there is no moment, however short, in which the card sits in the queue: a
+        move AFTER the create would leave one, and an hour of it whenever the move failed. With
+        no backlog declared the item gets its type's first state as before — and the product role
+        files nothing where that state is the queue (`board.base.intake`)."""
         area = self._area_for(repo)
+        state = self.intake_state()
         created = self.ado.call(
             "POST", f"wit/workitems/${urllib.parse.quote(self.work_item_type)}",
             content_type=JSON_PATCH,
             body=[{"op": "add", "path": "/fields/System.Title", "value": title},
                   *self._description_ops(body),
+                  *([{"op": "add", "path": "/fields/System.State", "value": state}]
+                    if state else []),
                   *([{"op": "add", "path": "/fields/System.AreaPath", "value": area}]
                     if area else [])])
         number = created.get("id")
