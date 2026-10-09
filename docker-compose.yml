@@ -182,6 +182,7 @@ services:
         # the sources file the base rewrote.
         DEBIAN_MIRROR: "${DEBIAN_MIRROR:-}"
     image: ghcr.io/open-factory-digital/openfactory-base:${OPENFACTORY_VERSION:-main}
+    init: true  # one of our images, so an init as PID 1 (#532), as on the worker
     command: ["true"]
     restart: "no"
 
@@ -219,6 +220,7 @@ services:
       args:
         OPENFACTORY_BASE_IMAGE: openfactory-base
     image: ghcr.io/open-factory-digital/openfactory-sandbox:${OPENFACTORY_VERSION:-main}
+    init: true  # one of our images, so an init as PID 1 (#532), as on the worker
     command: ["true"]
     restart: "no"
     depends_on:
@@ -241,10 +243,20 @@ services:
       context: .
       dockerfile: docker/cli.Dockerfile
     image: ghcr.io/open-factory-digital/openfactory-cli:${OPENFACTORY_VERSION:-main}
+    init: true  # one of our images, so an init as PID 1 (#532), as on the worker
     restart: "no"
 
   # ── the factory ─────────────────────────────────────────────────────────────────────────────
   worker:
+    # AN INIT AS PID 1 (#532), on every service that runs one of our images — a guard reads this
+    # file and fails on one that does not
+    # (`tests/test_every_container_whose_pid_1_is_ours_has_an_init.py`).
+    # Without it PID 1 is our Python process, which waits only for the children it started: every
+    # orphan in the container — git's detached auto-maintenance after each commit, fetch or merge,
+    # measured at about 7 a minute — stays a zombie for the container's life. A panel held 17,420
+    # after 39 hours, against a `pids.max` of 17,435, and could no longer start a thread. The image
+    # carries `tini -s` as well, for a runtime that starts it with no init at all.
+    init: true
     image: ghcr.io/open-factory-digital/openfactory-worker:${OPENFACTORY_VERSION:-main}
     build:
       context: .
@@ -489,6 +501,8 @@ services:
         # while the worker's was still running — a service list written by hand instead of derived.
         DEBIAN_MIRROR: "${DEBIAN_MIRROR:-}"
     command: ["python", "-m", "openfactory.cli", "serve", "--host", "0.0.0.0", "--port", "8787"]
+    # An init as PID 1, as on the worker (#532): the panel's git work orphans the same children.
+    init: true
     # A NAME THE WORKER CAN ADDRESS (ADR-0050 D7): a preview's exposed services sit on that unit's
     # own internal edge network, and the worker — which holds the socket, where the panel holds
     # none — connects this container to it at start and disconnects it at the end. The worker's

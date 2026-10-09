@@ -88,7 +88,12 @@ RUN sh docker/install-addons.sh .
 RUN git config --global --add safe.directory '*'
 
 WORKDIR /work
-ENTRYPOINT []
+# AN INIT AS PID 1 WHEN THIS IMAGE RUNS A JOB ITSELF (#532): `boxed_job` runs the agent and the
+# gates, and what they orphan — git's detached auto-maintenance, measured — is adopted by PID 1,
+# which Python never reaps. A runtime that starts this image may add no init of its own; `-s`
+# keeps tini reaping under one that does. The box the worker starts overrides the entrypoint and
+# gets its init from `docker run --init` (`adapters/sandbox/container.py`).
+ENTRYPOINT ["tini", "-s", "--"]
 CMD ["python", "-m", "openfactory.runtime.boxed_job"]
 
 # WHAT THIS BOX OFFERS THE CLIENT'S COMMANDS, written down so a REBUILD is not mistaken for a

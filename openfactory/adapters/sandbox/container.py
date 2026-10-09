@@ -523,6 +523,12 @@ class ContainerSandbox(SandboxAdapter):
             "docker", "run", "-d", "--name", cname,
             "--cpus", self.cpus, "--memory", self.memory,
             "--network", self.network,
+            # AN INIT AS PID 1, BECAUSE `sleep` IS NOT ONE (#532). Every command the agent and the
+            # gates run arrives through `docker exec`, and what one of them orphans — git's
+            # detached auto-maintenance after a commit or a fetch, measured — is adopted by PID 1,
+            # which only an init reaps. The image is the client's (ADR-0037 D1), so the init comes
+            # from the daemon, not from anything the image might carry.
+            "--init",
             # override any image ENTRYPOINT so the keep-alive command runs as-is
             "--entrypoint", "sleep",
             "-v", f"{host_clone}:{_WORKDIR}", "-w", _WORKDIR,
