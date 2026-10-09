@@ -1954,6 +1954,35 @@ def board_move_said(reason: str, *, ref: object = "", language: str | None = Non
     return _pick(_BOARD_MOVE_SAID[reason], language).format(ref=ref_label(ref))
 
 
+#: Why the product role filed nothing on a board where a new card is born in the queue (#536). The
+#: person reading it asked for the card and cannot repair the registry, so it says what would have
+#: happened — work started and paid for with nobody queueing it — and who repairs it, and where the
+#: line is: `openfactory doctor` names it. Said for one card or a whole breakdown alike.
+_FILING_HELD = {
+    "queue": {"pt-BR": ("Não registrei nada: neste quadro um cartão novo nasce em '{column}', a "
+                        "coluna de onde a fábrica pega trabalho, então ele começaria a ser "
+                        "construído — e a custar — sem ninguém colocá-lo na fila. Quem opera esta "
+                        "fábrica define onde os cartões novos esperam; o `openfactory doctor` diz "
+                        "a linha."),
+              "en": ("I filed nothing: on this board a new card starts in '{column}', the column "
+                     "the factory picks work up from, so it would start being built — and paid "
+                     "for — without anybody queueing it. Whoever runs this factory sets where new "
+                     "cards wait; `openfactory doctor` names the line.")},
+    "unread": {"pt-BR": ("Não registrei nada: não consegui ler o quadro para saber onde um cartão "
+                         "novo nasce, e um que nasce na coluna de onde a fábrica pega trabalho é "
+                         "construído sem ninguém colocá-lo na fila. Tente de novo daqui a pouco."),
+               "en": ("I filed nothing: I could not read the board to see where a new card starts, "
+                      "and one that starts in the column the factory picks work up from is built "
+                      "without anybody queueing it. Try again in a moment.")},
+}
+
+
+def filing_held(reason: str, *, column: str = "", language: str | None = None) -> str:
+    """Why nothing was filed, in the conversation's language (#536) — `queue` when a card filed
+    now would be born in the pickup column `column`, `unread` when the board could not say."""
+    return _pick(_FILING_HELD[reason], language).format(column=column)
+
+
 # ── what the product role's own writes answer (#513) ────────────────────────────────────────────
 #
 # EVERY DETAIL A WRITE ANSWERS, IN THE CONVERSATION'S LANGUAGE. #497 moved `promote`'s and

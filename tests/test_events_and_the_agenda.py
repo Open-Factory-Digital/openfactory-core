@@ -997,6 +997,9 @@ def _filing(registry, **overrides) -> SimpleNamespace:
         _file_one=lambda *a, **k: WriteResult(ok=True, ref="#500"),
         # the check each card of a requirement passes (#392), stood in like every other seam
         _vetter=lambda requirement, tracker: None,
+        # where a card filed now is born (#536) — out of the queue here; a board where it is the
+        # queue files nothing (`test_a_filed_card_never_lands_in_the_pickup_column.py`)
+        _born_in_the_queue=lambda tracker, board, **_k: None,
         # where it was asked — what this case is about; who confirmed it and the tracker travel
         # beside it to the card's door (#414)
         _open_delivery=lambda req, results, *, conversation="", requester="", **_kw:
