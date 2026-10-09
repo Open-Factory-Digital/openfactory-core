@@ -1935,6 +1935,14 @@ def board_view(project: str, card: str = "", pr: str = "") -> dict:
         cards = [{"ref": s.ref, "column": placed.get(s.ref, ""), "title": s.title,
                   "labels": list(s.labels or []), "updated_at": s.updated_at or ""}
                  for s in summaries]
+        # IN THE BOARD'S OWN ORDER (#512), which the page draws each column in. The tracker lists
+        # the most recently updated card first, so on the local board a queue confirmed as #3, #1
+        # was drawn #1, #3 while the poller picked #3. `columns()` comes in the board's order —
+        # the order `items_in_status` serves — and nothing is sorted here beyond following it: a
+        # hosted row keeps the order it returns. A card the board does not place keeps its place
+        # after the ones it does.
+        order = {ref: at for at, ref in enumerate(placed)}
+        cards.sort(key=lambda c: order.get(c["ref"], len(order)))
         cards += _delivered_cards(proj, board, tracker, placed=placed, names=names,
                                   shown={c["ref"] for c in cards})
 

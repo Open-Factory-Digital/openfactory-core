@@ -372,7 +372,9 @@ def test_a_card_queued_on_an_azure_board_nobody_renamed_lands_in_its_own_to_do(t
     [only] = _module(project, tmp_path, tracker).promote(["412"], actor=ANA, board=board)
 
     assert (only.ok, only.detail) == (True, ""), only.detail
-    assert client.patched == [(412, "To Do")]
+    # the queue by its own name — and then the card's place at the top of it, the rank this row
+    # writes for a card alone in its column (#512)
+    assert client.patched == [(412, "To Do"), (412, 1000.0)]
 
 
 # ── the local board: where it landed, it still lands — and a renamed one is followed ────────────

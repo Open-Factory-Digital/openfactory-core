@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import re
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -47,20 +48,31 @@ LANG, AGENT, ROOM = "pt-BR", "Nina", "acme"
 
 class _Site:
     """A Jira site whose cards wait in `Backlog`, each offered the move into the queue — unless its
-    workflow is one that does not offer it (`refuses`)."""
+    workflow is one that does not offer it (`refuses`).
+
+    AND RANKED AS A JIRA SITE RANKS (#512): one order over the whole project, which a status change
+    does not touch, written only through the Agile API's rank endpoint — and a search reads a
+    status's cards in it (`ORDER BY Rank`). The cards start ranked in the order they are named."""
 
     def __init__(self, *cards: str) -> None:
         self.status = dict.fromkeys(cards, BACKLOG)
+        self.rank = list(cards)
         self.refuses: set[str] = set()
 
     def urlopen(self, req, timeout=0):  # noqa: ARG002 — urllib's own signature
         method = req.get_method()
+        if "/rest/agile/1.0/" in req.full_url:
+            return self._ranked(method, req.full_url.split("/rest/agile/1.0/", 1)[1],
+                                json.loads(req.data))
         path = req.full_url.split("/rest/api/3/", 1)[1]
         # THE CARD'S DOOR READS THE BOARD, THEN EACH CARD, BEFORE IT QUEUES ONE (ADR-0055, #414)
         if method == "GET" and path.startswith("search/jql?"):
+            jql = parse_qs(urlsplit(path).query)["jql"][0]
+            status = re.search(r'status = "([^"]+)"', jql)
             return _Answer({"isLast": True, "issues": [
-                {"key": card, "fields": {"status": {"name": status}}}
-                for card, status in self.status.items()]})
+                {"key": card, "fields": {"status": {"name": self.status[card]}}}
+                for card in self.rank
+                if status is None or self.status[card] == status.group(1)]})
         read = re.fullmatch(rf"issue/({KEY}-\d+)", path)
         if read and method == "GET":
             return _Answer({"key": read.group(1), "fields": {
@@ -78,6 +90,18 @@ class _Site:
             self.status[moved.group(1)] = names[json.loads(req.data)["transition"]["id"]]
             return _Answer(None)
         raise AssertionError(f"the adapter called {method} {path}, a route this site never had")
+
+    def _ranked(self, method: str, path: str, payload: dict):
+        """`PUT /rest/agile/1.0/issue/rank` — the card put right after, or right before, its
+        neighbour in the project's one order."""
+        assert (method, path) == ("PUT", "issue/rank"), f"{method} {path} on the agile API"
+        (card,) = payload["issues"]
+        self.rank.remove(card)
+        if "rankAfterIssue" in payload:
+            self.rank.insert(self.rank.index(payload["rankAfterIssue"]) + 1, card)
+        else:
+            self.rank.insert(self.rank.index(payload["rankBeforeIssue"]), card)
+        return _Answer(None)
 
 
 @pytest.fixture(autouse=True)

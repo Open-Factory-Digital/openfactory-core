@@ -57,6 +57,11 @@ _SCHEMA = (
     # A card. `ref` is an INTEGER per project because the number sequence is per project (D5);
     # the PORT's two spellings (`#N` and bare `N`) are a rendering question and are resolved by
     # `canonical_ref` at the row, never stored twice.
+    #
+    # `position` IS WHERE THE CARD STANDS IN ITS COLUMN (#512) — the order the poller pulls the
+    # queue in, and the one `LocalBoard.place_after` writes. A file made before the column existed
+    # gains it through `_ADDED_COLUMNS`, and every card a writer puts in a column joins it at the
+    # bottom through `_TRIGGERS`.
     """CREATE TABLE IF NOT EXISTS cards (
            project      TEXT NOT NULL,
            ref          INTEGER NOT NULL,
@@ -69,6 +74,7 @@ _SCHEMA = (
            requester    TEXT NOT NULL DEFAULT '',
            created_at   TEXT NOT NULL,
            updated_at   TEXT NOT NULL,
+           position     INTEGER NOT NULL DEFAULT 0,
            PRIMARY KEY (project, ref)
        )""",
     # Ordered by `seq` rather than by the timestamp: two comments written in the same second must
@@ -165,6 +171,43 @@ _ADDED_COLUMNS = (
     # readable or mergeable either, so the default loses nothing it had: close it and propose
     # again, and the new one records where it is.
     ("pull_requests", "repo", "TEXT NOT NULL DEFAULT ''"),
+    # Where a card stands in its column (#512). `0` for every card already on a running board,
+    # which ties them, and a tie is served by number — the order that file was served in before
+    # the column existed. Every card that ENTERS a column afterwards joins it below them
+    # (`_TRIGGERS`), and a person's order rewrites the whole column (`LocalBoard.place_after`).
+    ("cards", "position", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+#: A CARD THAT ENTERS A COLUMN JOINS IT AT THE BOTTOM, whoever moved it there (#512).
+#:
+#: SIX WRITERS PUT A CARD IN A COLUMN on this board — the tracker's filing, its `set_state` and its
+#: close and reopen, the board's `set_column` and `set_status` — and the queue is served in the
+#: order a person set only if every one of them agrees on where a card lands. Written once per
+#: writer, the seventh would put its card wherever `0` sorts — at the TOP of the queue, ahead of
+#: work a person approved first. So the rule is the file's, and no writer can be added without it.
+#:
+#: ONLY WHEN THE COLUMN CHANGED (the `WHEN`): a move to where the card already is changes nothing,
+#: and must not send a card a person placed first to the back of its own column. Created AFTER
+#: `_add_columns`, because they write `position`, which a file made before #512 has only once it
+#: was added.
+_TRIGGERS = (
+    """CREATE TRIGGER IF NOT EXISTS a_filed_card_joins_the_bottom_of_its_column
+       AFTER INSERT ON cards
+       BEGIN
+           UPDATE cards SET position = (
+               SELECT COALESCE(MAX(position), 0) + 1 FROM cards
+               WHERE project = NEW.project AND column_key = NEW.column_key AND ref != NEW.ref)
+           WHERE project = NEW.project AND ref = NEW.ref;
+       END""",
+    """CREATE TRIGGER IF NOT EXISTS a_moved_card_joins_the_bottom_of_its_column
+       AFTER UPDATE OF column_key ON cards
+       WHEN NEW.column_key IS NOT OLD.column_key
+       BEGIN
+           UPDATE cards SET position = (
+               SELECT COALESCE(MAX(position), 0) + 1 FROM cards
+               WHERE project = NEW.project AND column_key = NEW.column_key AND ref != NEW.ref)
+           WHERE project = NEW.project AND ref = NEW.ref;
+       END""",
 )
 
 
@@ -229,6 +272,8 @@ def connect(path: str | os.PathLike[str] | None = None,
         for statement in _SCHEMA:
             conn.execute(statement)
         _add_columns(conn)
+        for statement in _TRIGGERS:
+            conn.execute(statement)
         if not write:
             yield conn
             return

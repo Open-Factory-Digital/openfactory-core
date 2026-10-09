@@ -102,7 +102,13 @@ _DRIVES = {
     "set_column": lambda t, b: b.set_column(issue="#1", issue_url="", name="TO-DO"),
     "set_status": lambda t, b: b.set_status(issue="#1", issue_url="",
                                             state=JobState.IMPLEMENTING),
+    "place_after": lambda t, b: b.place_after(issue="#3", issue_url="", after=None,
+                                              column="Backlog"),
 }
+
+#: The writes the board view does not show: a native parent link, and a card's place in its
+#: column (#512) — an order among cards, which no card's fields carry.
+_NOT_SHOWN = frozenset({"link_child", "place_after"})
 
 
 def _writers(cls) -> set[str]:
@@ -148,7 +154,7 @@ def test_a_write_by_another_process_is_seen_on_the_next_read(cards, db, writer):
     after = _seen(_read(cards, reader))
     truth = _seen(_read(cards, reader, fresh=True))
     assert after == truth, f"{writer} in another process was not seen on the next read"
-    if writer != "link_child":   # the one write the board view does not show
+    if writer not in _NOT_SHOWN:
         assert after != before, f"the drive for {writer} changed nothing a reader sees"
 
 

@@ -21,7 +21,9 @@ up.
 from __future__ import annotations
 
 import dataclasses
+import os
 import re
+import subprocess
 
 import pytest
 
@@ -134,6 +136,49 @@ def test_an_env_file_that_is_readable_by_everyone_is_refused_with_the_chmod():
     assert not finding.ok, "a world-readable credential file passed"
     assert "0644" in finding.message, finding.message
     assert _ACTIONABLE.search(finding.remedy), finding.remedy
+
+
+#: What docker printed on Docker Desktop when the installer's container was refused the socket
+#: (#529, 2026-10-05) — on stderr, with a lone newline on stdout.
+_REFUSED = ("permission denied while trying to connect to the docker API at "
+            "unix:///var/run/docker.sock")
+
+
+def test_a_socket_this_process_may_not_use_is_not_answered_with_start_docker():
+    """A STOPPED DAEMON AND A REFUSED SOCKET HAVE OPPOSITE REMEDIES. The installer's preflight said
+    "start Docker" on a Mac whose daemon was serving that install's pulls; the cause it read was
+    the socket's group, and the remedy has to be about that."""
+    finding = _finding(preflight.check(_probes(daemon=lambda: (False, _REFUSED))), "docker_daemon")
+
+    assert not finding.ok, finding
+    assert "start docker" not in finding.remedy.lower(), (
+        f"a refused socket is answered with `start Docker`: {finding.remedy!r}")
+    assert "--group-add" in finding.remedy, finding.remedy
+    assert _ACTIONABLE.search(finding.remedy), finding.remedy
+
+
+def test_the_refusal_docker_printed_reaches_the_finding_with_the_socket_it_was_about(
+        monkeypatch, tmp_path):
+    """THROUGH THE REAL PROBE, because that is where the cause was lost: docker wrote `\\n` to
+    stdout and the refusal to stderr, and `(stdout or stderr).strip()` turned the refusal into
+    "docker gave no answer". The detail also says who owns the socket HERE and who asked, which is
+    the difference the person has to see (0:0 in the container, 501:20 on the host)."""
+    socket_file = tmp_path / "docker.sock"
+    socket_file.write_text("")          # `stat` is all the probe asks of it
+    monkeypatch.setenv("DOCKER_HOST", f"unix://{socket_file}")
+
+    def refused(argv, **_):
+        return subprocess.CompletedProcess(argv, 1, stdout="\n", stderr=_REFUSED + "\n")
+
+    monkeypatch.setattr(preflight.subprocess, "run", refused)
+    reachable, detail = preflight._probe_daemon()
+
+    assert not reachable
+    assert _REFUSED in detail, f"the refusal docker printed did not reach the finding: {detail!r}"
+    found = os.stat(socket_file)
+    assert f"{socket_file} is {found.st_uid}:{found.st_gid} " in detail, (
+        f"the finding does not say who owns the socket where it was refused: {detail!r}")
+    assert f"this process is uid {os.getuid()} in groups " in detail, detail
 
 
 def test_every_check_can_be_made_to_fail():
