@@ -490,6 +490,10 @@ class Probes:
     #: it is placed (#536). Raises `BoardUnreadable` when the board could not be read, which
     #: `board_columns` already reports. None = an older Probes, too; the check is skipped.
     board_intake: Callable[[], object] | None = None
+    #: What each container of the stack holds — `PidCount` per container — so `pid_headroom` sees
+    #: a leak of processes before the container runs out of them (#532). `[]` where there is no
+    #: container to read; None = an older Probes, and the check is skipped.
+    pid_counts: Callable[[], list[PidCount]] | None = None
     #: `({column: stage key}, option)` — which neutral stage THIS board says each of its columns
     #: is, in board order, `""` for a column no stage is (`board.base.stage_key`), and the tracker
     #: option that declares the map (`board.base.stage_option`, `""` when the row declares none)
@@ -579,6 +583,7 @@ def diagnose(probes: Probes) -> Report:
         _guarded("board_columns", lambda: _board(probes)),
         *_intake_findings(probes),
         *_board_stages(probes),
+        *_pid_findings(probes),
         *([_guarded("merge_gates", lambda: _merge_gates(probes))] if probes.merge_gates else []),
         _guarded("post_merge", lambda: _post_merge(probes)),
         _guarded("product_link", lambda: _product(probes)),
@@ -1641,6 +1646,160 @@ def _intake_findings(p: Probes) -> list[Finding]:
     return [Finding("board_intake", True,
                     f"a card the product role files starts in {column!r}, out of {queue!r}, the "
                     f"column the poller reads")]
+
+
+#: A container holding this share of its `pids.max` FAILS `pid_headroom` (#532). A worker or a panel
+#: runs tens of processes, a job's agent and gates a few more: half the ceiling is not load, it is a
+#: leak, and at the ceiling the container can start no thread — a panel then reads the engine as
+#: unreachable. Half leaves days, at the rate measured, between the line going red and the stop.
+PIDS_SHARE_THAT_FAILS = 0.5
+
+#: Zombies that FAIL `pid_headroom` whatever the limit, which may be `max` (#532). Under an init a
+#: zombie lives until its parent's next wait, so a stack that reaps holds a handful at most; a
+#: hundred is the count of a PID 1 that reaps nothing — the panel that stopped held 17,420.
+ZOMBIES_THAT_FAIL = 100
+
+
+@dataclass(frozen=True)
+class PidCount:
+    """What one container holds (#532): its processes, its `pids.max` (None when unlimited or
+    unread), and how many of them are zombies. `unread` says why it could not be asked."""
+
+    container: str
+    current: int | None = None
+    limit: int | None = None
+    zombies: int | None = None
+    unread: str = ""
+
+
+def _pid_findings(p: Probes) -> list[Finding]:
+    """`pid_headroom`: whether any container of the stack is filling up with processes (#532).
+
+    THE COUNT NOTHING REPORTED. A panel whose PID 1 reaped no orphan held 17,420 zombies after 39
+    hours, against a `pids.max` of 17,435; it could start no thread, the floor read the engine as
+    unreachable, and this doctor passed the whole time. The containers now start an init, and
+    this is what sees the next leak — whatever its source — before the ceiling does.
+
+    A FAIL, NOT A NOTE, on either sign: half the ceiling in use, or a hundred zombies. A
+    container that could not be read is said in a note on a pass, never as a failure of the
+    stack: the question is whether one is filling up, and an unread one has not said that."""
+    if p.pid_counts is None:
+        return []
+    try:
+        counts = list(p.pid_counts() or [])
+    except Exception as exc:  # noqa: BLE001 — a failed probe is a finding, not a crash
+        return [Finding("pid_headroom", False, f"could not check pid_headroom: {exc}",
+                        "re-run with the underlying tool by hand to see the raw error")]
+    if not counts:
+        return []
+    read = [c for c in counts if not c.unread]
+    unread = "; ".join(f"the {c.container}'s processes could not be read ({c.unread})"
+                       for c in counts if c.unread)
+    full = [c for c in read
+            if (c.limit and c.current is not None and c.current >= c.limit * PIDS_SHARE_THAT_FAILS)
+            or (c.zombies is not None and c.zombies >= ZOMBIES_THAT_FAIL)]
+    if full:
+        return [Finding(
+            "pid_headroom", False,
+            "; ".join(_pid_line(c) for c in full) + " — at its ceiling a container can start no "
+            "thread, and the engine then reads as unreachable (#532)",
+            "restart the container to clear them now (`docker compose restart <service>`), then "
+            "check what stopped reaping: its service declares `init: true` and its image starts "
+            "`tini` — `docker inspect -f '{{.HostConfig.Init}}' <container>` reads `true`")]
+    if not read:
+        return [Finding("pid_headroom", True, "no container's processes could be read",
+                        note=unread)]
+    return [Finding("pid_headroom", True, "; ".join(_pid_line(c) for c in read), note=unread)]
+
+
+def _pid_line(c: PidCount) -> str:
+    """`the worker holds 41 processes of its 17,435, none of them a zombie` — what was read."""
+    number = f"{c.current:,}" if c.current is not None else "an unread number of"
+    held = f"the {c.container} holds {number} processes"
+    if c.limit:
+        held += f" of its {c.limit:,}"
+    if c.zombies is not None:
+        held += (", none of them a zombie" if c.zombies == 0 else
+                 f", {c.zombies:,} of them {'a zombie' if c.zombies == 1 else 'zombies'}")
+    return held
+
+
+def cgroup_pids(root: pathlib.Path = pathlib.Path("/sys/fs/cgroup"),
+                ) -> tuple[int | None, int | None]:
+    """`(pids.current, pids.max)` of the cgroup this process runs in — cgroup v2 at the root, v1
+    under `pids/` — with `max` read as None, unlimited. `(None, None)` when neither is there."""
+    for base in (root, root / "pids"):
+        current = base / "pids.current"
+        if current.is_file():
+            limit = base / "pids.max"
+            raw = limit.read_text().strip() if limit.is_file() else "max"
+            return int(current.read_text().strip()), (None if raw == "max" else int(raw))
+    return None, None
+
+
+def zombie_count(proc: pathlib.Path = pathlib.Path("/proc")) -> int:
+    """How many processes in this PID namespace are zombies — state `Z` in `/proc/<pid>/stat`,
+    read after the command's LAST closing parenthesis, because a command may hold one itself."""
+    count = 0
+    for stat in proc.glob("[0-9]*/stat"):
+        try:
+            text = stat.read_text()
+        except OSError:
+            continue  # the process ended between the listing and the read
+        count += text[text.rfind(")") + 1:].split()[:1] == ["Z"]
+    return count
+
+
+#: The same three readings as `cgroup_pids` and `zombie_count`, asked of ANOTHER container through
+#: `docker exec`: pids.current, pids.max, then the zombie count — the cgroup lines absent when it
+#: has no pids controller to read.
+_PIDS_SCRIPT = (
+    "for b in /sys/fs/cgroup /sys/fs/cgroup/pids; do if [ -r $b/pids.current ]; then "
+    "cat $b/pids.current; cat $b/pids.max 2>/dev/null || echo max; break; fi; done; "
+    "n=0; for s in /proc/[0-9]*/stat; do case \"$(cat $s 2>/dev/null)\" in *') Z '*) "
+    "n=$((n+1));; esac; done; echo $n")
+
+
+def parse_pid_script(container: str, out: str) -> PidCount:
+    """What `_PIDS_SCRIPT` printed, as a `PidCount` — the last line the zombies, the two before it
+    the cgroup's, when there are three."""
+    lines = [line.strip() for line in out.strip().splitlines() if line.strip()]
+    try:
+        zombies = int(lines[-1])
+        if len(lines) >= 3:
+            raw = lines[-2]
+            return PidCount(container, current=int(lines[-3]),
+                            limit=None if raw == "max" else int(raw), zombies=zombies)
+        return PidCount(container, zombies=zombies)
+    except (IndexError, ValueError):
+        return PidCount(container, unread=f"it answered {out.strip()[:80]!r}")
+
+
+def pid_counts(*, in_container: bool | None = None, panel: str | None = None,
+               run=None) -> list[PidCount]:
+    """What the stack's containers hold (#532): the one this doctor runs in — the worker, as the
+    documented `docker compose exec worker openfactory doctor` runs it — and the panel, through
+    `docker exec` on the socket the worker holds (`OPENFACTORY_PANEL_CONTAINER`). `[]` on a
+    machine that is not a container and names no panel: one machine's processes are its own."""
+    if in_container is None:
+        in_container = pathlib.Path("/.dockerenv").exists()
+    if panel is None:
+        panel = (os.environ.get("OPENFACTORY_PANEL_CONTAINER") or "").strip()
+    out: list[PidCount] = []
+    if in_container:
+        current, limit = cgroup_pids()
+        out.append(PidCount("worker", current=current, limit=limit, zombies=zombie_count()))
+    if panel:
+        run = run or (lambda argv: subprocess.run(argv, capture_output=True, text=True,
+                                                  timeout=20))
+        try:
+            done = run(["docker", "exec", panel, "sh", "-c", _PIDS_SCRIPT])
+        except Exception as exc:  # noqa: BLE001 — an unread panel is a note, not a crash
+            out.append(PidCount("panel", unread=str(exc)[:120]))
+        else:
+            out.append(parse_pid_script("panel", done.stdout) if done.returncode == 0 else
+                       PidCount("panel", unread=(done.stderr or done.stdout).strip()[:120]))
+    return out
 
 
 def _board_stages(p: Probes) -> list[Finding]:
@@ -2808,6 +2967,7 @@ def probes_for(project) -> Probes:
         pickup_column=_pickup_column,
         board_intake=_intake,
         board_stages=_stages,
+        pid_counts=pid_counts,
         merge_gates=_merge_gates_probe,
         floor_enforced=floor_is_enforced,
         harness_kind=lambda: harness_kind(project, "executor"),
