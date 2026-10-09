@@ -157,10 +157,10 @@ def histories(rows: list[dict]) -> dict[str, History]:
     caller has already read. Rows that are not this record's are skipped by their key, so a scan
     of the project's whole partition may be handed in as it came.
 
-    PUBLIC AND READ-ONLY (#356, and #85's autonomy reading, which adds this same function): the
-    outcome aggregates measure the record from the rows one scan of the store already holds, and
-    the one parse of a key is this module's — a second copy of it elsewhere would be the first
-    place an effect's outcome got read as a transition."""
+    PUBLIC AND READ-ONLY (#85's autonomy reading and #356's outcome aggregates): each measures the
+    record from the rows one scan of the store already holds, and the one parse of a key is this
+    module's — a second copy of it elsewhere would be the first place an effect's outcome got
+    read as a transition."""
     by_card: dict[str, list[dict]] = {}
     for raw in rows:
         sk = str(raw.get("sk") or "")

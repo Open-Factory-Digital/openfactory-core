@@ -155,6 +155,31 @@ def role_prompt(role: str) -> str:
     return ""
 
 
+#: Where a role's prompt comes from, as `role_prompt_source` names it (#81).
+SHIPPED = "shipped"
+ADD_ON = "add-on"
+NOWHERE = "missing"
+
+
+def role_prompt_source(role: str) -> tuple[str, Path | None]:
+    """Where `role_prompt(role)` reads its text: `(SHIPPED, the file)`, `(ADD_ON, None)` for an
+    add-on role's own `RoleSpec.prompt`, or `(NOWHERE, the file it expected)` (#81).
+
+    THE SAME ORDER AS `role_prompt`, because it is the same rule: the package's file first, an
+    add-on's text only for a role this package has no file for. And ONE LAYER, which is the fact
+    `openfactory explain` prints and a developer most needs: a role prompt is the package's file
+    or the add-on's text, never a merge of layers. The deployment overlay ADR-0044 names for it
+    does not exist yet; what a project changes is its guidelines, through its profile."""
+    path = _ROLES_DIR / f"{role}.md"
+    if path.exists():
+        return SHIPPED, path
+    from openfactory.adapters.agent.registry import addon_role
+
+    if addon_role(role) is not None:
+        return ADD_ON, None
+    return NOWHERE, path
+
+
 def can_judge(agent: object) -> bool:
     """Whether this harness can serve the judging roles at all. A harness that cannot run a
     read-only prompt cannot be a tech-lead or a reviewer, and saying so early beats discovering

@@ -87,9 +87,12 @@ MUTATIONS = [
      '                f"{ref_label(card)} is. Nothing was changed — try again."))',
      '                f"#{card} is. Nothing was changed — try again."))'),
 
-    ("…and a card in a column nobody mapped", PORTS,
-     '                f"{ref_label(card)} is in {column!r}, which is not a column',
-     '                f"#{card} is in {column!r}, which is not a column'),
+    # re-pinned 2026-10-05: the door's sentence for a column nobody maps is `voice.card_unmapped`
+    # now, the one the edit gate says too, with the line that maps it (#521) — the claim is
+    # unchanged
+    ("…and a card in a column nobody mapped", VOICE,
+     "    return _pick(_CARD_UNMAPPED, language).format(ref=ref_label(ref), column=column,",
+     "    return _pick(_CARD_UNMAPPED, language).format(ref=f\"#{ref}\", column=column,"),
 
     ("the events name the card `#CONT-412` (ready, preview, checks, withdrawn)", VOICE,
      '_CARD = {"pt-BR": "o {ref}{title}", "en": "{ref}{title}"}',

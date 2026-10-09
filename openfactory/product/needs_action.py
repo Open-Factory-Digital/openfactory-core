@@ -27,10 +27,11 @@ from pydantic import BaseModel, Field, field_validator
 
 
 #: The causes a diagnosis can have. `requirement` is the only one this role acts on.
-def _sig(agent_name: str = "") -> str:
+def _sig(agent_name: str = "", language: str | None = None) -> str:
+    """The role's signature, in the language of the ticket it heads — the project's (#538)."""
     from openfactory.product.voice import signature
 
-    return signature(agent_name)
+    return signature(agent_name, language=language)
 
 
 REQUIREMENT, TECHNICAL, ENVIRONMENT, UNCLEAR = (
@@ -144,7 +145,7 @@ def hand_back_comment(verdict: Verdict, *, agent_name: str = "",
     from openfactory.product import voice
 
     v = verdict.normalised()
-    sig = _sig(agent_name)
+    sig = _sig(agent_name, language)
     why = f" — {v.reason}" if v.reason else ""
     if v.cause == REQUIREMENT:
         # It reached here with the right cause, so what stopped it was CONFIDENCE. Saying that
@@ -175,7 +176,7 @@ def fix_comment(verdict: Verdict, *, agent_name: str = "", language: str | None 
     fix = voice._pick(voice._FIX_CLAUSE, language).format(fix=v.fix) if v.fix else ""
     named = columns or {}
     return voice._pick(voice._FIX_COMMENT, language).format(
-        sig=_sig(agent_name), why=why, fix=fix,
+        sig=_sig(agent_name, language), why=why, fix=fix,
         backlog=voice.column_said(named.get("backlog", ""), "backlog"),
         queue=voice.column_said(named.get("todo", ""), "todo"))
 

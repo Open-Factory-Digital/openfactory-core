@@ -616,6 +616,11 @@ input:focus,select:focus,textarea:focus{border-color:var(--amber);box-shadow:0 0
 #dash td{padding:8px;border-bottom:1px solid var(--line);color:var(--txt)}
 #dash tr:hover td{background:rgba(255,255,255,.03)}
 #dash .num{text-align:right;font-variant-numeric:tabular-nums}
+#dash .auto{margin-bottom:18px}
+#dash .auto .said{font-size:var(--t-md);color:var(--muted);margin:-6px 0 12px;line-height:1.5}
+#dash .auto .pair{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:900px){#dash .auto .pair{grid-template-columns:1fr}}
+#dash .auto .chartbox{min-height:0}
 
   /* the how-to under the project bar: closed by default, so it explains without shouting.
      Sizes come from the SCALE (--t-*), never from literals: six named sizes are a decision the
@@ -4436,6 +4441,7 @@ function _renderDashShell(d){
     <div class="tile"><div class="k">average cost / task</div><div class="v" id="dAvg">—</div></div>
     <div class="tile"><div class="k">average time / task</div><div class="v" id="dTime">—</div></div>
   </div>
+  <div class="auto" id="dAuto"></div>
   <div class="charts">
     <div class="chartbox"><div class="k">cost per day</div><div style="position:relative;height:200px"><canvas id="cDay"></canvas></div></div>
     <div class="chartbox"><div class="k">by model</div><div style="position:relative;height:200px"><canvas id="cModel"></canvas></div></div>
@@ -4475,6 +4481,45 @@ function _renderDashShell(d){
       <tbody id="dRows"></tbody></table>
   </div>`;
   ["fModel","fHarness","fRole","fKnow","fFrom","fTo"].forEach(id=>$("#"+id).addEventListener("change",_dashApply));
+  _renderAutonomy(d.autonomy);
+}
+// AUTONOMY (#85): how many of the project's cards reached their merge untouched, read from the
+// card's record ON THE SERVER — every word here arrives in the project's language (`said`), the
+// way the agenda's do, and the numbers as numbers. NOT re-filtered by the controls above: those
+// slice spend by pass, and a card's road to its merge is not a pass. A store that would not answer
+// is said as that (`readable: false`), never drawn as a record with nothing in it.
+function _renderAutonomy(a){
+  const box=$("#dAuto"); if(!box)return;
+  if(!a||!a.said){ box.innerHTML=""; return; }
+  const s=a.said, L=s.labels||{};
+  if(a.readable===false){
+    box.innerHTML=`<div class="chartbox"><div class="k">${esc(L.title||"")}</div><div class="said" style="margin:0">${esc(s.headline||"")}</div></div>`;
+    return;
+  }
+  const pct=a.yield==null?"—":Math.round(a.yield*100)+"%";
+  const rate=a.rework_rate==null?"—":(+a.rework_rate).toFixed(2);
+  const line=t=>t?`${esc(t)}<br>`:"";
+  const depth=Object.entries(a.repair_depth||{}).map(([d,n])=>
+    `<tr><td>${esc(d)}</td><td class="num">${esc(String(n))}</td></tr>`).join("");
+  const causes=s.causes||{};
+  const parks=Object.entries(a.park_reasons||{}).map(([c,n])=>
+    `<tr><td>${esc(causes[c]||c)}</td><td class="num">${esc(String(n))}</td></tr>`).join("");
+  box.innerHTML=`
+    <div class="tiles">
+      <div class="tile"><div class="k">${esc(L.yield||"")}</div><div class="v">${esc(pct)}</div></div>
+      <div class="tile"><div class="k">${esc(L.rework||"")}</div><div class="v">${esc(rate)}</div></div>
+      <div class="tile"><div class="k">${esc(L.measured||"")}</div><div class="v">${esc(String(a.measured||0))}</div></div>
+      <div class="tile"><div class="k">${esc(L.before||"")}</div><div class="v">${esc(String((a.before_the_record||[]).length))}</div></div>
+    </div>
+    <div class="said">${line(s.headline)}${line(s.rework)}${line(s.before_the_record)}${esc(s.scope||"")}</div>
+    <div class="pair">
+      <div class="chartbox"><div class="k">${esc(L.depth||"")}</div>
+        <table><thead><tr><th>${esc(L.repairs||"")}</th><th class="num">${esc(L.cards||"")}</th></tr></thead>
+        <tbody>${depth}</tbody></table></div>
+      <div class="chartbox"><div class="k">${esc(L.parks||"")}</div>
+        <table><thead><tr><th>${esc(L.cause||"")}</th><th class="num">${esc(L.count||"")}</th></tr></thead>
+        <tbody>${parks||`<tr><td colspan="2" class="sub" style="padding:12px">${esc(s.parks||"")}</td></tr>`}</tbody></table></div>
+    </div>`;
 }
 function _dashReset(){ ["fModel","fHarness","fRole","fKnow","fFrom","fTo"].forEach(id=>{$("#"+id).value=""}); _dashApply(); }
 function _mkChart(id,type,labels,data,color){

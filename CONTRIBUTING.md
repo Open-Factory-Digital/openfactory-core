@@ -74,6 +74,7 @@ contributor that is the wrong filter — those pages are your map:
 | [docs/adr/](docs/adr/) | **why** — 55 decision records. Read the one nearest your change before arguing with it |
 | [docs/engineering-lessons.md](docs/engineering-lessons.md) | the defects this codebase has actually paid for, with their measurements |
 | [docs/STATUS.md](docs/STATUS.md) | what is proven end to end and what is not |
+| [docs/developer-guide.md](docs/developer-guide.md) | why an agent is given the instructions it is given — `openfactory explain` and the cascade it prints — and where a developer or an AI engineer may change them |
 
 The single most useful habit: before changing behaviour, find the test whose NAME states the
 property you are about to change. Tests here are named as sentences (`test_a_named_check_is_not_

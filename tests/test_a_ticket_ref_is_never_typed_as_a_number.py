@@ -137,9 +137,9 @@ CARD_SITES = [
     # Not `number`, but the same ambiguity from the other side: `closed` reads as a boolean
     # everywhere else in this codebase, so it cannot go in REF_NAMES — and it carries the ref
     # of the card that was closed. The AST scan found its sibling `_closing_note` and could
-    # never have found this one.
-    ("openfactory.product.module", "_survivor_note", "closed"),
-    ("openfactory.product.module", "_closing_note", "in_favour_of"),
+    # never have found this one. Both notes are the voice's since #538.
+    ("openfactory.product.voice", "survivor_note", "closed"),
+    ("openfactory.product.voice", "closing_note", "in_favour_of"),
     ("openfactory.product.voice", "close_confirmation", "number"),
     ("openfactory.product.voice", "card_closed", "number"),
     ("openfactory.product.voice", "survivor_unclear", "number"),
