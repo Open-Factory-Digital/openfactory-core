@@ -137,9 +137,11 @@ MUTATIONS = [
      '        return Flight(unread=f"the engine could not say what runs ({first_message(exc)})")',
      "        return Flight()"),
 
+    # re-pinned 2026-10-09 (#533): `in_flight` reaches the engine through `_engine_client`, which
+    # `close_runs` shares, so the declared engine's silence is answered there
     ("a declared engine that does not answer reads as no engine", FORGET,
-     '            return Flight(unread=f"the durable engine did not answer ({first_message(exc)})")',
-     "            return Flight(engine=False)"),
+     '        return None, f"the durable engine did not answer ({first_message(exc)})", True',
+     '        return None, "", False'),
 
     # ── 5. asked first, backed up first ───────────────────────────────────────────────────────
     ("the command deletes without asking", CLI,

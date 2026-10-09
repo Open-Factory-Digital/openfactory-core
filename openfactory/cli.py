@@ -501,6 +501,8 @@ def project_forget_conversations(
     registry project of it, so those are named before it asks and theirs go too. A name no longer
     registered deletes what is recorded under that name alone.
     """
+    import asyncio
+
     from openfactory.memory import transcript
     from openfactory.product import forget
 
@@ -537,6 +539,13 @@ def project_forget_conversations(
         named = counts["people who named them"]
         typer.echo(f"erased {counts['files sent in them']} file(s) sent in them, and the names "
                    f"{named} person(s) gave them")
+    # AND THE RUNS THAT STILL HOLD THEM (#533): a conversation's run stays open until its next
+    # turns roll it over, which a forgotten conversation never takes, so the engine's retention
+    # never reached what was said in it. Closed here, the same way `project forget` closes them.
+    closed = asyncio.run(forget.close_runs(where))
+    typer.echo(forget.engine_went(closed).line())
+    if closed.unread or closed.at_work:
+        raise typer.Exit(1)
 
 
 @project_app.command("forget")
