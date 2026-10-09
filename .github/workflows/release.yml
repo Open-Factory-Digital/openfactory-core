@@ -410,6 +410,9 @@ jobs:
       # so its page prints its own installer and `--version`; a final prints the one-line install.
       # The page used to print the one-line install for every tag, and v0.5.0-rc.1's told its
       # testers to install v0.4.2. A script, so the suite runs it (`scripts/release-page-body.sh`).
+      # UNDER IT, THE RELEASE'S NOTES (#517): a final's section of CHANGELOG.md, which its version
+      # pull request assembled from the fragments the pull requests carried, or a candidate's
+      # fragments so far (`scripts/release_notes.py page`).
       - name: write the top of the release page
         env:
           TAG: ${{ github.ref_name }}
@@ -430,7 +433,9 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           make_latest: ${{ !contains(github.ref_name, '-') }}
           # GENERATED NOTES, UNDER WHAT A RELEASE PAGE OWES A READER: how to install this release,
-          # and which images this tag published, so somebody landing here from a `docker pull` that
-          # failed can see whether the tag they typed exists (the step above writes both).
+          # which images this tag published, so somebody landing here from a `docker pull` that
+          # failed can see whether the tag they typed exists, and the release's notes (the step
+          # above writes all three). GitHub's list follows them: every merged pull request, the
+          # ones exempt from a release note included.
           generate_release_notes: true
           body_path: release-page.md

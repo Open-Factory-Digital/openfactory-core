@@ -18,4 +18,10 @@ This project's bar, from [CONTRIBUTING.md](../CONTRIBUTING.md):
 
 If any box is unchecked, say why here — a stated exception is fine, a silent one is not.
 
+## Release note
+
+- [ ] `changes/<issue>.<type>.md` carries the line a person installing the release will read
+      about this change ([CONTRIBUTING.md](../CONTRIBUTING.md)), or the change touches only
+      documents or tests and asks for the label `no-release-note`
+
 ## Anything a reviewer should look at first
