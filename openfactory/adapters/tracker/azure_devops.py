@@ -709,8 +709,29 @@ class AzureBoardsTracker:
         THE BOARD SAYS WHICH COLUMN THAT IS (`AzureBoardsBoard.intake_column`), and only together
         do they answer the money question: is a card filed now created in the column the poller
         picks up from? On the process the setup guide builds, the type's first state is `To Do`,
-        and `To Do` is the pickup column."""
-        return self.state_map.get("backlog", "")
+        and `To Do` is the pickup column.
+
+        A DECLARED STATE THE TYPE DOES NOT HAVE raises `IntakeUnknown` (#543). The create sends it,
+        Azure refuses it (`TF401320`) on every card, and the board — which shows it in no column —
+        answered `""`, which the doctor passed as "the door places it in the backlog" (review of
+        #547). Read off the type's own states, by name without case, the way `_is_closed` reads
+        them; a type that lists none is not judged."""
+        declared = self.state_map.get("backlog", "")
+        if not declared:
+            return ""
+        states = [name for name, _category in self._states(self.work_item_type)]
+        if states and _fold(declared) not in {_fold(s) for s in states}:
+            from openfactory.adapters.board.base import IntakeUnknown
+
+            them = ", ".join(f"`{s}`" for s in states)
+            raise IntakeUnknown(
+                f"`state_map` declares the backlog {declared!r}, which is not a state of the "
+                f"{self.work_item_type} type ({them}) — Azure DevOps refuses every work item "
+                f"created in it",
+                remedy=(f"correct the `backlog` entry of `state_map` under the tracker's options "
+                        f"to one of {them}, or add {declared!r} to the {self.work_item_type} type "
+                        f"in the inherited process"))
+        return declared
 
     def create_ticket(self, *, title: str, body: str, repo: str = "") -> str:
         """Create a work item in the project's intake state and return its ref.
