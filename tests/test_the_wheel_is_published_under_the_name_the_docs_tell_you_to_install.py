@@ -224,24 +224,38 @@ def test_a_deliberately_unpublished_wheel_never_makes_the_release_run_red():
         f"cancel the release that carries docker-compose.yml and SHA256SUMS")
 
 
+#: The last line `release-page-body.sh` writes itself: what follows it is the release's notes,
+#: appended by `release_notes.py page` since #517.
+_END_OF_THE_INSTALL_TEXT = "Verify the assets below with `sha256sum -c SHA256SUMS --ignore-missing`."
+
+
 def test_nothing_in_the_release_claims_a_wheel_that_may_not_exist():
-    """The release notes are read by people deciding what they can install. While publishing is
-    gated, a line promising PyPI would be a claim the same workflow declines to make true.
+    """The release page is read by people deciding what they can install. While publishing is
+    gated, an install line promising PyPI would be a claim the same workflow declines to make true.
 
     The page's top is written by `scripts/release-page-body.sh` since #531, which names a
     candidate's wheel only when the run publishes it (`WHEEL_PUBLISHED`, the `pypi` job's gate);
-    here, with the gate off, for both kinds of tag."""
+    here, with the gate off, for both kinds of tag.
+
+    THE INSTALL TEXT, NOT THE NOTES (review of #571). Since #517 the page ends with the release's
+    notes, and a note may name PyPI as its subject — "the PyPI page describes the project" is a line
+    about what a page says, not a way to install. Scanning the page as one string made every such
+    note unmergeable, so the scan stops where the script stops writing, and that boundary is
+    asserted first, so a moved one cannot leave the scan reading nothing."""
     import os
     import subprocess
 
-    body = "".join(
-        subprocess.run(["sh", str(ROOT / "scripts" / "release-page-body.sh"), tag],
-                       capture_output=True, text=True, check=True,
-                       env={**os.environ, "WHEEL_PUBLISHED": "false"}).stdout
-        for tag in ("v0.5.0", "v0.5.0-rc.1"))
+    for tag in ("v0.5.0", "v0.5.0-rc.1"):
+        body = subprocess.run(["sh", str(ROOT / "scripts" / "release-page-body.sh"), tag],
+                              capture_output=True, text=True, check=True,
+                              env={**os.environ, "WHEEL_PUBLISHED": "false"}).stdout
+        assert _END_OF_THE_INSTALL_TEXT in body, (
+            f"{tag}: the page no longer ends its install text where this reads it:\n{body}")
+        install = body[:body.index(_END_OF_THE_INSTALL_TEXT)].lower()
+        assert "Install" in body[:body.index(_END_OF_THE_INSTALL_TEXT)], body
 
-    assert "pypi" not in body.lower() and "pip install" not in body.lower(), (
-        f"the release body advertises the wheel while the publish is gated:\n{body}")
+        assert "pypi" not in install and "pip install" not in install, (
+            f"{tag}: the install text advertises the wheel while the publish is gated:\n{body}")
 
 
 def test_the_tag_and_the_declared_version_are_reconciled_before_the_upload():
