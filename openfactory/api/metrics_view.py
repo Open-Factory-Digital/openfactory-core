@@ -108,11 +108,16 @@ def scan_records(table_name: str | None = None, region: str | None = None) -> li
         return []
 
 
-def scan_all_or_raise(table_name: str | None = None, region: str | None = None) -> list[dict]:
+def scan_all_or_raise(table_name: str | None = None, region: str | None = None, *,
+                      must_answer: bool = False) -> list[dict]:
     """`scan_records`, but an unreadable store RAISES rather than reading as an empty one.
 
     `[]` here means the store answered and had nothing, or that no readable store is configured —
     which is a supported deployment shape, not a failure.
+
+    `must_answer` is `query.records_of_kind`'s, for a caller that reports what it read as a fact
+    (`openfactory autonomy`, #85): a sink that was NAMED and cannot be built raises
+    `StoreUnreadable` too, rather than reading as "no store configured".
 
     THE SINK THE REGISTRY BUILT IS THE ONLY DOOR. This used to fall through to
     `OPENFACTORY_METRICS_TABLE` whenever that sink could not read, so a deployment on any other
@@ -124,6 +129,10 @@ def scan_all_or_raise(table_name: str | None = None, region: str | None = None) 
         from openfactory.observability.registry import configured_metrics_sink
 
         return configured_metrics_sink(table=table_name, region=region).scan()
+    if must_answer:
+        # asked with the keyword only here: doubles of this resolver take none (`query.py`)
+        found = _configured_sink(must_build=True)
+        return [] if found is None else found.scan()
     sink = _configured_sink()
     return [] if sink is None else sink.scan()
 
@@ -352,6 +361,30 @@ def dashboard(records: list[dict], project: str | None = None) -> dict:
     }
 
 
-def cost_dashboard(project: str | None = None, table_name: str | None = None) -> dict:
-    """The full payload for GET /api/metrics — scan + per-project shape. Always returns a dict."""
-    return dashboard(scan_records(table_name), project=project)
+def cost_dashboard(project: str | None = None, table_name: str | None = None, *,
+                   language_of=None) -> dict:
+    """The full payload for GET /api/metrics — scan + per-project shape. Always returns a dict.
+
+    AND THE AUTONOMY BLOCK (#85), from the same rows: how many of the project's cards reached
+    their merge untouched, the passes they took, why cards parked (`observability/autonomy.py`).
+    `language_of(project)` is the project's language, asked once the project is known — the
+    dashboard picks the first one when none is named — so the block's sentences arrive in it.
+
+    THE SPEND DEGRADES AND THE AUTONOMY SAYS SO. An unreadable store still renders the cost view
+    empty, as it always has; the autonomy block does not inherit that: "no card measured yet"
+    over a store nobody could read is a claim about the factory nobody checked, so the block
+    says the store would not answer instead (`autonomy.unread`)."""
+    from openfactory.observability.autonomy import autonomy, unread
+
+    failed: Exception | None = None
+    try:
+        records = scan_all_or_raise(table_name)
+    except Exception as exc:  # noqa: BLE001 — the dashboard degrades to empty, never 500s
+        log.warning("metrics scan failed for %s: %s", table_name or "the configured sink", exc)
+        records, failed = [], exc
+    payload = dashboard(records, project=project)
+    chosen = payload["project"]
+    language = language_of(chosen) if (language_of is not None and chosen) else None
+    payload["autonomy"] = (unread(chosen, failed, language=language) if failed is not None
+                           else autonomy(records, chosen, language=language))
+    return payload
