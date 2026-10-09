@@ -4551,6 +4551,7 @@ def _stage(proj, board, issue: str) -> _Stage:
     about a card that moved between them."""
     from openfactory.adapters.board.base import stage_key, stage_option
     from openfactory.contracts.refs import canonical_ref
+    from openfactory.product.voice import card_unmapped
 
     if board is None:
         return _Stage()      # tickets only, no columns at all: nothing can have moved it
@@ -4575,14 +4576,14 @@ def _stage(proj, board, issue: str) -> _Stage:
         # STILL A REAL ANSWER — a column nobody maps cannot be judged, and guessing is the
         # direction this gate must not fail in. Only the remedy changed: the option to edit is the
         # one THIS board reads, and generic code no longer claims to know its name.
-        named = stage_option(board)
-        repair = (f"Map it with the project's tracker option `{named}`" if named else
-                  "Map it in the project's tracker options, the way this board's provider "
-                  "documents its column names")
-        return _Stage(column=column, cannot_tell=(
-            f"{issue} is in {column!r}, which is not a column this platform maps, so it cannot "
-            f"tell whether the factory has taken the card up. {repair}, or say what you wanted "
-            f"to change on the card itself."))
+        #
+        # AND IT IS THE DOOR'S OWN SENTENCE (#521). `card_move` refuses here, before the door, so
+        # a queueing from Azure's stock `New` read this one — and the door's said the same thing
+        # in other words, with a different remedy, in English only. One sentence now, in the
+        # project's language, with the line of configuration that maps the column in it.
+        return _Stage(column=column, cannot_tell=card_unmapped(
+            ref=issue, column=column, option=stage_option(board),
+            language=getattr(proj, "language", None)))
     return _Stage(key=key, column=column)
 
 

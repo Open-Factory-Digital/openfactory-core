@@ -216,16 +216,6 @@
   "não consegui ler o histórico deste ticket",
   "sem diagnóstico do tech-lead"
  ],
- "openfactory/product/capabilities.py": [
-  "confirmar de novo é uma decisão a registrar por escrito, não um sim",
-  "essa capacidade já estava confirmada",
-  "esse nome não é o de uma capacidade",
-  "não consegui ler o arquivo dessa capacidade",
-  "não encontrei essa capacidade entre as observadas nem entre as escritas",
-  "não escrevo através dele",
-  "o arquivo dessa capacidade é um link",
-  "o repositório não aceita registro direto"
- ],
  "openfactory/product/cards.py": [
   "a revisão automática não respondeu"
  ],
@@ -331,27 +321,12 @@
  ],
  "openfactory/product/module.py": [
   "## Cartão #",
-  "** Não revisei nada disso",
-  "**O que está escrito aqui como",
-  ", e reescrevi o que precisa ser verdade para dá-lo por pronto a partir dele",
-  ", que ele citava, foi substituído por aquele",
   "Escreva o que precisa ser verdade para considerá-lo feito, no nível do PRODUTO",
   "Este cartão foi escrito a partir de outro texto e precisa passar a executar o requisito abaixo",
   "Este item não diz quando estaria pronto, então seria recusado na entrada",
-  "O que eu não consegui determinar",
-  "O que eu não consegui determinar",
   "Reescreva o que precisa ser verdade para considerá-lo feito, no nível do PRODUTO e SOMENTE a partir deste requisito",
-  "Se havia algo escrito lá que não está aqui, vale trazer antes de começar",
   "a agente respondeu sem poder abrir o código",
-  "critérios a partir do que já estava descrito",
-  "este cartão passou a executar o requisito",
-  "este cartão passou a executar o requisito",
-  "este item não dizia quando estaria pronto, então seria recusado na entrada",
-  "foi fechado em favor deste, a pedido de",
-  "nada pode entrar que o requisito não peça, e o que ele mudou em relação ao texto anterior tem de aparecer",
-  "o texto que ele seguia antes foi substituído",
-  "o trabalho passa a ser acompanhado lá",
-  "rever pode mudar o que vai ser construído, e essa é uma decisão de vocês, não uma arrumação minha"
+  "nada pode entrar que o requisito não peça, e o que ele mudou em relação ao texto anterior tem de aparecer"
  ],
  "openfactory/product/queue.py": [
   "módulo fiscal",

@@ -111,7 +111,8 @@ def test_every_check_the_doctor_HAS_is_reached_by_the_green_set():
     nothing — the recurring defect of this codebase, and here it would be invisible."""
     checks = [f.check for f in doctor.diagnose(a_fully_pinned_probe_set()).findings]
 
-    for optional in ("agent_credential", "ci_declared", "box_proof", "api_budget"):
+    for optional in ("agent_credential", "ci_declared", "box_proof", "api_budget",
+                     "board_stages"):
         assert optional in checks, (
             f"the {optional!r} check did not run at all on the baseline probe set — its probe is "
             f"unpinned, so `diagnose` skipped it and the report is green about a question "
