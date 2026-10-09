@@ -345,6 +345,10 @@ _CARD_CONTROLS = {
         "ask_close": ("Fechar tira o cartão da lista de trabalho e o mantém no histórico, "
                       "registrado como não feito. Diga por quê — é o que o próximo leitor vai "
                       "ter."),
+        # a FINISHED card's close is recorded as delivered (#162, #534), so its control says that
+        "ask_close_finished": ("Fechar tira o cartão da lista de trabalho e o mantém no "
+                               "histórico como entregue — ele já está terminado. Diga por quê — é "
+                               "o que o próximo leitor vai ter."),
         "ask_remove": ("Remover apaga o cartão do quadro. O número dele não volta a ser usado, e "
                        "fica registrado quem removeu, quando e por quê."),
         "ask_remove_closes": ("Aqui os cartões só podem ser fechados, não apagados: ele será "
@@ -355,6 +359,9 @@ _CARD_CONTROLS = {
         "confirm": "Confirm", "cancel": "Cancel", "reason": "Why? (one line)",
         "ask_close": ("Closing takes the card off the list of work and keeps it in the history, "
                       "recorded as not done. Say why — it is what the next reader will have."),
+        "ask_close_finished": ("Closing takes the card off the list of work and keeps it in the "
+                               "history as delivered — it is already finished. Say why — it is "
+                               "what the next reader will have."),
         "ask_remove": ("Removing deletes the card from the board. Its number is never used again, "
                        "and who removed it, when and why is kept."),
         "ask_remove_closes": ("Cards here can only be closed, not deleted: it will be closed as "
@@ -395,6 +402,10 @@ _CARD_WITHDRAWN_RESULT = {
     "pt-BR": {
         "closed": "fechei o {ref} — ele sai da lista de trabalho e fica no histórico como não "
                   "feito.",
+        # THE SAME WORD THE RECORD WROTE (#534): a card already finished closes as delivered
+        # (#162), and the sentence about it says so — "not done" was the record's opposite
+        "delivered": "fechei o {ref} como entregue — ele já estava terminado, e o que entregou "
+                     "continua registrado.",
         "removed": "removi o {ref} — ele não está mais no quadro; o número não volta a ser usado, "
                    "e fica registrado quem removeu, quando e por quê.",
         "only_closed": "aqui os cartões só podem ser fechados, não apagados, então fechei o {ref} "
@@ -405,6 +416,8 @@ _CARD_WITHDRAWN_RESULT = {
     "en": {
         "closed": "closed {ref} — it leaves the list of work and stays in the history as not "
                   "done.",
+        "delivered": "closed {ref} as delivered — it was already finished, and what it shipped "
+                     "stays on the record.",
         "removed": "removed {ref} — it is gone from the list of work; its number is never used "
                    "again, and who removed it, when and why is kept.",
         "only_closed": "cards here can only be closed, not deleted, so I closed {ref} as not "
@@ -416,13 +429,17 @@ _CARD_WITHDRAWN_RESULT = {
 
 
 def card_controls(*, opened_by_product: bool, started: bool, removes: bool,
-                  language: str | None = None) -> dict[str, str]:
+                  finished: bool = False, language: str | None = None) -> dict[str, str]:
     """The words a card's close and remove controls carry, and the sentence under the card saying
-    what they do — for both surfaces, in the project's language (#384)."""
+    what they do — for both surfaces, in the project's language (#384). A `finished` card's close
+    says "delivered", the word its close records (#162, #534)."""
     words = dict(_pick(_CARD_CONTROLS, language))
     if not removes:
         words["ask_remove"] = words["ask_remove_closes"]
     del words["ask_remove_closes"]
+    if finished:
+        words["ask_close"] = words["ask_close_finished"]
+    del words["ask_close_finished"]
     words["note"] = _pick(_CARD_CONTROLS_NOTE, language)[(bool(opened_by_product),
                                                           bool(started))]
     return words
