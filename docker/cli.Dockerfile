@@ -83,6 +83,9 @@ COPY --from=compose-plugin /docker-compose /usr/local/lib/docker/cli-plugins/doc
 
 WORKDIR /opt/openfactory
 COPY pyproject.toml README.md LICENSE NOTICE ./
+# THE LONG DESCRIPTION pyproject.toml DECLARES, AT THE PATH IT DECLARES IT (#368). Without it
+# the backend warns and installs an empty description today; a newer one may refuse the build.
+COPY docs/pypi.md ./docs/pypi.md
 COPY openfactory ./openfactory
 # THE SAME INSTALL STEP THE OTHER TWO IMAGES RUN, as the same script — see
 # `docker/install-addons.sh` for why it is a script a guard can EXECUTE rather than a shell line a

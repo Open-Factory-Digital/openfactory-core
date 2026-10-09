@@ -2221,6 +2221,62 @@ def floor_cmd(
         typer.echo(f"  {got.census_line}")
 
 
+@app.command("autonomy")
+def autonomy_cmd(
+    project: str = typer.Argument(..., help="A registered project"),
+    days: int | None = typer.Option(
+        None, "--days", min=1, help="only the cards merged, and the parks, of the last N days"),
+    as_json: bool = typer.Option(False, "--json",
+                                 help="the `autonomy` block `/api/metrics` carries, for a script"),
+) -> None:
+    """How many cards reached their merge with no repair pass and nobody stepping in — read from
+    the card's record. Measurement starts with cards promoted from 0.5.0 on: older cards are named
+    as before the record and never enter a rate, so do not quote a yield over them.
+
+    Writes nothing and spends nothing. Beside the yield: the code-writing passes per card, how
+    many repair passes each card took, and why cards parked, classified from the recorded note.
+
+    THE SECOND TRANSPORT, like `floor`: this and the cost dashboard's `autonomy` block are one
+    function's answer over the same rows (`observability/autonomy.py`), so `--json` is that block.
+    A STORE THAT WILL NOT ANSWER EXITS 2 with what failed and what to check — never read as a
+    record with nothing in it, which would say "no card measured" about cards nobody looked at."""
+    import json as _json
+    from datetime import UTC, datetime, timedelta
+
+    from openfactory.api.metrics_view import scan_all_or_raise
+    from openfactory.observability.autonomy import autonomy, unread
+    from openfactory.observability.query import StoreUnreadable
+
+    try:
+        language = getattr(ProjectRegistry().get(project), "language", None)
+    except KeyError:
+        typer.echo(f"✗ no project named {project!r} — `openfactory project list` shows what this "
+                   f"deployment drives (and remember the worker has its own registry)", err=True)
+        raise typer.Exit(2) from None
+    try:
+        records = scan_all_or_raise(must_answer=True)
+    except StoreUnreadable as exc:
+        typer.echo(f"✗ {unread(project, exc, language=language)['said']['headline']}", err=True)
+        raise typer.Exit(2) from None
+    since = datetime.now(UTC) - timedelta(days=days) if days else None
+    block = autonomy(records, project, since=since, language=language)
+    if as_json:
+        typer.echo(_json.dumps(block, indent=2, ensure_ascii=False))
+        return
+    said = block["said"]
+    typer.echo(said["title"])
+    for line in (said["headline"], said["rework"], said["before_the_record"], said["scope"]):
+        if line:
+            typer.echo(f"  {line}")
+    if block["measured"]:
+        labels = said["labels"]
+        depth = "   ".join(f"{d}: {n}" for d, n in block["repair_depth"].items())
+        typer.echo(f"  {labels['depth']} — {depth}")
+    typer.echo(f"  {said['parks']}")
+    for cause, n in block["park_reasons"].items():
+        typer.echo(f"    {said['causes'].get(cause, cause):<44} {n}")
+
+
 @app.command("preflight")
 def preflight_cmd(
     as_json: bool = typer.Option(
@@ -2261,6 +2317,31 @@ def preflight_cmd(
     # answered failures, which is the same rule `readiness.Report.missing` holds.
     if not report.ok:
         raise typer.Exit(1)
+
+
+@app.command("explain")
+def explain_cmd(
+    checkout: str = typer.Argument(..., help="A path to a checkout — the repository whose "
+                                             ".openfactory/project.yaml is read"),
+    language: str = typer.Option("en", "--language", help="en or pt-BR"),
+    full: bool = typer.Option(False, "--full", help="Print each block's text under its line, "
+                                                    "as the prompt carries it"),
+) -> None:
+    """Why an agent is given the instructions it is given: every block a planner or executor pass
+    of this project carries, in order, where it comes from and what the project's profile did to
+    it.
+
+    THE JOB'S OWN CODE ANSWERS. The rows are the trace `build_context` writes while it
+    assembles a context for a blank card, so this cannot disagree with what a job inlines. It
+    reads a checkout and writes nothing: no harness, forge or network is called, and no card or
+    registry is touched."""
+    from openfactory.orchestrator import explain as ex
+
+    try:
+        typer.echo(ex.explain(checkout, language=language, full=full), nl=False)
+    except ex.Refused as refused:
+        typer.echo(str(refused), err=True)
+        raise typer.Exit(1) from None
 
 
 @app.command("doctor")

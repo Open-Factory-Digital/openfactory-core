@@ -1,0 +1,12 @@
+# The project's own profile. A profile in `.openfactory/profiles/` wins over a shipped one of the
+# same name, and `extends` composes: this one is `prototype` (which waives `tdd.md`) plus one
+# replacement of its own.
+name: house-style
+summary: >-
+  Internal tools that are still finding their shape: no test-first mandate, and the shop's own
+  engineering baseline instead of the framework's.
+extends: prototype
+guidelines:
+  # By framework FILENAME, never by path: the platform decides where its baseline lives.
+  replace:
+    engineering.md: docs/engineering.md

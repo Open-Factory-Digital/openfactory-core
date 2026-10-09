@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from openfactory.adapters.agent.roles import role_prompt
 from openfactory.adapters.reviewer.harness import extract_json
+from openfactory.contracts.refs import REF_AS_WRITTEN, refs_written
 from openfactory.product.corpus import Corpus, Requirement
 from openfactory.product.speaker import render as render_speaker
 from openfactory.product.voice import AUDIENCE_RULES
@@ -64,6 +65,11 @@ _TICKET_RE = re.compile(r"\[\[TICKET(?::\s*(?P<title>[^\]\n]{1,120}))?\]\]")
 #: order spends nothing and starts nothing — the next `promote` follows it — which is why it is
 #: not the queue gesture, and why it still waits for a yes: the order decides what is spent on
 #: next.
+#:
+#: THE CARDS AS THE TRACKER SPELLS THEM (#515), read through `contracts.refs`: `#12`, `CONT-412`,
+#: `acme/web#1`. The marker read digits only, so on Jira — where no card has a number — "coloca
+#: nessa ordem: DAR-7, DAR-3" matched nothing: nothing was staged, the reorder never reached the
+#: board, and the marker was left for the safety net to strip, the order lost in a log line.
 ORDER_MARKER = "[[ORDEM"
 #: THE THIRD READING (#33 slice 7, holes 5 and 6). A message is a broken promise (`[[DEFEITO`), a
 #: wish (`[[PEDIDO]]`) — or the system WORKING AS DESIGNED, which until now had no shape: the role
@@ -80,7 +86,10 @@ _TEACH_RE = re.compile(r"\[\[USO(?::\s*(?P<evidence>(?:(?!\]\])[^\n])*))?\]\]")
 EVIDENCE_MARKER = "[[EVIDENCIA"
 _EVIDENCE_RE = re.compile(r"\[\[EVIDENCIA(?::\s*(?P<evidence>(?:(?!\]\])[^\n])*))?\]\]")
 _REQ_IN_EVIDENCE = re.compile(r"REQ-?0*(\d{1,4})", re.IGNORECASE)
-_ORDER_RE = re.compile(r"\[\[ORDEM:\s*(?P<numbers>[#\d][#\d,;\s]{0,200})\]\]")
+#: A LIST OF REFS AND NOTHING ELSE — separated by commas, semicolons or spaces, at most fifty — so
+#: prose inside the brackets is not read as an order; the net below strips it, loudly.
+_ORDER_RE = re.compile(rf"\[\[ORDEM:\s*(?P<numbers>{REF_AS_WRITTEN}"
+                       rf"(?:(?:\s*[,;]\s*|\s+){REF_AS_WRITTEN}){{0,49}})\s*\]\]")
 
 #: One per decision she needs from a person. DECLARED by the model rather than parsed out of its
 #: prose: guessing "was that a question?" from free text is exactly the kind of inference that
@@ -397,8 +406,8 @@ class ProductAnswer(BaseModel):
     #: title they gave it — "" when the model named none, in which case the text is the title
     is_ticket: bool = False
     ticket_title: str = ""
-    #: the person gave the backlog an order (see ORDER_MARKER) — the card numbers, top first, as
-    #: they said them; empty when they did not
+    #: the person gave the backlog an order (see ORDER_MARKER) — the cards, top first, as they
+    #: said them and as the tracker spells them (#515); empty when they did not
     is_reorder: bool = False
     order: list[str] = Field(default_factory=list)
     #: the message reports the system WORKING AS DESIGNED (see TEACH_MARKER) — the reply teaches
@@ -688,7 +697,8 @@ class ProductRole:
             "you should argue into a requirement, nor for a broken promise.\n\n"
             "IF THEY GAVE THE BACKLOG AN ORDER — \"coloca nessa ordem: 7, 3, 9\", \"primeiro o "
             "7, depois o 3\", \"prioriza o 9\", any way of saying which cards come FIRST — end "
-            "with [[ORDEM: 7, 3, 9]] on its own line, the card numbers in the order they want, "
+            "with [[ORDEM: 7, 3, 9]] on its own line, the cards as the board names them — "
+            "7, CONT-412, acme/web#1 — in the order they want, "
             f"top first, exactly as they said them. {STAGED_AFTER_YOUR_REPLY} Writing the "
             "order spends nothing and starts "
             "nothing: the next start follows it. Do NOT use it when they merely mentioned cards, "
@@ -780,9 +790,9 @@ class ProductRole:
         teach = _TEACH_RE.search(text)
         evidence = _EVIDENCE_RE.search(text)
         # IN THE ORDER GIVEN, never sorted (`contracts.refs.ref_numbers` sorts, and is exactly the
-        # helper NOT to use here); a number said twice keeps its first place.
-        order = (list(dict.fromkeys(re.findall(r"\d+", ordered.group("numbers"))))
-                 if ordered else [])
+        # helper NOT to use here); a card said twice keeps its first place — and each one AS THE
+        # TRACKER SPELLS IT (#515): `DAR-7` on Jira, `acme/web#1` across repositories
+        order = refs_written(ordered.group("numbers")) if ordered else []
         # the markers are plumbing between the role and the channel — never let them reach a person
         text = text.replace(QUEUE_MARKER, "").rstrip()
         text = _ADJUST_RE.sub("", text).rstrip()

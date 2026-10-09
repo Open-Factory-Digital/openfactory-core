@@ -21,14 +21,16 @@ OWN board through the registry, so the order goes through the wrapper or nowhere
     written as a chain of position mutations and the reply reads it back;
   · a rank the board refused, and one whose call raised, is still REPORTED by the wrapper — which
     is why the fix keeps the wrapper rather than unwrapping it at the check;
-  · on the local row, which does not rank, the person is still told so in one sentence;
+  · on a board that does not rank — a client's own, since the local row ranks too (#512) — the
+    person is still told so in one sentence, and on the local row the order is written;
   · and a guard: for every `runtime_checkable` protocol the product module checks, and the board
     and tracker capabilities beside them, an adapter that satisfies it satisfies it wrapped, and
     one that does not, does not.
 
-The order marker reads digits only (`role._ORDER_RE`), so a Jira key cannot reach this verb from
-the conversation at all; the hosted row driven here is therefore the one whose refs a person can
-actually say in chat.
+The order marker read digits only (`role._ORDER_RE`) when this was written, so a Jira key could not
+reach this verb from the conversation; the hosted row driven here is therefore GitHub's. Since #515
+the marker reads a key as Jira spells it, and the Jira row is driven from the conversation in
+`test_an_order_of_jira_keys_is_written_from_the_conversation.py`.
 """
 
 from __future__ import annotations
@@ -176,27 +178,77 @@ def test_a_rank_whose_call_raised_is_reported_by_the_wrapper(github, told):
     assert all(detail.startswith("place_after: ") and "503" in detail for detail, _ in told), told
 
 
-# ── a board that does not rank: the local row ───────────────────────────────────────────────────
+# ── a board that does not rank, and the local row, which does since #512 ───────────────────────
 
-def test_the_local_board_still_says_in_one_sentence_that_it_does_not_rank(tmp_path, monkeypatch,
-                                                                          told):
-    """`LocalBoard` keeps no rank, and says so by not claiming `Rankable`. Wrapped, it must not
-    start claiming it: a wrapper that answered yes for every board would turn this sentence into
-    an `AttributeError` caught one level down — "não consegui reposicionar" about a board that was
-    never able to."""
+class _ItsOwnBoard:
+    """A client's own board: it reads and moves cards, and keeps no order this platform can write
+    — it has no `place_after`, and so does not claim `Rankable`."""
+
+    def url(self) -> str:
+        return ""
+
+    def columns(self) -> dict[str, str]:
+        return {}
+
+    def column_names(self) -> list[str]:
+        return ["Backlog", "TO-DO"]
+
+    def items_in_status(self, status: str) -> list[str]:
+        return []
+
+    def add_item(self, *, issue_url: str) -> None:
+        return None
+
+    def set_column(self, *, issue: str, issue_url: str, name: str) -> bool:
+        return True
+
+    def set_status(self, *, issue: str, issue_url: str, state, needs_person=None) -> bool:
+        return True
+
+
+@pytest.fixture
+def local(tmp_path, monkeypatch):
+    """A project on the local row, its board created and three cards filed in its Backlog."""
     from openfactory.adapters.board_setup.local import LocalBoardSetup
+    from openfactory.adapters.tracker.registry import build_tracker
     from openfactory.contracts.project import ProviderRef
 
     monkeypatch.setenv("OPENFACTORY_BOARD_DB", str(tmp_path / "board.db"))
     project = _project(ProviderRef(kind="local", repo="acme", options={}))
     LocalBoardSetup().create(project=project, owner="", title="acme", token=None)
-    module = ProductModule(project, token="t")
-    assert type(module._board()._inner).__name__ == "LocalBoard"
+    tracker = build_tracker(project)
+    assert [tracker.create_ticket(title=t, body="x") for t in ("um", "dois", "três")] == [
+        "#1", "#2", "#3"]
+    return project
 
-    said = _confirmed(project, module, ["1", "2"])
+
+def test_a_board_that_does_not_rank_still_says_so_in_one_sentence(local, told):
+    """A board that keeps no rank says so by not claiming `Rankable`. Wrapped, it must not start
+    claiming it: a wrapper that answered yes for every board would turn this sentence into an
+    `AttributeError` caught one level down — "não consegui reposicionar" about a board that was
+    never able to. The local row was this board until #512; a client's own adapter is now."""
+    module = ProductModule(local, token="t", board=_ItsOwnBoard())
+    assert type(module._board()._inner) is _ItsOwnBoard
+
+    said = _confirmed(local, module, ["1", "2"])
 
     assert said.startswith("este quadro ainda não aceita reordenação por aqui"), said
     assert "não consegui" not in said and told == [], (said, told)
+
+
+def test_the_local_board_writes_the_order_confirmed(local, told):
+    """The local row ranks by a position in the column (#512): the order confirmed is written
+    through the module's own watched board, and the backlog is read in it."""
+    from openfactory.adapters.board import build_board
+
+    module = ProductModule(local, token="t")
+    assert type(module._board()._inner).__name__ == "LocalBoard"
+
+    said = _confirmed(local, module, ["3", "1"])
+
+    assert build_board(local).items_in_status("Backlog") == ["3", "1", "2"]
+    assert said == reordered(["3", "1"], language=LANG, agent_name="Nina"), said
+    assert told == [("place_after", True)] * 2, "the rank went around the watch"
 
 
 # ── the guard: what the module asks of a watched adapter is what the adapter answers ───────────

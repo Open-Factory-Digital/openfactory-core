@@ -730,13 +730,22 @@ def test_a_capability_is_named_never_addressed_by_a_path(bed, slug):
     not a plain name — a path that climbs into the requirements, one into `.okf/` — is refused
     before anything is read or written."""
     from openfactory.product.capabilities import confirm_in_repository
+    from openfactory.product.voice import record_said
 
     before = _git(bed.context, "rev-parse", "HEAD")
-    result = bed.module().confirm_capability(slug, actor="ines")
-    assert not result.ok and result.detail == "esse nome não é o de uma capacidade"
-    direct = confirm_in_repository(docs_repo="quayside-context", clone_url="file:///nowhere",
-                                   slug=slug, flow=None, confirmed_by="ines")
-    assert not direct.ok and direct.detail == "esse nome não é o de uma capacidade"
+    module = bed.module()
+    result = module.confirm_capability(slug, actor="ines")
+    # in the project's language (#513), where it was this Portuguese sentence in every one
+    assert not result.ok and result.detail == record_said("not_a_capability",
+                                                          language=module.project.language)
+    # and the write itself, in the language its caller hands it (#538), where it was this
+    # Portuguese sentence whatever the module had said
+    for language in ("pt-BR", "en"):
+        direct = confirm_in_repository(docs_repo="quayside-context", clone_url="file:///nowhere",
+                                       slug=slug, flow=None, confirmed_by="ines",
+                                       language=language)
+        assert not direct.ok and direct.detail == record_said("not_a_capability",
+                                                              language=language)
     assert _git(bed.context, "rev-parse", "HEAD") == before
 
 

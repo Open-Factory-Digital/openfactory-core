@@ -125,6 +125,34 @@ def _tracked_text_files() -> list[str]:
             and p != f"tests/{pathlib.Path(__file__).name}"]
 
 
+def _the_page_the_index_shows() -> str:
+    """The file `pyproject.toml` declares as the core's long description — "" when it declares
+    none. Read off the declaration, never typed here, so the one page the rule reads differently
+    is whichever page actually travels in the wheel's metadata."""
+    readme = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"].get("readme") or ""
+    return readme.get("file", "") if isinstance(readme, dict) else readme
+
+
+def _unfollowable_in(rel: str, unpublished: set[str]) -> set[str]:
+    """The names `rel` may not hand a reader as a bare-name install.
+
+    EVERY UNPUBLISHED NAME, IN EVERY FILE BUT ONE: the page the index itself shows (#368). That
+    page is the core's long description — it reaches a reader as the text of the project's page
+    ON the index, which exists only because an upload of the core happened, so the reader of it
+    is standing exactly where `pip install` of the core resolves. The page's whole job is to show
+    that command, and the gate this file reads cannot see that the upload it gates has already
+    been enabled (0.4.0 was installed from the index by name, measured for #368).
+
+    NARROW ON BOTH AXES, and asserted to be: the exemption is the CORE'S name only — an add-on
+    package is on no index whichever page names it — and it is that one declared file only, so
+    the core's name is still an offence in the README, in every other document and in every
+    refusal while the gate stands."""
+    core = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["name"]
+    if rel and rel == _the_page_the_index_shows():
+        return unpublished - {core}
+    return unpublished
+
+
 def _bare_name_installs(text: str, distributions: set[str]) -> list[str]:
     """Every `pip install <one of ours>` in `text` — a path or a wheel is not one of them."""
     found = []
@@ -261,7 +289,7 @@ def test_nothing_hands_a_reader_a_pip_install_of_a_name_no_index_serves():
     offenders = {}
     for rel in _tracked_text_files():
         hits = _bare_name_installs((ROOT / rel).read_text(encoding="utf-8", errors="ignore"),
-                                   unpublished)
+                                   _unfollowable_in(rel, unpublished))
         if hits:
             offenders[rel] = hits
 
@@ -298,6 +326,33 @@ def test_the_scan_can_SEE_the_sentence_that_was_here_and_leaves_a_real_path_alon
                        "pip install -q pytest", f"uv add ./addons/{package}",
                        f"the {package} package", f"pip uninstall {package}"):
         assert _bare_name_installs(followable, distributions) == [], followable
+
+
+def test_the_page_the_index_shows_may_name_the_core_and_NOTHING_ELSE_is_relaxed():
+    """The one exemption (#368), held to its two edges — on the worst case, where every one of our
+    distributions counts as unpublished, so the answer does not depend on today's gate.
+
+    The page may hand a reader the core by name, because a reader of it is on the index that
+    served the name. It may not hand them an add-on package, which no index serves wherever the
+    sentence is written. And the core's name stays an offence in every other file — the README
+    is the first one a widened exemption would let it back into."""
+    core = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["name"]
+    package = plugins.SHIPS_IN["channel.slack"]
+    page = _the_page_the_index_shows()
+    worst = our_distributions()
+
+    assert page and page in _tracked_text_files(), (
+        f"pyproject.toml declares {page!r} as the long description and the scan does not read it "
+        f"— the exemption would be about a page nobody checks")
+    the_door = f"pip install '{core}[runtime]'"
+    assert _bare_name_installs(the_door, _unfollowable_in(page, worst)) == [], (
+        "the page the index shows cannot show the install the index serves")
+    assert _bare_name_installs(f"pip install {package}", _unfollowable_in(page, worst)), (
+        f"the exemption lets the page hand a reader {package}, which no index serves")
+    for elsewhere in ("README.md", "docs/setup/one-machine.md", "openfactory/runtime/host.py"):
+        assert _bare_name_installs(the_door, _unfollowable_in(elsewhere, worst)), (
+            f"{elsewhere} may now name the core by name while the publish is gated — the "
+            f"exemption is wider than the one page the index shows")
 
 
 # ── the positive twin: the remedy still exists, it is just a true one ───────────────────────────

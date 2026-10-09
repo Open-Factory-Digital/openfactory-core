@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
@@ -40,6 +41,64 @@ def _md_files(repo: Path, glob: str | None) -> list[Path]:
 
 
 ORG_DEFAULTS_DIR = Path(__file__).resolve().parent.parent / "org_defaults"
+
+#: WHAT BECAME OF A DOCUMENT the cascade considered (#81). `openfactory explain` prints these, and
+#: they are written by the reads below — the job's own — and never derived a second time, so the
+#: explanation cannot disagree with the prompt it explains.
+KEPT = "kept"
+WAIVED = "waived"
+REPLACED = "replaced"
+REFUSED = "refused"
+MISSING = "missing"
+#: An operator directory that is configured, present, and holds no `.md` at all.
+EMPTY = "empty"
+#: The operator's `reference/` documents, when the box cannot open them and they are not indexed.
+UNREACHABLE = "unreachable"
+
+#: The layers that are not a manifest key. A project's own entries are traced under the key that
+#: names them (`docs.guidelines`, `components.<name>.guidelines`, `docs.constraints`), the same key
+#: `declared_guidelines` carries and the doctor prints.
+FRAMEWORK = "framework"
+PROFILE = "profile"
+OPERATOR = "operator"
+
+
+@dataclass(frozen=True)
+class Traced:
+    """One document the cascade considered, where it came from and what became of it (#81).
+
+    `name` is the document AS ITS LAYER ADDRESSES IT: a bare filename for the framework and the
+    operator tier — the name a profile's `waive:`/`replace:` uses — and the checkout-relative path
+    for everything the project names. `detail` is the profile chain that waived it, the path that
+    replaced it, or why it was refused. `text` is exactly what was inlined, None when nothing was:
+    the texts of a trace, in order, ARE the context's documents (the guide's guard holds that)."""
+
+    layer: str
+    name: str
+    fate: str
+    detail: str = ""
+    text: str | None = None
+
+
+def _kept(trace: list[Traced] | None, layer: str, name: str, text: str, *,
+          fate: str = KEPT, detail: str = "") -> str:
+    """`text`, which the caller inlines — and the same value traced, when a trace is asked for."""
+    if trace is not None:
+        trace.append(Traced(layer, name, fate, detail, text))
+    return text
+
+
+def _dropped(trace: list[Traced] | None, layer: str, name: str, fate: str,
+             detail: str = "") -> None:
+    """Trace a document the job does NOT inline, and why."""
+    if trace is not None:
+        trace.append(Traced(layer, name, fate, detail))
+
+
+def _read_all(docs: list[Path], trace: list[Traced] | None, layer: str) -> list[str]:
+    """Every file of `docs`, truncated as the prompt carries it, each one traced KEPT."""
+    return [_kept(trace, layer, p.name, p.read_text()[:_MAX_DOC_CHARS]) for p in docs]
+
 
 #: Why `resolve_inside` refuses an entry. The job's warning branches on them and the doctor's
 #: `guidelines` line says them, so the two surfaces cannot drift into two vocabularies (#350).
@@ -108,6 +167,17 @@ def _inside(repo_path: Path | None, relative: str, *, named_by: str = "a profile
     return candidate
 
 
+def _why_refused(repo_path: Path | None, relative: str) -> str:
+    """The reason `_inside` refused `relative`, for the trace — asked of the same `resolve_inside`
+    it asked, so the two cannot name different reasons."""
+    if repo_path is None:
+        return "no checkout"
+    try:
+        return resolve_inside(repo_path, relative)[1] or "could not be resolved"
+    except OSError:
+        return "could not be resolved"
+
+
 def declared_guidelines(manifest) -> list[tuple[str, str]]:
     """Every guideline path the manifest names, with the key that names it — `docs.guidelines`
     first, then each component's — for the job that reads them and the doctor that checks them."""
@@ -118,7 +188,8 @@ def declared_guidelines(manifest) -> list[tuple[str, str]]:
 
 
 def _resolve_tier(docs: list[Path], profile: ResolvedProfile | None,
-                  repo_path: Path | None, *, source: str) -> list[str]:
+                  repo_path: Path | None, *, source: str, layer: str = FRAMEWORK,
+                  trace: list[Traced] | None = None) -> list[str]:
     """Read an ordered list of NAMED guideline files, applying the profile's waive/replace.
 
     ONE MECHANISM, TWO TIERS. The framework baseline (`org_defaults/*.md`) and the operator's own
@@ -128,20 +199,26 @@ def _resolve_tier(docs: list[Path], profile: ResolvedProfile | None,
     subtract the standard it was meant to replace.
 
     Does NOT warn about a waive/replace naming a file no tier has: that is decided ONCE, across
-    both tiers together, by `_unknown_names` — a name unknown here may be known there."""
+    both tiers together, by `_unknown_names` — a name unknown here may be known there.
+
+    `trace`, when given, receives every file under `layer` with what became of it (#81) — from
+    the branch that decided it, so `openfactory explain` reads the decision and not a copy of it."""
     if profile is None:
-        return [p.read_text()[:_MAX_DOC_CHARS] for p in docs]
+        return _read_all(docs, trace, layer)
     waived = set(profile.waived_guidelines())
     replaced = profile.replaced_guidelines()
+    chain = " → ".join(profile.names)
     out: list[str] = []
     for p in docs:
         if p.name in waived:
+            _dropped(trace, layer, p.name, WAIVED, chain)
             continue
         substitute = replaced.get(p.name)
         if substitute is not None:
             doc = _inside(repo_path, substitute)
             if doc is not None and doc.is_file():
-                out.append(doc.read_text()[:_MAX_DOC_CHARS])
+                out.append(_kept(trace, layer, p.name, doc.read_text()[:_MAX_DOC_CHARS],
+                                 fate=REPLACED, detail=substitute))
                 continue
             # THE ORIGINAL FILE STAYS. A replacement that is not there must not subtract: the
             # project asked for a different rule, not for no rule, and honouring half of that
@@ -150,11 +227,15 @@ def _resolve_tier(docs: list[Path], profile: ResolvedProfile | None,
                 "profile %s replaces %r with %r and no such file exists in the checkout — the "
                 "%s %s is used instead; check the path.",
                 " → ".join(profile.names), p.name, substitute, source, p.name)
-        out.append(p.read_text()[:_MAX_DOC_CHARS])
+        # `detail` ON A KEPT FILE is the replacement a profile named and the checkout lacks — the
+        # trace says why the original is still there, as the warning above does
+        out.append(_kept(trace, layer, p.name, p.read_text()[:_MAX_DOC_CHARS],
+                         detail=substitute or ""))
     return out
 
 
-def _unknown_names(profile: ResolvedProfile, known: set[str]) -> None:
+def _unknown_names(profile: ResolvedProfile, known: set[str],
+                   trace: list[Traced] | None = None) -> None:
     """Warn for every waived/replaced name no waivable tier actually has.
 
     A profile that waives or replaces a file no tier defines is a declaration written against a
@@ -162,7 +243,7 @@ def _unknown_names(profile: ResolvedProfile, known: set[str]) -> None:
     rule was dropped when the rule is still being injected, which is the most expensive shape of
     silence here: the operator believes the class is looser than it is. Decided across BOTH the
     framework baseline and the operator tier, so waiving an operator guideline by name is not
-    mistaken for a typo."""
+    mistaken for a typo. Traced MISSING under the profile layer, `detail` the line that names it."""
     named = set(profile.waived_guidelines()) | set(profile.replaced_guidelines())
     for name in sorted(named - known):
         # THE WHOLE CHAIN, NOT THE LEAF. These entries accumulate from every profile in the
@@ -172,11 +253,14 @@ def _unknown_names(profile: ResolvedProfile, known: set[str]) -> None:
             "profile %s names %r and no such framework or operator guideline exists — the "
             "deployment ships %s. That line of the profile changes NOTHING; check the name.",
             " → ".join(profile.names), name, ", ".join(sorted(known)) or "none")
+        _dropped(trace, PROFILE, name, MISSING,
+                 "waive" if name in profile.waived_guidelines() else "replace")
 
 
 def _org_defaults(profile: ResolvedProfile | None = None,
                   repo_path: Path | None = None,
-                  extra_known: set[str] | None = None) -> list[str]:
+                  extra_known: set[str] | None = None,
+                  trace: list[Traced] | None = None) -> list[str]:
     """Framework-owned baseline guidelines (openfactory/org_defaults/*.md).
 
     THIS USED TO SAY "injected into EVERY job regardless of project", and that sentence was the
@@ -201,21 +285,25 @@ def _org_defaults(profile: ResolvedProfile | None = None,
     """
     baseline = [p for p in sorted(ORG_DEFAULTS_DIR.glob("*.md")) if p.is_file()]
     if profile is None:
-        return [p.read_text()[:_MAX_DOC_CHARS] for p in baseline]
+        return _read_all(baseline, trace, FRAMEWORK)
 
     known = {p.name for p in baseline} | (extra_known or set())
-    _unknown_names(profile, known)
-    out = _resolve_tier(baseline, profile, repo_path, source="framework's own")
+    _unknown_names(profile, known, trace)
+    out = _resolve_tier(baseline, profile, repo_path, source="framework's own", trace=trace)
 
     for extra in profile.extra_guidelines():
         doc = _inside(repo_path, extra)
         if doc is not None and doc.is_file():
-            out.append(doc.read_text()[:_MAX_DOC_CHARS])
+            out.append(_kept(trace, PROFILE, extra, doc.read_text()[:_MAX_DOC_CHARS]))
         else:
             _log.warning(
                 "profile %s extends the guidelines with %r and no such file exists in the "
                 "checkout — the agent runs WITHOUT it; check the path.",
                 " → ".join(profile.names), extra)
+            if doc is None:
+                _dropped(trace, PROFILE, extra, REFUSED, _why_refused(repo_path, extra))
+            else:
+                _dropped(trace, PROFILE, extra, MISSING)
     return out
 
 
@@ -267,9 +355,16 @@ def build_context(
     manifest: Manifest, repo_path: Path, ticket: Ticket, *, knowledge_map: str | None = None,
     knowledge_path: Path | None = None, knowledge_bundle_dir: Path | None = None,
     profile: ResolvedProfile | None = None, reference_root: str | None = None,
+    trace: list[Traced] | None = None,
 ) -> AgentContext:
+    """The context a pass carries. `trace`, when given, receives one `Traced` per document the
+    cascade considered, in the order the brief inlines them — the constraints, then every
+    guideline tier — with what became of each (#81). `openfactory explain` is its reader; a job
+    passes none and nothing about the job changes."""
     constraints = [
-        p.read_text()[:_MAX_DOC_CHARS] for p in _md_files(repo_path, manifest.docs.constraints)
+        _kept(trace, "docs.constraints", p.relative_to(repo_path).as_posix(),
+              p.read_text()[:_MAX_DOC_CHARS])
+        for p in _md_files(repo_path, manifest.docs.constraints)
     ]
     # A declared doc-role that resolves to zero files is almost always a bug (bad glob or
     # missing docs), and it degrades the agent SILENTLY — it just runs with less project
@@ -280,6 +375,7 @@ def build_context(
             "docs.constraints %r matched no .md files — the agent runs WITHOUT the "
             "project's constraints (ADRs); check the path/glob.", manifest.docs.constraints
         )
+        _dropped(trace, "docs.constraints", manifest.docs.constraints, MISSING)
 
     guideline_paths = declared_guidelines(manifest)
     # The DEPLOYMENT's own guidelines (#318) — an organisation's central standards, contained.
@@ -290,10 +386,12 @@ def build_context(
         _log.warning(
             "%s names %s and no such directory exists — every job runs WITHOUT the operator's "
             "central guidelines; check the path.", operator_guidelines.ENV_VAR, operator.dir)
+        _dropped(trace, OPERATOR, str(operator.dir), MISSING)
     elif operator.empty:
         _log.warning(
             "%s names %s and it holds no .md guidelines — every job runs WITHOUT the operator's "
             "central guidelines; check the directory.", operator_guidelines.ENV_VAR, operator.dir)
+        _dropped(trace, OPERATOR, str(operator.dir), EMPTY)
     _warn_if_a_name_lives_in_both_tiers(profile, operator)
     # THE ORDER IS THE WEIGHT (#318): framework baseline first (shaped by the project's class, if
     # it declares one), THEN the operator's own guidelines, THEN the project's own house rules —
@@ -301,17 +399,19 @@ def build_context(
     # the last word. A profile waives/replaces the operator tier by name exactly as it does the
     # framework's, so its filenames join the known set the unknown-name warning checks against.
     guidelines = _org_defaults(profile, repo_path,
-                               {p.name for p in operator.guideline_docs})
+                               {p.name for p in operator.guideline_docs}, trace)
     guidelines += _resolve_tier(operator.guideline_docs, profile, repo_path,
-                                source="operator's own")
+                                source="operator's own", layer=OPERATOR, trace=trace)
     for named_by, g in guideline_paths:
         # CONTAINED (#329): the manifest is the repository's, so what it names is read from it
         doc = _inside(repo_path, g, named_by=named_by)
         if doc is None:
+            _dropped(trace, named_by, g, REFUSED, _why_refused(repo_path, g))
             continue
         if doc.is_file():
-            guidelines.append(doc.read_text()[:_MAX_DOC_CHARS])
+            guidelines.append(_kept(trace, named_by, g, doc.read_text()[:_MAX_DOC_CHARS]))
         else:
+            _dropped(trace, named_by, g, MISSING)
             # Same rule as the two globs above, which had the warning while this list dropped
             # entries in silence (v2 verification pass, 2026-08-10): a guideline the manifest
             # NAMES and the checkout lacks degrades the agent quietly — a rule the team wrote
@@ -330,6 +430,7 @@ def build_context(
             "docs.architecture %r matched no .md files — the agent gets no architecture "
             "index; check the path/glob.", manifest.docs.architecture
         )
+        _dropped(trace, "docs.architecture", manifest.docs.architecture, MISSING)
     # The operator's `reference/` documents feed the SAME index, on the same terms (#318): a long
     # central standard is INDEXED (title + summary) and read on demand, never inlined on every job.
     #
@@ -354,6 +455,8 @@ def build_context(
                 "indexed — the agent is told about no document it cannot open. A container box "
                 "needs that directory mounted; see `guidelines` in the box knobs.",
                 operator_guidelines.ENV_VAR, len(operator.reference_docs), operator.dir)
+            _dropped(trace, OPERATOR, f"{operator_guidelines.REFERENCE_SUBDIR}/", UNREACHABLE,
+                     str(len(operator.reference_docs)))
 
     # Knowledge Layer, Phase 1 (opt-in via manifest.knowledge_map). Fail-safe: a missing,
     # stale, or orphaned bundle yields "" and the agent just searches the code as before —

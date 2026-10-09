@@ -745,8 +745,8 @@ _ONLY_THE_REQUESTER_CONFIRMS = {
            "yours."),
 }
 _ACCEPTANCE_STAMPED = {
-    "pt-BR": "O aceite ficou registrado em {cards}, em seu nome.",
-    "en": "The acceptance is recorded on {cards}, in your name.",
+    "pt-BR": "O aceite ficou registrado {cards}, em seu nome.",
+    "en": "The acceptance is recorded {cards}, in your name.",
 }
 _ACCEPTANCE_NOT_STAMPED = {
     "pt-BR": ("O acordo vale. Só não consegui registrá-lo no cartão agora — o time foi avisado e "
@@ -756,11 +756,16 @@ _ACCEPTANCE_NOT_STAMPED = {
 }
 _CARDS_WORD = {"pt-BR": ("o cartão {one}", "os cartões {many}"),
                "en": ("card {one}", "cards {many}")}
+#: The same cards after "em", as two entries and never "em" + `_CARDS_WORD`: Portuguese contracts
+#: the preposition with the article ("no cartão", "nos cartões"), and composed it read "registrado
+#: em o cartão #12" (#538, the rule `_AGENDA_WHO` states).
+_ON_CARDS = {"pt-BR": ("no cartão {one}", "nos cartões {many}"),
+             "en": ("on card {one}", "on cards {many}")}
 _AND = {"pt-BR": " e ", "en": " and "}
 
 
-def _named_cards(cards: list[str], language: str | None) -> str:
-    one, many = _pick(_CARDS_WORD, language)
+def _named_cards(cards: list[str], language: str | None, words=None) -> str:
+    one, many = _pick(words or _CARDS_WORD, language)
     refs = [ref_label(c) for c in cards]
     if len(refs) == 1:
         return one.format(one=refs[0])
@@ -790,7 +795,7 @@ def acceptance_stamp(*, number: int, actor: str, day: str, where: str, requester
     if bare_requester and bare_requester != bare_actor:
         behalf = _pick(_ON_BEHALF, language).format(requester=bare_requester)
     return _pick(_ACCEPTANCE_STAMP, language).format(
-        sig=signature(agent_name), actor=bare_actor, day=day,
+        sig=signature(agent_name, language=language), actor=bare_actor, day=day,
         where=where or "", behalf=behalf, number=number).replace(" ,", ",").replace("  ", " ")
 
 
@@ -804,7 +809,8 @@ def only_the_requester_confirms(*, language: str | None = None) -> str:
 
 
 def acceptance_stamped(*, cards: list[str], language: str | None = None) -> str:
-    return _pick(_ACCEPTANCE_STAMPED, language).format(cards=_named_cards(cards, language))
+    return _pick(_ACCEPTANCE_STAMPED, language).format(
+        cards=_named_cards(cards, language, _ON_CARDS))
 
 
 def acceptance_not_stamped(*, language: str | None = None) -> str:
@@ -1641,13 +1647,27 @@ def question_for(kind: str, language: str | None = None) -> str:
         language)
 
 
-def signature(agent_name: str = "") -> str:
+#: How the agent signs what it writes on a ticket — the role's name is prose, in the language of
+#: the card it heads (#538). It was "(produto)" on every project, so an English project's card read
+#: an English note under a Portuguese signature once the notes themselves were translated.
+_SIGNATURE = {
+    "pt-BR": {"named": "**{name} (produto):**", "role": "**Produto:**"},
+    "en": {"named": "**{name} (product):**", "role": "**Product:**"},
+}
+
+
+def signature(agent_name: str = "", *, language: str | None = None) -> str:
     """How the agent signs what it writes on a ticket.
 
     Names the ROLE as well as the person: the team reads these, and "Nina" alone tells a new joiner
-    nothing about why the comment exists."""
+    nothing about why the comment exists.
+
+    `language` IS THE CARD'S, which is the project's: every caller writes on a card and hands its
+    own (`tests/test_the_card_notes_speak_the_projects_language.py` holds each one to it). It
+    defaults like every entry here, to English, rather than to the Portuguese it used to be."""
     name = (agent_name or "").strip()
-    return f"**{name} (produto):**" if name else "**Produto:**"
+    said = _pick(_SIGNATURE, language)
+    return said["named"].format(name=name) if name else said["role"]
 
 
 #: How each triage finding reads to someone who does not run the board. The kinds are the platform's
@@ -1881,6 +1901,27 @@ _QUEUED = {
     "pt-BR": "Coloquei na fila, nesta ordem: {items}. A fábrica começa pelo primeiro.",
     "en": "Queued, in this order: {items}. The factory starts with the first.",
 }
+#: A queue whose order did not reach the board (#512), by why. "A fábrica começa pelo primeiro"
+#: is true only where `promote` ranked every card it names (`WriteResult.ranked`): the poller pulls
+#: in board order, and before #512 nothing wrote that order — so the sentence above promised it on
+#: every board. A board that keeps no order this platform can write says so here and only here;
+#: one that ranks and refused a card's place says the order did not land, and the team was told
+#: (the module's watched board reports the refused write).
+_QUEUED_OUT_OF_ORDER = {
+    "unrankable": {
+        "pt-BR": ("Coloquei na fila: {items}. Este quadro não aceita uma ordem gravada daqui, "
+                  "então a fábrica os pega na ordem do próprio quadro."),
+        "en": ("Queued: {items}. This board does not take an order from here, so the factory "
+               "takes them in the board's own order."),
+    },
+    "not_kept": {
+        "pt-BR": ("Coloquei na fila: {items}, mas não consegui gravar essa ordem no quadro — a "
+                  "fábrica os pega na ordem do próprio quadro. O time foi avisado e resolve."),
+        "en": ("Queued: {items}, but I could not write that order on the board — the factory "
+               "takes them in the board's own order. The team has been told and will sort it "
+               "out."),
+    },
+}
 #: Why a card `promote` or `reorder` was asked to move did not (#497). They were Portuguese literals
 #: in the module, so an English conversation read "1 did not go in: o quadro recusou a
 #: movimentação" — and the two that name the card wrote `#{number}`, which on Jira is `#CONT-412`,
@@ -1911,6 +1952,355 @@ def board_move_said(reason: str, *, ref: object = "", language: str | None = Non
     """What `promote` and `reorder` answer for a card that did not move, in the conversation's
     language and naming the card as its tracker does (#497)."""
     return _pick(_BOARD_MOVE_SAID[reason], language).format(ref=ref_label(ref))
+
+
+# ── what the product role's own writes answer (#513) ────────────────────────────────────────────
+#
+# EVERY DETAIL A WRITE ANSWERS, IN THE CONVERSATION'S LANGUAGE. #497 moved `promote`'s and
+# `reorder`'s here; the rest of `ProductModule` and the release still wrote theirs as Portuguese
+# literals, written when every ref was a number — so an English conversation read "não encontrei o
+# cartão", and a Jira one read `#CONT-412`. A detail is what the person reads in the chat, after the
+# sanitiser (`client_safe_detail`): each table below names the card by `ref_label`, as
+# `board_move_said` does, and the module composes none of its own.
+
+#: The card acts — `refine`, `close_card`, the removal, `align_card` and the re-pointing of an
+#: orphan. The board that cannot be read is said with ONE voice by every act that has to find its
+#: card first, and so is the card that is not on it (`correction_refused` says the same).
+_CARD_SAID = {
+    "board_unreadable": {
+        "pt-BR": ("não consegui abrir o quadro agora para ler esse cartão, então não mexi nele. "
+                  "O time foi avisado."),
+        "en": ("I could not open the board just now to read that card, so I left it alone. The "
+               "team has been told.")},
+    "not_found": {"pt-BR": "não encontrei o cartão {number} no quadro",
+                  "en": "I could not find card {number} on the board"},
+    "already_closed": {"pt-BR": "o {number} já estava fechado — não mexi nele",
+                       "en": "{number} was already closed — I left it alone"},
+    "survivor_missing": {
+        "pt-BR": ("não encontrei o {other} no quadro, então não fechei o {number}: mandar quem ler "
+                  "procurar um cartão que não existe é pior do que deixar os dois abertos."),
+        "en": ("I could not find {other} on the board, so I did not close {number}: sending "
+               "whoever reads it to look for a card that does not exist is worse than leaving both "
+               "open.")},
+    "survivor_closed": {
+        "pt-BR": ("o {other} também já está fechado, então não fechei o {number}: os dois fechados "
+                  "quer dizer que ninguém está olhando esse trabalho. Me digam qual cartão fica "
+                  "com ele."),
+        "en": ("{other} is already closed too, so I did not close {number}: with both closed, "
+               "nobody is looking after that work. Tell me which card keeps it.")},
+    "close_failed": {
+        "pt-BR": "não consegui fechar o {number} agora. Nada mudou — o time foi avisado e resolve.",
+        "en": ("I could not close {number} just now. Nothing changed — the team has been told and "
+               "will sort it out.")},
+    "close_unlinked": {
+        "pt-BR": ("fechei o {number}, mas não consegui deixar o registro disso no {other}. O time "
+                  "foi avisado."),
+        "en": ("I closed {number}, but could not leave a note of it on {other}. The team has been "
+               "told.")},
+    "remove_failed": {
+        "pt-BR": ("não consegui remover o {number} agora. Nada mudou — o time foi avisado e "
+                  "resolve."),
+        "en": ("I could not remove {number} just now. Nothing changed — the team has been told "
+               "and will sort it out.")},
+    "has_criteria": {"pt-BR": "esse já diz quando estaria pronto — não mexi",
+                     "en": "that one already says when it would be done — I left it alone"},
+    "no_criteria": {"pt-BR": "não consegui escrever critérios que se sustentassem",
+                    "en": "I could not write criteria that would hold up"},
+    "refine_failed": {
+        "pt-BR": ("não consegui escrever os critérios no {number} agora. Nada mudou no cartão — o "
+                  "time foi avisado e resolve."),
+        "en": ("I could not write the criteria on {number} just now. Nothing changed on the card "
+               "— the team has been told and will sort it out.")},
+    "refine_unnoted": {
+        "pt-BR": ("escrevi os critérios no {number}, mas não consegui deixar o comentário dizendo "
+                  "que fui eu — isso está escrito no próprio item. O time foi avisado."),
+        "en": ("I wrote the criteria on {number}, but could not leave the comment saying it was "
+               "me — that is written on the item itself. The team has been told.")},
+    "no_criteria_from": {
+        "pt-BR": ("não consegui escrever critérios que se sustentassem a partir do requisito "
+                  "{requirement} — não mexi no cartão"),
+        "en": ("I could not write criteria that would hold up from requirement {requirement} — I "
+               "left the card alone")},
+    "align_failed": {
+        "pt-BR": "não consegui reescrever o {number} agora. O time foi avisado e resolve.",
+        "en": ("I could not rewrite {number} just now. The team has been told and will sort it "
+               "out.")},
+    "align_unnoted": {
+        "pt-BR": ("alinhei o {number}, mas não consegui deixar escrito nele que o texto anterior "
+                  "foi substituído. O time foi avisado."),
+        "en": ("I aligned {number}, but could not write on it that the previous text was "
+               "replaced. The team has been told.")},
+    "repointed": {"pt-BR": "passou a executar o requisito {requirement}",
+                  "en": "now carries out requirement {requirement}"},
+    "repoint_failed": {
+        "pt-BR": ("não consegui atualizar o {number} — ele continua apontando para o texto antigo, "
+                  "e o time foi avisado."),
+        "en": ("I could not update {number} — it still points to the old text, and the team has "
+               "been told.")},
+}
+
+
+def card_said(reason: str, *, number: object = "", other: object = "",
+              requirement: object = "", language: str | None = None) -> str:
+    """What a card act answers for itself (#513), the cards named as their tracker names them."""
+    return _pick(_CARD_SAID[reason], language).format(
+        number=ref_label(number), other=ref_label(other), requirement=requirement)
+
+
+#: What a write that wrote criteria COUNTED — the measure `confirm._A_MEASURE` tells from a residue
+#: (a count and the thing counted, nothing else) and `criteria_written` shows beside the act. It was
+#: "3 critérios" in every language, and "1 critérios" for one.
+_CRITERIA_COUNTED = {
+    "pt-BR": {"one": "{n} critério", "many": "{n} critérios"},
+    "en": {"one": "{n} criterion", "many": "{n} criteria"},
+}
+
+
+def criteria_counted(n: int, *, language: str | None = None) -> str:
+    return _pick(_CRITERIA_COUNTED, language)["one" if n == 1 else "many"].format(n=n)
+
+
+#: The writes into the product's record — a requirement proposed, agreed, dropped or decided on, a
+#: fact or an answer noted, a capability confirmed, a conversation's summary, a document, the survey
+#: of the code. None names a card.
+_RECORD_SAID = {
+    "undrafted": {
+        "pt-BR": ("não consegui transformar isso num texto de requisito que se sustentasse, então "
+                  "não registrei nada. Me diga de outro jeito e eu tento de novo."),
+        "en": ("I could not turn that into a requirement text that would hold up, so I recorded "
+               "nothing. Say it another way and I'll try again.")},
+    "propose_failed": {
+        "pt-BR": ("não consegui registrar esse requisito agora. Nada foi escrito — o time foi "
+                  "avisado e resolve."),
+        "en": ("I could not record that requirement just now. Nothing was written — the team has "
+               "been told and will sort it out.")},
+    "already_agreed": {"pt-BR": "esse já estava acordado", "en": "that one was already agreed"},
+    "accept_failed": {
+        "pt-BR": ("não consegui registrar o acordo do requisito {number} agora. Nada mudou — o "
+                  "time foi avisado e resolve."),
+        "en": ("I could not record the agreement on requirement {number} just now. Nothing "
+               "changed — the team has been told and will sort it out.")},
+    "drop_failed": {
+        "pt-BR": ("não consegui registrar o abandono do requisito {number} agora. Nada mudou — o "
+                  "time foi avisado e resolve."),
+        "en": ("I could not record that requirement {number} is dropped just now. Nothing "
+               "changed — the team has been told and will sort it out.")},
+    "not_a_capability": {"pt-BR": "esse nome não é o de uma capacidade",
+                         "en": "that name is not the name of a capability"},
+    "capability_not_found": {
+        "pt-BR": "não encontrei essa capacidade entre as observadas nem entre as escritas",
+        "en": "I could not find that capability among the observed ones or the written ones"},
+    "capability_failed": {
+        "pt-BR": ("não consegui registrar a confirmação da capacidade {term} agora. Nada mudou — "
+                  "o time foi avisado e resolve."),
+        "en": ("I could not record the confirmation of capability {term} just now. Nothing "
+               "changed — the team has been told and will sort it out.")},
+    # what `capabilities.confirm_in_repository` finds in the file it would write (#538)
+    "capability_is_a_link": {
+        "pt-BR": "o arquivo dessa capacidade é um link — não escrevo através dele",
+        "en": "that capability's file is a link — I do not write through it"},
+    "capability_unreadable": {"pt-BR": "não consegui ler o arquivo dessa capacidade",
+                              "en": "I could not read that capability's file"},
+    "capability_already_confirmed": {"pt-BR": "essa capacidade já estava confirmada",
+                                     "en": "that capability was already confirmed"},
+    "capability_retired": {
+        "pt-BR": ("essa capacidade foi aposentada — confirmar de novo é uma decisão a registrar "
+                  "por escrito, não um sim"),
+        "en": ("that capability was retired — confirming it again is a decision to record in "
+               "writing, not a yes")},
+    "decision_on_retired": {
+        "pt-BR": ("o requisito {number} já não vale, então registrar uma decisão nele guardaria "
+                  "isso onde ninguém vai procurar. Me diga em qual requisito isso deve entrar."),
+        "en": ("requirement {number} no longer stands, so recording a decision on it would keep "
+               "it where nobody will look. Tell me which requirement it belongs in.")},
+    "decision_just_recorded": {"pt-BR": "essa decisão acabou de ser registrada",
+                               "en": "that decision was just recorded"},
+    "decision_failed": {
+        "pt-BR": ("não consegui registrar essa decisão no requisito {number} agora. Nada mudou — o "
+                  "time foi avisado e resolve."),
+        "en": ("I could not record that decision on requirement {number} just now. Nothing "
+               "changed — the team has been told and will sort it out.")},
+    "fact_known": {"pt-BR": "já tenho isto anotado sobre {term!r}: {body}",
+                   "en": "I already have this noted about {term!r}: {body}"},
+    "answer_just_noted": {"pt-BR": "isto acabou de ser anotado sobre {term!r}",
+                          "en": "this was just noted about {term!r}"},
+    "answer_failed": {
+        "pt-BR": ("não consegui registrar a resposta sobre {term!r} agora. Nada foi escrito — o "
+                  "time foi avisado e resolve."),
+        "en": ("I could not record the answer about {term!r} just now. Nothing was written — the "
+               "team has been told and will sort it out.")},
+    "fact_failed": {
+        "pt-BR": ("não consegui anotar o que você me disse sobre {term!r} agora. Nada foi escrito "
+                  "— o time foi avisado e resolve."),
+        "en": ("I could not note what you told me about {term!r} just now. Nothing was written — "
+               "the team has been told and will sort it out.")},
+    "distillate_failed": {"pt-BR": "não consegui guardar o resumo da conversa agora.",
+                          "en": "I could not keep the summary of the conversation just now."},
+    "document_failed": {"pt-BR": "não consegui guardar esse documento agora — nada foi escrito.",
+                        "en": "I could not file that document just now — nothing was written."},
+    "no_code_copy": {"pt-BR": "não consegui obter uma cópia do código para ler",
+                     "en": "I could not get a copy of the code to read"},
+    "unsurveyed": {
+        "pt-BR": ("li o produto e não consegui escrever um levantamento que se sustentasse, então "
+                  "não registrei nada."),
+        "en": ("I read the product and could not write a survey that would hold up, so I "
+               "recorded nothing.")},
+    "survey_failed": {
+        "pt-BR": ("não consegui escrever o levantamento agora. Nada foi registrado — o time foi "
+                  "avisado e resolve."),
+        "en": ("I could not write the survey just now. Nothing was recorded — the team has been "
+               "told and will sort it out.")},
+}
+
+
+def record_said(reason: str, *, number: object = "", term: str = "", body: str = "",
+                language: str | None = None) -> str:
+    """What a write into the product's record answers for itself (#513)."""
+    return _pick(_RECORD_SAID[reason], language).format(number=number, term=term, body=body)
+
+
+#: A requirement broken into cards, and the cards that came of it — the filing, the vetting, where
+#: a card was filed, and the acceptance stamped on it. `{ref}` is a card, named by `ref_label`.
+_BREAKDOWN_SAID = {
+    "unbroken": {
+        "pt-BR": ("não consegui quebrar esse requisito em frentes de trabalho que se "
+                  "sustentassem, então não registrei nada."),
+        "en": ("I could not break that requirement into pieces of work that would hold up, so I "
+               "recorded nothing.")},
+    "out_of_time": {
+        "pt-BR": ("não deu tempo de revisar e abrir a frente “{title}” nesta rodada — nada dela "
+                  "foi escrito; peça a quebra de novo para abrir as que faltam."),
+        "en": ("there was no time this round to review and open “{title}” — nothing of it was "
+               "written; ask for the breakdown again to open the ones still missing.")},
+    "already_carried": {
+        "pt-BR": ("essa frente já está no {ref} — apontei o requisito para lá em vez de abrir um "
+                  "cartão novo"),
+        "en": ("that piece of work is already in {ref} — I pointed the requirement there instead "
+               "of opening a new card")},
+    "not_vetted": {
+        "pt-BR": ("a frente “{title}” não passou na revisão automática, então não abri esse "
+                  "cartão — as outras seguiram. O que falta: {why}"),
+        "en": ("“{title}” did not pass the automatic review, so I did not open that card — the "
+               "others went ahead. What is missing: {why}")},
+    "title_exists": {"pt-BR": "já existe um cartão com esse título",
+                     "en": "a card with that title already exists"},
+    "file_failed": {
+        "pt-BR": ("não consegui registrar “{title}” agora. O time foi avisado e resolve — as "
+                  "outras frentes seguiram."),
+        "en": ("I could not record “{title}” just now. The team has been told and will sort it "
+               "out — the others went ahead.")},
+    "unplaced": {
+        "pt-BR": ("criado, mas o quadro recusou a colocação — o cartão está sem coluna e o time "
+                  "foi avisado."),
+        "en": ("created, but the board refused to place it — the card has no column and the team "
+               "has been told.")},
+    "unplaced_no_ref": {
+        "pt-BR": ("criado, mas o quadro não aceitou a colocação — o cartão está sem coluna e o "
+                  "time foi avisado."),
+        "en": ("created, but the board did not take the placement — the card has no column and "
+               "the team has been told.")},
+    # NO "REPOSITORY" IN THE ENGLISH: it is delivery vocabulary the sanitiser hides, and this is
+    # said under a card that WAS filed — swapped for "I couldn't record that", it would be a lie
+    "outside_sources": {
+        "pt-BR": ("o cartão foi aberto em {default}: `{target}` não está entre os repositórios "
+                  "deste produto."),
+        "en": ("the card was opened in {default}: `{target}` is not one of the places this "
+               "product's code lives.")},
+    "one_place": {
+        "pt-BR": ("o cartão foi aberto em {default}: este quadro registra todo cartão num lugar "
+                  "só, e ele é de `{home}`."),
+        "en": ("the card was opened in {default}: this board keeps every card in one place, and "
+               "this one belongs to `{home}`.")},
+    "the_default": {"pt-BR": "o repositório padrão", "en": "the usual place"},
+    "retired": {
+        "pt-BR": "o requisito {number} já não vale — não abri nenhum cartão para ele",
+        "en": "requirement {number} no longer stands — I did not open any card for it"},
+    "unstamped": {"pt-BR": "não consegui registrar o aceite no {ref}",
+                  "en": "I could not record the agreement on {ref}"},
+}
+
+
+def breakdown_said(reason: str, *, ref: object = "", title: str = "", why: str = "",
+                   number: object = "", default: str = "", target: str = "", home: str = "",
+                   language: str | None = None) -> str:
+    """What filing a requirement's cards answers for itself (#513). `default` is the repository a
+    card was filed in, said in backticks — or, when the product names none, in words."""
+    where = f"`{default}`" if default else _pick(_BREAKDOWN_SAID["the_default"], language)
+    return _pick(_BREAKDOWN_SAID[reason], language).format(
+        ref=ref_label(ref), title=title, why=why, number=number, default=where, target=target,
+        home=home)
+
+
+#: What `propose_queue` answers for itself: a proposal the role could not put together, and the
+#: cards a batch boundary left for the next round — NAMED, never a silent truncation.
+_QUEUE_SAID = {
+    "unproposed": {"pt-BR": "não consegui montar a proposta",
+                   "en": "I could not put the proposal together"},
+    "left_for_later": {
+        "pt-BR": "Deixei para a próxima rodada o que não cabia inteiro agora: {cards}.",
+        "en": "I left for the next round what did not fit whole this time: {cards}."},
+}
+
+
+def queue_said(reason: str, *, cards: list | tuple = (), language: str | None = None) -> str:
+    return _pick(_QUEUE_SAID[reason], language).format(
+        cards=", ".join(ref_label(c) for c in cards))
+
+
+#: Why the factory may not be aimed at this text — ONE sentence for the acts that aim it
+#: (`break_down`, `align_card`, and the alignment's own refusal in the engine). Three answers, and
+#: the difference is what the person can do next: a retired text has a replacement to ask about, a
+#: proposal needs a yes, and a reading of the code was never a promise at all.
+_NOT_A_PROMISE = {
+    "retired": {
+        "pt-BR": ("o requisito {number} já não vale, então mandar construir a partir dele seria "
+                  "pedir um texto aposentado. Me diga qual requisito vale hoje e eu sigo com "
+                  "esse."),
+        "en": ("requirement {number} no longer stands, so building from it would mean asking for "
+               "a retired text. Tell me which requirement stands today and I'll go with that "
+               "one.")},
+    "observed": {
+        "pt-BR": ("o {number} é o que eu li que o sistema já faz hoje, não algo que vocês pediram "
+                  "— construir a partir dele seria transformar o comportamento actual em "
+                  "promessa, defeitos inclusive. Se é isso que tem de valer, me digam e eu "
+                  "registro primeiro."),
+        "en": ("requirement {number} is what I read the system already does today, not something "
+               "you asked for — building from it would turn the current behaviour into a "
+               "promise, defects included. If that is what has to stand, tell me and I'll record "
+               "it first.")},
+    "proposed": {
+        "pt-BR": ("o requisito {number} ainda não foi acordado, então não dá para virar trabalho: "
+                  "enquanto ele for só uma proposta, construir a partir dele seria decidir por "
+                  "vocês. Me confirmem esse requisito e eu sigo."),
+        "en": ("requirement {number} has not been agreed yet, so it cannot become work: while it "
+               "is only a proposal, building from it would be deciding for you. Confirm that "
+               "requirement and I'll carry on.")},
+}
+
+
+def not_a_promise(reason: str, *, number: object, language: str | None = None) -> str:
+    return _pick(_NOT_A_PROMISE[reason], language).format(number=number)
+
+
+#: What the client's release answers when it did not go out (`product/release.py`, ADR-0025). The
+#: first names the card, which was `#{…}` on every tracker.
+_RELEASE_SAID = {
+    "not_waiting": {
+        "pt-BR": ("o {ref} não está mais esperando essa liberação — ou já subiu, ou a janela de "
+                  "espera fechou. Não mexi em nada; me diga e eu verifico em que pé está."),
+        "en": ("{ref} is no longer waiting for this release — either it already went out, or the "
+               "time to approve it ran out. I did not touch anything; tell me and I'll check where "
+               "it stands.")},
+    "failed": {
+        "pt-BR": ("não consegui levar a sua liberação até a esteira agora. **Nada subiu** — o "
+                  "time já foi avisado e eu volto a você assim que resolver."),
+        "en": ("I could not get your release through just now. **Nothing was released** — the "
+               "team has been told, and I'll come back to you as soon as it is sorted.")},
+}
+
+
+def release_said(reason: str, *, ref: object = "", language: str | None = None) -> str:
+    return _pick(_RELEASE_SAID[reason], language).format(ref=ref_label(ref))
 
 
 #: The header over a group that only means something whole. Written as WHAT THE CLIENT WILL BE ABLE
@@ -1968,16 +2358,21 @@ def queue_proposal(readiness, proposal, *, titles: dict[str, str] | None = None,
     return "\n".join(lines)
 
 
-def queued(numbers: list[str], *, language: str | None = None, agent_name: str = "") -> str:
+def queued(numbers: list[str], *, language: str | None = None, agent_name: str = "",
+           ranked: str = "kept") -> str:
     """The cards a confirmed queue moved, named AS THE TRACKER SPELLS THEM (#491).
 
     `ref_label`, never `f"#{n}"`: `#12` on GitHub, as it always read, and `CONT-412` on Jira —
-    not `#CONT-412`, which nobody there writes and nobody can paste back."""
+    not `#CONT-412`, which nobody there writes and nobody can paste back.
+
+    `ranked` IS WHETHER THE ORDER REACHED THE BOARD (#512, `WriteResult.ranked`): `kept` says the
+    factory starts with the first; `unrankable` and `not_kept` say it takes them in the board's
+    own order, and why."""
     from openfactory.contracts.refs import ref_label
 
     sig = f"{agent_name.strip()}: " if agent_name.strip() else ""
-    return sig + _pick(_QUEUED, language).format(
-        items=", ".join(ref_label(n) for n in numbers))
+    said = _QUEUED_OUT_OF_ORDER.get(ranked, _QUEUED)
+    return sig + _pick(said, language).format(items=", ".join(ref_label(n) for n in numbers))
 
 
 _SITUATION = {
@@ -2011,7 +2406,12 @@ _SITUATION = {
 _TREND_WORD = {"pt-BR": ("cresceu", "diminuiu"), "en": ("grew", "shrank")}
 
 
-def _listed(numbers: list[str], *, limit: int = 6) -> str:
+#: The tail of a list cut short — "#3, #5 e mais 4" — in the conversation's language (#513): it was
+#: a hard-coded "e mais", so an English situation ended "#3, #5 e mais 4".
+_LISTED_MORE = {"pt-BR": "{shown} e mais {rest}", "en": "{shown} and {rest} more"}
+
+
+def _listed(numbers: list[str], *, limit: int = 6, language: str | None = None) -> str:
     """Ticket numbers a reader can actually go and look at.
 
     A count is a fact nobody can act on: "another 11 do not say when they would be done" leaves a
@@ -2019,7 +2419,9 @@ def _listed(numbers: list[str], *, limit: int = 6) -> str:
     and turns a statistic into a task."""
     shown = ", ".join(ref_label(n) for n in numbers[:limit])
     rest = len(numbers) - limit
-    return f"{shown} e mais {rest}" if rest > 0 else shown
+    if rest <= 0:
+        return shown
+    return _pick(_LISTED_MORE, language).format(shown=shown, rest=rest)
 
 
 #: What the CLIENT hears about the state of their own requirements. The operator's version
@@ -2081,7 +2483,8 @@ def situation(readiness, *, requirements: int = 0, previous_backlog: int | None 
         out = w["idle_ready"].format(ready=len(readiness.ready))
     elif readiness.blocked_by_refinement:
         out = w["idle_blocked"].format(backlog=backlog,
-                                       items=_listed(readiness.needs_refinement))
+                                       items=_listed(readiness.needs_refinement,
+                                                     language=language))
     elif readiness.idle:
         out = w["quiet"]
     else:
@@ -2089,7 +2492,7 @@ def situation(readiness, *, requirements: int = 0, previous_backlog: int | None 
 
     if readiness.needs_refinement and not readiness.blocked_by_refinement:
         out += w["refine"].format(n=len(readiness.needs_refinement),
-                                  items=_listed(readiness.needs_refinement))
+                                  items=_listed(readiness.needs_refinement, language=language))
     if previous_backlog is not None and previous_backlog != backlog:
         grew, shrank = _TREND_WORD.get(lang, _TREND_WORD["en"])
         delta = backlog - previous_backlog
@@ -2585,7 +2988,7 @@ _CLOSE_CONFIRM_DUPLICATE = {
            "changes, and nothing starts because of this — starting is still your call."
            "\n\nConfirm?"),
 }
-#: WHAT THE CLOSING NOTE ACTUALLY HOLDS. `_closing_note` writes who asked, and the reason only when
+#: WHAT THE CLOSING NOTE ACTUALLY HOLDS. `closing_note` writes who asked, and the reason only when
 #: somebody gave one — so the sentence that claimed "quem decidiu **e por quê**" over a note reading
 #: "fechado a pedido de <@U…>." was promising the client a record that did not exist. Whoever opened
 #: the card in six months found half of what they had been told was there.
@@ -2671,6 +3074,73 @@ def survivor_unclear(*, number: str, other: str, language: str | None = None) ->
     """Which card the work moved to, asked rather than guessed."""
     return _pick(_SURVIVOR_UNCLEAR, language).format(number=ref_label(number),
                                                      other=ref_label(other))
+
+
+# ── what the role leaves written ON a card (#538) ───────────────────────────────────────────────
+#
+# A CARD BELONGS TO THE PROJECT, NOT TO A CONVERSATION. These are not said in the chat: they stay
+# on the card's own thread, where somebody reads them months later with no idea which conversation
+# asked — so they follow the PROJECT's language (`Project.language`), as `_CORRECTION_NOTE` and
+# `_CHANGE_ACCEPTED_NOTE` do. Until #538 the five of them were composed in `module.py` in
+# Portuguese, #513 having fixed only their `#`: an English project's card said "fechado a pedido
+# de …" about its own closing. `{sig}` is `signature`, `{ref}` a card named by `ref_label`.
+
+#: Who asked, AFTER "a pedido" — the preposition is the entry's, never the template's, because
+#: Portuguese contracts it with the article of what follows (the rule `_AGENDA_WHO` states): a
+#: person is "de U0ADMIN", and nobody named is the team, "do time". Composed as "de {who}" it read
+#: "a pedido de o time" on every close a caller made without an actor.
+_REQUESTED_BY = {
+    "pt-BR": {"person": "de {actor}", "nobody": "do time"},
+    "en": {"person": "of {actor}", "nobody": "of the team"},
+}
+
+
+def _requested_by(actor: str, language: str | None) -> str:
+    said = _pick(_REQUESTED_BY, language)
+    return said["person"].format(actor=actor) if actor else said["nobody"]
+
+
+#: What the closed card is left saying. Written for whoever opens it in six months and asks why the
+#: work disappeared — so it names the decision, the person, and, when it moved, where it went.
+_CLOSING_NOTE = {
+    "pt-BR": "{sig} Fechado a pedido {by}.",
+    "en": "{sig} Closed at the request {by}.",
+}
+_CLOSING_NOTE_IN_FAVOUR = {
+    "pt-BR": ("{sig} Fechado a pedido {by}, em favor do {ref}: o trabalho passa a ser "
+              "acompanhado lá."),
+    "en": ("{sig} Closed at the request {by}, in favour of {ref}: the work is followed there "
+           "now."),
+}
+#: The other half of the link. Without it the surviving card never learns it absorbed something,
+#: and whoever picks it up works from half the conversation.
+_SURVIVOR_NOTE = {
+    "pt-BR": ("{sig} O {ref} foi fechado em favor deste, a pedido {by}. Se havia algo escrito "
+              "lá que não está aqui, vale trazer antes de começar."),
+    "en": ("{sig} {ref} was closed in favour of this one, at the request {by}. If something "
+           "was written there that is not here, bring it over before starting."),
+}
+
+
+def closing_note(*, in_favour_of: str | None, actor: str, reason: str = "",
+                 language: str | None = None, agent_name: str = "") -> str:
+    """What the closed card is left saying: who asked, where the work went when it moved, and the
+    reason in the words it was given — never translated, because it is somebody's."""
+    catalogue = _CLOSING_NOTE_IN_FAVOUR if in_favour_of else _CLOSING_NOTE
+    note = _pick(catalogue, language).format(sig=signature(agent_name, language=language),
+                                             by=_requested_by(actor, language),
+                                             ref=ref_label(in_favour_of))
+    if reason:
+        note += f"\n\n{reason.strip()}"
+    return note
+
+
+def survivor_note(*, closed: str, actor: str, language: str | None = None,
+                  agent_name: str = "") -> str:
+    """What the surviving card is told about the card closed in its favour (`closed`, a ref)."""
+    return _pick(_SURVIVOR_NOTE, language).format(sig=signature(agent_name, language=language),
+                                                  ref=ref_label(closed),
+                                                  by=_requested_by(actor, language))
 
 
 # ── correcting a card this role opened (#156) ───────────────────────────────────────────────────
@@ -2847,7 +3317,8 @@ def correction_note(*, kind: str, actor: str, old_text: str = "", old_title: str
              + ([words["bar"]] if bar_changed else []))
     before = _pick(_CORRECTION_BEFORE, language)
     note = _pick(_CORRECTION_NOTE, language).format(
-        sig=signature(agent_name), what=words["and"].join(parts), actor=actor)
+        sig=signature(agent_name, language=language), what=words["and"].join(parts),
+        actor=actor)
     if bar_changed and with_a_pass:
         note += before["with_a_pass"]
     if title_changed and old_title.strip():
@@ -3245,7 +3716,7 @@ def change_accepted_note(*, by: str, head: str, pr_url: str, merging: bool = Fal
     """What the card says once its requester accepted the change: who, on which head of which
     change — and that the factory merges it, when the look was all that held it."""
     return _pick(_CHANGE_ACCEPTED_NOTE, language).format(
-        sig=signature(agent_name), by=by, head=f"`{head[:7]}`", pr=pr_url,
+        sig=signature(agent_name, language=language), by=by, head=f"`{head[:7]}`", pr=pr_url,
         merging=_pick(_CHANGE_ACCEPTED_MERGING, language) if merging else "")
 
 
@@ -3419,6 +3890,59 @@ def align_to_dropped_replacement(*, number: str, requirement: int, successor: in
         number=ref_label(number), requirement=requirement, successor=successor)
 
 
+#: The note an alignment leaves on the card (#538): what it now carries out, that its criteria were
+#: rewritten from that text, and — under `_COULD_NOT_DETERMINE` — what this pass could not answer,
+#: kept in the comment where nothing orders an executor to meet it.
+_ALIGN_NOTE = {
+    "pt-BR": ("{sig} Este cartão passou a executar o requisito {requirement}, e reescrevi o que "
+              "precisa ser verdade para dá-lo por pronto a partir dele — o texto que ele seguia "
+              "antes foi substituído. Corrijam se eu entendi errado."),
+    "en": ("{sig} This card now carries out requirement {requirement}, and I rewrote what has to "
+           "be true to call it done from that text — the one it followed before was replaced. "
+           "Correct me if I got it wrong."),
+}
+#: The questions a pass of the model could not answer, under the note of `align` and of `refine`.
+_COULD_NOT_DETERMINE = {
+    "pt-BR": "\n\nO que eu não consegui determinar:\n",
+    "en": "\n\nWhat I could not determine:\n",
+}
+#: The note a re-pointed citation leaves (#538). It says what changed AND what deliberately did
+#: not: whoever picks this card up has to know that what it asks for was written against the older
+#: text, or they will read the new citation and assume somebody checked.
+_REPOINT_NOTE = {
+    "pt-BR": ("{sig} Este cartão passou a executar o requisito {successor}{who}: o requisito "
+              "{cited}, que ele citava, foi substituído por aquele.\n\n**O que está escrito aqui "
+              "como \"pronto\" continua igual, e foi escrito a partir do texto antigo.** Não "
+              "revisei nada disso: rever pode mudar o que vai ser construído, e essa é uma "
+              "decisão de vocês, não uma arrumação minha."),
+    "en": ("{sig} This card now carries out requirement {successor}{who}: requirement {cited}, "
+           "which it cited, was replaced by that one.\n\n**What is written here as \"done\" is "
+           "unchanged, and it was written from the older text.** I revised none of it: revising "
+           "it can change what gets built, and that is your decision, not tidying of mine."),
+}
+_REPOINT_WHO = {"pt-BR": ", a pedido de {actor}", "en": ", at the request of {actor}"}
+
+
+def _undetermined(questions, language: str | None) -> str:
+    return (_pick(_COULD_NOT_DETERMINE, language) + "\n".join(f"- {q}" for q in questions)
+            if questions else "")
+
+
+def align_note(*, requirement: int, questions=(), language: str | None = None,
+               agent_name: str = "") -> str:
+    return (_pick(_ALIGN_NOTE, language).format(sig=signature(agent_name, language=language),
+                                                requirement=requirement)
+            + _undetermined(questions, language))
+
+
+def repoint_note(*, cited: int, successor: int, actor: str = "", language: str | None = None,
+                 agent_name: str = "") -> str:
+    """Re-pointed by the platform, nobody is named; at somebody's request, they are."""
+    who = _pick(_REPOINT_WHO, language).format(actor=actor) if actor else ""
+    return _pick(_REPOINT_NOTE, language).format(sig=signature(agent_name, language=language),
+                                                 successor=successor, who=who, cited=cited)
+
+
 #: What `refine` says when the card already states what must be true. THE REFUSAL IS RIGHT — it
 #: exists to unblock cards with nothing written, and rewriting prose nobody complained about is how
 #: an agent churns a board and teaches people to stop reading its comments.
@@ -3508,6 +4032,26 @@ def criteria_written(*, number: str, measure: str = "", noted: bool = True,
     catalogue = _CRITERIA_WRITTEN if noted else _CRITERIA_WRITTEN_UNEXPLAINED
     return _pick(catalogue, language).format(
         number=ref_label(number), measure=f" ({measure.strip()})" if measure.strip() else "")
+
+
+#: The comment `refine` leaves beside the criteria it wrote (#538): why it wrote them, how many,
+#: from what, and what it could not determine. `{criteria}` is `criteria_counted`, so one is "1
+#: critério" and "1 criterion" rather than the "1 critérios" this said when it was module prose.
+_REFINE_NOTE = {
+    "pt-BR": ("{sig} Este item não dizia quando estaria pronto, então seria recusado na entrada. "
+              "Escrevi {criteria} a partir do que já estava descrito — corrijam se eu entendi "
+              "errado."),
+    "en": ("{sig} This item did not say when it would be done, so pickup would have refused it. "
+           "I wrote {criteria} from what was already described — correct me if I got it wrong."),
+}
+
+
+def refine_note(*, criteria: int, questions=(), language: str | None = None,
+                agent_name: str = "") -> str:
+    return (_pick(_REFINE_NOTE, language).format(
+        sig=signature(agent_name, language=language),
+        criteria=criteria_counted(criteria, language=language))
+        + _undetermined(questions, language))
 
 
 #: What she is still waiting on, said to the person who asked how things are going. Two clauses,
@@ -3810,6 +4354,53 @@ def card_refused(event: str, *, state: str, ref: str, language: str | None = Non
 
 def card_raced(*, ref: str, language: str | None = None) -> str:
     return _pick(_CARD_RACED, language).format(ref=ref_label(ref))
+
+
+#: A CARD IN A COLUMN NO STAGE IS (#521). The door cannot tell where such a card is in its life, and
+#: it refuses rather than guesses — that stays. What the refusal said about it was *"map it in the
+#: project's tracker options"*, in English to every conversation, naming neither the option nor
+#: the stage: and on an Azure board with a stock process it is the FIRST thing a person meets,
+#: because Azure files every new work item into `New`, which no stage is by default, so the first
+#: queueing of the first card was refused that way. The repair is the deployment's one line, and
+#: the sentence now says it — the option the board's own row reads (`board.base.stage_option`:
+#: `columns`, `status_map` on Jira), and the stage a card a person queues waits in. A column that
+#: is some other stage is the person's to name; the backlog is only the example, said as one.
+_CARD_UNMAPPED = {
+    "pt-BR": ("O {ref} está em {column!r}, que não é uma coluna que esta plataforma mapeia, então "
+              "não há como saber em que ponto da vida o cartão está. Nada foi alterado. {repair}"),
+    "en": ("{ref} is in {column!r}, which is not a column this platform maps, so it cannot tell "
+           "where the card is in its life. Nothing was changed. {repair}"),
+}
+#: `{line}` is `board.base.option_line`'s — a STRING of JSON, quoted for YAML, because the
+#: registry's options are strings and the unquoted form is a mapping it refuses.
+_CARD_UNMAPPED_REPAIR = {
+    "pt-BR": ("Mapeie a coluna com a opção `{option}` do tracker do projeto — se é nela que um "
+              "cartão espera para entrar na fila, `{line}` faz dela o backlog — e tente de novo."),
+    "en": ("Map it with the project's tracker option `{option}` — if cards wait there to be "
+           "queued, `{line}` makes it the backlog — and try again."),
+}
+#: A row that declares no option of its own: naming one it does not read would send the person to
+#: edit something that changes nothing (`board.base.stage_option`).
+_CARD_UNMAPPED_SOMEWHERE = {
+    "pt-BR": ("Mapeie a coluna nas opções do tracker do projeto, do jeito que o fornecedor deste "
+              "quadro documenta os nomes das colunas, e tente de novo."),
+    "en": ("Map it in the project's tracker options, the way this board's provider documents its "
+           "column names, and try again."),
+}
+
+
+def card_unmapped(*, ref: str, column: str, option: str = "", language: str | None = None) -> str:
+    """Why nothing can happen to card `ref` while it sits in `column`, a column no stage is — and
+    the one line of configuration that maps it, under the tracker option `option` that THIS
+    board reads (`""` when its row declares none)."""
+    from openfactory.adapters.board.base import option_line
+
+    option = (option or "").strip()
+    repair = (_pick(_CARD_UNMAPPED_REPAIR, language).format(
+        option=option, line=option_line(option, {"backlog": column}))
+        if option else _pick(_CARD_UNMAPPED_SOMEWHERE, language))
+    return _pick(_CARD_UNMAPPED, language).format(ref=ref_label(ref), column=column,
+                                                  repair=repair)
 
 
 #: WHAT THE PRODUCT ROLE OWES, AS ONE LINE ON THE CARD ITSELF (ADR-0055 D11). The person cannot act

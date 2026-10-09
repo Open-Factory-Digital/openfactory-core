@@ -796,3 +796,90 @@ PREVIEW: dict[str, dict[str, str]] = {
         "pt-BR": "Pré-visualização no ar: {link}\n\nO produto com esta mudança, até {until}. "
                  "Abra, experimente e diga no card se é o que foi pedido."},
 }
+
+#: What the autonomy reading says to an operator (#85, hole 4): how many cards reached their merge
+#: with no repair pass and nobody stepping in, what the passes cost when they did not, and why
+#: cards parked — `observability/autonomy.py` decides which line and these say it, on the cost
+#: dashboard and from `openfactory autonomy`. The NUMBERS travel beside the sentences as numbers;
+#: these only frame them.
+#:
+#: NEVER "FIRST PASS" HERE. A client already reads that phrase as the brownfield read of a legacy
+#: codebase (`product baseline`), and a dashboard tile saying it about cards would be read as that.
+#: The class names under `cause.*` are the taxonomy's own (`techlead/classify.py`), named the way
+#: a person reads them; the key a script reads is the class itself, in the numbers.
+AUTONOMY: dict[str, dict[str, str]] = {
+    "title": {
+        "en": "{project} — autonomy, read from the card record",
+        "pt-BR": "{project} — autonomia, lida do registro dos cards"},
+    #: `{window}` is `window` below, or nothing: the whole record
+    "window": {"en": " since {day}", "pt-BR": " desde {day}"},
+    "none": {
+        "en": "No card is measured yet{window}: a card counts once the record holds its promotion "
+              "and then its merge.",
+        "pt-BR": "Nenhum card medido ainda{window}: um card entra na conta quando o registro tem a "
+                 "promoção e depois o merge."},
+    "yield": {
+        "en": "{clean} of {merged} measured cards reached their merge with no repair pass and "
+              "nobody stepping in{window} — {pct}%.",
+        "pt-BR": "{clean} de {merged} cards medidos chegaram ao merge sem passada de reparo e sem "
+                 "ninguém intervir{window} — {pct}%."},
+    "rework": {
+        "en": "{passes} passes wrote code for them: {rate} per card, where 1 is a single pass "
+              "each.",
+        "pt-BR": "{passes} passadas escreveram código para eles: {rate} por card, sendo 1 uma "
+                 "única passada cada."},
+    "before": {
+        "en": "{count} merged card(s) left out: the record does not hold their promotion before "
+              "their merge.",
+        "pt-BR": "{count} card(s) mergeado(s) fora da conta: o registro não tem a promoção antes "
+                 "do merge."},
+    #: ALWAYS SAID, beside the number: the `promoted` row exists since #414 (2026-10-04), so a
+    #: yield quoted over older cards would be a yield over whichever of them happened to be recorded
+    "scope": {
+        "en": "Measurement starts with cards promoted from 0.5.0 on; older cards never enter a "
+              "rate.",
+        "pt-BR": "A medição começa com os cards promovidos a partir da 0.5.0; cards mais antigos "
+                 "nunca entram numa taxa."},
+    "parks": {
+        "en": "{count} park(s){window}, classified from the recorded note.",
+        "pt-BR": "{count} parada(s){window}, classificada(s) pela nota registrada."},
+    "parks.none": {
+        "en": "No park recorded{window}.",
+        "pt-BR": "Nenhuma parada registrada{window}."},
+    #: the store would not answer: said with its cause and what to check, never as an empty record
+    "unread": {
+        "en": "The card record could not be read, so nothing is measured: {cause}. Check that "
+              "OPENFACTORY_METRICS_SINK names the store this deployment writes (and "
+              "OPENFACTORY_METRICS_DB its file, for sqlite), and that this process can read it.",
+        "pt-BR": "Não consegui ler o registro dos cards, então nada foi medido: {cause}. "
+                 "Confira se OPENFACTORY_METRICS_SINK aponta para o armazenamento que esta "
+                 "instalação grava (e OPENFACTORY_METRICS_DB para o arquivo, no sqlite), e se este "
+                 "processo consegue lê-lo."},
+    # ── what the dashboard's tiles and tables are headed ─────────────────────────────────────────
+    "label.title": {"en": "Autonomy — from the card record",
+                    "pt-BR": "Autonomia — do registro dos cards"},
+    "label.yield": {"en": "merged untouched", "pt-BR": "merge sem retrabalho"},
+    "label.rework": {"en": "code passes per card", "pt-BR": "passadas de código por card"},
+    "label.measured": {"en": "measured merges", "pt-BR": "merges medidos"},
+    "label.before": {"en": "before the record", "pt-BR": "antes do registro"},
+    "label.depth": {"en": "repair passes per card", "pt-BR": "passadas de reparo por card"},
+    "label.repairs": {"en": "repair passes", "pt-BR": "passadas de reparo"},
+    "label.cards": {"en": "cards", "pt-BR": "cards"},
+    "label.parks": {"en": "why cards parked — classified from the recorded note",
+                    "pt-BR": "por que os cards pararam — classificado pela nota registrada"},
+    "label.cause": {"en": "cause", "pt-BR": "causa"},
+    "label.count": {"en": "parks", "pt-BR": "paradas"},
+    # ── the classes a park's note is read into (`techlead/classify.py`) ──────────────────────────
+    "cause.transient": {"en": "passes on its own", "pt-BR": "passa sozinho"},
+    "cause.credential": {"en": "a credential", "pt-BR": "uma credencial"},
+    "cause.environment": {"en": "infrastructure", "pt-BR": "infraestrutura"},
+    "cause.requirement": {"en": "the ticket itself", "pt-BR": "o próprio ticket"},
+    "cause.code": {"en": "the change", "pt-BR": "a mudança"},
+    "cause.policy": {"en": "an organisation rule", "pt-BR": "uma regra da organização"},
+    "cause.project": {"en": "the project's own configuration",
+                      "pt-BR": "a configuração do próprio repo"},
+    "cause.tree": {"en": "a working copy in the way", "pt-BR": "uma cópia de trabalho no caminho"},
+    "cause.gate": {"en": "a check only a person settles",
+                   "pt-BR": "uma verificação que só uma pessoa resolve"},
+    "cause.unknown": {"en": "nobody could tell", "pt-BR": "ninguém soube dizer"},
+}

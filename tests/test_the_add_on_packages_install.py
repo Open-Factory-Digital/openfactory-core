@@ -35,6 +35,7 @@ import venv
 
 import add_ons
 import pytest
+from test_the_wheel_ships_what_the_platform_needs import _what_the_backend_reads_beside_pyproject
 from vendor_addons import packages, require
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -106,7 +107,9 @@ def _run(*cmd: str, env: dict | None = None, cwd: pathlib.Path | None = None) ->
 
 def _public_core(into: pathlib.Path) -> pathlib.Path:
     """The public tree's core, as the build backend reads it: `openfactory/` minus every path
-    `docs/STATUS.md` excludes, plus the four files a wheel is built from."""
+    `docs/STATUS.md` excludes, plus the files a wheel is built from — `pyproject.toml`, the README
+    and every file the declaration names beside it (the long description since #368, which a
+    copy without it builds anyway, with an empty description and a warning)."""
     excluded = add_ons.excluded_paths()
     src = into / "public"
 
@@ -122,7 +125,8 @@ def _public_core(into: pathlib.Path) -> pathlib.Path:
     staged = into / "public-src" / "openfactory"
     shutil.copytree(ROOT / "openfactory", staged, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copytree(staged, src / "openfactory", ignore=leaves)
-    for f in ("pyproject.toml", "LICENSE", "NOTICE", "README.md"):
+    for f in ("pyproject.toml", "README.md", *_what_the_backend_reads_beside_pyproject()):
+        (src / f).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / f, src / f)
     for p in excluded:
         if p.startswith("openfactory/"):
