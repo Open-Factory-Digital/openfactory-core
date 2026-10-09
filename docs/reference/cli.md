@@ -53,6 +53,23 @@ Run this first. Before the first ticket there is no invariant protecting you —
 column, an App without Projects permission and a missing harness all produce the same symptom,
 which is nothing happening.
 
+### `openfactory explain <checkout> [--language en|pt-BR] [--full]`
+
+Why an agent is given the instructions it is given: every block a planner or executor pass of the
+project at that checkout carries, one line each, in the order the job inlines them — the role
+prompt and the file it comes from, the constraints, each framework guideline with what the
+project's profile did to it (kept, waived, replaced), the operator's directory when
+`OPENFACTORY_GUIDELINES_DIR` is set, the project's own guidelines by the key that names them, and
+the index. A path the job refuses or cannot find is a row too. `--full` prints each block's text
+under its line, as the prompt carries it; `--language pt-BR` writes every label and refusal in
+Portuguese.
+
+The rows are the record the job's own `build_context` keeps while it assembles a context, so this
+cannot disagree with what a job inlines. It reads and writes nothing: no harness, forge or network
+is called, no card or registry is touched, and the card's own words are never printed. A missing
+manifest, a profile that does not resolve and an address instead of a path are each refused in one
+sentence, exit 1. Walked in [the developer's guide](../developer-guide.md).
+
 ### `openfactory conformance <project>`
 
 Whether the **manifest** is complete: the floor requires `validate.test` and `validate.security`.

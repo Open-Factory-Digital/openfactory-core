@@ -2317,6 +2317,31 @@ def preflight_cmd(
         raise typer.Exit(1)
 
 
+@app.command("explain")
+def explain_cmd(
+    checkout: str = typer.Argument(..., help="A path to a checkout — the repository whose "
+                                             ".openfactory/project.yaml is read"),
+    language: str = typer.Option("en", "--language", help="en or pt-BR"),
+    full: bool = typer.Option(False, "--full", help="Print each block's text under its line, "
+                                                    "as the prompt carries it"),
+) -> None:
+    """Why an agent is given the instructions it is given: every block a planner or executor pass
+    of this project carries, in order, where it comes from and what the project's profile did to
+    it.
+
+    THE JOB'S OWN CODE ANSWERS. The rows are the trace `build_context` writes while it
+    assembles a context for a blank card, so this cannot disagree with what a job inlines. It
+    reads a checkout and writes nothing: no harness, forge or network is called, and no card or
+    registry is touched."""
+    from openfactory.orchestrator import explain as ex
+
+    try:
+        typer.echo(ex.explain(checkout, language=language, full=full), nl=False)
+    except ex.Refused as refused:
+        typer.echo(str(refused), err=True)
+        raise typer.Exit(1) from None
+
+
 @app.command("doctor")
 def doctor_cmd(name: str) -> None:
     """Check every prerequisite and say which one is missing.
