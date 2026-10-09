@@ -3546,13 +3546,33 @@ async def _with_the_work_filed(accepted: Outcome, *, project: str, number: int,
             "nothing_to_build": False}
     made = [r for r in filed if r.get("ok")]
     if made:
-        refs = ", ".join(r.get("ref") or r.get("url") or "?" for r in made)
-        return done(f"{accepted.message} Work filed: {refs}. Starting any of it is still a "
-                    f"person's decision.", **data)
+        # EVERY ROW, NOT ONLY THE ONES THAT LANDED (#564): what was not filed, and why, is said in
+        # the module's own sentence, the way the conversation says it
+        return done(f"{accepted.message} {_breakdown_said(project, number, filed)}", **data)
     detail = next((r.get("detail") for r in filed if not r.get("ok") and r.get("detail")), "")
     return done(f"{accepted.message} I could not turn it into units of work "
                 f"{f'({detail}) ' if detail else ''}— the agreement is recorded either way, and "
                 f"asking me to break it down will try again.", **data)
+
+
+def _breakdown_said(project: str, number: int, filed: list[dict]) -> str:
+    """A breakdown's outcome as every surface says it — `confirm.breakdown_outcome`, the
+    conversation's own rendering, in the project's language and naming this board's backlog
+    (#564). The board's word is a courtesy: one that cannot be read leaves the platform's."""
+    from openfactory.product.confirm import breakdown_outcome
+    from openfactory.registry import ProjectRegistry
+
+    proj, backlog = None, ""
+    try:
+        proj = ProjectRegistry().get(project)
+        from openfactory.adapters.board import build_board
+        from openfactory.adapters.board.base import stage_column
+
+        board = build_board(proj)
+        backlog = stage_column(board, "backlog") if board is not None else ""
+    except Exception:  # noqa: BLE001 — a column's name is a courtesy; the outcome is not
+        log.info("could not ask %s's board what it calls its backlog", project, exc_info=True)
+    return breakdown_outcome(filed, number=number, project=proj, backlog=backlog)
 
 
 async def _broken_down_on_the_worker(*, project: str, number: int, by: Actor,
@@ -3649,9 +3669,9 @@ async def _product_break_down(*, project: str, number: str, by: Actor,
     data = {"project": proj.name, "number": num, "filed": filed}
     made = [r for r in filed if r.get("ok")]
     if made:
-        refs = ", ".join(r.get("ref") or r.get("url") or "?" for r in made)
-        return done(f"Work filed for requirement {num}: {refs}. Starting any of it is still a "
-                    f"person's decision.", **data)
+        # THE SAME RENDERING AS THE ACCEPTANCE AND THE CONVERSATION (#564): a front not filed is
+        # named beside the ones that were, never dropped because another one landed
+        return done(_breakdown_said(proj.name, num, filed), **data)
     detail = next((r.get("detail") for r in filed if not r.get("ok") and r.get("detail")), "")
     why = f": {detail}" if detail else " — the breakdown produced no unit of work"
     return refused(FAILED, f"nothing was filed for requirement {num}{why.rstrip('.')}.", **data)
