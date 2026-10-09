@@ -50,6 +50,7 @@ comment on `CONT-412` cannot be addressed with `412`.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from openfactory.contracts import JobState
@@ -422,6 +423,52 @@ def stage_option(board) -> str:
     and a refusal naming an option the deployment does not have is worse than one naming none."""
     named = getattr(board, "stage_option", "")
     return named.strip() if isinstance(named, str) else ""
+
+
+@dataclass(frozen=True)
+class Intake:
+    """Where a card the tracker creates is born on its board, before anybody places it (#536).
+
+    `column` is the board's column; `""` when no column shows the state it is created in, and
+    `None` when the board could not be read — never collapsed into "not the queue", because the
+    question this answers is whether filing a card now starts spending. `queue` is the column the
+    poller reads, and `queued` is whether the two are one. `remedy` is the row's own line for
+    taking a filed card out of the queue, `""` when the row has none to offer."""
+
+    column: str | None
+    queue: str
+    queued: bool
+    remedy: str = ""
+
+
+def intake(tracker, board) -> Intake | None:
+    """Where a card filed now is born on `board` — asked of the ROW, because only the vendor knows
+    (#536). `None` when the question does not arise: no board, or a row whose created card sits on
+    no column until it is placed (a GitHub issue is on a board only once added) or is filed by the
+    row itself in its backlog (the local board).
+
+    THE DEFECT IT ANSWERS. An Azure DevOps work item is on its team's board by existing, in the
+    column its type's first state maps to — `To Do` on the Basic process, which is the pickup
+    column. The product role filed there and asked the door to place the card in a backlog the
+    board did not have; the placement failed, the card stayed, and the poller started work nobody
+    had queued — the one gesture that spends was nobody's (ADR-0019 §5).
+
+    TWO HALVES, TWO ROWS: the TRACKER says which state it creates a card in (`intake_state`, `""`
+    for the vendor's own first state) and the BOARD says which of its columns shows that state
+    (`intake_column`). The queue is `pickup_column()`, the board's own answer, which carries the
+    deployment's `pickup_status` (#502) — the column `openfactory poll` and the scan read."""
+    lands = getattr(board, "intake_column", None)
+    if board is None or not callable(lands):
+        return None
+    said = getattr(tracker, "intake_state", None)
+    state = said() if callable(said) else ""
+    column = lands(state if isinstance(state, str) else "")
+    queue = str(board.pickup_column() or "")
+    queued = bool(column) and column.strip().casefold() == queue.strip().casefold()
+    offer = getattr(board, "intake_remedy", None)
+    remedy = offer(column) if queued and callable(offer) else ""
+    return Intake(column=column, queue=queue, queued=queued,
+                  remedy=remedy if isinstance(remedy, str) else "")
 
 
 def option_line(option: str, mapping: dict[str, str]) -> str:

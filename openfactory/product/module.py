@@ -2880,6 +2880,11 @@ class ProductModule:
 
         tracker = tracker or self._tracker()
         board = self._board_or_default(board)   # ADR-0030: production never used to pass one
+        # NOT ONE CARD OF IT WHERE A NEW CARD IS BORN IN THE QUEUE (#536): said once, for the
+        # whole breakdown, and nothing of it written
+        held = self._born_in_the_queue(tracker, board, act="break a requirement into work")
+        if held is not None:
+            return [held]
         results: list[WriteResult] = []
         vet = self._vetter(requirement, tracker)
         from openfactory.product.cards import BREAKDOWN_BUDGET_SECONDS
@@ -2981,6 +2986,11 @@ class ProductModule:
             return _could_not(said["title_too_long_ticket"].format(limit=TITLE_LIMIT),
                               act="file a ticket")
         tracker = tracker or self._tracker()
+        # WHERE THE CARD WOULD BE BORN IS ASKED BEFORE IT IS WRITTEN (#536)
+        board = self._board_or_default(board)
+        held = self._born_in_the_queue(tracker, board, act="file a ticket")
+        if held is not None:
+            return held
 
         def _open() -> WriteResult:
             existing = tracker.find_ticket(title=name)
@@ -3068,6 +3078,11 @@ class ProductModule:
         else:
             title = restated.strip().rstrip(".")[:80]
         tracker = tracker or self._tracker()
+        # WHERE THE DEFECT WOULD BE BORN IS ASKED BEFORE IT IS WRITTEN (#536)
+        board = self._board_or_default(board)
+        held = self._born_in_the_queue(tracker, board, act="file a defect")
+        if held is not None:
+            return held
 
         def _open() -> WriteResult:
             # `by_number`, and INSIDE the guard. The first version called a `.get` the corpus
@@ -3652,6 +3667,40 @@ class ProductModule:
             return WriteResult(ok=True, ref=str(ref),
                                detail=breakdown_said("unplaced", language=lang))
         return WriteResult(ok=True, ref=str(ref), detail=elsewhere)
+
+    def _born_in_the_queue(self, tracker, board, *, act: str) -> WriteResult | None:
+        """The refusal to file, when a card filed now would be BORN in the pickup column — `None`
+        when it would not, or when the question does not arise on this row (#536).
+
+        ASKED BEFORE ANYTHING IS WRITTEN, by each of the three filing writers. On an Azure DevOps
+        board a work item is on the board by existing, in the column its first state maps to, and
+        the setup guide's process maps `To Do` — the queue. The door's `filed` then placed it in a
+        backlog the board did not have, failed, and the poller started work nobody had queued:
+        "nothing starts spending on its own" (ADR-0019 §5) broken by the role whose constant
+        `FILING_KEY` exists to keep it. A placement after the create cannot repair it — the card
+        is in the queue between the two, and for an hour whenever the placement fails — so the
+        card is not created at all, and the person who asked is told why and who fixes it.
+
+        AN UNREAD BOARD REFUSES TOO. The question is whether filing starts spending, and a board
+        that could not say has not said no; the filing is asked for again in a moment. A board the
+        tracker creates no card on by itself (`intake` answers `None`) files as before."""
+        from openfactory.adapters.board.base import Intake, intake
+        from openfactory.product.voice import filing_held
+
+        try:
+            born = intake(tracker, board)
+        except Exception as exc:  # noqa: BLE001 — unsure is not "safe to spend"
+            log.info("could not tell where a card filed now would start (%s)", exc)
+            born = Intake(column=None, queue="", queued=False)
+        if born is None or (born.column is not None and not born.queued):
+            return None
+        lang = getattr(getattr(self, "project", None), "language", None)
+        if born.queued:
+            return _could_not(filing_held("queue", column=str(born.column), language=lang),
+                              act=act, cause=f"a card filed now is born in {born.column!r}, the "
+                                             f"pickup column {born.queue!r} (#536)")
+        return _could_not(filing_held("unread", language=lang), act=act,
+                          cause="the board could not say where a card filed now would start")
 
     def _filed_through_the_door(self, ref: str, *, by: str, tracker, board,
                                 owed: dict | None = None) -> tuple[bool, str]:
