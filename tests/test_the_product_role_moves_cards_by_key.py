@@ -87,6 +87,12 @@ class _Site:
         self.requests.append((method, path, body))
         if (method, path) == ("POST", "search/jql"):        # `find_ticket`: nothing filed before
             return _Answer({"isLast": True, "issues": []})
+        if (method, path) == ("GET", f"project/{KEY}/statuses"):
+            # WHERE A NEW ISSUE IS BORN, asked before one is filed (#543): `Aberto`, first
+            return _Answer([{"name": "Task", "statuses": [
+                {"name": n, "statusCategory": {"key": "done" if n == DONE else
+                                               "indeterminate" if n == DOING else "new"}}
+                for n in (OPENED, PENDING, TODO, DOING, DONE)]}])
         if (method, path) == ("POST", "issue"):
             key = f"{KEY}-{len(self.status) + 1}"
             self.status[key] = OPENED
@@ -161,9 +167,12 @@ def jira(site, tmp_path, monkeypatch):
 
     monkeypatch.setenv("OPENFACTORY_METRICS_SINK", "sqlite")
     monkeypatch.setenv("OPENFACTORY_METRICS_DB", str(tmp_path / "metrics.db"))
+    # `intake_status`: the workflow lists several statuses of the To Do category, and where a new
+    # issue starts is declared, never taken from the order they are listed in (#552's review)
     options = {"site": "https://acme-team.atlassian.net", "email": "alice@acme.ai",
                "status_map": json.dumps({"backlog": PENDING, "todo": TODO,
-                                         "in_progress": DOING, "done": DONE})}
+                                         "in_progress": DOING, "done": DONE}),
+               "intake_status": OPENED}
     project = Project(name="acme", repo_path=str(tmp_path), language="pt-BR",
                       tracker=ProviderRef(kind="jira", repo=KEY, options=options),
                       product=_product())

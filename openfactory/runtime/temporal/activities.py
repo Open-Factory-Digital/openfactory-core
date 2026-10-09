@@ -1220,6 +1220,32 @@ def _do_split(inp: SplitInput) -> str:
 
     parent = tracker.get_ticket(parent_ref)
     board = _board_beside(project, tracker)
+    # A CHILD IS NEVER BORN IN A QUEUE NOBODY SENT IT TO (#543). A deployment that keeps a split's
+    # children in the backlog (`split_to_todo: false`) has said a person sequences them — and on a
+    # board where a new card is born in the pickup column, each child would be taken by the poller
+    # the moment it was written, with nobody queueing it (ADR-0019 §5); the door's `filed` into the
+    # backlog then fails on a board that has none, and the child stays. So nothing is created: the
+    # split fails, and the job parks with the proposal for a person to split by hand — the same
+    # outcome as any split that could not finish. A board that could not say holds it too.
+    #
+    # STRAIGHT TO THE QUEUE IS NOT ASKED: those children go where they are born, by the policy the
+    # deployment chose (ADR-0013 D3) — the parent was queued by a person — and each is placed there
+    # the moment it is written, in creation order, exactly as it was before a child could be born
+    # in the queue: being born there moves nothing earlier.
+    if not to_todo:
+        from openfactory.adapters.board.base import intake_held
+
+        born = intake_held(tracker, board)
+        if born is not None:
+            why = (f"a child created now would be born in {born.column!r}, the pickup column, and "
+                   f"this project keeps a split's children in the backlog" if born.queued else
+                   born.unknown or "the board could not say where a child created now would be "
+                                   "born")
+            activity.logger.error("OPENFACTORY_SPLIT_HELD %s — nothing was created: %s. "
+                                  "The job parks for a person to split it by hand; `openfactory "
+                                  "doctor` names the board's line", parent_ref, why)
+            _pf_emit(events, inp.project, inp.issue, "note", f"not split: {why}")
+            raise RuntimeError(f"{parent_ref} was not split: {why}")
     _pf_emit(events, inp.project, inp.issue, "state", "splitting",
              note=f"creating {n} children and closing the parent")
     # WHERE EACH CHILD WENT, AS THIS PROJECT'S BOARD CALLS IT (#502): the note is read by a person
