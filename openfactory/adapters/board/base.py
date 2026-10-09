@@ -422,3 +422,21 @@ def stage_option(board) -> str:
     and a refusal naming an option the deployment does not have is worse than one naming none."""
     named = getattr(board, "stage_option", "")
     return named.strip() if isinstance(named, str) else ""
+
+
+def option_line(option: str, mapping: dict[str, str]) -> str:
+    """The line a person writes under the project's tracker `options` to declare `mapping` by
+    `option` — `columns: '{"backlog": "New"}'` (#521). The ONE place a sentence gets it from.
+
+    A STRING OF JSON, QUOTED FOR YAML — NEVER A MAPPING. `ProviderRef.options` is `dict[str,
+    str]`, and the line the refusal and the doctor first printed, `columns: {"backlog": "New"}`, is
+    a mapping once it is pasted into the registry: the registry refuses the project for it, so the
+    repair a person was handed broke the project instead of mapping its column. The setup guide
+    always showed the quoted form; the sentences now say what the guide says.
+
+    `json.dumps` writes the JSON, so a column whose name carries a quote is still one string, and
+    a single quote inside YAML's single quotes is doubled, which is how YAML escapes it there."""
+    import json
+
+    value = json.dumps({str(k): str(v) for k, v in mapping.items()}, ensure_ascii=False)
+    return f"{option}: '{value.replace(chr(39), chr(39) * 2)}'"
