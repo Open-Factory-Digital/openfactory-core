@@ -627,8 +627,8 @@ def _branch(r: Reading, n: Pseudonyms) -> Answer:
     return combined(results), "; ".join(said), []
 
 
-#: A RELEASE is `x.y.z` (three numbers), with or without the `v` a tag carries. A candidate (`0.6.0rc1`,
-#: `v0.6.0-rc.1`) and a development build (`0.6.0.dev0`) are not one.
+#: A RELEASE is `x.y.z` (three numbers), with or without the `v` a tag carries. A candidate
+#: (`0.6.0rc1`, `v0.6.0-rc.1`) and a development build (`0.6.0.dev0`) are not one.
 _RELEASE = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
 
 
