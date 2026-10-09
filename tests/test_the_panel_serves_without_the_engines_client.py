@@ -131,8 +131,11 @@ def routes():
         if typing.get_type_hints(route.endpoint).get("return") is StreamingResponse:
             try:
                 frame = asyncio.run(_first_frame(route.endpoint, values, path))
+                # THE SAME BOUND AS A PAGE'S BODY. A frame clipped at 400 was clipped mid-JSON the
+                # day the install sentence it carries grew a second door (#368): the frame was
+                # whole on the wire and unreadable here, which is a harness limit, not a finding.
                 row.update(status=200, stream=True,
-                           body=(frame.decode() if isinstance(frame, bytes) else str(frame))[:400])
+                           body=(frame.decode() if isinstance(frame, bytes) else str(frame))[:4000])
             except Exception as exc:  # noqa: BLE001 — reported, never raised: the parent judges
                 row.update(status=500, stream=True, body=f"{type(exc).__name__}: {exc}"[:400])
         else:

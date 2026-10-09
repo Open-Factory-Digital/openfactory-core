@@ -187,3 +187,23 @@ def test_the_page_parser_reads_the_extras_it_is_given(tmp_path):
                     "pip install -e '.[dev, runtime]'\n```\n")
 
     assert _installs_of_the_checkout(page) == [(4, []), (5, ["dev", "runtime"])]
+
+
+# ── the install the refusal names ───────────────────────────────────────────────────────────────
+
+def test_the_install_the_refusals_name_can_be_followed_from_either_door():
+    """#368. The sentence every surface gives for a missing library named the checkout's install
+    only — `pip install -e '.[runtime]'` in the checkout you installed from — and a person who
+    installed from the index, the door the PyPI page documents, has no checkout to run it in. So
+    it names both: the checkout's command, and what an install from an index or a wheel repeats.
+    Every sentence that carries the remedy carries all of it, because they are one remedy."""
+    checkout = "pip install -e '.[runtime]'"
+    sentence = host.RUNTIME_INSTALL
+
+    assert checkout in sentence, sentence
+    the_other_door = sentence.replace(checkout, "")
+    assert "index" in the_other_door and "[runtime]" in the_other_door, (
+        f"the remedy names only the checkout's install, which an install from an index or a wheel "
+        f"cannot follow: {sentence!r}")
+    for said in (host.RUNTIME_HINT, host.RUNTIME_TOO, host.CLIENT_MISSING):
+        assert sentence in said, said
