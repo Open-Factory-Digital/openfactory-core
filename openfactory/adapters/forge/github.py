@@ -13,6 +13,7 @@ import subprocess
 import urllib.parse
 
 from openfactory.adapters.forge.base import (
+    BranchProtection,
     CommentsNotListed,
     ForgeAdapter,
     ReviewComment,
@@ -701,6 +702,164 @@ class GitHubForge(ForgeAdapter):
         if any(row["kind"] == "process" for row in rows):
             return rows
         raise GatesNotListed(unseen)
+
+    # ---- what a certificate reads (#356, `forge/base.py`'s three optional capabilities) ---------
+
+    #: THE GRANTS THAT REACH `.github/workflows/`, in GitHub's two vocabularies: a classic token's
+    #: or a CLI login's OAuth scope `workflow`, and an App's `workflows` permission, which has
+    #: only one level. `repo` does not include it — a token without `workflow` is refused a push
+    #: that touches a workflow file — so a certificate asks for exactly these two names.
+    ci_write_permissions = frozenset({"workflow", "workflows:write"})
+
+    def branch_protection(self, repo: str, branch: str) -> BranchProtection | None:
+        """What protects `branch`, from GitHub's two mechanisms, and whether auto-merge is on.
+
+        `rules/branches/<b>` ALONE IS NOT ENOUGH, whatever its name suggests. It answers the
+        active RULESET rules, repository and organisation alike, to anybody with read access —
+        and nothing about CLASSIC branch protection, which still guards most repositories: #206
+        measured it answering `[]` for a branch that requires two approvals. So this reads the way
+        `merge_gates` reads, and for the same measured reasons (its docstring has them): the
+        rulesets first, then `branches/<b>`, whose `protection.enabled` says whether classic
+        rules are there at all, and `branches/<b>/protection` only then — a document GitHub shows
+        to a repository administrator alone, so its refusal is expected and leaves `None` in
+        whatever the rulesets did not already settle.
+
+        THE MAPPING, the same rule from either mechanism:
+
+            pr_required          ruleset `pull_request`, or classic `required_pull_request_reviews`
+            linear_history       ruleset `required_linear_history`, or classic
+                                 `required_linear_history.enabled`
+            force_push_blocked   ruleset `non_fast_forward`, or a classic protection whose
+                                 `allow_force_pushes.enabled` is false (its default)
+            auto_merge_enabled   the repository's `allow_auto_merge` (`repos/<o>/<r>`)
+
+        A mechanism that sets a fact settles it; a fact neither sets is `False` only when BOTH
+        were read. `allow_auto_merge` is a field GitHub may leave out for a credential that cannot
+        administer the repository, and a field left out is `None`, never `False`.
+
+        None when the rulesets themselves could not be read — the one read every other answer
+        here builds on."""
+        target = self._repo_or_self(repo)
+        name = (branch or "").strip()
+        if not target or not name:
+            return None
+        where = f"{target}@{name}"
+        rules, _ = self._api_read(f"repos/{target}/rules/branches/{name}",
+                                  f"list the rules of {where}", list)
+        if rules is None:
+            return None  # the read every other answer here builds on
+        types = {str(r.get("type") or "") for r in rules if isinstance(r, dict)}
+        said: dict[str, bool | None] = {
+            "pr_required": True if "pull_request" in types else None,
+            "linear_history": True if "required_linear_history" in types else None,
+            "force_push_blocked": True if "non_fast_forward" in types else None,
+        }
+        classic = self._classic_protection(target, name, where)
+        if classic is not None:
+            for fact, value in classic.items():
+                said[fact] = said[fact] or value
+        settings, _ = self._api_read(f"repos/{target}", f"read the settings of {target}", dict)
+        auto = (settings or {}).get("allow_auto_merge")
+        return BranchProtection(**said, auto_merge_enabled=auto if isinstance(auto, bool) else None)
+
+    def _classic_protection(self, target: str, name: str, where: str) -> dict[str, bool] | None:
+        """The three facts as CLASSIC branch protection sets them — all `False` when the branch
+        has none — or None when whether it has any, or what it says, could not be read."""
+        off = {"pr_required": False, "linear_history": False, "force_push_blocked": False}
+        summary_of, _ = self._api_read(f"repos/{target}/branches/{name}",
+                                       f"read the branch {where}", dict)
+        if summary_of is None:
+            return None
+        summary = summary_of.get("protection")
+        summary = summary if isinstance(summary, dict) else {}
+        enabled = summary.get("enabled")
+        if enabled is False or (enabled is not True and summary_of.get("protected") is not True):
+            return off
+        protection, why = self._api_read(f"repos/{target}/branches/{name}/protection",
+                                         f"read the classic protection of {where}", dict)
+        if protection is None:
+            return off if why.startswith("Branch not protected") else None
+
+        def on(key: str) -> bool:
+            value = protection.get(key)
+            return value.get("enabled") is True if isinstance(value, dict) else False
+
+        return {"pr_required": isinstance(protection.get("required_pull_request_reviews"), dict),
+                "linear_history": on("required_linear_history"),
+                "force_push_blocked": not on("allow_force_pushes")}
+
+    def credential_permissions(self) -> frozenset[str] | None:
+        """What the credential this row holds is granted, in GitHub's words — or None.
+
+        TWO CREDENTIALS, TWO READS, and neither mints anything to ask:
+
+          an App        `GET /app/installations/<id>` signed with the App's own JWT
+                        (`github_app.installation_permissions`): its `permissions`, each as
+                        `<name>:<level>` — `contents:write`, `workflows:write`. Asked of the
+                        provider this row was built with, so it is the installation a job acts as.
+          a token       the `X-OAuth-Scopes` header GitHub sends back on any call made with a
+                        classic token or an OAuth login (`gh`'s own): `repo`, `workflow`. Read off
+                        `GET /rate_limit`, which spends no rate limit.
+
+        NONE FOR WHAT GITHUB DOES NOT PUBLISH. A fine-grained token and an installation token
+        handed in as a value carry permissions, not scopes, and GitHub tells neither what they
+        are; the header is then missing, or present and EMPTY. An empty header is not believed:
+        "a classic token granted nothing" and "a token whose grants this header does not list"
+        look the same in it, and only one of them would make a certificate's answer true."""
+        from openfactory.adapters.github_app import GitHubAppTokenProvider
+
+        app = getattr(self._token_provider, "__self__", None)
+        if isinstance(app, GitHubAppTokenProvider):
+            granted = app.permissions()
+            return (None if granted is None
+                    else frozenset(f"{k}:{v}" for k, v in granted.items()))
+        p = self._gh_read(["api", "--include", "rate_limit"], "read the credential's scopes")
+        if p is None or p.returncode != 0:
+            if p is not None:
+                log.info("could not read the credential's scopes: %s", _redact(p.stderr)[-160:])
+            return None
+        for line in (p.stdout or "").splitlines():
+            if not line.strip():
+                break  # the headers end at the first blank line; the body is not read
+            header, _, value = line.partition(":")
+            if header.strip().lower() == "x-oauth-scopes":
+                scopes = frozenset(s.strip() for s in value.split(",") if s.strip())
+                return scopes or None
+        log.info("GitHub listed no OAuth scopes for this credential: a fine-grained or an "
+                 "installation token, whose permissions it does not publish to the token")
+        return None
+
+    def published_releases(self, url: str) -> list[str] | None:
+        """The tags of the published releases of the repository `url` names — no draft and no
+        pre-release, as GitHub lists them (`repos/<o>/<r>/releases`) — or None.
+
+        ONLY A REPOSITORY ON THIS ROW'S HOST. A URL on another host is not this credential's to
+        carry there (`authenticated_url`'s rule), and answering for it would read somebody else's
+        forge with this one's token. Public releases are readable with any token."""
+        import json as _json
+
+        parts = urllib.parse.urlsplit((url or "").strip())
+        path = [s for s in (parts.path or "").removesuffix(".git").split("/") if s]
+        if parts.scheme != "https" or (parts.hostname or "").lower() != self._host() \
+                or len(path) != 2:
+            return None
+        target = "/".join(path)
+        p = self._gh_read(["api", f"repos/{target}/releases?per_page=100"],
+                          f"list the releases of {target}")
+        if p is None or p.returncode != 0:
+            if p is not None:
+                log.info("could not list the releases of %s: %s", target,
+                         _redact(p.stderr)[-160:])
+            return None
+        try:
+            rows = _json.loads(p.stdout or "")
+        except ValueError:
+            return None
+        if not isinstance(rows, list):
+            return None
+        return [str(r["tag_name"]) for r in rows
+                if isinstance(r, dict) and r.get("tag_name")
+                and r.get("draft") is not True and r.get("prerelease") is not True]
 
     def _repo_of_pr(self, pr: str) -> str:
         """The repository a pull request lives in: the one its URL names, else the configured one

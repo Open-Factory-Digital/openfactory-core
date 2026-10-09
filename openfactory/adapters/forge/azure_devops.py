@@ -46,6 +46,7 @@ import urllib.parse
 
 from openfactory.adapters.azure_devops import AzureDevOpsClient, AzureDevOpsError
 from openfactory.adapters.forge.base import (
+    BranchProtection,
     CommentsNotListed,
     ForgeAdapter,
     ReviewComment,
@@ -106,6 +107,33 @@ _POLICY_REMEDY = {
 }
 _POLICY_REMEDY_GENERAL = ("Settle it on the pull request in Azure DevOps, or make the policy "
                           "optional for this branch (Project settings → Repositories → Policies).")
+
+
+#: The policies a pull request is EVALUATED against (#356), by type id: with any of them blocking
+#: on a branch, Azure Repos refuses a direct push to it and takes changes by pull request only.
+#: Repository settings that are also policy configurations — file size, path length, reserved
+#: names — are checked on every push and require no pull request, so they are not here.
+_MERGE_STRATEGY_POLICY = "fa4e907d-c16b-4a4c-9dfa-4916e5d171ab"
+_PULL_REQUEST_POLICIES = frozenset({
+    _BUILD_POLICY,
+    _STATUS_POLICY,
+    _MERGE_STRATEGY_POLICY,
+    "fa4e907d-c16b-4a4c-9dfa-4906e5d171dd",  # Minimum number of reviewers
+    "fd2167ab-b0be-447a-8ec8-39368250530e",  # Required reviewers
+    "c6a1889d-b943-4856-b76f-9e46bb6b0df2",  # Comment requirements
+    "40e92b44-2fe1-4dd6-b3d8-74a9c21d0c6e",  # Work item linking
+})
+
+
+def _linear_only(config: dict) -> bool:
+    """Whether a "Require a merge strategy" policy leaves history linear: squash or
+    rebase-and-fast-forward allowed, and neither a merge commit (`allowNoFastForward`) nor a
+    semi-linear merge (`allowRebaseMerge`). `useSquashMerge` is the older spelling of
+    squash-only, which a policy created before the four switches still carries."""
+    settings = config.get("settings") or {}
+    if settings.get("allowNoFastForward") is True or settings.get("allowRebaseMerge") is True:
+        return False
+    return any(settings.get(k) is True for k in ("allowSquash", "allowRebase", "useSquashMerge"))
 
 
 def _policy_type(policy: dict) -> tuple[str, str]:
@@ -1387,6 +1415,75 @@ class AzureReposForge(ForgeAdapter):
                                                    _POLICY_REMEDY_GENERAL)
             rows.append(row)
         return rows
+
+    # ---- what a certificate reads (#356, `forge/base.py`'s optional capabilities) -------------
+
+    def branch_protection(self, repo: str, branch: str) -> BranchProtection | None:
+        """What protects `branch` of `repo`, read from the BRANCH POLICIES that apply to it.
+
+        AZURE REPOS HAS NO "PROTECTED BRANCH" SWITCH: protection IS its branch policies, read from
+        the same `policy/configurations` `merge_gates` reads and through the same scope rule
+        (`_policy_applies` — a sibling repository's policy and another branch's are not this
+        one's). Only an enabled, BLOCKING policy counts: an optional one is shown and ignored.
+
+            pr_required          any blocking policy a pull request is evaluated against
+                                 (reviewers, build, comments, work items, status, merge
+                                 strategy): Azure Repos then refuses every direct push to the
+                                 branch and takes changes by pull request only
+            linear_history       a blocking "Require a merge strategy" policy that allows only
+                                 squash and rebase-and-fast-forward — no merge commit
+                                 (`allowNoFastForward`) and no semi-linear merge
+                                 (`allowRebaseMerge`), whose history keeps merge commits
+            force_push_blocked   True where a pull request is required: a branch that takes no
+                                 direct push takes no forced one. Elsewhere `None` — whether a
+                                 force push is allowed is then the repository's "Force push"
+                                 PERMISSION, a security setting this row does not read
+            auto_merge_enabled   `None`, always. Auto-complete is not a setting a repository
+                                 turns on: there is nothing to read, and a certificate does not
+                                 pass what nobody read
+
+        NONE when the policies or the repository's id could not be read — an unreadable listing
+        is not a branch with no policy."""
+        target = self._repo_or_self(repo)
+        name = (branch or "").strip()
+        if not name:
+            return None
+        try:
+            client = self._client_for(repo)
+            configs = client.values("policy/configurations")
+            found = client.call("GET", f"git/repositories/{urllib.parse.quote(target)}")
+        except (AzureDevOpsError, ValueError) as exc:
+            log.info("could not read the branch policies of %s (%s)", target, str(exc)[:160])
+            return None
+        repository_id = str(found.get("id") or "")
+        if not repository_id:
+            log.info("%s came back without an id, so no policy can be scoped to it", target)
+            return None
+        ref = _branch_ref(name)
+        blocking = [c for c in configs
+                    if isinstance(c, dict) and c.get("isEnabled") and not c.get("isDeleted")
+                    and _policy_applies(c, repository_id, ref) and _policy_blocks(c)]
+        types = {_policy_type(c)[0] for c in blocking}
+        pr_required = bool(types & _PULL_REQUEST_POLICIES)
+        linear = any(_linear_only(c) for c in blocking
+                     if _policy_type(c)[0] == _MERGE_STRATEGY_POLICY)
+        return BranchProtection(pr_required=pr_required, linear_history=linear,
+                                force_push_blocked=True if pr_required else None,
+                                auto_merge_enabled=None)
+
+    def credential_permissions(self) -> frozenset[str] | None:
+        """None, always — and the reason is the vendor's, not a read that failed.
+
+        A PERSONAL ACCESS TOKEN CANNOT READ ITS OWN SCOPES. Azure DevOps answers a PAT's calls
+        without saying what it was granted (there is no `X-OAuth-Scopes` here), and the route
+        that lists a person's tokens (`_apis/tokens/pats`) takes an Entra ID token, not a PAT. A
+        machine identity has no scopes at all: what it may do is its permissions on each
+        repository. And a pipeline here is a file in the repository, so a credential that can
+        push can change it — a question for the branch's policies, which `branch_protection`
+        reads, rather than for a scope. Saying `None` is what lets a certificate say `unknown`."""
+        log.info("Azure DevOps does not publish a credential's scopes to the credential, so what "
+                 "the credential of %s is granted is not read", self.repo)
+        return None
 
     def _build_page(self, pr_data: dict, build_id: object) -> str:
         """The portal page of one build, for a person. Composed, not read: the evaluation names

@@ -2481,9 +2481,10 @@ def certify_deployment_cmd(
     person is replaced by a pseudonym; URLs, hosts, e-mail addresses and credentials are dropped.
 
     The outcomes over the window are read from the job journals and the metrics store; one that
-    cannot be read is null, with the reason. This build does not sign the pack, read the forge's
-    protection and permissions, or ask the releases API: the pack says so, and those controls
-    read `unknown`."""
+    cannot be read is null, with the reason. The forge is asked, read-only, what protects each
+    repository's base branch, what the credential a job holds is granted, and which releases of
+    the platform are published; what it cannot answer reads `unknown`, never `pass`. This build
+    does not sign the pack, and the pack says so."""
     from openfactory.certify import pack as certify
     from openfactory.cli_refusals import certify_deployment_refusal
 

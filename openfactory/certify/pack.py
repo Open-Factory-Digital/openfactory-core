@@ -2,10 +2,13 @@
 
 THREE STEPS, AND ONLY THE FIRST TOUCHES THE MACHINE. `gather` reads what the platform already knows
 about itself — the registry, the manifests it reads to run a job, the box proofs, the doctor, the
-preflight, the environment and the secrets file's mode — into a `controls.Reading`. `assemble` turns
-a reading into the pack's files with every identifier replaced and every credential, address and
-path dropped, and refuses to hand back a pack in which anything survived. `write` puts the files in
-a tarball. A test drives the second and third with no registry, no Docker and no network.
+preflight, the environment and the secrets file's mode — and asks each project's forge row three
+read-only questions (#356): what protects the branch it merges into, what its credential is
+granted, and which releases of the platform are published — into a `controls.Reading`.
+`assemble` turns a reading into the pack's files with every identifier replaced and every
+credential, address and path dropped, and refuses to hand back a pack in which anything survived.
+`write` puts the files in a tarball. A test drives the second and third with no registry, no
+Docker and no network.
 
 WHAT IS NEVER READ: ticket titles and bodies, pull request bodies, commit messages, diffs, and any
 file inside a customer repository other than the manifest the platform already loads. The box
@@ -51,8 +54,6 @@ SUMS_FILE = "SHA256SUMS"
 #: What a reader must not look for in this pack, said in the pack.
 NOT_YET = (
     "a signature: minisign signing is not built yet, so there is no pack.sig",
-    "the forge-read controls: C-WORKFLOWS and C-BRANCH read `unknown`",
-    "the releases read: C-VERSION reads `unknown`",
     "every outcome aggregate that could not be read: each is null in `outcomes`, with its "
     "reason in `outcomes.not_measured`",
     "the env check and conformance diagnostics",
@@ -94,7 +95,9 @@ def gather(*, cwd: Path | None = None) -> c.Reading:
     was = quieted.level
     quieted.setLevel(logging.ERROR)
     try:
-        projects = [_project(p, build) for p in rows]
+        forges = [_forge_of(p) for p in rows]
+        projects = [_project(p, build, forge) for p, forge in zip(rows, forges, strict=True)]
+        releases = _releases(forges)
         try:
             before = preflight.check(preflight.probes_for_this_machine()).as_document()
             before_error = ""
@@ -112,7 +115,7 @@ def gather(*, cwd: Path | None = None) -> c.Reading:
         version=__version__, build=build, env=env, env_file=_env_file(here), sandbox=sandbox,
         identity=identity_kind(env), providers=_providers(rows, env, sandbox), projects=projects,
         floor_protected=protected.floor_protected_paths(), approvers=approvers,
-        preflight=before, preflight_error=before_error)
+        preflight=before, preflight_error=before_error, releases=releases)
     reading.identifiers = _identifiers(rows, projects, approvers or [], env)
     reading.secrets = _secret_values(rows, env)
     reading.variables = _variable_names(rows)
@@ -130,8 +133,9 @@ def _outcomes_of(names: list[str]):
     return read
 
 
-def _project(project, build: tuple[str, str]) -> c.ProjectReading:
+def _project(project, build: tuple[str, str], forge=None) -> c.ProjectReading:
     from openfactory import box_prove, doctor
+    from openfactory.adapters.forge.base import ci_write_permissions_of, credential_permissions_of
 
     box = getattr(project, "box", None)
     credential, mints = _forge_credential(project)
@@ -142,12 +146,85 @@ def _project(project, build: tuple[str, str]) -> c.ProjectReading:
     reading.repositories.append(_repository(project, "", default=True))
     for repo in _foreign_repositories(project, box_prove._proof_dir()):
         reading.repositories.append(_repository(project, repo, default=False))
+    if forge is not None:
+        reading.permissions = credential_permissions_of(forge)
+        reading.ci_permissions = ci_write_permissions_of(forge)
+        for repo in reading.repositories:
+            repo.protection = _protection(forge, repo)
     try:
         report = doctor.diagnose(doctor.probes_for(project))
         reading.doctor = doctor.as_document(report, project=project.name, build=build)
     except Exception as exc:  # noqa: BLE001 — a doctor that could not run is `unknown`
         reading.doctor_error = str(exc)
     return reading
+
+
+def _forge_of(project):
+    """The project's forge row, holding the credential a JOB of the project would hold — the
+    worker's resolution: the project's stored value, else the deployment's provider for the
+    vendor (`credentials.deployment_forge_provider`). None when it cannot be built; every read
+    through it is then `unknown`.
+
+    THE READS ARE A JOB'S READS, NOT THE DOCTOR'S. The doctor asks with the static token only,
+    because a diagnostic that mints spends; a certificate is about the credential a job HOLDS, so
+    it asks with that one. The App's permissions are read without a mint (signed with the App's
+    own key); a branch's protection on a private repository needs a token, and one is minted."""
+    from openfactory.adapters.forge.registry import build_forge
+    from openfactory.credentials import deployment_forge_provider, forge_token_for
+
+    try:
+        token = forge_token_for(project)
+        return build_forge(project, token=token,
+                           token_provider=None if token else deployment_forge_provider(project))
+    except Exception as exc:  # noqa: BLE001 — a forge that cannot be built answers `unknown`
+        log.info("the forge of %s could not be built (%s)", project.name, str(exc)[:160])
+        return None
+
+
+def _protection(forge, repo: c.RepositoryReading):
+    """What protects the branch `repo`'s manifest merges into, or None when the manifest is
+    unread (there is no branch to ask about) or the forge could not say."""
+    from openfactory.adapters.forge.base import branch_protection_of
+
+    branch = getattr(repo.manifest, "base_branch", "") if repo.manifest is not None else ""
+    if not branch:
+        return None
+    return branch_protection_of(forge, branch, repo="" if repo.default else repo.identity)
+
+
+def releases_home() -> str:
+    """Where the platform publishes its releases: the `Repository` URL of the installed
+    package's own metadata (`pyproject.toml`'s `urls`), or `""` when the installation has none.
+    ONE HOME, the one the wheel already carries — never a second copy of the address in code."""
+    from importlib.metadata import PackageNotFoundError, metadata
+
+    try:
+        entries = metadata("openfactory").get_all("Project-URL") or []
+    except PackageNotFoundError:
+        return ""
+    for entry in entries:
+        label, _, url = str(entry).partition(",")
+        if label.strip().lower() == "repository":
+            return url.strip()
+    return ""
+
+
+def _releases(forges: list) -> list[str] | None:
+    """The platform's published releases, as the first forge row that can list them answers — or
+    None. A row lists only a repository on its own host, so a deployment on another vendor, or
+    one that cannot reach the network, answers None, and C-VERSION says `unknown`."""
+    from openfactory.adapters.forge.base import published_releases_of
+
+    home = releases_home()
+    if not home:
+        return None
+    for forge in forges:
+        if forge is None:
+            continue
+        got = published_releases_of(forge, home)
+        if got is not None:
+            return got
+    return None
 
 
 #: `credentials.forge_credential_source`'s identities, as the classes C-FORGE-CRED judges.

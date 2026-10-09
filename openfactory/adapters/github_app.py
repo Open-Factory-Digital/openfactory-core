@@ -9,12 +9,15 @@ tokens are long-lived; Jira uses API tokens), each in their own adapter.
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from datetime import datetime
 
 import httpx
 import jwt
+
+log = logging.getLogger("openfactory.github_app")
 
 
 def token_from_env() -> str | None:
@@ -50,6 +53,41 @@ def mint_installation_token(
     return data["token"], expires
 
 
+def installation_permissions(
+    *, app_id: str, private_key: str, installation_id: str
+) -> dict[str, str] | None:
+    """What the installation is GRANTED — `{"contents": "write", "workflows": "write", ...}` — or
+    None when it could not be read (#356).
+
+    `GET /app/installations/{id}`, SIGNED WITH THE APP'S JWT, the way the mint above is: the
+    installation's own record, read without minting a token to ask. An installation token cannot
+    answer this about itself — GitHub sends it no list of its permissions — and minting one only
+    to look would spend for a read. The token a job is minted carries exactly these: the mint
+    above asks for no narrower set.
+
+    NEVER RAISES. A key that does not sign, a refused JWT, an unreachable API and an answer
+    without `permissions` are all "could not read", which a certificate says as `unknown`."""
+    try:
+        now = int(time.time())
+        app_jwt = jwt.encode(
+            {"iat": now - 60, "exp": now + 540, "iss": app_id}, private_key, algorithm="RS256"
+        )
+        r = httpx.get(
+            f"https://api.github.com/app/installations/{installation_id}",
+            headers={"Authorization": f"Bearer {app_jwt}",
+                     "Accept": "application/vnd.github+json"},
+            timeout=30,
+        )
+        data = r.json() if r.status_code == 200 else None
+    except Exception:  # noqa: BLE001 — every failure here is the same answer: not read
+        log.info("the App installation's permissions could not be read", exc_info=True)
+        return None
+    granted = data.get("permissions") if isinstance(data, dict) else None
+    if not isinstance(granted, dict):
+        return None
+    return {str(k): str(v) for k, v in granted.items()}
+
+
 class GitHubAppTokenProvider:
     """Caches an installation token and re-mints ~5 min before it expires. This is
     what an always-on worker holds; a single short `openfactory run` needs only one token."""
@@ -68,3 +106,8 @@ class GitHubAppTokenProvider:
             app_id=self.app_id, private_key=self.private_key, installation_id=self.installation_id
         )
         return self._token
+
+    def permissions(self) -> dict[str, str] | None:
+        """What THIS installation is granted (`installation_permissions`), or None."""
+        return installation_permissions(app_id=self.app_id, private_key=self.private_key,
+                                        installation_id=self.installation_id)

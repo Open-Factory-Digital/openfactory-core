@@ -175,6 +175,13 @@ Needs Action, the platform versions the jobs ran on, and the `box prove` runs. C
 only; a measure that cannot be read (no metrics store, no journals where certify ran, a card
 record that began inside the window) is `null`, and `outcomes.not_measured` says why.
 
+Three controls ask the forge, read-only, through the project's own forge row: C-BRANCH (the base
+branch requires a pull request, keeps history linear, blocks force pushes and allows auto-merge),
+C-WORKFLOWS (the credential a job holds cannot write the CI definitions) and C-VERSION (the running
+version is the latest published release or the one before). What the forge cannot answer — a
+credential without the scope to ask, a vendor that does not publish it, no network — reads
+`unknown`, never `pass`.
+
 `openfactory certify verify <pack.tgz> [--profile <p>] [--thresholds <file>]` checks a pack
 offline, the way the submissions bot does: every member a regular file, `pack.json` against its
 schema, `SHA256SUMS` and `pack.json`'s own checksums against the files, the signature, and every
@@ -185,9 +192,8 @@ outcome the pack did not measure fails its threshold as "not measured", never as
 `--allow-unsigned` stops an unsigned pack being a finding, for a rehearsal; the submissions bot
 never passes it.
 
-Not built yet, and said in every pack: the signature (so every pack is a `signature` finding
-without `--allow-unsigned`), the forge reads (C-WORKFLOWS, C-BRANCH) and the releases read
-(C-VERSION).
+Not built yet, and said in every pack: the signature, so every pack is a `signature` finding
+without `--allow-unsigned`.
 
 ---
 

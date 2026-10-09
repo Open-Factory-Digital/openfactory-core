@@ -131,11 +131,11 @@ MUTATIONS = [
      NAMES + "::test_a_pack_in_which_anything_survived_is_never_written"),
 
     # ── controls ────────────────────────────────────────────────────────────────────────────────
+    # re-pinned 2026-10-05: the forge and releases reads are built, so no control is NOT_BUILT
+    # any more; the claim now lives where an unread branch protection is answered (#356)
     ("a read this slice does not make answers pass", CONTROLS,
-     "            out.append(Control(spec.id, spec.title, True, UNKNOWN, spec.source,\n"
-     "                               NOT_BUILT[spec.id]))",
-     "            out.append(Control(spec.id, spec.title, True, PASS, spec.source,\n"
-     "                               NOT_BUILT[spec.id]))", CTRL),
+     "            if got is None:\n                results.append(UNKNOWN)",
+     "            if got is None:\n                results.append(PASS)", CTRL),
 
     ("a control the profile does not require is evaluated as required", CONTROLS,
      "        if spec.id not in required:",

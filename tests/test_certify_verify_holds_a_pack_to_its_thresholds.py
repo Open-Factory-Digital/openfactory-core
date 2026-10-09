@@ -166,10 +166,17 @@ def test_every_threshold_is_reported_by_its_id(good):
 
 
 def test_a_finding_is_one_line_per_failure_under_the_id_of_what_failed(written):
+    # THE FAILURES ARE THE PACK'S OWN, read from it — not a list of controls this build cannot
+    # read, which the forge reads (slice 3) emptied: every control the pack records as neither
+    # `pass` nor `info` is one line under T-CONTROLS, named by its id, and nothing else is.
     output = _cli("verify", str(written)).output
+    document = json.loads(_members(written)["pack.json"])
+    failing = {x["id"] for x in document["controls"] if x["result"] not in (c.PASS, c.INFO)}
 
     controls = [line for line in output.splitlines() if line.startswith("✗ T-CONTROLS")]
-    assert {line.split()[2].rstrip(":") for line in controls} >= set(c.NOT_BUILT), output
+    named = [line.split()[2].rstrip(":") for line in controls]
+    assert failing, "the bed fails no control, so this measures nothing"
+    assert len(named) == len(set(named)) and set(named) == failing, output
 
 
 @pytest.mark.parametrize("make", [

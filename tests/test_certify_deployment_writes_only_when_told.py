@@ -4,9 +4,9 @@ THE COMMAND'S CONTRACT, from the issue: `--partner`, `--profile` and `--practiti
 default and a refusal names the flag (with its cause and its remedy, `cli_refusals.py`'s rule);
 `--dry-run` prints the entire pack and writes nothing; without `--yes` nothing is written; `--yes`
 writes a tarball whose `pack.json` validates against the published schema and whose checksums
-are the files beside it. And what this slice does not do is SAID — in the pack and its summary —
-rather than filled in: no signature, `unknown` for the forge and releases reads, outcomes not
-measured.
+are the files beside it. And what is not built yet is SAID — in the pack and its summary — rather
+than filled in: no signature, outcomes not measured. A forge read that could not be made reads
+`unknown`, never `pass`.
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ import tarfile
 import pytest
 from typer.testing import CliRunner
 
-from openfactory.certify import controls as c
 from openfactory.certify import pack
 from openfactory.certify.schema import validate
 from openfactory.observability.query import MEASURES
@@ -167,37 +166,45 @@ def test_what_the_pack_does_not_contain_is_said_in_it(tmp_path, monkeypatch):
     assert all(outcomes["not_measured"][m].strip() for m in MEASURES)
     summary = files["summary.md"]
     assert "## What this pack does not contain yet" in summary
-    for gap in ("signature", "C-WORKFLOWS", "C-BRANCH", "C-VERSION", "outcome aggregate"):
+    for gap in ("signature", "outcome aggregate"):
         assert gap in summary, f"the summary does not say the pack lacks {gap}"
+    assert not [g for g in document["not_in_this_pack"] if "C-" in g], (
+        "the pack still says a control is not read — the forge and releases reads are built")
     assert summary.index("does not contain yet") < summary.index("## Controls"), (
         "what is missing is said after the results, where a reader has already decided")
 
 
-def test_the_reads_this_slice_does_not_make_read_unknown_never_pass(tmp_path, monkeypatch):
-    """The forge's branch protection, the credential's permissions, the releases list: on a
-    deployment where everything else is green, those three still say `unknown`."""
+def test_a_forge_that_refuses_every_read_leaves_its_controls_unknown_never_pass(tmp_path,
+                                                                                 monkeypatch):
+    """The forge's branch protection, the credential's grants, the releases list, each refused —
+    a credential without the scope to ask: on a deployment where everything else is green, those
+    three say `unknown`."""
     bed.build(tmp_path, monkeypatch)
+    no = bed.refused("Resource not accessible by personal access token", 403)
+    bed.forge_answers(monkeypatch, rules=no, branch=no, settings=no, scopes=no, releases=no)
 
     for profile in ("standard", "enterprise"):
         document = bed.pack_json(bed.files_of(_invoke(
             "--partner", "altiva", "--profile", profile, "--practitioner", "x",
             "--dry-run").output))
         results = {x["id"]: x for x in document["controls"]}
-        for control in c.NOT_BUILT:
+        for control in ("C-WORKFLOWS", "C-BRANCH", "C-VERSION"):
             assert results[control]["result"] == "unknown", results[control]
-            assert "not built" in results[control]["evidence"]["detail"]
+            assert "could not be read" in results[control]["evidence"]["detail"]
 
 
-def test_the_controls_read_locally_are_computed_not_unknown(tmp_path, monkeypatch):
-    """Every control this slice CAN read answers from the deployment — none of them falls back
-    to `unknown` on a deployment that has everything they read."""
+def test_every_control_is_computed_from_what_the_deployment_and_its_forge_say(tmp_path,
+                                                                             monkeypatch):
+    """Every control answers from the deployment — none of them falls back to `unknown` on a
+    deployment that has everything they read, the forge's three reads included."""
     bed.build(tmp_path, monkeypatch)
 
     document = bed.pack_json(bed.files_of(_invoke(*FULL, "--dry-run").output))
 
     results = {x["id"]: x["result"] for x in document["controls"]}
-    local = set(c.CONTROL_IDS) - set(c.NOT_BUILT)
-    assert {k: v for k, v in results.items() if k in local and v == "unknown"} == {}
+    assert {k: v for k, v in results.items() if v == "unknown"} == {}
+    assert results["C-BRANCH"] == "pass" and results["C-WORKFLOWS"] == "pass"
+    assert results["C-VERSION"] == "fail", "a development build passed as a release"
     assert results["C-PANEL"] == "pass" and results["C-ENVFILE"] == "pass"
     assert results["C-BOX-ENV"] == "fail", "a project with no box.env passed the allow list"
     assert results["C-PROOF"] == "fail", "an unproven repository passed the proof control"
