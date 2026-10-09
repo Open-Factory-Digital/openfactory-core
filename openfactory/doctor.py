@@ -1619,7 +1619,12 @@ def _intake_findings(p: Probes) -> list[Finding]:
     deployment that sees this line green and then files is the one this check exists for.
 
     NOTHING WHERE `board_columns` HAS SPOKEN: an unreadable board is said there, once, and a second
-    line here would be the same cause reported as two problems."""
+    line here would be the same cause reported as two problems.
+
+    A BOARD READ THAT CANNOT SAY is a FAIL too (`Intake.unknown`, #543): a declaration naming a
+    state the vendor does not have, or a workflow with several statuses a new card could start
+    in and none declared. The product role files nothing there, so a pass would be the doctor
+    certifying a board it did not read an answer from — the line names the declaration instead."""
     if p.board_intake is None:
         return []
     try:
@@ -1631,6 +1636,13 @@ def _intake_findings(p: Probes) -> list[Finding]:
                         "re-run with the underlying tool by hand to see the raw error")]
     if born is None:
         return []
+    unknown = getattr(born, "unknown", "") or ""
+    if unknown:
+        return [Finding(
+            "board_intake", False,
+            f"where a card the product role files is created cannot be told: {unknown} — so the "
+            f"product role files nothing on this board until it is declared (#543)",
+            getattr(born, "remedy", "") or INTAKE_REMEDY)]
     column, queue = getattr(born, "column", "") or "", getattr(born, "queue", "") or ""
     if getattr(born, "queued", False):
         return [Finding(
@@ -1640,9 +1652,12 @@ def _intake_findings(p: Probes) -> list[Finding]:
             f"so the product role files nothing on this board until it has a backlog (#536)",
             getattr(born, "remedy", "") or INTAKE_REMEDY)]
     if not column:
+        # SAID AS MEASURED, AND NO FURTHER: the board shows the state a new card is created in on
+        # no column. Where the door then places it is a different question, which this probe did
+        # not ask (review of #547).
         return [Finding("board_intake", True,
-                        f"a card the product role files starts on no column of its own, out of "
-                        f"{queue!r} — the door places it in the backlog")]
+                        f"a card the product role files is created in a state no column of this "
+                        f"board shows, out of {queue!r}, the column the poller reads")]
     return [Finding("board_intake", True,
                     f"a card the product role files starts in {column!r}, out of {queue!r}, the "
                     f"column the poller reads")]
@@ -2561,7 +2576,9 @@ def probes_for(project) -> Probes:
         if board is None or not callable(getattr(board, "intake_column", None)):
             return None
         born = intake(build_tracker(project, token_provider=_board_credential(project)), board)
-        if born is not None and born.column is None:
+        # A BOARD READ THAT COULD NOT SAY is not an unread one (`Intake.unknown`, #543): it is
+        # this check's own FAIL, with the declaration that answers it — never `board_columns`'s.
+        if born is not None and born.column is None and not born.unknown:
             raise BoardUnreadable(_board_coordinates(project), remedy=_board_remedy(project))
         return born
     def _stages() -> tuple[dict[str, str], str] | None:

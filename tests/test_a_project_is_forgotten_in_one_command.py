@@ -251,14 +251,33 @@ class _Engine:
     """The durable engine as `in_flight` asks it: the running workflows by type, and each
     conversation's presence. A double, because the suite may not reach a real one."""
 
-    def __init__(self, *, jobs=(), conversations=(), presence=None, fails=False):
+    def __init__(self, *, jobs=(), conversations=(), presence=None, fails=False,
+                 coordinators=(), retention_days=30):
         self.jobs, self.conversations = list(jobs), list(conversations)
         self.presence, self.fails = dict(presence or {}), fails
+        self.coordinators = list(coordinators)
+        #: what `close_runs` ended, with the reason the engine records
+        self.terminated: dict[str, str] = {}
+        self.namespace = "default"
+        engine = self
+
+        class _Service:
+            async def describe_namespace(self, request):
+                assert request.namespace == engine.namespace
+                ttl = SimpleNamespace(seconds=retention_days * 86400)
+                return SimpleNamespace(config=SimpleNamespace(workflow_execution_retention_ttl=ttl))
+        self.workflow_service = _Service()
 
     def list_workflows(self, query: str):
         if self.fails:
             raise RuntimeError("visibility store unavailable")
-        ids = self.jobs if "JobWorkflow" in query else self.conversations
+        if "JobWorkflow" in query:
+            ids = self.jobs
+        elif "ConversationWorkflow" in query:
+            ids = self.conversations
+        else:   # one run, asked by its id
+            ids = [w for w in self.coordinators if f'WorkflowId = "{w}"' in query]
+        ids = [w for w in ids if w not in self.terminated]
 
         async def _rows():
             for wid in ids:
@@ -271,6 +290,9 @@ class _Engine:
         class _Handle:
             async def query(self, _name, _cursor, **_kw):
                 return {"seq": 0, "entries": [], "presence": engine.presence.get(wid, {})}
+
+            async def terminate(self, *, reason: str = ""):
+                engine.terminated[wid] = reason
         return _Handle()
 
 
@@ -317,6 +339,113 @@ def test_no_engine_declared_runs_nothing_and_a_declared_one_that_will_not_answer
     monkeypatch.setattr(view, "connect", _down)
     silent = asyncio.run(forget.in_flight(books))
     assert "connection refused" in silent.unread and silent.refusal(), silent
+
+
+# ── the runs that still hold what was said (#533) ───────────────────────────────────────────────
+
+async def _idle(_t, **_k):
+    """`in_flight` on an engine where nothing runs on the project."""
+    return forget.Flight()
+
+
+def _runs(deployment):
+    """The engine holding books's product: two idle conversations, one with a turn at work, the
+    project's tech-lead run — and another product's conversation and tech-lead, which stay."""
+    from openfactory.product.door import workflow_id
+
+    books, shop = deployment["books"], deployment["shop"]
+    idle = [workflow_id(product_key(books), "sala"), workflow_id(product_key(books), "dm-ana")]
+    busy = workflow_id(product_key(books), "dm-bob")
+    elsewhere = workflow_id(product_key(shop), "sala")
+    engine = _Engine(conversations=[*idle, busy, elsewhere], presence={busy: {"working": True}},
+                     coordinators=[forget.coordinator_id("books"), forget.coordinator_id("shop")])
+    return engine, idle, busy, elsewhere
+
+
+def test_the_idle_conversation_runs_and_the_tech_lead_run_are_closed_and_nothing_else(deployment):
+    """CLOSED, NOT CLEARED: an open run's history is never reached by the engine's retention, and
+    a forgotten conversation never takes the turns that would roll it over. Terminated, it is
+    closed, and its history expires; the next message starts a new run (`door.receive`)."""
+    import asyncio
+
+    engine, idle, busy, elsewhere = _runs(deployment)
+
+    closed = asyncio.run(forget.close_runs(forget.target("books").where,
+                                           coordinator=forget.coordinator_id("books"),
+                                           client=engine))
+
+    assert set(engine.terminated) == {*idle, forget.coordinator_id("books")}, engine.terminated
+    assert set(engine.terminated.values()) == {forget.CLOSED_BECAUSE}
+    assert closed.at_work == (busy,), "a turn at work is never ended mid-turn"
+    assert elsewhere not in engine.terminated and forget.coordinator_id("shop") not in (
+        engine.terminated), "another product's runs were closed"
+    assert closed.retention == "30 days"
+    assert closed.sentence() == ("their history expires with the engine's retention (30 days); "
+                                 "1 left open, a turn at work in it — run this again once it ends")
+
+
+def test_project_forget_closes_the_runs_and_says_when_their_history_goes(remembered, monkeypatch):
+    engine, idle, busy, _elsewhere = _runs(remembered)
+    engine.presence.pop(busy)
+
+    async def _client():
+        return engine, "", True
+
+    monkeypatch.setattr(forget, "_engine_client", _client)
+    monkeypatch.setattr(forget, "in_flight", _idle)
+
+    done = _forget("books", "--yes", "--no-backup")
+
+    assert done.exit_code == 0, done.output
+    assert ("✓ engine: forgotten — 3 conversation runs closed, 1 tech-lead runs closed; their "
+            "history expires with the engine's retention (30 days)") in done.output, done.output
+    assert len(engine.terminated) == 4
+
+
+def test_an_engine_that_could_not_close_them_is_a_failure_said(remembered, monkeypatch):
+    engine, *_ = _runs(remembered)
+    engine.fails = True
+
+    async def _client():
+        return engine, "", True
+
+    monkeypatch.setattr(forget, "_engine_client", _client)
+    monkeypatch.setattr(forget, "in_flight", _idle)
+
+    done = _forget("books", "--yes", "--no-backup")
+
+    assert done.exit_code == 1, done.output
+    assert ("✗ engine: failed — 0 conversation runs closed; the engine could not close the runs "
+            "(visibility store unavailable) — run this again once the engine answers"
+            ) in done.output, done.output
+
+
+def test_forget_conversations_closes_the_conversation_runs_and_leaves_the_tech_lead(remembered,
+                                                                                 monkeypatch):
+    """The deletion-request command: what was said is deleted from the store AND the runs holding
+    it are closed. The tech-lead's run holds no conversation, and this command touches nothing but
+    the conversations."""
+    from openfactory.cli import app
+
+    engine, idle, busy, elsewhere = _runs(remembered)
+    engine.presence.pop(busy)
+
+    async def _client():
+        return engine, "", True
+
+    monkeypatch.setattr(forget, "_engine_client", _client)
+
+    done = CliRunner().invoke(app, ["project", "forget-conversations", "books", "--yes"])
+
+    assert done.exit_code == 0, done.output
+    assert set(engine.terminated) == {*idle, busy}, engine.terminated
+    assert "✓ engine: forgotten — 3 conversation runs closed;" in done.output, done.output
+
+
+def test_what_it_keeps_says_the_engine_s_history_goes_with_its_retention():
+    kept = " ".join(forget.KEPT)
+    assert "until the engine's retention expires it" in kept
+    assert "for its retention" not in kept, "a run that never closes is never retained away"
 
 
 # ── what this deployment cannot forget is refused by name ───────────────────────────────────────

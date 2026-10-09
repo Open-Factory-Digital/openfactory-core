@@ -19,7 +19,14 @@ the defect; and a requirement's card is created and answered, in the project's P
 WHAT IS DRIVEN HERE IS THE REAL `JiraTracker` AND THE REAL `JiraProjectBoard`, built by the
 registry rows from a project's tracker options, against a fake at the one place the adapter
 touches the network (`urllib.request.urlopen`) — as `test_a_withdrawn_card_lands_in_the_sites_own_
-status_on_jira.py` does. The site creates an issue in `A Fazer` and its workflow offers `Backlog`.
+status_on_jira.py` does. The site creates an issue in `Aberto`, a status the project maps to
+nothing, and its workflow offers `Backlog`.
+
+SINCE #543 THE SITE IS NOT THE ONE MEASURED ABOVE. A workflow that creates an issue IN the queue
+(`A Fazer`, here) is where the product role files nothing at all — the card would be built with
+nobody queueing it (`test_every_card_writer_asks_whether_it_is_born_in_the_queue.py`) — so the
+workflow here creates it one status before, which is what this file is about: where the card is
+PLACED once it exists, and under which key its delivery is followed.
 The ledger is the deployment's SQLite store. A GitHub-shaped ref (`#12`) is keyed exactly as
 before: the board is asked for `12`, and the defect is followed as `defeito-12`.
 """
@@ -37,6 +44,8 @@ from openfactory.product import events
 
 KEY = "DAR"
 BACKLOG, TODO, DOING, DONE = "Backlog", "A Fazer", "Em andamento", "Concluído"
+#: where the workflow creates an issue — out of the queue, and mapped to nothing (#543)
+OPENED = "Aberto"
 TO_BACKLOG, TO_TODO, TO_DOING = "21", "11", "31"
 ANA = "ana-requester-77"
 ANAS = f"person:{ANA}"
@@ -57,7 +66,7 @@ class _Answer:
 
 
 class _Site:
-    """A Jira site whose workflow creates an issue in `A Fazer` and offers `Backlog` from it."""
+    """A Jira site whose workflow creates an issue in `Aberto` and offers `Backlog` from it."""
 
     def __init__(self) -> None:
         self.status: dict[str, str] = {}
@@ -77,9 +86,15 @@ class _Site:
         self.requests.append((method, path, body))
         if (method, path) == ("POST", "search/jql"):        # `find_ticket`: nothing filed before
             return _Answer({"isLast": True, "issues": []})
+        if (method, path) == ("GET", f"project/{KEY}/statuses"):
+            # WHERE A NEW ISSUE IS BORN, asked before one is filed (#543): the workflow's first
+            return _Answer([{"name": "Task", "statuses": [
+                {"name": n, "statusCategory": {"key": c}} for n, c in (
+                    (OPENED, "new"), (BACKLOG, "new"), (TODO, "new"), (DOING, "indeterminate"),
+                    (DONE, "done"))]}])
         if (method, path) == ("POST", "issue"):
             key = f"{KEY}-{len(self.status) + 1}"
-            self.status[key] = TODO
+            self.status[key] = OPENED
             return _Answer({"id": str(10000 + len(self.status)), "key": key})
         read = re.fullmatch(rf"issue/({KEY}-\d+)", path)
         if read and method == "GET":
@@ -117,8 +132,11 @@ def project(tmp_path, monkeypatch):
 
     monkeypatch.setenv("OPENFACTORY_METRICS_SINK", "sqlite")
     monkeypatch.setenv("OPENFACTORY_METRICS_DB", str(tmp_path / "metrics.db"))
+    # `intake_status`: the workflow below lists three statuses of the To Do category, and where a
+    # new issue starts is declared, never taken from the order they are listed in (#552's review)
     options = {"site": "https://acme-team.atlassian.net", "email": "alice@acme.ai",
-               "status_map": json.dumps({"todo": TODO, "in_progress": DOING, "done": DONE})}
+               "status_map": json.dumps({"todo": TODO, "in_progress": DOING, "done": DONE}),
+               "intake_status": OPENED}
     return Project(name="acme", repo_path=str(tmp_path), language="pt-BR",
                    tracker=ProviderRef(kind="jira", repo=KEY, options=options),
                    product=ProductConfig(docs_repo="acme/acme-docs", admins=[ANA],

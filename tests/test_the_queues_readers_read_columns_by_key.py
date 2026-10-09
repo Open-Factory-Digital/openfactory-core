@@ -103,6 +103,12 @@ class _Site:
             return _Answer({"isLast": True, "issues": [
                 {"key": k, "fields": {"status": {"name": i["status"]}}}
                 for k, i in self.issues.items() if not wanted or i["status"] == wanted.group(1)]})
+        if (method, route) == ("GET", f"project/{KEY}/statuses"):
+            # WHERE A NEW ISSUE IS BORN, asked before one is filed (#543): `Aberto`, first
+            return _Answer([{"name": "Task", "statuses": [
+                {"name": n, "statusCategory": {"key": "done" if n == DONE else
+                                               "indeterminate" if n in (DOING, WAITING) else "new"}}
+                for n in (OPENED, PENDING, TODO, READY, DOING, WAITING, DONE)]}])
         if (method, route) == ("POST", "issue"):
             key = f"{KEY}-{len(self.issues) + 1}"
             self.put(key, OPENED, summary=body["fields"]["summary"])
@@ -147,9 +153,11 @@ def jira(site, tmp_path, monkeypatch):
     monkeypatch.setenv("OPENFACTORY_METRICS_DB", str(tmp_path / "metrics.db"))
 
     def _open(status_map: dict | None = None, **more):
+        # `intake_status`: the workflow lists several statuses of the To Do category, and where a new
+        # issue starts is declared, never taken from the order they are listed in (#552's review)
         options = {"site": "https://acme-team.atlassian.net", "email": "alice@acme.ai",
                    "status_map": json.dumps(RENAMED if status_map is None else status_map),
-                   **more}
+                   "intake_status": OPENED, **more}
         project = Project(name="acme", repo_path=str(tmp_path), language="pt-BR",
                           tracker=ProviderRef(kind="jira", repo=KEY, options=options),
                           product=_product())
