@@ -153,9 +153,11 @@ def jira(site, tmp_path, monkeypatch):
     monkeypatch.setenv("OPENFACTORY_METRICS_DB", str(tmp_path / "metrics.db"))
 
     def _open(status_map: dict | None = None, **more):
+        # `intake_status`: the workflow lists several statuses of the To Do category, and where a new
+        # issue starts is declared, never taken from the order they are listed in (#552's review)
         options = {"site": "https://acme-team.atlassian.net", "email": "alice@acme.ai",
                    "status_map": json.dumps(RENAMED if status_map is None else status_map),
-                   **more}
+                   "intake_status": OPENED, **more}
         project = Project(name="acme", repo_path=str(tmp_path), language="pt-BR",
                           tracker=ProviderRef(kind="jira", repo=KEY, options=options),
                           product=_product())

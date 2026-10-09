@@ -167,9 +167,12 @@ def jira(site, tmp_path, monkeypatch):
 
     monkeypatch.setenv("OPENFACTORY_METRICS_SINK", "sqlite")
     monkeypatch.setenv("OPENFACTORY_METRICS_DB", str(tmp_path / "metrics.db"))
+    # `intake_status`: the workflow lists several statuses of the To Do category, and where a new
+    # issue starts is declared, never taken from the order they are listed in (#552's review)
     options = {"site": "https://acme-team.atlassian.net", "email": "alice@acme.ai",
                "status_map": json.dumps({"backlog": PENDING, "todo": TODO,
-                                         "in_progress": DOING, "done": DONE})}
+                                         "in_progress": DOING, "done": DONE}),
+               "intake_status": OPENED}
     project = Project(name="acme", repo_path=str(tmp_path), language="pt-BR",
                       tracker=ProviderRef(kind="jira", repo=KEY, options=options),
                       product=_product())
