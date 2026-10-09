@@ -156,6 +156,7 @@ its administrator named — and localised — everything in it:
                           token_env: ACME_JIRA_TOKEN,
                           issue_type: Tarefa,                # default `Task`
                           status_map: '{"backlog": "A Fazer", "todo": "Pronto", "in_progress": "Em andamento", "done": "Concluído"}',
+                          intake_status: "A Fazer",          # where Jira creates a new issue
                           not_delivered_resolution: "Won't Do" } }
 ```
 
@@ -175,8 +176,15 @@ and paid for, with nobody queueing it. Nothing files a card there: the product r
 own `card_create`, a split that keeps its children in the backlog, the factory's impediment and
 `preview propose --as-card` each refuse and say why, and `openfactory doctor` fails `board_intake`
 with the line that repairs it — add a status of the To Do category for the queue (`Pronto` above)
-and map the first status as `backlog`, as the example does. The first status is read off the
-project's statuses for the `issue_type`: the first of the To Do category.
+and map the first status as `backlog`, as the example does.
+
+**Where a new issue starts is read, never guessed.** It is read off the project's statuses for the
+`issue_type` only where it cannot be a guess: the type's one status of the To Do category. Jira
+publishes a workflow's initial status only to its administrator and documents no order for the
+statuses it lists, so a workflow with several — the example's, once `Pronto` is added — says which
+with `intake_status`: the status the workflow starts a new issue in. Undeclared there, or declared
+as a status the type does not have, nothing is filed and `openfactory doctor` fails `board_intake`
+naming the statuses; the line it hands over for the queue declares `intake_status` with it.
 
 `not_delivered_resolution` is the **resolution** this site gives a card that was closed
 *without* the work being done — a duplicate, a withdrawn request. With it, such a close carries

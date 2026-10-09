@@ -38,6 +38,9 @@ MUTATIONS = [
      '                  *([{"op": "add", "path": "/fields/System.State", "value": state}]\n'
      "                    if state else []),\n",
      ""),
+    # three rows re-pinned 2026-10-09 (#552): the tracker now checks a declared backlog against the
+    # type's states, the doctor FAILs a board it read no answer from with the same `False` line
+    # shape, and the probe tells that board from an unread one — each row still cuts its own claim
     ("the tracker forgets the backlog the deployment declared", TRACKER,
      '        declared = self.state_map.get("backlog", "")',
      '        declared = ""'),
