@@ -1186,8 +1186,8 @@ def _as_card(project, repo: str, proposal: PreviewProposal) -> Outcome:
         if born is not None:
             where = (f"a new card on this board is born in {born.column!r}, the column the "
                      f"factory picks work up from, so it would be built with nobody queueing it"
-                     if born.queued else "the board could not be read to see where a new card "
-                                         "is born")
+                     if born.queued else born.unknown or "the board could not be read to see "
+                                                         "where a new card is born")
             return Outcome(repo=repo, detail=f"the card was not filed: {where}. `openfactory "
                                              f"doctor {project.name}` names the board's line.")
         ref = tracker.create_ticket(title=title, body=card_body(proposal, repo))

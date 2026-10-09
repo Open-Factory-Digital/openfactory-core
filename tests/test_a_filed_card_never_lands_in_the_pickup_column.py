@@ -88,6 +88,8 @@ class _Azure:
         self.blind = False
         #: the board's columns say which is the incoming one, as the live board does
         self.typed = True
+        #: states of the type the board shows on no column — a state is not a column by existing
+        self.unshown: set[str] = set()
 
     def state_of(self, n) -> str:
         return self.items[int(n)]["System.State"]
@@ -122,12 +124,13 @@ class _Azure:
         if method == "GET" and re.fullmatch(r"work/boards/[^/]+/columns", path):
             if self.blind:
                 raise AzureDevOpsError("GET work/boards/Issues/columns → 404 TF401501")
-            last = len(self.states) - 1
+            shown = [s for s, _c in self.states if s not in self.unshown]
+            last = len(shown) - 1
             return {"value": [{"name": s, "stateMappings": {KIND: s},
                                **({"columnType": ("incoming" if i == 0 else
                                                   "outgoing" if i == last else "inProgress")}
                                   if self.typed else {})}
-                              for i, (s, _c) in enumerate(self.states)]}
+                              for i, s in enumerate(shown)]}
         if (method, path) == ("GET", "work/teamsettings/teamfieldvalues"):
             return {"field": {"referenceName": "System.AreaPath"}, "values": []}
         if (method, path) == ("GET", f"wit/workitemtypes/{KIND}/states"):

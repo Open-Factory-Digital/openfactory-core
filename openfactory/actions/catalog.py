@@ -4439,6 +4439,9 @@ def _born_in_the_queue(proj, tracker, board) -> Outcome | None:
     if born.queued:
         return refused(CONFLICT, card_open_held("queue", column=str(born.column), language=lang),
                        project=proj.name, column=str(born.column))
+    if born.unknown:
+        return refused(CONFLICT, card_open_held("undeclared", column=born.queue, language=lang),
+                       project=proj.name, column=born.queue)
     return refused(UNAVAILABLE, card_open_held("unread", language=lang), project=proj.name)
 
 

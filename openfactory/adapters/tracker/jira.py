@@ -169,7 +169,7 @@ class JiraTracker:
     def __init__(self, *, site: str, project_key: str, email: str, token: str | None = None,
                  status_map: dict[str, str] | None = None, issue_type: str = "Task",
                  not_delivered_resolution: str = "", not_delivered_status: str = "",
-                 language: str | None = None) -> None:
+                 intake_status: str = "", language: str | None = None) -> None:
         self.site = site.rstrip("/")
         self.project_key = project_key
         self.email = email
@@ -187,6 +187,10 @@ class JiraTracker:
         #: of its own rather than with a field (a team-managed project has no screen to carry a
         #: resolution). `""` for the same reason: `Cancelled` is a name most sites do not have.
         self.not_delivered_status = str(not_delivered_status or "").strip()
+        #: THIS SITE's name for the status a new issue of `issue_type` is created in — its
+        #: workflow's initial status, which Jira publishes only to an administrator of the workflow
+        #: (#543). `""` = not declared, and the board reads it off the workflow where it can.
+        self.intake_status = str(intake_status or "").strip()
         #: The PROJECT's language, for the one sentence this row writes to a person in its own
         #: name — the note on a card it could not record as not delivered. Everything else it
         #: posts was composed by its caller, already in that language.
@@ -484,8 +488,9 @@ class JiraTracker:
                    {"update": {"labels": [{"remove": self.jira_label(label)}]}})
 
     def intake_state(self) -> str:
-        """`""`, always: a Jira issue is born in its workflow's INITIAL status, whatever this
-        deployment calls its backlog (#543). See `board.base.intake`.
+        """The workflow's INITIAL status as the deployment declared it (`intake_status`), or `""`:
+        a Jira issue is born there, whatever this deployment calls its backlog (#543). See
+        `board.base.intake`.
 
         JIRA'S CREATE TAKES NO STATUS. `POST issue` has no field for one; the `transition` it also
         accepts is applied to the issue once it exists, by an id only an existing issue's
@@ -494,8 +499,13 @@ class JiraTracker:
         between the two, and stays there whenever the move fails. So this row cannot do what the
         Azure row does with `state_map`, and says so: the board names the initial status
         (`JiraProjectBoard.intake_column`), and where that is the queue the deployment gives the
-        queue a status of its own — the line `openfactory doctor` hands over."""
-        return ""
+        queue a status of its own — the line `openfactory doctor` hands over.
+
+        A DECLARATION, NOT A CHOICE: `intake_status` moves nothing Jira creates. It says which
+        status the workflow starts an issue in, because Jira publishes that only to whoever
+        administers the workflow — and a workflow with two statuses an issue could start in cannot
+        be read without it (review of #552). The board checks it against the type's statuses."""
+        return self.intake_status
 
     def create_ticket(self, *, title: str, body: str) -> str:
         created = self._call("POST", "issue", {

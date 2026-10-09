@@ -56,8 +56,10 @@ from tests.test_a_filed_card_never_lands_in_the_pickup_column import (  # noqa: 
     ANA,
     BASIC,
     GUIDE,
+    OWN_BACKLOG,
     UNREAD,
     VERBS,
+    WITH_BACKLOG,
     WITH_READY,
     _filed,
     _intake_line,
@@ -228,6 +230,21 @@ def test_an_unread_board_opens_nothing_either(ado):
     assert site.items == {}
 
 
+def test_a_board_whose_backlog_was_declared_wrong_opens_nothing_and_names_the_queue(ado):
+    """NOT "TRY AGAIN": a declaration a retry never mends (#543) — and the person on the board is
+    told the way they DO have, opening the card in the queue, by the queue's own name."""
+    from openfactory.product.voice import card_open_held
+
+    _project, _tracker, _board, site = ado(WITH_READY, {**GUIDE, "state_map": json.dumps(
+        {"backlog": "Nope", "todo": "Ready"})})
+
+    out = _open_card(title="Exportar o relatório em CSV")
+
+    assert (out.ok, out.code, out.message) == (
+        False, "conflict", card_open_held("undeclared", column="Ready")), out.message
+    assert "open it in 'Ready'" in out.message and site.items == {}
+
+
 def test_on_the_guides_board_the_card_is_opened_in_the_backlog(ado):
     _project, _tracker, board, site = ado(WITH_READY, GUIDE)
 
@@ -393,6 +410,43 @@ def test_on_the_guides_board_the_preview_card_waits_in_the_backlog(ado):
     assert site.created_in() == ["To Do"]
 
 
+# ── what Azure DevOps was declared, read against the type (#547's review) ─────────────────────────
+
+def test_a_backlog_state_the_type_does_not_have_holds_the_filing_and_fails_the_doctor(ado):
+    """THE CREATE WOULD BE REFUSED ON EVERY CARD: `state_map` names a backlog the work item type
+    does not have, the board shows it on no column, and `""` read that as "born on no column" — the
+    doctor passed, and the requester heard "I could not open the card just now" on every attempt
+    (#547's review). Read against the type's own states, it is a hold and a FAIL that names them."""
+    from openfactory.product.voice import filing_held
+
+    project, tracker, board, site = ado(WITH_READY, {**GUIDE, "state_map": json.dumps(
+        {"backlog": "Nope", "todo": "Ready"})})
+
+    [held] = _filed("ticket", project, tracker, board)
+    line, report = _intake_line(project)
+
+    assert (held.ok, held.detail) == (False, filing_held("undeclared")) and site.created == []
+    assert not line.ok and not report.ok, "a board that refuses every create passed the doctor"
+    assert ("`state_map` declares the backlog 'Nope', which is not a state of the Issue type"
+            in line.message), line.message
+    assert "one of `To Do`, `Ready`, `Doing`" in line.remedy
+
+
+def test_a_backlog_state_no_column_shows_is_said_as_measured(ado):
+    """…while a state the type HAS but no column shows is the pass it was, said in the words the
+    probe earned: where the card is created, and nothing about where the door then puts it."""
+    project, tracker, board, site = ado(WITH_BACKLOG, OWN_BACKLOG)
+    site.unshown = {"Backlog"}
+
+    line, _report = _intake_line(project)
+    [filed] = _filed("ticket", project, tracker, board)
+
+    assert line.ok and line.message == ("a card the product role files is created in a state no "
+                                        "column of this board shows, out of 'To Do', the column "
+                                        "the poller reads")
+    assert filed.ok and site.created_in() == ["Backlog"], filed.detail
+
+
 # ── the Jira row ────────────────────────────────────────────────────────────────────────────────
 
 READY = "Ready"
@@ -442,7 +496,12 @@ class _Workflow(_Site):
 @pytest.fixture
 def jira(tmp_path, monkeypatch):
     """`open(statuses, initial, language) -> (project, tracker, board, site)`: a Jira project as the
-    registry holds one, its row's tracker and board built by the registry rows."""
+    registry holds one, its row's tracker and board built by the registry rows.
+
+    `declared` is the deployment's `intake_status` — by default the truth, the workflow's own
+    `initial`, because these workflows list two statuses of the To Do category and the row reads
+    neither by listing order (#552's review); `""` declares nothing, any other name a status the
+    deployment got wrong."""
     from openfactory.adapters.board import build_board
     from openfactory.adapters.tracker.registry import build_tracker
     from openfactory.contracts.project import Project, ProviderRef
@@ -453,11 +512,13 @@ def jira(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENFACTORY_LOG_DIR", str(tmp_path / "logs"))
 
     def _open(statuses=IN_THE_QUEUE, *, initial: str = TODO, language: str = "pt-BR",
-              status_map: dict | None = None, types=None):
+              status_map: dict | None = None, types=None, declared: str | None = None):
         site = _Workflow(statuses, initial=initial, types=types)
         monkeypatch.setattr("urllib.request.urlopen", site.urlopen)
         options = {"site": "https://acme-team.atlassian.net", "email": "alice@acme.ai",
                    "status_map": json.dumps(status_map or STATUS_MAP, ensure_ascii=False)}
+        if (initial if declared is None else declared):
+            options["intake_status"] = initial if declared is None else declared
         project = Project(name="acme", repo_path=str(tmp_path), language=language,
                           product=_product(),
                           tracker=ProviderRef(kind="jira", repo=KEY, options=options))
@@ -517,23 +578,105 @@ def test_an_unread_jira_project_files_nothing(jira):
     assert _intake_line(project)[0] is None, "an unread board is said by board_columns, once"
 
 
-def test_the_jira_row_reads_where_a_new_issue_is_born(jira):
-    """The first status of the To Do category for the type the tracker creates, the first listed
-    when the site names no category; a declared status by its name; and the tracker's half is
-    always the workflow's own — Jira's create takes no status."""
-    _p, tracker, board, site = jira(((DONE, "done"), (TODO, "new"), (BACKLOG, "new")))
+def test_the_jira_row_reads_where_a_new_issue_is_born_only_where_it_is_not_a_guess(jira):
+    """The type's ONE status of the To Do category, whatever order the site lists them in — its one
+    status where the site names no category; never one of several by listing order (#552's
+    review); a declared status by its name, and one the type does not have refused rather than
+    read as "on no column"; and the tracker's half is the declaration — Jira's create takes no
+    status."""
+    from openfactory.adapters.board.base import IntakeUnknown
+
+    _p, tracker, board, site = jira(((DONE, "done"), (TODO, "new"), (DOING, "indeterminate")),
+                                    declared="")
     assert tracker.intake_state() == ""
     assert board.intake_column() == TODO
-    assert (board.intake_column("backlog"), board.intake_column("Pronto")) == (BACKLOG, "")
+    site.types = {"Task": ((DOING, "indeterminate"), (DONE, "done"), (TODO, "new"))}
+    assert board.intake_column() == TODO, "one To Do status is read whatever the order"
+    site.types = {"Task": ((TODO, ""),)}
+    assert board.intake_column() == TODO, "a type with one status and no category has said"
+    site.types = {"Bug": ((BACKLOG, "new"),), "Task": ((DONE, "done"), (TODO, "new"))}
+    assert board.intake_column() == TODO, "the type the tracker creates, not another"
 
-    site.types = {"Task": ((BACKLOG, ""), (TODO, ""))}
-    assert board.intake_column() == BACKLOG
+    for several in (((TODO, "new"), (BACKLOG, "new"), (DONE, "done")),
+                    ((BACKLOG, "new"), (TODO, "new"), (DONE, "done")),
+                    ((BACKLOG, ""), (TODO, ""))):
+        site.types = {"Task": several}
+        with pytest.raises(IntakeUnknown) as unknown:
+            board.intake_column()
+        assert "has 2 statuses a new issue could start in" in unknown.value.reason, several
+        assert f"{TODO!r}" in unknown.value.reason and f"{BACKLOG!r}" in unknown.value.reason
+        assert "`intake_status: '<that status>'`" in unknown.value.remedy
 
-    site.types = {"Bug": ((BACKLOG, "new"),), "Task": ((TODO, "new"), (BACKLOG, "new"))}
-    assert board.intake_column() == TODO
+    site.types = {"Task": IN_THE_QUEUE}
+    assert (board.intake_column("backlog"), board.intake_column(" a fazer ")) == (BACKLOG, TODO)
+    with pytest.raises(IntakeUnknown) as wrong:
+        board.intake_column("Pronto")
+    assert wrong.value.reason.startswith("`intake_status` declares 'Pronto', which is not a "
+                                         "status of the Task type ('A Fazer', 'Backlog', ")
 
     site.types = {"Task": ()}
     assert board.intake_column() is None, "a type that lists no status has not said"
+    _p, tracker, _board, _site = jira(declared=BACKLOG)
+    assert tracker.intake_state() == BACKLOG, "the tracker's half is the declaration"
+
+
+#: A workflow that lists two statuses of the To Do category, each order, and the status Jira
+#: really creates a new issue in — the four rows of #552's review, with no `intake_status`.
+LISTINGS = [(IN_THE_QUEUE, TODO), (IN_THE_QUEUE, BACKLOG), (BACKLOG_FIRST, TODO),
+            (BACKLOG_FIRST, BACKLOG)]
+
+
+@pytest.mark.parametrize(("statuses", "initial"), LISTINGS)
+def test_undeclared_two_statuses_a_new_issue_could_start_in_hold_the_filing_and_fail_the_doctor(
+        jira, statuses, initial):
+    """THE ORDER THE SITE LISTS THEM IN DECIDES NOTHING. Read by order, the same statuses listed
+    the other way round made the doctor pass a board whose create lands in the queue — and filing
+    went ahead — or fail one that was right (#552's review). Undeclared, every order is held and
+    every order fails the doctor with the declaration that answers it."""
+    from openfactory.product.voice import filing_held
+
+    project, tracker, board, site = jira(statuses, initial=initial, declared="", language="en")
+
+    [held] = _filed("ticket", project, tracker, board)
+    line, report = _intake_line(project)
+
+    assert (held.ok, held.detail, site.status) == (False, filing_held("undeclared"), {})
+    assert not line.ok and not report.ok, "an order guessed passed the doctor"
+    assert line.message.startswith("where a card the product role files is created cannot be "
+                                   "told: the Task type's workflow has 2 statuses"), line.message
+    assert "`intake_status: '<that status>'`" in line.remedy
+
+
+@pytest.mark.parametrize(("statuses", "initial"), LISTINGS)
+def test_declared_the_filing_follows_the_workflow_in_every_order(jira, statuses, initial):
+    """…and with `intake_status` declared — the truth — the filing and the doctor follow where Jira
+    really creates the issue, whichever order the site lists the statuses in."""
+    project, tracker, board, site = jira(statuses, initial=initial, language="en")
+
+    [filed] = _filed("ticket", project, tracker, board)
+    line, _report = _intake_line(project)
+
+    if initial == TODO:   # the queue
+        assert (filed.ok, site.status) == (False, {}) and not line.ok
+    else:
+        assert (filed.ok, site.status) == (True, {"DAR-1": BACKLOG}) and line.ok, filed.detail
+
+
+def test_a_declared_status_the_type_does_not_have_holds_the_filing_and_fails_the_doctor(jira):
+    """NOT "ON NO COLUMN": a name the type does not have answered `""`, which files the card and
+    passes the doctor — on a declaration that is simply wrong (#547's review, on Azure)."""
+    from openfactory.product.voice import filing_held
+
+    project, tracker, board, site = jira(declared="Pronto", language="en")
+
+    [held] = _filed("ticket", project, tracker, board)
+    line, report = _intake_line(project)
+
+    assert (held.ok, held.detail, site.status) == (False, filing_held("undeclared"), {})
+    assert not line.ok and not report.ok
+    assert ("`intake_status` declares 'Pronto', which is not a status of the Task type"
+            in line.message), line.message
+    assert "one of `A Fazer`, `Backlog`, `Em andamento`, `Concluído`" in line.remedy
 
 
 # ── the doctor, on Jira ─────────────────────────────────────────────────────────────────────────
@@ -548,12 +691,17 @@ def test_the_doctor_fails_a_jira_board_whose_workflow_creates_an_issue_in_the_qu
     assert ("`status_map: '{\"todo\": \"Ready\", \"in_progress\": \"Em andamento\", \"done\": "
             "\"Concluído\", \"backlog\": \"A Fazer\"}'`") in line.remedy, line.remedy
     assert "with a transition into it from `A Fazer`" in line.remedy
+    assert "and `intake_status: 'A Fazer'`" in line.remedy, "the repair must not create a guess"
 
 
-def test_the_jira_line_the_doctor_hands_over_is_a_repair_the_registry_takes(jira, tmp_path):
+@pytest.mark.parametrize("repaired", [WITH_ITS_QUEUE, tuple(reversed(WITH_ITS_QUEUE))])
+def test_the_jira_line_the_doctor_hands_over_is_a_repair_the_registry_takes(jira, tmp_path,
+                                                                           repaired):
     """PASTED UNDER THE TRACKER'S OPTIONS, read by the real loader, on the workflow the line asks
     for — a `Ready` after the status Jira files in — and a card filed then waits there, placed
-    where it was born, with every other stage still mapped."""
+    where it was born, with every other stage still mapped. IN EITHER LISTING ORDER: the repaired
+    workflow has two statuses of the To Do category, and the line declares which one Jira creates
+    in, so the order the site lists them in decides nothing (#552's review, its fourth row)."""
     from openfactory.adapters.board import build_board
     from openfactory.adapters.board.base import intake
     from openfactory.adapters.tracker.registry import build_tracker
@@ -561,13 +709,15 @@ def test_the_jira_line_the_doctor_hands_over_is_a_repair_the_registry_takes(jira
 
     project, _tracker, _board, _site = jira()
     line, _report = _intake_line(project)
-    [pasted] = re.findall(r"`(status_map: [^`]+)`", line.remedy)
+    pasted = re.findall(r"`((?:status_map|intake_status): [^`]+)`", line.remedy)
+    assert len(pasted) == 2, line.remedy
     registry = tmp_path / "pasted.yaml"
     registry.write_text(f"projects:\n  acme:\n    name: acme\n    repo_path: {tmp_path}\n"
                         f"    tracker:\n      kind: jira\n      repo: {KEY}\n      options:\n"
                         f"        site: https://acme-team.atlassian.net\n"
-                        f"        email: alice@acme.ai\n        {pasted}\n")
-    _p, _t, _b, site = jira(WITH_ITS_QUEUE)
+                        f"        email: alice@acme.ai\n"
+                        + "".join(f"        {one}\n" for one in pasted))
+    _p, _t, _b, site = jira(repaired)
     fixed = ProjectRegistry(registry).get("acme")
     tracker, board = build_tracker(fixed, token="t"), build_board(fixed, token="t")
 

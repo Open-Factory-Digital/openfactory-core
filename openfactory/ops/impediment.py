@@ -302,7 +302,7 @@ def _born_in_the_queue(project, trk) -> str:
         return ""
     if born.queued:
         return f"a card created now on this board is born in {born.column!r}, the pickup column"
-    return "the board could not say where a card created now would be born"
+    return born.unknown or "the board could not say where a card created now would be born"
 
 
 def _door_view(project):

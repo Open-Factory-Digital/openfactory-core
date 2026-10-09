@@ -1239,7 +1239,8 @@ def _do_split(inp: SplitInput) -> str:
         if born is not None:
             why = (f"a child created now would be born in {born.column!r}, the pickup column, and "
                    f"this project keeps a split's children in the backlog" if born.queued else
-                   "the board could not say where a child created now would be born")
+                   born.unknown or "the board could not say where a child created now would be "
+                                   "born")
             activity.logger.error("OPENFACTORY_SPLIT_HELD %s — nothing was created: %s. "
                                   "The job parks for a person to split it by hand; `openfactory "
                                   "doctor` names the board's line", parent_ref, why)

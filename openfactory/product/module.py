@@ -3698,6 +3698,9 @@ class ProductModule:
             return _could_not(filing_held("queue", column=str(born.column), language=lang),
                               act=act, cause=f"a card filed now is born in {born.column!r}, the "
                                              f"pickup column {born.queue!r} (#536)")
+        if born.unknown:
+            return _could_not(filing_held("undeclared", language=lang), act=act,
+                              cause=born.unknown)
         return _could_not(filing_held("unread", language=lang), act=act,
                           cause="the board could not say where a card filed now would start")
 

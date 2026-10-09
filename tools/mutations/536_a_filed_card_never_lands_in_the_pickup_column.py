@@ -39,8 +39,8 @@ MUTATIONS = [
      "                    if state else []),\n",
      ""),
     ("the tracker forgets the backlog the deployment declared", TRACKER,
-     '        return self.state_map.get("backlog", "")',
-     '        return ""'),
+     '        declared = self.state_map.get("backlog", "")',
+     '        declared = ""'),
 
     # 2. the board's half
     ("the incoming column is read off the wrong column type", BOARD,
@@ -100,8 +100,10 @@ MUTATIONS = [
 
     # 5. the doctor
     ("the doctor only warns about a board that spends on its own", DOCTOR,
-     '            "board_intake", False,\n',
-     '            "board_intake", True,\n'),
+     '            "board_intake", False,\n'
+     '            f"a card the product role files is created in {column!r}, the column the poller "',
+     '            "board_intake", True,\n'
+     '            f"a card the product role files is created in {column!r}, the column the poller "'),
     ("the doctor never asks", DOCTOR,
      "        board_intake=_intake,\n",
      ""),
@@ -110,7 +112,7 @@ MUTATIONS = [
      "    except BoardUnreadable:\n"
      '        return [Finding("board_intake", False, "the board could not be read", "")]\n'),
     ("the probe reports an unread board as one whose new card is on no column", DOCTOR,
-     "        if born is not None and born.column is None:",
+     "        if born is not None and born.column is None and not born.unknown:",
      "        if False:"),
 
     # 6. the guide

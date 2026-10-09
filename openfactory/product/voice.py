@@ -1954,12 +1954,23 @@ _FILING_HELD = {
                "en": ("I filed nothing: I could not read the board to see where a new card starts, "
                       "and one that starts in the column the factory picks work up from is built "
                       "without anybody queueing it. Try again in a moment.")},
+    # NOT "TRY AGAIN": the board was read and cannot say from what the deployment declared (#543) —
+    # a declaration missing or wrong, which a retry never mends and only the operator can.
+    "undeclared": {"pt-BR": ("Não registrei nada: onde um cartão novo nasce neste quadro ainda não "
+                             "está definido direito, e um que nasce na coluna de onde a fábrica "
+                             "pega trabalho é construído sem ninguém colocá-lo na fila. Quem opera "
+                             "esta fábrica define isso; o `openfactory doctor` diz a linha."),
+                   "en": ("I filed nothing: where a new card starts on this board is not set right "
+                          "yet, and one that starts in the column the factory picks work up from "
+                          "is built without anybody queueing it. Whoever runs this factory sets "
+                          "it; `openfactory doctor` names the line.")},
 }
 
 
 def filing_held(reason: str, *, column: str = "", language: str | None = None) -> str:
     """Why nothing was filed, in the conversation's language (#536) — `queue` when a card filed
-    now would be born in the pickup column `column`, `unread` when the board could not say."""
+    now would be born in the pickup column `column`, `unread` when the board could not say, and
+    `undeclared` when it was read and cannot say from what was declared (#543)."""
     return _pick(_FILING_HELD[reason], language).format(column=column)
 
 
@@ -1984,12 +1995,24 @@ _CARD_OPEN_HELD = {
                "en": ("Nothing was opened: the board could not be read to see where a new card "
                       "starts, and one that starts in the column the factory picks work up from is "
                       "built without anybody queueing it. Try again in a moment.")},
+    # `column` is the QUEUE here: where a new card starts is what cannot be said (#543).
+    "undeclared": {"pt-BR": ("Nada foi aberto: onde um cartão novo nasce neste quadro ainda não "
+                             "está definido direito, e um que nasce na coluna de onde a fábrica "
+                             "pega trabalho é construído sem ninguém colocá-lo na fila. Para "
+                             "começar agora, abra-o em '{column}'; para que espere, quem opera "
+                             "esta fábrica define isso — o `openfactory doctor` diz a linha."),
+                   "en": ("Nothing was opened: where a new card starts on this board is not set "
+                          "right yet, and one that starts in the column the factory picks work up "
+                          "from is built without anybody queueing it. To start it now, open it in "
+                          "'{column}'; for it to wait, whoever runs this factory sets it — "
+                          "`openfactory doctor` names the line.")},
 }
 
 
 def card_open_held(reason: str, *, column: str = "", language: str | None = None) -> str:
     """Why the board opened no card, in the project's language (#543) — `queue` when a card opened
-    now would be born in the pickup column `column`, `unread` when the board could not say."""
+    now would be born in the pickup column `column`, `unread` when the board could not say, and
+    `undeclared` when it was read and cannot say from what was declared, `column` the queue."""
     return _pick(_CARD_OPEN_HELD[reason], language).format(column=column)
 
 

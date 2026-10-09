@@ -198,24 +198,44 @@ class JiraProjectBoard:
         and the poller took it; where it does offer one, the card sat in the queue until the move.
         `JiraTracker.intake_state` says why the create cannot carry a status of its own.
 
-        READ, NOT DECLARED, FROM THE ISSUE TYPE THE TRACKER CREATES (`issue_type`): the first of
-        its statuses in the To Do category (`new`), the first listed when the site names no
-        category. Atlassian documents no order for `project/{key}/statuses` and no read of a
-        workflow's initial status short of administering it, so this is the read with the fewest
-        assumptions, NOT a measured one: a type with ONE status of the To Do category — every
-        template above — is answered whatever the order; with several, the first the site lists
-        is taken, which no live site has yet been read to confirm.
+        READ FROM THE ISSUE TYPE THE TRACKER CREATES (`issue_type`) ONLY WHERE THE READ CANNOT BE
+        A GUESS: its ONE status of the To Do category (`new`), or its one status where the site
+        names no category. Atlassian documents no order for `project/{key}/statuses` and no read of
+        a workflow's initial status short of administering it, so a type with SEVERAL candidates is
+        not answered by the order they happen to be listed in — measured in the review of #552, the
+        same statuses listed the other way round made the doctor pass a board whose create lands in
+        the queue, and fail the board its own line had repaired. It raises `IntakeUnknown`, naming
+        them and the declaration that answers it: `intake_status`, the deployment's word for the
+        initial status, which the line `intake_remedy` hands over carries too.
 
-        `None` = the statuses could not be read — never "no such column", for the reason
-        `AzureBoardsBoard.intake_column` gives — and a type that lists none has not said either.
-        A DECLARED `state` is its status by name, without case, `""` when the type has none."""
+        A DECLARED `state` is its status by name, without case — and one the type does not have
+        raises `IntakeUnknown` rather than answering `""`, which would read as "born on no column"
+        and file. `None` = the statuses could not be read — never "no such column", for the reason
+        `AzureBoardsBoard.intake_column` gives — and a type that lists none has not said either."""
+        from openfactory.adapters.board.base import IntakeUnknown
+
         statuses = self._statuses_of_the_type()
         if not statuses:
             return None
+        names = list(dict.fromkeys(n for n, _c in statuses))
+        kind = str(getattr(self._tracker, "issue_type", "") or "") or "issue"
         wanted = (state or "").strip().casefold()
         if wanted:
-            return next((n for n, _c in statuses if n.casefold() == wanted), "")
-        return next((n for n, c in statuses if c == "new"), statuses[0][0])
+            found = next((n for n in names if n.casefold() == wanted), None)
+            if found is None:
+                raise IntakeUnknown(
+                    f"`intake_status` declares {state.strip()!r}, which is not a status of the "
+                    f"{kind} type ({', '.join(repr(n) for n in names)})",
+                    remedy=_intake_status_remedy(names, kind))
+            return found
+        first = list(dict.fromkeys(n for n, c in statuses if c == "new")) or names
+        if len(first) == 1:
+            return first[0]
+        raise IntakeUnknown(
+            f"the {kind} type's workflow has {len(first)} statuses a new issue could start in "
+            f"({', '.join(repr(n) for n in first)}), and Jira says which one only to the "
+            f"workflow's administrator — so none is taken from the order the site lists them in",
+            remedy=_intake_status_remedy(first, kind))
 
     def intake_remedy(self, column: str) -> str:
         """The line that takes a filed card out of the queue `column` on this row — what
@@ -225,14 +245,19 @@ class JiraProjectBoard:
 
         A QUEUE OF ITS OWN, the shape the Azure row's line asks for too: `column` stays where Jira
         files a new issue and becomes the backlog, so a card a PERSON creates on the board waits
-        there as well, and the poller reads a status nobody's create lands in."""
+        there as well, and the poller reads a status nobody's create lands in.
+
+        AND `intake_status` WITH IT: the repaired workflow has two statuses of the To Do category,
+        which `intake_column` refuses to tell apart by listing order — so the line also declares
+        the one Jira creates in, and applying it removes the guess instead of creating one (review
+        of #552)."""
         named = dict(getattr(self._tracker, "status_map", None) or {})
         line = json.dumps({**named, "backlog": column, "todo": "Ready"}, ensure_ascii=False)
-        quoted = line.replace("'", "''")   # YAML's own escape inside single quotes: `Won't Do`
         return ("add a status of the To Do category for the queue — `Ready`, say — to the "
                 f"project's workflow, with a transition into it from `{column}`, and declare under "
-                f"the tracker's options `status_map: '{quoted}'` — a new issue then waits in "
-                f"`{column}` until a person queues it")
+                f"the tracker's options `status_map: {_yaml_quoted(line)}` and "
+                f"`intake_status: {_yaml_quoted(column)}` — a new issue then waits in `{column}` "
+                f"until a person queues it")
 
     def _statuses_of_the_type(self) -> list[tuple[str, str]] | None:
         """`(name, category key)` of each status of the issue type the tracker creates, in the
@@ -367,3 +392,18 @@ class JiraProjectBoard:
                         state, key, self.project_key)
             return False
         return self.set_column(issue=issue, issue_url=issue_url, name=target)
+
+
+def _yaml_quoted(value: str) -> str:
+    """`value` as a YAML single-quoted scalar — the form a line pasted under the tracker's options
+    is read back as one string: a quote inside is doubled, YAML's own escape there (`Won't Do`)."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _intake_status_remedy(statuses: list[str], kind: str) -> str:
+    """The declaration that answers where a new issue starts, when the workflow cannot be read for
+    it (#543) — `intake_status`, named among the statuses it can be, never guessed among them."""
+    them = ", ".join(f"`{s}`" for s in statuses)
+    return (f"declare under the tracker's options the status a new {kind} issue starts in — the "
+            f"workflow's initial status, one of {them} — as `intake_status: "
+            f"{_yaml_quoted(statuses[0] if len(statuses) == 1 else '<that status>')}`")

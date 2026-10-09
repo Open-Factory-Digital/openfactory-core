@@ -106,6 +106,11 @@ def _jira(project, **kw):
         # that map is keyed by the states a job can be in, and this is a word of the close.
         #   not_delivered_status: "Cancelado"
         not_delivered_status=options.get("not_delivered_status", ""),
+        # …and the status its workflow creates a new issue in (#543): Jira publishes it only to an
+        # administrator, and a workflow with two statuses an issue could start in is not read
+        # without it. `JiraProjectBoard.intake_column` checks it against the type's statuses.
+        #   intake_status: "A Fazer"
+        intake_status=options.get("intake_status", ""),
         # for the one note the row writes in its own name — see `JiraTracker.language`
         language=getattr(project, "language", None),
     )

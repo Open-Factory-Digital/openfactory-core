@@ -439,6 +439,27 @@ class Intake:
     queue: str
     queued: bool
     remedy: str = ""
+    #: Why a board that WAS read cannot say where a new card is born — a declaration missing, or
+    #: one naming a state the vendor does not have (`IntakeUnknown`). `""` when it can say, or when
+    #: it could not be read at all. Set only with `column` None: unknown is held like unread.
+    unknown: str = ""
+
+
+class IntakeUnknown(Exception):
+    """A row read its board and cannot say where a card it creates is born from what the deployment
+    declared — raised by `intake_state` or `intake_column`, never for an unread board (#543).
+
+    A RAISE, NOT `""`, because `""` already means "born on no column of the board", which files the
+    card. A declaration naming a state the vendor does not have answered `""`, and the doctor
+    passed a board on which every create was refused (review of #547); a Jira workflow with two
+    statuses a new issue could start in was answered by the order the site happened to list them
+    (review of #552). `reason` says which, for the team; `remedy` is the declaration that would
+    answer it, as the registry takes it."""
+
+    def __init__(self, reason: str, *, remedy: str = "") -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.remedy = remedy
 
 
 def intake(tracker, board) -> Intake | None:
@@ -456,13 +477,21 @@ def intake(tracker, board) -> Intake | None:
     TWO HALVES, TWO ROWS: the TRACKER says which state it creates a card in (`intake_state`, `""`
     for the vendor's own first state) and the BOARD says which of its columns shows that state
     (`intake_column`). The queue is `pickup_column()`, the board's own answer, which carries the
-    deployment's `pickup_status` (#502) — the column `openfactory poll` and the scan read."""
+    deployment's `pickup_status` (#502) — the column `openfactory poll` and the scan read.
+
+    A ROW THAT CANNOT SAY FROM WHAT WAS DECLARED raises `IntakeUnknown`, and the answer is an
+    `Intake` with no column, the reason and the declaration that would answer it: held like an
+    unread board, and a FAIL in the doctor rather than a pass it did not earn (#543)."""
     lands = getattr(board, "intake_column", None)
     if board is None or not callable(lands):
         return None
     said = getattr(tracker, "intake_state", None)
-    state = said() if callable(said) else ""
-    column = lands(state if isinstance(state, str) else "")
+    try:
+        state = said() if callable(said) else ""
+        column = lands(state if isinstance(state, str) else "")
+    except IntakeUnknown as unknown:
+        return Intake(column=None, queue=str(board.pickup_column() or ""), queued=False,
+                      remedy=unknown.remedy, unknown=unknown.reason)
     queue = str(board.pickup_column() or "")
     queued = bool(column) and column.strip().casefold() == queue.strip().casefold()
     offer = getattr(board, "intake_remedy", None)
@@ -483,10 +512,11 @@ def intake_held(tracker, board) -> Intake | None:
     poller took them with nobody queueing them (ADR-0019 §5). Each now asks this, so the rule is
     said once: two copies of "is this safe to file" are how one of them would come to differ.
 
-    UNSURE IS NOT "SAFE TO SPEND": a question that raised, or a board that could not be read,
-    holds the card too — whether filing now starts spending is unknown, and filing is asked for
-    again in a moment. A row whose new card sits on no column until it is placed (`intake` answers
-    `None`), or one born out of the queue, files as before."""
+    UNSURE IS NOT "SAFE TO SPEND": a question that raised, a board that could not be read, or one
+    read that cannot say from what was declared (`unknown`), holds the card too — whether filing
+    now starts spending is unknown, and filing is asked for again in a moment. A row whose new card
+    sits on no column until it is placed (`intake` answers `None`), or one born out of the queue,
+    files as before."""
     try:
         born = intake(tracker, board)
     except Exception as exc:  # noqa: BLE001 — unsure is not "safe to spend"
