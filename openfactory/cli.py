@@ -2480,8 +2480,10 @@ def certify_deployment_cmd(
     file inside a repository beyond its manifest. Every organisation, repository, project and
     person is replaced by a pseudonym; URLs, hosts, e-mail addresses and credentials are dropped.
 
-    This build does not sign the pack, read the forge's protection and permissions, ask the
-    releases API, or measure outcomes: the pack says so, and those controls read `unknown`."""
+    The forge is asked, read-only, what protects each repository's base branch, what the
+    credential a job holds is granted, and which releases of the platform are published; what it
+    cannot answer reads `unknown`, never `pass`. This build does not sign the pack or measure
+    outcomes, and the pack says so."""
     from openfactory.certify import pack as certify
     from openfactory.cli_refusals import certify_deployment_refusal
 

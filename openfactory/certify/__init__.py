@@ -12,12 +12,17 @@ package is that command's machinery, in four pieces that each answer one questio
                   validator the standard library can run, so a pack is checked before it is written
     pack.py       reading the deployment, assembling the files, and the tarball
 
-WHAT THIS FIRST SLICE DOES NOT DO, said here and in every pack it writes rather than discovered by
-a reader: it does not sign the pack (minisign is a follow-up), it does not read the forge's branch
-protection or the credential's permissions (those controls read `unknown`, never `pass`), it does
-not ask the releases API whether the running version is current, and it does not measure the
-outcome aggregates (`not_measured`, never zeros). A pack that claimed any of those would be a
-certificate for something nobody looked at.
+THE FORGE IS ASKED THREE READ-ONLY QUESTIONS (slice 3), through optional capabilities of each
+project's forge row (`adapters/forge/base.py`): what protects the branch the platform merges into
+(C-BRANCH), what the credential a job holds is granted (C-WORKFLOWS), and which releases of the
+platform are published (C-VERSION). A row that cannot answer, a credential without the scope to
+ask and a machine with no network all answer `None`, which those controls read as `unknown`,
+never `pass`.
+
+WHAT IS NOT DONE YET, said here and in every pack it writes rather than discovered by a reader: it
+does not sign the pack (minisign is a follow-up), and it does not measure the outcome aggregates
+(`not_measured`, never zeros). A pack that claimed either would be a certificate for something
+nobody looked at.
 
 NOTHING HERE READS A CUSTOMER REPOSITORY'S CONTENTS beyond the manifests the platform already
 reads to run a job: no ticket text, no pull request bodies, no commit messages, no diffs.

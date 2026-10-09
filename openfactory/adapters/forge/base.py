@@ -12,6 +12,8 @@ import logging
 from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
 
+from pydantic import BaseModel, ConfigDict
+
 log = logging.getLogger("openfactory.forge")
 
 ReviewEvent = Literal["approve", "comment", "request-changes"]
@@ -678,3 +680,135 @@ def display_name(forge: object) -> str:
     from openfactory import plugins
 
     return plugins.display_name(forge, "the forge")
+
+
+# ---- what a certificate reads off the forge (#356) ---------------------------------------------
+#
+# `openfactory certify` asks the forge three questions no job asks: is the branch the platform
+# merges into protected, what is the credential a job holds GRANTED, and which releases of the
+# platform itself are published. Three OPTIONAL capabilities, for `RepositoryCreatingForge`'s
+# reason: the local forge has none of them, an add-on written before them has none, and folding
+# them into `ForgeAdapter` would make every double claim answers it cannot give.
+#
+# EACH IS ASKED THROUGH A MODULE FUNCTION BELOW, never by `isinstance` (a mock satisfies a
+# `runtime_checkable` protocol by having attributes), and each has the third answer every read on
+# this port has: `None` is "could not read" — no such capability, a credential without the scope
+# to ask, a refusal, no network. A certificate turns `None` into `unknown`, and `unknown` is never
+# a pass: what nobody read is not certified.
+
+
+class BranchProtection(BaseModel):
+    """What a branch's protection enforces, in four facts a certificate asks about, each
+    `True`/`False` when it was read and `None` when it could not be.
+
+    NEUTRAL ON PURPOSE. GitHub spells these as ruleset rules and classic protection fields, Azure
+    Repos as branch policies, and each row maps its own vocabulary in. A field the row could not
+    read stays `None` rather than `False` — "I could not see the setting" is not "it is off", and
+    a certificate that failed a branch over a setting nobody saw would be as wrong as one that
+    passed it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    pr_required: bool | None = None
+    linear_history: bool | None = None
+    force_push_blocked: bool | None = None
+    auto_merge_enabled: bool | None = None
+
+
+@runtime_checkable
+class ProtectionReadingForge(Protocol):
+    """A forge that can say what protects a branch."""
+
+    def branch_protection(self, repo: str, branch: str) -> BranchProtection | None:
+        """What protects `branch` of `repo` ("" = this adapter's own), or None when it could not
+        be read at all. A read that saw some settings and not others answers the object, with
+        `None` in the fields it could not see."""
+        ...
+
+
+@runtime_checkable
+class PermissionReadingForge(Protocol):
+    """A forge that can say what the credential it holds is GRANTED."""
+
+    #: The names, in this row's own vocabulary, of the grants that let a credential write the
+    #: repository's CI definitions. A LITERAL each row knows about itself, like `Staged`'s
+    #: `stage_option`: the core asks whether the read grants meet this set and never spells a
+    #: vendor's permission name.
+    ci_write_permissions: frozenset[str]
+
+    def credential_permissions(self) -> frozenset[str] | None:
+        """Every permission or scope the credential holds, as this vendor names them — or None
+        when the vendor does not publish them to the credential, or the read failed."""
+        ...
+
+
+@runtime_checkable
+class ReleaseListingForge(Protocol):
+    """A forge that can list the published releases of a repository at a URL on its own host."""
+
+    def published_releases(self, url: str) -> list[str] | None:
+        """The tags of `url`'s published releases — no draft, no pre-release — or None when `url`
+        is not on this forge's host or the list could not be read."""
+        ...
+
+
+def branch_protection_of(forge: object, branch: str, *, repo: str = "") -> BranchProtection | None:
+    """What protects `branch` of `repo` on `forge`, or None — the ONE place generic code asks.
+
+    ONLY A REAL ANSWER IS BELIEVED: a `BranchProtection`. A row without the capability, a row
+    that raised, and a double answering a mock are all "could not read", and none of them may
+    read as a protected branch."""
+    ask = getattr(forge, "branch_protection", None)
+    if not callable(ask) or not (branch or "").strip():
+        return None
+    try:
+        said = ask(repo, branch)
+    except Exception as exc:  # noqa: BLE001 — an unreadable protection is not an open branch
+        log.info("%s could not read the protection of %s (%s)", type(forge).__name__, branch,
+                 str(exc)[:160])
+        return None
+    return said if isinstance(said, BranchProtection) else None
+
+
+def credential_permissions_of(forge: object) -> frozenset[str] | None:
+    """What the credential `forge` holds is granted, or None — the ONE place generic code asks.
+
+    A set of strings, or nothing: an empty set is a real answer (granted nothing), and a mock or
+    a list of anything else is not one."""
+    ask = getattr(forge, "credential_permissions", None)
+    if not callable(ask):
+        return None
+    try:
+        said = ask()
+    except Exception as exc:  # noqa: BLE001 — an unreadable grant is not an empty one
+        log.info("%s could not read its credential's permissions (%s)", type(forge).__name__,
+                 str(exc)[:160])
+        return None
+    if not isinstance(said, set | frozenset) or not all(isinstance(p, str) for p in said):
+        return None
+    return frozenset(said)
+
+
+def ci_write_permissions_of(forge: object) -> frozenset[str]:
+    """The grants `forge`'s row says reach its CI definitions — empty when it declares none,
+    which a caller reads as "this row cannot say", never as "nothing reaches them"."""
+    named = getattr(forge, "ci_write_permissions", None)
+    if not isinstance(named, set | frozenset) or not all(isinstance(p, str) for p in named):
+        return frozenset()
+    return frozenset(named)
+
+
+def published_releases_of(forge: object, url: str) -> list[str] | None:
+    """The published release tags of the repository at `url`, read through `forge`, or None —
+    the ONE place generic code asks. Only a list of strings is believed."""
+    ask = getattr(forge, "published_releases", None)
+    if not callable(ask) or not (url or "").strip():
+        return None
+    try:
+        said = ask(url)
+    except Exception as exc:  # noqa: BLE001 — an unread list is not an empty one
+        log.info("%s could not list the releases (%s)", type(forge).__name__, str(exc)[:160])
+        return None
+    if not isinstance(said, list) or not all(isinstance(t, str) for t in said):
+        return None
+    return said
