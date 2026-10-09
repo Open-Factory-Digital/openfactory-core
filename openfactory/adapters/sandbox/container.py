@@ -324,6 +324,12 @@ def _read_the_forges_base(host_clone: Path, base_branch: str, remote_url: str) -
                            f"starts from and is measured against: {_redact(out).strip()[:300]}")
 
 
+#: Said after a refused `docker run` whose daemon had no init to give the box (#532): Docker ships
+#: one, and podman's docker-compatible socket needs `catatonit` and refuses the run without it.
+_NO_INIT_BINARY = (" — the box is started with `--init` (#532), and this daemon has no init binary "
+                   "to give it: on podman, install `catatonit`")
+
+
 class ContainerSandbox(SandboxAdapter):
     def __init__(
         self,
@@ -558,7 +564,7 @@ class ContainerSandbox(SandboxAdapter):
             # SOMEBODY ELSE'S container: another client's checkout, cache and network.
             raise RuntimeError(
                 f"could not start the box {cname!r} (docker run exited {rc}): {out.strip()[:300]}"
-            )
+                + _NO_INIT_BINARY * any(w in out for w in ("init binary", "catatonit")))
         _host(["docker", "exec", cname, "git", "config", "--global",
                "--add", "safe.directory", _WORKDIR])
 

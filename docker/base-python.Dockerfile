@@ -132,9 +132,8 @@ RUN set -eu; \
       echo "apt fetches from Debian's own mirror over http (set DEBIAN_MIRROR to change it)"; \
     fi
 
-# `tini` is the init `sandbox.Dockerfile`'s ENTRYPOINT runs (#532).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git curl ca-certificates nodejs npm make build-essential tini \
+      git curl ca-certificates nodejs npm make build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # THE PACKAGE-MANAGER FLOOR (pilot, 2026-08-13). The rule that decides what belongs here: if

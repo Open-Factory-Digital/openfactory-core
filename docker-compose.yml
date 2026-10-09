@@ -318,6 +318,8 @@ services:
       OPENFACTORY_SESSION_STORE: ${OPENFACTORY_SESSION_STORE:-file}
       OPENFACTORY_RESUME_DIR: /var/lib/openfactory/resume
       OPENFACTORY_REGISTRY: /var/lib/openfactory/registry.yaml
+      # What `openfactory doctor` calls this container on its own line (#532).
+      OPENFACTORY_ROLE: worker
       # The board this platform can hold itself (ADR-0049 D5). BOTH halves point at it:
       # the worker polls it and the panel serves it, from the state volume they share.
       OPENFACTORY_BOARD_DB: /var/lib/openfactory/board.db
@@ -521,6 +523,8 @@ services:
       OPENFACTORY_METRICS_SINK: sqlite
       OPENFACTORY_METRICS_DB: /var/lib/openfactory/metrics.db
       OPENFACTORY_REGISTRY: /var/lib/openfactory/registry.yaml
+      # What `openfactory doctor` calls this container on its own line (#532).
+      OPENFACTORY_ROLE: panel
       # The board this platform can hold itself (ADR-0049 D5). BOTH halves point at it:
       # the worker polls it and the panel serves it, from the state volume they share.
       OPENFACTORY_BOARD_DB: /var/lib/openfactory/board.db

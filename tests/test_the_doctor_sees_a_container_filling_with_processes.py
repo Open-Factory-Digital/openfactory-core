@@ -5,17 +5,19 @@ A panel whose PID 1 reaped no orphan held 17,420 zombies after 39 hours, against
 the whole time: nothing in the stack read the count. The containers now start an init (the other
 half of #532); `pid_headroom` is what sees the next leak, whatever its source, before the ceiling.
 
-It reads the container the doctor runs in — the worker, as `docker compose exec worker openfactory
-doctor` runs it — from its own cgroup and `/proc`, and the panel through `docker exec` on the
-socket the worker holds. It FAILS at half the ceiling, or at a hundred zombies whatever the
-ceiling, and says an unread container in a note rather than as a failure of the stack.
+It asks the container the doctor runs in, and the panel through `docker exec` on the socket the
+worker holds, ONE script in each one's own `sh`. It FAILS at half the ceiling, at a hundred zombies
+whatever the ceiling, or when a container that was asked did not answer; a container that could not
+be asked — not there, no daemon — is a note rather than a failure of the stack.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import pathlib
+import re
 import subprocess
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -98,86 +100,198 @@ def test_a_probe_that_raised_is_a_finding_not_a_crash():
     assert not line.ok and "permission denied" in line.message and line.remedy
 
 
-# ── what it reads in the container it runs in ───────────────────────────────────────────────────
+def test_a_container_that_was_asked_and_did_not_answer_FAILS():
+    """REVIEW OF #572: at its ceiling a container cannot start the shell that would count, and
+    the check passed in exactly that state, with a note. Asked and silent is the failure; not
+    there is the note."""
+    line, report = _line(PidCount("worker", 41, LIMIT, 0),
+                         PidCount("panel", silent="it did not answer in 20s"))
+
+    assert not line.ok and not report.ok
+    assert "the panel was asked how many processes it holds and did not answer" in line.message
+    assert "restart the container" in line.remedy
+
+
+# ── the one reader, run ─────────────────────────────────────────────────────────────────────────
+
+def _script(cgroup: pathlib.Path, proc: pathlib.Path) -> PidCount:
+    """`PIDS_SCRIPT` as a container runs it, in this machine's `sh`, over a cgroup and a `/proc`
+    of the test's own."""
+    done = subprocess.run(["sh", "-c", doctor.PIDS_SCRIPT, "sh", str(cgroup), str(proc)],
+                          capture_output=True, text=True, timeout=30)
+    assert done.returncode == 0, done.stderr
+    return doctor.parse_pid_script("here", done.stdout)
+
+
+def _proc(tmp_path: pathlib.Path, stats: dict[str, str]) -> pathlib.Path:
+    proc = tmp_path / "proc"
+    for pid, stat in stats.items():
+        (proc / pid).mkdir(parents=True)
+        (proc / pid / "stat").write_text(stat + "\n")
+    return proc
+
 
 def test_the_cgroup_is_read_on_v2_and_on_v1_and_max_is_unlimited(tmp_path: pathlib.Path):
+    proc = _proc(tmp_path, {"1": "1 (python) S 0 1 1"})
     v2 = tmp_path / "v2"
     v2.mkdir()
     (v2 / "pids.current").write_text("41\n")
     (v2 / "pids.max").write_text("17435\n")
-    assert doctor.cgroup_pids(v2) == (41, 17435)
+    assert _script(v2, proc) == PidCount("here", 41, 17435, 0)
 
     (v2 / "pids.max").write_text("max\n")
-    assert doctor.cgroup_pids(v2) == (41, None)
+    assert _script(v2, proc) == PidCount("here", 41, None, 0)
 
     v1 = tmp_path / "v1"
     (v1 / "pids").mkdir(parents=True)
     (v1 / "pids" / "pids.current").write_text("7\n")
     (v1 / "pids" / "pids.max").write_text("4096\n")
-    assert doctor.cgroup_pids(v1) == (7, 4096)
+    assert _script(v1, proc) == PidCount("here", 7, 4096, 0)
 
-    assert doctor.cgroup_pids(tmp_path / "none") == (None, None)
+    assert _script(tmp_path / "none", proc) == PidCount("here", zombies=0), "no pids controller"
 
 
 def test_a_zombie_is_read_after_the_commands_last_parenthesis(tmp_path: pathlib.Path):
-    """`pid (comm) state …` — and a command may carry `) Z ` in its own name."""
-    for pid, stat in {"1": "1 (python) S 0 1 1", "57": "57 (git) Z 1 57 1",
-                      "58": "58 (git) Z 1 58 1", "60": "60 (a) Z (b) S 1 60 1",
-                      "self": "99 (x) Z 1"}.items():
-        (tmp_path / pid).mkdir()
-        (tmp_path / pid / "stat").write_text(stat + "\n")
+    """`pid (comm) state …` — and a command may carry `) Z ` in its own name: `60 (a) Z (b) S` is
+    a sleeping process, which the panel's reader counted as a zombie (review of #572)."""
+    proc = _proc(tmp_path, {"1": "1 (python) S 0 1 1", "57": "57 (git) Z 1 57 1",
+                            "58": "58 (git) Z 1 58 1", "60": "60 (a) Z (b) S 1 60 1",
+                            "61": "61 (a) S (b) Z 1 61 1", "62": "62 (c) Z (d) R 1 62 1",
+                            "self": "99 (x) Z 1"})
 
-    assert doctor.zombie_count(tmp_path) == 2
-
-
-def test_the_worker_is_read_only_inside_a_container(monkeypatch):
-    monkeypatch.setattr(doctor, "cgroup_pids", lambda: (41, LIMIT))
-    monkeypatch.setattr(doctor, "zombie_count", lambda: 0)
-
-    assert doctor.pid_counts(in_container=False, panel="") == []
-    assert doctor.pid_counts(in_container=True, panel="") == [PidCount("worker", 41, LIMIT, 0)]
+    assert _script(tmp_path / "none", proc).zombies == 3
 
 
-# ── what it asks the panel ──────────────────────────────────────────────────────────────────────
+def test_the_count_forks_nothing_per_process(tmp_path: pathlib.Path):
+    """REVIEW OF #572: it forked a `cat` per `/proc` entry, 0.6 ms a process — eleven seconds at
+    the 17,420 the panel held, against a twenty-second timeout. Read by the shell's own `read`, the
+    count holds no command per process."""
+    proc = _proc(tmp_path, {str(n): f"{n} (git) Z 1 {n} 1" for n in range(2, 3002)})
 
-def test_the_panel_is_asked_through_docker_exec_and_read_back():
-    asked = []
-
-    def run(argv):
-        asked.append(argv)
-        return SimpleNamespace(returncode=0, stdout="12\n17435\n3\n", stderr="")
-
-    [panel] = doctor.pid_counts(in_container=False, panel="openfactory-panel", run=run)
-
-    assert panel == PidCount("panel", 12, LIMIT, 3)
-    assert asked[0][:4] == ["docker", "exec", "openfactory-panel", "sh"]
+    started = time.monotonic()
+    assert _script(tmp_path / "none", proc).zombies == 3000
+    assert time.monotonic() - started < 5, "the count costs a process per process again"
+    assert not re.search(r"\$\((?!\()|`|\bcat\b", doctor.PIDS_SCRIPT), "a command per process"
 
 
-@pytest.mark.parametrize(("done", "unread"), [
-    (SimpleNamespace(returncode=1, stdout="", stderr="Error: No such container: openfactory-panel\n"),
-     "Error: No such container: openfactory-panel"),
-    (SimpleNamespace(returncode=0, stdout="garbage\n", stderr=""), "it answered 'garbage'"),
-])
-def test_a_panel_that_could_not_say_is_unread(done, unread):
-    [panel] = doctor.pid_counts(in_container=False, panel="openfactory-panel",
-                                run=lambda argv: done)
-    assert panel == PidCount("panel", unread=unread)
-
-
-def test_a_panel_with_no_pids_controller_still_counts_its_zombies():
-    assert doctor.parse_pid_script("panel", "4\n") == PidCount("panel", zombies=4)
-    assert doctor.parse_pid_script("panel", "9\nmax\n0\n") == PidCount("panel", 9, None, 0)
-
-
-def test_the_script_the_panel_is_asked_runs_in_a_posix_shell():
-    """RUN, NOT READ: the script is a string a container's `sh` executes, so it is executed here,
-    against this machine's own cgroup and `/proc`, and what it prints must parse."""
-    done = subprocess.run(["sh", "-c", doctor._PIDS_SCRIPT], capture_output=True, text=True,
+def test_the_script_runs_in_a_posix_shell_on_this_machine():
+    """RUN, NOT READ: against this machine's own cgroup and `/proc`, what it prints must parse."""
+    done = subprocess.run(["sh", "-c", doctor.PIDS_SCRIPT], capture_output=True, text=True,
                           timeout=30)
 
     assert done.returncode == 0, done.stderr
     read = doctor.parse_pid_script("here", done.stdout)
     assert not read.unread and read.zombies is not None and read.zombies >= 0, done.stdout
+
+
+def test_a_container_with_no_pids_controller_still_counts_its_zombies():
+    assert doctor.parse_pid_script("panel", "4\n") == PidCount("panel", zombies=4)
+    assert doctor.parse_pid_script("panel", "9\nmax\n0\n") == PidCount("panel", 9, None, 0)
+
+
+# ── which containers it asks, and how ───────────────────────────────────────────────────────────
+
+class _Docker:
+    """Answers `sh -c` here and `docker inspect` / `docker exec` on the panel, as set per test."""
+
+    def __init__(self, *, here="41\n17435\n0\n", running="true", panel="12\n17435\n3\n"):
+        self.asked: list[list[str]] = []
+        self.here, self.running, self.panel = here, running, panel
+
+    def __call__(self, argv):
+        self.asked.append(argv)
+        if argv[0] == "sh":
+            return self._done(self.here)
+        if argv[:2] == ["docker", "inspect"]:
+            return self._done(self.running)
+        return self._done(self.panel)
+
+    @staticmethod
+    def _done(answer):
+        if isinstance(answer, BaseException):
+            raise answer
+        if isinstance(answer, SimpleNamespace):
+            return answer
+        return SimpleNamespace(returncode=0, stdout=answer, stderr="")
+
+
+def test_the_container_it_runs_in_is_read_only_inside_a_pids_cgroup(tmp_path: pathlib.Path):
+    """`/.dockerenv` is Docker's file; a pids cgroup is the container, whatever started it."""
+    assert doctor.pid_counts(in_container=False, panel="", run=_Docker()) == []
+    assert not doctor.in_a_pids_cgroup(tmp_path)
+    (tmp_path / "pids.current").write_text("1\n")
+    assert doctor.in_a_pids_cgroup(tmp_path)
+
+
+@pytest.mark.parametrize(("role", "label"), [("worker", "worker"), ("panel", "panel"),
+                                             ("", "container box-7")])
+def test_the_container_it_runs_in_is_named_as_its_service_declares(monkeypatch, role, label):
+    """REVIEW OF #572: it was "the worker" wherever the doctor ran — run in the panel, the line
+    named the worker for the panel's own processes. The role the service declares, else the
+    hostname."""
+    import socket
+
+    monkeypatch.setenv("OPENFACTORY_ROLE", role)
+    monkeypatch.setattr(socket, "gethostname", lambda: "box-7")
+
+    [here] = doctor.pid_counts(in_container=True, panel="", run=_Docker())
+
+    assert here == PidCount(label, 41, LIMIT, 0)
+
+
+def test_run_in_the_panel_the_panel_is_not_asked_twice(monkeypatch):
+    monkeypatch.setenv("OPENFACTORY_ROLE", "panel")
+    docker = _Docker()
+
+    counts = doctor.pid_counts(in_container=True, panel="openfactory-panel", run=docker)
+
+    assert counts == [PidCount("panel", 41, LIMIT, 0)]
+    assert not [a for a in docker.asked if a[0] == "docker"]
+
+
+def test_the_panel_is_asked_through_docker_exec_and_read_back():
+    docker = _Docker()
+
+    [panel] = doctor.pid_counts(in_container=False, panel="openfactory-panel", run=docker)
+
+    assert panel == PidCount("panel", 12, LIMIT, 3)
+    assert docker.asked[-1][:4] == ["docker", "exec", "openfactory-panel", "sh"]
+
+
+@pytest.mark.parametrize(("docker", "expected"), [
+    (_Docker(running=SimpleNamespace(returncode=1, stdout="",
+                                     stderr="Error: No such object: openfactory-panel\n")),
+     PidCount("panel", unread="Error: No such object: openfactory-panel")),
+    (_Docker(running="false"), PidCount("panel", unread="it is not running")),
+    (_Docker(running=FileNotFoundError("docker")), PidCount("panel", unread="docker")),
+    (_Docker(panel="garbage\n"), PidCount("panel", unread="it answered 'garbage'")),
+], ids=["not-there", "stopped", "no-docker", "garbled"])
+def test_a_panel_that_could_not_be_asked_is_unread(docker, expected):
+    [panel] = doctor.pid_counts(in_container=False, panel="openfactory-panel", run=docker)
+    assert panel == expected
+
+
+@pytest.mark.parametrize(("docker", "silent"), [
+    (_Docker(panel=subprocess.TimeoutExpired(["docker"], 20)), "it did not answer in 20s"),
+    (_Docker(panel=SimpleNamespace(returncode=126, stdout="", stderr=(
+        "OCI runtime exec failed: exec failed: unable to start container process: "
+        "fork/exec /bin/sh: resource temporarily unavailable"))),
+     "OCI runtime exec failed: exec failed: unable to start container process: fork/exec "
+     "/bin/sh: resource temporarily unavail"),
+], ids=["timed-out", "could-not-start-the-shell"])
+def test_a_running_panel_that_did_not_answer_is_silent(docker, silent):
+    """The state the check exists for: the panel is there, running, and too full to answer."""
+    [panel] = doctor.pid_counts(in_container=False, panel="openfactory-panel", run=docker)
+    assert panel == PidCount("panel", silent=silent)
+
+
+def test_the_container_it_runs_in_that_could_not_run_the_count_is_silent(monkeypatch):
+    monkeypatch.setenv("OPENFACTORY_ROLE", "worker")
+    docker = _Docker(here=BlockingIOError(11, "Resource temporarily unavailable"))
+
+    [here] = doctor.pid_counts(in_container=True, panel="", run=docker)
+
+    assert here.container == "worker" and "Resource temporarily unavailable" in here.silent
 
 
 def test_the_doctor_a_deployment_runs_asks_it(tmp_path: pathlib.Path):

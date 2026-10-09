@@ -12,7 +12,7 @@ stayed a zombie; a panel ran out of processes after 39 hours. The claims, each a
      panel, and the build-only services alike (rows 1-3);
   2. the panel runs under the worker image's init, never an entrypoint of its own (row 4);
   3. the box is started with `docker run --init` (row 5);
-  4. the worker and sandbox images start `tini -s --`, and install it (rows 6-9).
+  4. the worker and sandbox images start `tini -s --`, and each installs it itself (rows 6-10).
 """
 
 TEST = "tests/test_every_container_whose_pid_1_is_ours_has_an_init.py"
@@ -21,7 +21,6 @@ COMPOSE = "docker-compose.yml"
 CONTAINER = "openfactory/adapters/sandbox/container.py"
 WORKER = "docker/worker.Dockerfile"
 SANDBOX = "docker/sandbox.Dockerfile"
-BASE = "docker/base-python.Dockerfile"
 
 _WORKER_ENTRYPOINT = ('ENTRYPOINT ["tini", "-s", "--"]\n'
                       'CMD ["python", "-m", "openfactory.runtime.temporal.worker"]\n')
@@ -63,7 +62,8 @@ MUTATIONS = [
     ("the sandbox image starts a job with no init", SANDBOX,
      'ENTRYPOINT ["tini", "-s", "--"]\n',
      "ENTRYPOINT []\n"),
-    ("the base the sandbox is built from does not install tini", BASE,
-     "make build-essential tini \\\n",
-     "make build-essential \\\n"),
+    # 2026-10-10, review of #572: the sandbox installs tini itself — its base is an ARG
+    ("the sandbox image names a tini it does not install", SANDBOX,
+     "--no-install-recommends gh tini \\\n",
+     "--no-install-recommends gh \\\n"),
 ]

@@ -126,14 +126,39 @@ def _installs(dockerfile: str, package: str) -> bool:
                for line in text.splitlines())
 
 
-@pytest.mark.parametrize(("dockerfile", "installed_by"), [
-    ("worker.Dockerfile", "worker.Dockerfile"),
-    # built FROM the base image, which installs it
-    ("sandbox.Dockerfile", "base-python.Dockerfile"),
-])
-def test_the_long_lived_images_start_an_init(dockerfile, installed_by):
+@pytest.mark.parametrize("dockerfile", ["worker.Dockerfile", "sandbox.Dockerfile"])
+def test_the_long_lived_images_start_an_init(dockerfile):
     """For a runtime that starts the image with no init of its own — a cluster's default — the
-    image carries one. Installed where the image gets its packages, so the ENTRYPOINT names a
-    binary that is there."""
+    image carries one. Installed BY THE FILE THAT NAMES IT, so the ENTRYPOINT names a binary that
+    is there whatever it is built from: the sandbox's base is an ARG (ADR-0043), and leaning on
+    the default base to install it started no job on any other (review of #572)."""
     assert _entrypoint(dockerfile) == INIT, dockerfile
-    assert _installs(installed_by, "tini"), f"{installed_by} does not install tini"
+    assert _installs(dockerfile, "tini"), f"{dockerfile} does not install tini"
+
+
+@pytest.mark.parametrize(("refused", "named"), [
+    ("Error: container-init binary not found on the host: stat /usr/libexec/podman/catatonit: "
+     "no such file or directory", True),
+    ('docker: Error response from daemon: Conflict. The container name "/x" is already in use.',
+     False),
+])
+def test_a_daemon_with_no_init_binary_is_named_in_the_refusal(monkeypatch, refused, named):
+    """`--init` asks the DAEMON for an init: Docker ships one, podman's docker-compatible socket
+    needs `catatonit` and refuses the run without it — no box starts, and the refusal says why
+    (review of #572). Any other refusal is said as the daemon said it, without the line."""
+    import openfactory.adapters.sandbox.container as mod
+    from openfactory.adapters.sandbox.container import ContainerSandbox
+
+    def host(args, timeout=None):
+        if args[:2] == ["docker", "run"]:
+            return 125, refused
+        if args[:2] == ["docker", "inspect"]:
+            return 1, "No such object"
+        return 0, ""
+
+    monkeypatch.setattr(mod, "_host", host)
+    with pytest.raises(RuntimeError) as err:
+        ContainerSandbox(image="img", project="acme").prepare(
+            repo_path=ROOT, base_branch="main", branch="openfactory/12")
+
+    assert ("install `catatonit`" in str(err.value)) is named, str(err.value)
