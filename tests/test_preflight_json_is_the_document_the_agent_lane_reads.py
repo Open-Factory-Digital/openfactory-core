@@ -43,7 +43,7 @@ def _probes(**overrides) -> preflight.Probes:
         writable_without_root=lambda where: (True, "created and written as this user"),
         image_present=lambda image: True,
         sandbox_image=lambda: "ghcr.io/open-factory-digital/openfactory-sandbox:v1.0.0",
-        env_file=lambda: (True, 0o600),
+        env_file=lambda: (True, 0o600, ""),
         agent_credential=lambda: (True, "CLAUDE_CODE_OAUTH_TOKEN is set"),
         ports=lambda: (("panel", 8787), ("engine UI", 8080), ("engine", 7233)),
     )
@@ -73,7 +73,7 @@ def test_it_says_which_version_of_itself_it_is():
 
 
 def test_every_finding_carries_exactly_the_promised_fields():
-    document = _document(env_file=lambda: (False, None))
+    document = _document(env_file=lambda: (False, None, ""))
 
     assert document["findings"], "no findings in the document — the contract has no subject"
     for finding in document["findings"]:
@@ -85,7 +85,7 @@ def test_every_finding_carries_exactly_the_promised_fields():
 def test_the_passes_are_in_it_too_and_not_only_the_failures():
     """A document of failures alone would let the agent lane propose a step that has been taken —
     it cannot see that Docker is already running, so "start Docker" stays plausible for ever."""
-    document = _document(env_file=lambda: (False, None))
+    document = _document(env_file=lambda: (False, None, ""))
     checks = {f["check"]: f["ok"] for f in document["findings"]}
 
     assert any(checks.values()) and not all(checks.values()), checks
@@ -119,7 +119,7 @@ def test_the_verdict_and_the_ok_flag_agree_with_the_findings():
     """A verdict computed once and carried alongside its evidence can drift from it. Both readers
     of this document — a human and an agent — would then be told two different things by the same
     file, and the shorter one wins every time."""
-    for overrides in ({}, {"env_file": lambda: (False, None)},
+    for overrides in ({}, {"env_file": lambda: (False, None, "")},
                       {"image_present": lambda image: None}):
         document = _document(**overrides)
         failed = [f for f in document["findings"] if f["answered"] and not f["ok"]]
