@@ -121,7 +121,7 @@ def test_preflight_is_what_names_the_missing_image_at_install_time():
         writable_without_root=lambda where: (True, "ok"),
         image_present=lambda image: False,
         sandbox_image=lambda: _resolved(_launched()),
-        env_file=lambda: (True, 0o600),
+        env_file=lambda: (True, 0o600, ""),
         agent_credential=lambda: (True, "set"),
         ports=lambda: (("panel", 8787),))
     finding = next(f for f in preflight.check(probes).findings if f.check == "box_image")
