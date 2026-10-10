@@ -73,19 +73,8 @@ INTERVENTIONS = frozenset({"parked", "resumed", "adjusted"})
 
 PROMOTED, MERGED, PARKED = "promoted", "merged", "parked"
 
-#: A job row's states that are past the merge (`contracts/state.py`): read only to name a card
-#: the record never saw merge, never to measure one.
-_PAST_THE_MERGE = frozenset({"merged", "staging_deploying", "staging_verifying",
-                             "awaiting_prod_approval", "prod_releasing", "prod_verifying",
-                             "rolling_back", "done"})
-
 #: The repair-depth buckets, in the order the table reads.
 DEPTHS = ("0", "1", "2", "3+")
-
-#: The taxonomy's classes, in the order `techlead/classify.py` names them — each one a word in
-#: the phrasebook, so the dashboard's table never shows a class it cannot name.
-CAUSES = ("transient", "credential", "environment", "requirement", "code", "policy", "project",
-          "tree", "gate", "unknown")
 
 
 def _said(key: str, language: str | None, **params: object) -> str:
@@ -141,8 +130,9 @@ def autonomy(records: Iterable[dict], project: str, *, since: object = None,
     happened from then on; `None` is the whole record. `language` is the project's: the numbers
     are numbers, and every sentence and label beside them is in it."""
     from openfactory.contracts.refs import canonical_ref, ref_sort_key
+    from openfactory.contracts.state import PAST_THE_MERGE
     from openfactory.lifecycle import record
-    from openfactory.techlead.classify import classify
+    from openfactory.techlead.classify import CLASSES, classify
 
     start = _moment(since) if since is not None else None
     mine = [r for r in records if _project_of(r) == project]
@@ -156,7 +146,7 @@ def autonomy(records: Iterable[dict], project: str, *, since: object = None,
         ticket = canonical_ref(row.get("ticket"))
         if row.get("kind") == "agent_run":
             roles.setdefault(ticket, []).append(str(row.get("role") or ""))
-        elif row.get("kind") == "job" and str(row.get("state") or "") in _PAST_THE_MERGE:
+        elif row.get("kind") == "job" and str(row.get("state") or "") in PAST_THE_MERGE:
             ts = str(row.get("ts") or "")
             job_merged[ticket] = min(job_merged.get(ticket, ts), ts)
 
@@ -226,7 +216,9 @@ def autonomy(records: Iterable[dict], project: str, *, since: object = None,
         "parks": (_said("parks", language, count=parks, window=window) if parks
                   else _said("parks.none", language, window=window)),
         "labels": _labels(language),
-        "causes": {c: _said(f"cause.{c}", language) for c in CAUSES},
+        # EVERY CLASS THE CLASSIFIER HAS, each a word in the phrasebook — read from it, never a
+        # copy, so the table never shows a class it cannot name (review of #545)
+        "causes": {c: _said(f"cause.{c}", language) for c in CLASSES},
     }
     return block
 

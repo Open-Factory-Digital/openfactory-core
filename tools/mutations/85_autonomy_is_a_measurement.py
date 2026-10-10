@@ -52,8 +52,12 @@ MUTATIONS = [
      "        if promoted is None:\n            before.append(card)\n            continue",
      "        if promoted is None:\n            promoted = 0"),
 
-    ("a merge only the job's row holds at Done is forgotten instead of named", AUTONOMY,
-     '"rolling_back", "done"})', '"rolling_back"})'),
+    # RE-PINNED 2026-10-10 (reviews of #545 and #554): the states past the merge are the machine's
+    # own, read off `JobState` from MERGED to DONE in `contracts/state.py`, not a copy here
+    ("a merge only the job's row holds at Done is forgotten instead of named",
+     "openfactory/contracts/state.py",
+     "_ORDER[_ORDER.index(JobState.MERGED):_ORDER.index(JobState.DONE) + 1])",
+     "_ORDER[_ORDER.index(JobState.MERGED):_ORDER.index(JobState.DONE)])"),
 
     ("an effect's outcome row is parsed as the transition it belongs to", RECORD,
      "        if len(parts) == 1:\n", "        if len(parts) in (1, 4):\n"),

@@ -26,6 +26,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from openfactory.observability.autonomy import REPAIR_ROLES
+
 log = logging.getLogger("openfactory.metrics.query")
 
 INDEX = "by_kind"
@@ -125,22 +127,10 @@ def records_of_kind(project: str, kind: str, *, limit: int = 500,
 # note is read into it, the states past the merge, a pass belonging to its card, a ref's one
 # spelling, and a naive time read as UTC. When #85 lands, these become imports of its names.
 
-#: The passes that write code AGAIN because what was written did not hold — `autonomy.py`'s
-#: `REPAIR_ROLES`, exactly: a failed validation, a suppression the gate refused, a review's
-#: findings, a red CI, and a box that died mid-pass (`machine.py::_count`).
-REPAIR_ROLES = frozenset({"repair", "suppression_repair", "review_repair", "ci_repair",
-                          "recovery"})
-
-#: The tech-lead's classes (`techlead/classify.py`), in the order it names them — `autonomy.py`'s
-#: `CAUSES`, exactly. Every class is always present in a measured `parks`, so a zero is a zero.
-PARK_CLASSES = ("transient", "credential", "environment", "requirement", "code", "policy",
-                "project", "tree", "gate", "unknown")
-
-#: The job states past the merge (`contracts/state.py`) — `autonomy.py`'s `_PAST_THE_MERGE`,
-#: exactly. A job that ENDED in one of them landed its change.
-PAST_THE_MERGE = frozenset({"merged", "staging_deploying", "staging_verifying",
-                            "awaiting_prod_approval", "prod_releasing", "prod_verifying",
-                            "rolling_back", "done"})
+# THE PASSES THAT WRITE CODE AGAIN (`autonomy.REPAIR_ROLES`), THE TECH-LEAD'S CLASSES
+# (`techlead/classify.CLASSES`) AND THE STATES PAST THE MERGE (`contracts/state.PAST_THE_MERGE`) are
+# read where they are defined. Each was a copy here, equal by hand (review of #554), and a class or
+# a state added at its source would have gone uncounted in these outcomes without a word.
 
 #: The endings the issue names, always present in a measured `ended`; any other state a job
 #: ended in is counted under its own name beside them.
@@ -351,6 +341,8 @@ def outcomes(project: str | Iterable[str], since: object, until: object, *,
     It is read only when it covers the window — it began before the window did, or no job in the
     window started before it began — because a park nobody recorded is not a park that did not
     happen. A card parked before the record began and still waiting is not in it at all."""
+    from openfactory.contracts.state import PAST_THE_MERGE
+
     names = [project] if isinstance(project, str) else list(dict.fromkeys(project))
     start, end = _moment(since), _moment(until)
     if start is None or end is None:
@@ -440,9 +432,10 @@ def _from_the_store(block: dict, gaps: dict, rows: list[dict], names: list[str],
     """The measures the metrics store answers — the passes, the job rows, the card record — into
     `block`, and the reason for each it cannot, into `gaps`."""
     from openfactory.contracts.refs import canonical_ref
+    from openfactory.contracts.state import PAST_THE_MERGE
     from openfactory.lifecycle import record
     from openfactory.lifecycle.table import MOVES_NOTHING, State
-    from openfactory.techlead.classify import classify
+    from openfactory.techlead.classify import CLASSES, classify
 
     # EVERY PASS ON ITS CARD, joined by the ref's one spelling (`autonomy.py`'s rule): `#12` and
     # `12` are one card, and a card is its project's — `12` here is not `12` there.
@@ -541,7 +534,7 @@ def _from_the_store(block: dict, gaps: dict, rows: list[dict], names: list[str],
 
     # PARKS, read exactly as `autonomy.py` reads them: every `parked` row in the window, its
     # recorded note read into the tech-lead's taxonomy. A note nobody can read is `unknown`.
-    parks: dict[str, int] = dict.fromkeys(PARK_CLASSES, 0)
+    parks: dict[str, int] = dict.fromkeys(CLASSES, 0)
     for history in histories:
         for row in history.rows:
             if row.event == "parked" and inside(_moment(row.ts)):
