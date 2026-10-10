@@ -31,15 +31,29 @@ CATALOG = "openfactory/actions/catalog.py"
 
 MUTATIONS = [
     # 1. the store reads one conversation by its key
+    # RE-PINNED 2026-10-10 (review of #581): two statements, with and without a cursor, through an
+    # index on the row's key
     ("the store reads every conversation of the kind", SINK,
-     '"SELECT data FROM metrics WHERE pk = ? AND kind = ? AND ticket = ?"',
-     '"SELECT data FROM metrics WHERE pk = ? AND kind = ? AND (ticket = ? OR 1)"'),
+     '                "SELECT data FROM metrics WHERE pk = ? AND kind = ? AND ticket = ? AND sk < ?"',
+     '                "SELECT data FROM metrics WHERE pk = ? AND kind = ? AND (ticket = ? OR 1) AND sk < ?"'),
     ("the store ignores the cursor", SINK,
-     "\" AND (expires_at IS NULL OR expires_at > ?) AND (? = '' OR sk < ?)\"",
-     "\" AND (expires_at IS NULL OR expires_at > ?) AND (? = '' OR sk < ? OR 1)\""),
+     "        if before:\n            rows = self._query(",
+     "        if False:\n            rows = self._query("),
     ("the store keeps the oldest rows, not the newest", SINK,
-     '" ORDER BY sk DESC LIMIT ?",',
-     '" ORDER BY sk ASC LIMIT ?",'),
+     '                + live + " ORDER BY sk DESC LIMIT ?",\n                (project, kind, ticket, '
+     'before,',
+     '                + live + " ORDER BY sk ASC LIMIT ?",\n                (project, kind, ticket, '
+     'before,'),
+    ("the conversation's index is on the time again, which the planner never reads", SINK,
+     "CREATE INDEX IF NOT EXISTS metrics_by_ticket_key ON metrics (pk, kind, ticket, sk);",
+     "CREATE INDEX IF NOT EXISTS metrics_by_ticket_key ON metrics (pk, kind, ticket, ts);"),
+    ("the cursor is one disjunction again, which no index can range over", SINK,
+     '"SELECT data FROM metrics WHERE pk = ? AND kind = ? AND ticket = ? AND sk < ?"\n'
+     '                + live + " ORDER BY sk DESC LIMIT ?",\n'
+     "                (project, kind, ticket, before, int(time.time()), max(0, limit)))",
+     '"SELECT data FROM metrics WHERE pk = ? AND kind = ? AND ticket = ?"\n'
+     "                \" AND (? = '' OR sk < ?)\" + live + \" ORDER BY sk DESC LIMIT ?\",\n"
+     "                (project, kind, ticket, before, before, int(time.time()), max(0, limit)))"),
 
     # 2. transcript.page
     ("the store that reads by key is not asked; the product's rows are walked", TRANSCRIPT,

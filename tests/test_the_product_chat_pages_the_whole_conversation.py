@@ -247,3 +247,33 @@ def test_the_socket_hands_the_newest_page_and_answers_for_the_one_before(chat,  
         first = until(ana, lambda f: f["kind"] == "earlier")[-1]
         assert [t["text"] for t in first["turns"]] == [f"linha {i:02d}" for i in range(0, 5)]
         assert first["earlier"] == "", "the start of the conversation still offers a page before"
+
+
+@pytest.mark.parametrize("before", ["", "2026-10-10T12:00:00+00:00#person:ana#person"])
+def test_a_page_is_read_through_the_conversations_own_index(books, before):
+    """REVIEW OF #581: the index on `ts` was never consulted — the planner took the primary key on
+    `pk` alone and walked the project's whole partition, every kind, for every page. The plan of
+    the statement the sink actually runs must seek the conversation by its key, cursor included."""
+    import sqlite3
+
+    from openfactory.observability.registry import deployment_metrics_sink
+
+    sink = deployment_metrics_sink()
+    _said(books, THREAD, 3, size=50)
+    ran: list = []
+    real = sink._query
+
+    def _recorded(sql, args):
+        ran.append((sql, args))
+        return real(sql, args)
+
+    sink._query = _recorded
+    sink.records_of_ticket(books.name, transcript.TRANSCRIPT_KIND, THREAD, before=before, limit=5)
+    [(sql, args)] = ran
+
+    with sqlite3.connect(sink.path) as db:
+        plan = " ".join(str(row[-1]) for row in db.execute(f"EXPLAIN QUERY PLAN {sql}", args))
+    assert "metrics_by_ticket_key" in plan, plan
+    assert "pk=? AND kind=? AND ticket=?" in plan, plan
+    if before:
+        assert "sk<?" in plan.replace(" ", ""), f"the cursor is not used as a range: {plan}"
