@@ -78,6 +78,24 @@ RECOGNISERS = {
     ("openfactory/product/voice.py", "_CLAIMED_DONE"): "recorded",
     ("openfactory/product/voice.py", "_RETRACTS_WRITE"): "nothing was",
     ("openfactory/product/voice.py", "_CANNOT_OBSERVE"): "see the",
+    # DECLARED 2026-10-10 (review of #579): what reads a person's gestures, assent and refusals —
+    # they were counted as the sweep's debt, and no sweep will ever move what the platform READS.
+    # `intents._BECAUSE` is not here: it knows Portuguese only, which is the defect on the way in,
+    # so it stays in the list until it reads an English reason too.
+    ("openfactory/product/intents.py", "_NOT_NEGATED"): "never",
+    ("openfactory/product/intents.py", "_BRIDGE"): "never",
+    ("openfactory/product/intents.py", "_ATTACHED"): "with",
+    ("openfactory/product/intents.py", "_DUPLICATE_NOUN"): "covered",
+    ("openfactory/product/intents.py", "_SURVIVOR_CONNECTIVE"): r"in\s+favou?r",
+    ("openfactory/product/intents.py", "_PATTERNS"): "introduce yourself",
+    ("openfactory/actions/floor_intents.py", "_LEADER_WORDS"): "please",
+    ("openfactory/actions/floor_intents.py", "_PATTERNS"): "rework",
+    ("openfactory/actions/floor_intents.py", "_NEGATORS"): "never",
+    ("openfactory/actions/floor_intents.py", "_BARE_HOLD"): "wait",
+    ("openfactory/actions/floor_intents.py", "_BARE_REFUSAL"): "never",
+    ("openfactory/language/assent.py", "CORE"): "yes",
+    ("openfactory/language/assent.py", "CORE_PHRASES"): "go ahead",
+    ("openfactory/language/assent.py", "FILLER"): "please",
 }
 
 
