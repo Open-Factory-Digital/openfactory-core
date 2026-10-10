@@ -2266,6 +2266,13 @@ _BREAKDOWN_SAID = {
                "others went ahead. What is missing: {why}")},
     "title_exists": {"pt-BR": "já existe um cartão com esse título",
                      "en": "a card with that title already exists"},
+    # A FRONT HELD WITH THE ONE IT WAITS ON (#576), in one sentence: filed alone, it stood on a
+    # foundation nobody had filed, and the pre-flight parked it a move later
+    "held": {
+        "pt-BR": ("“{base}” não foi aberta, então segurei “{title}”, que é construída em cima "
+                  "dela — peça a quebra de novo e as duas são abertas, nessa ordem."),
+        "en": ("“{base}” was not opened, so I held “{title}”, which builds on it — ask for the "
+               "breakdown again and both are opened, in that order.")},
     "file_failed": {
         "pt-BR": ("não consegui registrar “{title}” agora. O time foi avisado e resolve — as "
                   "outras frentes seguiram."),
@@ -2304,13 +2311,14 @@ _BREAKDOWN_SAID = {
 
 def breakdown_said(reason: str, *, ref: object = "", title: str = "", why: str = "",
                    number: object = "", default: str = "", target: str = "", home: str = "",
-                   language: str | None = None) -> str:
+                   base: str = "", language: str | None = None) -> str:
     """What filing a requirement's cards answers for itself (#513). `default` is the repository a
-    card was filed in, said in backticks — or, when the product names none, in words."""
+    card was filed in, said in backticks — or, when the product names none, in words. `base` is
+    the front a held one builds on (#576)."""
     where = f"`{default}`" if default else _pick(_BREAKDOWN_SAID["the_default"], language)
     return _pick(_BREAKDOWN_SAID[reason], language).format(
         ref=ref_label(ref), title=title, why=why, number=number, default=where, target=target,
-        home=home)
+        home=home, base=base)
 
 
 #: What `propose_queue` answers for itself: a proposal the role could not put together, and the
