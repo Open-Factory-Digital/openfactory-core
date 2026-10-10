@@ -46,7 +46,7 @@ def _probes(**overrides) -> preflight.Probes:
         writable_without_root=lambda where: (True, "created and written as this user"),
         image_present=lambda image: True,
         sandbox_image=lambda: "ghcr.io/open-factory-digital/openfactory-sandbox:v1.0.0",
-        env_file=lambda: (True, 0o600),
+        env_file=lambda: (True, 0o600, ""),
         agent_credential=lambda: (True, "CLAUDE_CODE_OAUTH_TOKEN is set"),
         ports=lambda: (("panel", 8787), ("engine UI", 8080), ("engine", 7233)),
     )
@@ -64,7 +64,7 @@ BREAKAGES: tuple[tuple[str, dict], ...] = (
     ("disk", dict(free_disk=lambda: 2 * 1024 ** 3)),
     ("work_dir", dict(writable_without_root=lambda where: (False, "Permission denied"))),
     ("box_image", dict(image_present=lambda image: False)),
-    ("env_file", dict(env_file=lambda: (False, None))),
+    ("env_file", dict(env_file=lambda: (False, None, ""))),
     ("agent_credential", dict(agent_credential=lambda: (False, "neither variable is set"))),
     # A loopback preview with no port range publishes nothing (#265).
     ("preview", dict(preview_rows=lambda: {"OPENFACTORY_PREVIEW_RUNTIME": "compose",
@@ -131,7 +131,7 @@ def test_an_env_file_that_is_readable_by_everyone_is_refused_with_the_chmod():
     """The `.env.compose` check has TWO failing branches and `BREAKAGES` reaches only the first
     (the file is absent). This is the other: the file exists and carries a forge credential with
     write access to somebody's repositories, at a mode their whole machine can read."""
-    finding = _finding(preflight.check(_probes(env_file=lambda: (True, 0o644))), "env_file")
+    finding = _finding(preflight.check(_probes(env_file=lambda: (True, 0o644, ""))), "env_file")
 
     assert not finding.ok, "a world-readable credential file passed"
     assert "0644" in finding.message, finding.message
