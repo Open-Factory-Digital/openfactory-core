@@ -35,9 +35,10 @@ MUTATIONS = [
     ("the per-pass rows are dropped, and spend by model or harness cannot be read", REC,
      "        for entry in agent_runs:", "        for entry in ():", TEST),
 
+    # re-pinned 2026-10-09 (#551): the state is read once, for the row and the journal's ending
     ("the attempt stops saying how it ended", CLI,
-     '               state=getattr(result.state, "value", str(result.state)),',
-     '               state="",', TEST),
+     '               ts=datetime.now(UTC).isoformat(), state=state,',
+     '               ts=datetime.now(UTC).isoformat(), state="",', TEST),
 
     ("nothing is timed, so a job that took an hour looks like one that took a second", CLI,
      "               wall_s=round(time.monotonic() - started, 1),", "               wall_s=None,",

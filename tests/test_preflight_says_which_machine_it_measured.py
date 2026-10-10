@@ -35,7 +35,7 @@ def _probes(**overrides) -> preflight.Probes:
         writable_without_root=lambda where: (True, "created and written as this user"),
         image_present=lambda image: True,
         sandbox_image=lambda: "ghcr.io/open-factory-digital/openfactory-sandbox:v1.0.0",
-        env_file=lambda: (True, 0o600),
+        env_file=lambda: (True, 0o600, ""),
         agent_credential=lambda: (True, "CLAUDE_CODE_OAUTH_TOKEN is set"),
         ports=lambda: (("panel", 8787), ("engine UI", 8080), ("engine", 7233)),
     )
@@ -58,7 +58,7 @@ def test_a_failing_finding_says_it_too():
         daemon=lambda: (False, "Cannot connect to the Docker daemon"),
         compose=lambda: (False, "not a docker command"),
         writable_without_root=lambda where: (False, "Permission denied"),
-        env_file=lambda: (False, None),
+        env_file=lambda: (False, None, ""),
         agent_credential=lambda: (False, "neither variable is set")))
 
     assert report.missing, "nothing failed — this guard has no subject"

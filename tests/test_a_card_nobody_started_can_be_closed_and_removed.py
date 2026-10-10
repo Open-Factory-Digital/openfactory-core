@@ -571,3 +571,55 @@ def test_the_audit_table_is_PRUNED_and_the_highest_removed_number_survives_it(de
     with connect() as conn:
         assert next_ref(conn, "acme") == int(three.lstrip("#")) + 1, (
             "a removed card's number was handed out again after its audit line aged")
+
+
+# ── what a close records and what it says agree (#534) ─────────────────────────────────────────
+
+@pytest.mark.parametrize("column", ["Backlog", "Done"])
+@pytest.mark.parametrize("opened", [_opened_by_product, _on_the_board],
+                         ids=["the product role's path", "the door's path"])
+def test_a_close_says_the_word_it_recorded_on_either_path_from_either_column(
+        deployment, tracker, board, told, opened, column):
+    """THE RECORD AND THE SENTENCE FROM ONE `delivered` (#534). A finished card's close records
+    `completed`, #162's word for delivered; the product role's path answered "stays in the history
+    as not done" over that record, while the door's path said "as delivered". Each path, each
+    column: what is said agrees with what was written."""
+    ref = opened(tracker, board, column=column)
+
+    out = _act("card_close", project="acme", issue=ref, reason="tidying the board")
+
+    assert out.ok, out.message
+    recorded = _closed_reason(ref)
+    assert recorded == ("completed" if column == "Done" else "not_planned"), recorded
+    said_delivered = "as delivered" in out.message
+    assert said_delivered == (recorded == "completed"), (recorded, out.message)
+    assert ("not done" in out.message) == (opened is _opened_by_product and column == "Backlog")
+
+
+@pytest.mark.parametrize(("column", "word"), [("Backlog", "as not done"),
+                                              ("Done", "as delivered")])
+def test_the_close_control_says_the_word_its_close_will_record(deployment, tracker, board,
+                                                                column, word):
+    """`ask_close`, what the panel shows before a close, said "recorded as not done" whatever the
+    card's column — the same claim, made before the close instead of after."""
+    from openfactory.actions.catalog import card_view
+
+    ref = _opened_by_product(tracker, board, column=column)
+
+    view = card_view(deployment, tracker, board, ref, opened_by="request")
+
+    assert word in view["words"]["ask_close"].replace("recorded as not done", "as not done"), (
+        view["words"]["ask_close"])
+
+
+def test_the_delivered_sentences_speak_both_languages():
+    from openfactory.product.voice import card_controls, card_withdrawn_result
+
+    assert card_withdrawn_result(ref="#7", how="delivered", language="pt-BR").startswith(
+        "fechei o #7 como entregue")
+    assert card_withdrawn_result(ref="#7", how="delivered", language="en").startswith(
+        "closed #7 as delivered")
+    for lang, word in (("pt-BR", "como entregue"), ("en", "as delivered")):
+        words = card_controls(opened_by_product=True, started=True, removes=True, finished=True,
+                              language=lang)
+        assert word in words["ask_close"] and "ask_close_finished" not in words

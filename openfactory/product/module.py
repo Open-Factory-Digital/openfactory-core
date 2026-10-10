@@ -4668,7 +4668,11 @@ class ProductModule:
         result = self._close_one(number, actor=actor, in_favour_of=None, reason=reason,
                                  delivered=delivered, event="closed" if delivered else "withdrawn")
         if result.ok and not result.detail:
-            result.detail = card_withdrawn_result(ref=number, how="closed", language=lang)
+            # THE ONE `delivered` FOR THE RECORD AND THE SENTENCE (#534): the record above wrote
+            # `completed` for a finished card, and the answer said "not done" — #162 again, from
+            # the sentence's side
+            result.detail = card_withdrawn_result(ref=number, how="delivered" if delivered
+                                                  else "closed", language=lang)
         return result
 
     def _asked_by(self, number: str) -> str:
