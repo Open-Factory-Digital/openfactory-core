@@ -190,10 +190,12 @@ def _moment(value: object) -> datetime | None:
 def _an_ending(event: dict) -> bool:
     """Whether a journal line says how a job ENDED: a `state` line that carries `by`.
 
-    TWO WRITERS PUT IT THERE AND NOTHING ELSE DOES. `record_outcome` (#131), at the job's one exit,
-    signs it `the workflow`; a stop (`catalog._journal_the_stop`, #413) signs it with whoever
-    stopped the job, because a terminated workflow never reaches its exit. The box's own state
-    lines carry a `reason` and never a `by` (`machine._set_state`): they say how far the job got."""
+    ONE FUNCTION WRITES IT AND NOTHING ELSE DOES: `job_record.record_ending`, for three callers. The
+    workflow's `record_outcome` (#131), at the job's one exit, signs it `the workflow`; the
+    attended driver (`openfactory run`, `poll`) signs it `the attended driver` (#551); a stop
+    (`catalog._journal_the_stop`, #413) signs it with whoever stopped the job, because a terminated
+    workflow never reaches its exit. The box's own state lines carry a `reason` and never a `by`
+    (`machine._set_state`): they say how far the job got."""
     return event.get("kind") == "state" and isinstance(event.get("data"), dict) \
         and "by" in event["data"]
 
@@ -228,8 +230,8 @@ def _jobs_in(path: Path, project: str) -> list[_Job]:
     last one is NOT a job: it is the card's later ending, which the deploy watch records after the
     job's own `merged` when the deploy was the card's last stage (`_the_last_stage`) — the job
     still ended where its own line says. Lines after the last ending are a job whose ending is not
-    recorded: one running now, one the attended driver ran (it journals no ending), or one whose
-    ending was lost. Consecutive jobs with no ending between them read as one.
+    recorded: one running now, one the attended driver ran before #551 (it journalled no ending),
+    or one whose ending was lost. Consecutive jobs with no ending between them read as one.
 
     A line that is not JSON, or has no time, is skipped, as the panel skips it."""
     from openfactory.contracts.refs import canonical_ref

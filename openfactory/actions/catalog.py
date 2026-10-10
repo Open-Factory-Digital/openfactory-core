@@ -1322,14 +1322,11 @@ def _journal_the_stop(project, issue: str, *, by: Actor, why: str) -> None:
     `record_outcome` was written to end. Best-effort: the stop stands whatever the journal says."""
     try:
         from openfactory.contracts import JobState
-        from openfactory.observability.events import JobEvent, now_iso
-        from openfactory.observability.registry import journal_for
-        from openfactory.paths import events_file
+        from openfactory.observability.job_record import record_ending
 
-        journal_for(events_file(project, issue)).emit(JobEvent(
-            ts=now_iso(), job_id=f"#{issue}", ticket_id=f"#{issue}", kind="state",
-            message=JobState.SKIPPED.value,
-            data={"reason": f"stopped by {by}" + (f": {why}" if why else ""), "by": str(by)}))
+        # THE ONE WRITER OF THE ENDING LINE, which both drivers write through (#551)
+        record_ending(project, issue, JobState.SKIPPED.value, by=str(by),
+                      note=f"stopped by {by}" + (f": {why}" if why else ""))
     except Exception:  # noqa: BLE001 — the stop stands; only its journal line is missing
         log.warning("OPENFACTORY_STOP_NOT_JOURNALLED project=%s issue=%s — the job was stopped "
                     "and its journal does not say so", getattr(project, "name", "?"), issue,

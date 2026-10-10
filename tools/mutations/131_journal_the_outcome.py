@@ -25,11 +25,12 @@ MUTATIONS = [
      '        if not workflow.patched("journal-the-outcome"):\n            return',
      "        pass"),
 
+    # re-pinned 2026-10-09 (#551): `record_outcome` writes the line through
+    # `job_record.record_ending`, which the attended driver and a stop write through too
     ("the reason is dropped and only the bare state survives",
-     "openfactory/runtime/temporal/activities.py",
-     '            kind="state", message=inp.state, data={"reason": note or None, '
-     '"by": "the workflow"},',
-     '            kind="state", message=inp.state, data={},'),
+     "openfactory/observability/job_record.py",
+     '        data={"reason": (note or "").strip() or None, "by": by}))\n',
+     '        data={}))\n'),
 
     ("a journal that will not write takes the job down with it",
      "openfactory/runtime/temporal/activities.py",
