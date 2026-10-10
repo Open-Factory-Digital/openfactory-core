@@ -402,16 +402,69 @@ def recent(project, *, thread: str, channel: str = "",
     mine = sorted((r for r in found if str(r.get("ticket", "")) in keys
                    and (overheard or _addressed(r))),
                   key=lambda r: str(r.get("ts", "")))
-    return _newest_within(
-        [Turn(role=str(r.get("role", "")) or "person",
-              text=str((r.get("extra") or {}).get("text", "")).strip(),
-              ts=str(r.get("ts", "")), actor=str((r.get("extra") or {}).get("actor", "")),
-              id=str((r.get("extra") or {}).get("id", "") or ""),
-              in_reply_to=str((r.get("extra") or {}).get("in_reply_to", "") or ""),
-              addressed=_addressed(r),
-              attachments=tuple((r.get("extra") or {}).get("attachments") or ()))
-         for r in mine],
-        budget)
+    return _newest_within([_turn(r) for r in mine], budget)
+
+
+def _turn(row: dict) -> Turn:
+    """One stored row as the turn it records — the one reading `recent` and `page` share."""
+    extra = row.get("extra") or {}
+    return Turn(role=str(row.get("role", "")) or "person",
+                text=str(extra.get("text", "")).strip(),
+                ts=str(row.get("ts", "")), actor=str(extra.get("actor", "")),
+                id=str(extra.get("id", "") or ""),
+                in_reply_to=str(extra.get("in_reply_to", "") or ""),
+                addressed=_addressed(row),
+                attachments=tuple(extra.get("attachments") or ()))
+
+
+#: How many turns one PAGE of a conversation holds, for the people in it (#566): the catch-up a
+#: page is handed, and each earlier page it asks for. A count of turns, not of characters: this
+#: read builds no prompt, so the prompt's budget (`DEFAULT_BUDGET`) is not its bound.
+PAGE_TURNS = 40
+
+
+def page(project, *, thread: str, before: str = "",
+         limit: int | None = None) -> tuple[list[Turn], str]:
+    """One page of a conversation, for the PEOPLE IN IT: its newest `limit` turns written before
+    `before`, oldest first — every line, the ones the room said to each other included (ADR-0051
+    D14) — and the cursor of the page before it, `""` when this one reaches the start.
+
+    THE PAGE'S READ, NOT THE PROMPT'S (#566). The panel's catch-up and `product_thread` read
+    `recent`, which keeps the newest turns within the prompt's 6,000 characters out of the
+    project's last 300 rows of every conversation: a person reopening their conversation saw its
+    last few turns — two replies that carried a card filled the budget — and on a busy project an
+    older conversation opened empty. This reads the conversation BY ITS KEY, a page at a time,
+    through the store's `TicketReadingSink`; a store without it is walked as `erase` walks it.
+
+    `project` is read as `recent` reads it: the PRODUCT's memory, every partition of it, by the
+    same rule (`rows`). The cursor is a row's key (`sk`), unique and ordered as written. RAISES
+    what the store raises: the page says "could not read", never an empty conversation."""
+    if not thread:
+        return [], ""
+    limit = PAGE_TURNS if limit is None else limit
+    from openfactory.observability.metrics import TicketReadingSink
+    from openfactory.observability.registry import deployment_metrics_sink
+
+    where = _where(project)
+    sink = deployment_metrics_sink()
+    if isinstance(sink, TicketReadingSink):
+        names = tuple(dict.fromkeys((where.key, *where.members))) if where.marked else (where.key,)
+        found = []
+        for name in names:
+            for row in sink.records_of_ticket(name, TRANSCRIPT_KIND, thread, before=before,
+                                              limit=limit + 1):
+                mark = (row.get("extra") or {}).get(PRODUCT_MARK)
+                if not where.marked or mark == where.key or (not mark and name in where.members):
+                    found.append(row)
+    else:
+        every, _full = rows(project, limit=ERASE_SCAN)
+        found = [r for r in every if str(r.get("ticket", "")) == thread
+                 and (not before or str(r.get("sk", "")) < before)]
+    found.sort(key=lambda r: str(r.get("sk", "") or r.get("ts", "")))
+    more = len(found) > limit
+    found = found[-limit:] if limit > 0 else []
+    cursor = str(found[0].get("sk", "") or found[0].get("ts", "")) if more and found else ""
+    return [_turn(r) for r in found], cursor
 
 
 #: The mark an erased line carries, and how far back an erasure reads to find a conversation's

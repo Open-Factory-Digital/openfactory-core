@@ -266,11 +266,11 @@ def test_the_history_hands_the_page_which_message_each_turn_is(monkeypatch):
     from openfactory.memory import transcript
     from openfactory.memory.transcript import Turn
 
-    monkeypatch.setattr(transcript, "recent", lambda *_a, **_kw: [
+    monkeypatch.setattr(transcript, "page", lambda *_a, **_kw: ([
         Turn(role="person", text="sim", actor="ana", id="click-0123456789"),
-        Turn(role="agent", text="Registrado.", in_reply_to="click-0123456789")])
+        Turn(role="agent", text="Registrado.", in_reply_to="click-0123456789")], ""))
 
-    turns = product_chat._history(_project(), "person:ana", "ana")
+    turns, _earlier = product_chat._history(_project(), "person:ana", "ana")
 
     assert [(t["id"], t["in_reply_to"]) for t in turns] == [
         ("click-0123456789", ""), ("", "click-0123456789")], turns

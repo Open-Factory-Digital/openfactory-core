@@ -2925,7 +2925,8 @@ async def _product_discard_attachment(*, project: str, by: Actor, attachment: st
     return done(f"{found.name} was discarded from this conversation.", discarded=found.id)
 
 
-async def _product_thread(*, project: str, by: Actor, thread: str = "") -> Outcome:
+async def _product_thread(*, project: str, by: Actor, thread: str = "",
+                          before: str = "") -> Outcome:
     """The recent turns of one conversation with the product role — the room, or your own.
 
     WHAT MAKES THE ROOM A ROOM. The panel offered one box and kept what it said in the page:
@@ -2953,13 +2954,18 @@ async def _product_thread(*, project: str, by: Actor, thread: str = "") -> Outco
     # THE PRODUCT'S MEMORY (ADR-0051 D2): the conversation as every registry project of this
     # product holds it, rows from before the move included — the one the door's turns write to.
     # EVERY LINE OF IT, the ones the room said to each other included (ADR-0051 D14): this SHOWS
-    # the conversation to the people in it, who saw them anyway — it builds no prompt
-    turns = transcript.recent(proj, thread=key, overheard=True)
+    # the conversation to the people in it, who saw them anyway — it builds no prompt. A PAGE AT A
+    # TIME, by the conversation's key (#566): it read the prompt's 6,000-character window, so the
+    # CLI showed the end of a conversation and nothing could reach the rest. `earlier` is the
+    # cursor of the page before this one, passed back as `before`.
+    turns, earlier = transcript.page(proj, thread=key, before=(before or "").strip())
     agent = getattr(getattr(proj, "product", None), "agent_name", "") or "product"
     rows = [{"role": t.role, "actor": agent if t.role == "agent" else (t.actor or ""),
              "text": t.text, "ts": t.ts} for t in turns]
-    return done(transcript.render(turns, agent_name=agent) or "nothing was said here yet.",
-                thread=key, private=is_private(key), turns=rows)
+    said = transcript.render(turns, agent_name=agent) or "nothing was said here yet."
+    if earlier:
+        said += f"\n\n(earlier turns: pass before={earlier})"
+    return done(said, thread=key, private=is_private(key), turns=rows, earlier=earlier)
 
 
 async def _product_agenda(*, project: str, by: Actor) -> Outcome:
@@ -6993,7 +6999,7 @@ CATALOG: dict[str, ActionSpec] = {
                     "project's room, or your own",
             run=_product_thread,
             required=("project",),
-            optional=("thread",),
+            optional=("thread", "before"),
             needs_admin=False,
         ),
         ActionSpec(

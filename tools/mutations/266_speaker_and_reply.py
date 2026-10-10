@@ -70,10 +70,12 @@ MUTATIONS = [
      '        if in_reply_to:\n            extra["in_reply_to"] = str(in_reply_to)\n',
      ""),
     # RE-PINNED 2026-09-24 (#266 slice 6): the reader carries `addressed` after the two ids now,
-    # so the two lines end in a comma and the cut leaves that argument standing
+    # so the two lines end in a comma and the cut leaves that argument standing.
+    # RE-PINNED 2026-10-10 (#566): one row becomes a turn in `_turn`, which `recent` and `page`
+    # share, and it reads the row's `extra` once
     ("the transcript's reader drops both ids", TRANSCRIPT,
-     '              id=str((r.get("extra") or {}).get("id", "") or ""),\n'
-     '              in_reply_to=str((r.get("extra") or {}).get("in_reply_to", "") or ""),\n',
+     '                id=str(extra.get("id", "") or ""),\n'
+     '                in_reply_to=str(extra.get("in_reply_to", "") or ""),\n',
      ""),
 
     # ── staging keyed by the conversation and the person ─────────────────────────────────────────

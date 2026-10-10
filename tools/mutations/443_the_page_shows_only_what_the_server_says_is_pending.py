@@ -19,9 +19,10 @@ MUTATIONS = [
     ("another person's proposal is offered to this one", WAITING,
      "    for key in dict.fromkeys((key_for(conversation, person), conversation)):\n",
      "    for key in dict.fromkeys(proposals):\n"),
+    # RE-PINNED 2026-10-10 (#566): the frame also carries the cursor of the page before it
     ("the history frame names nothing, so a stale token survives the catch-up", CHAT,
-     '        fan.release(sub, {"kind": "history", "turns": turns, "staged": sub.staged})\n',
-     '        fan.release(sub, {"kind": "history", "turns": turns})\n'),
+     '        fan.release(sub, {"kind": "history", "turns": turns, "staged": sub.staged,\n',
+     '        fan.release(sub, {"kind": "history", "turns": turns,\n'),
     ("the watch never asks the store again after a batch", CHAT,
      "                await self.hub.restage(self.product, self.conversation)\n",
      "                pass\n"),

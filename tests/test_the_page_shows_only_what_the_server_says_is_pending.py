@@ -182,7 +182,7 @@ def test_the_history_frame_carries_what_waits():
 
     code = inspect.getsource(product_chat.serve)
     assert "staged_for, project, key, actor.id" in code
-    assert '{"kind": "history", "turns": turns, "staged": sub.staged}' in code
+    assert '{"kind": "history", "turns": turns, "staged": sub.staged,' in code
 
 
 # ── the page: it replaces its own with what the server names ───────────────────────────────────

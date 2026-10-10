@@ -207,6 +207,27 @@ class KeyedSink(Protocol):
         ...
 
 
+@runtime_checkable
+class TicketReadingSink(Protocol):
+    """A sink that reads ONE TICKET's rows of a kind by the ticket itself, a page at a time (#566).
+
+    A conversation is a ticket of the transcript's rows (`memory/transcript.py`), and it was found
+    by walking the project's most recent rows of every conversation (`SCAN_ROWS`, 300), then cut to
+    the prompt's character budget — so the page a person opened showed the last 6,000 characters
+    of their own conversation, and an older one on a busy project opened empty. A sink that can
+    say which rows are one ticket's, newest first, gives the page every turn, in pages.
+
+    A SEPARATE PROTOCOL, like `ForgettingSink`: a store added from outside declares it by
+    implementing the method, and one that does not is read the old way, by a wider walk
+    (`transcript.page`). RAISES `query.StoreUnreadable` WHEN THE STORE WILL NOT ANSWER."""
+
+    def records_of_ticket(self, project: str, kind: str, ticket: str, *, before: str = "",
+                          limit: int = 50) -> list[dict]:
+        """Rows of `kind` under `ticket` for `project`, oldest first, keeping the most RECENT
+        `limit` whose key comes before `before` (a row's `sk`; `""` = up to now)."""
+        ...
+
+
 class NullMetricsSink:
     """Default: drops records (local dev / metrics off). Never raises."""
 

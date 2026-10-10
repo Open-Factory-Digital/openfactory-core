@@ -1775,7 +1775,7 @@ def test_the_POs_page_can_reach_what_the_role_can_DO_not_only_what_it_can_say():
     # the same key rule — so the read is reached, and its row stays for the CLI
     html = (ROOT / "openfactory/api/panel.html").read_text()
     chat = (ROOT / "openfactory/api/product_chat.py").read_text()
-    assert "/api/product/stream" in html and "transcript.recent(project, thread=key" in chat, (
+    assert "/api/product/stream" in html and "transcript.page(project, thread=key" in chat, (
         "the PO's page cannot read the conversation it writes into")
 
 
