@@ -25,16 +25,37 @@ CORE = ('<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/
         '</cp:coreProperties>')
 
 
+#: Every part's time in the archive. `writestr(name, …)` stamps the moment of the call, at the
+#: two-second resolution of a zip's DOS time, so the same document built twice differed when the
+#: two calls fell either side of a tick — and a test comparing what it stored with a second build
+#: of it failed about once in a full run (measured 2026-10-10). Fixed, a document is a function of
+#: its content.
+_STAMP = (2026, 1, 1, 0, 0, 0)
+
+
 def _zip(parts: dict[str, str | bytes]) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for name, body in parts.items():
-            z.writestr(name, body)
+            z.writestr(zipfile.ZipInfo(name, date_time=_STAMP), body,
+                       compress_type=zipfile.ZIP_DEFLATED)
     return buf.getvalue()
 
 
 def _p(text: str) -> str:
     return f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"
+
+
+def test_a_document_built_twice_is_the_same_bytes(monkeypatch):
+    """Two builds of one document, the clock moved between them: the bytes do not follow it."""
+    import time as clock
+
+    first = docx("prazo")
+    later = clock.time() + 10
+    monkeypatch.setattr(clock, "time", lambda: later)
+    monkeypatch.setattr(clock, "localtime", lambda *_a: clock.gmtime(later))
+
+    assert docx("prazo") == first and xlsx([["a"]]) == xlsx([["a"]])
 
 
 def docx(*paragraphs: str, table: list[list[str]] | None = None, title: str = "") -> bytes:
