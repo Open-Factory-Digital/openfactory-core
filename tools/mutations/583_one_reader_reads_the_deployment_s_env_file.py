@@ -48,9 +48,10 @@ MUTATIONS = [
     ("an unreadable file passes `env_file`", PREFLIGHT,
      "    if unreadable:\n        return _fail(",
      "    if False:\n        return _fail("),
+    # RE-PINNED 2026-10-10 (#582): the unreadable file is said after the harness's own reading
     ("the credential line says nothing is set where the file could not be read", PREFLIGHT,
-     '"neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set" + _unread()',
-     '"neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set"'),
+     '        return False, said + _unread(), f"{repair} — in .env.compose"',
+     '        return False, said, f"{repair} — in .env.compose"'),
 
     # 4. the preview
     ("the preview reads a product's env file by no rules at all", ASSEMBLE,

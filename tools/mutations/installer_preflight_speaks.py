@@ -33,12 +33,16 @@ MUTATIONS = [
      '        f"first ticket rather than at `up`)", on=LOCAL)',
      '"", on=LOCAL)'),
 
+    # RE-PINNED 2026-10-10 (#582, review of #584): the repair is the harness's own, and this
+    # sentence is the fallback for a probe that names none
     ("the agent credential refusal restates the problem instead of answering it",
      MODULE,
-     '"run `claude setup-token` and put the result in CLAUDE_CODE_OAUTH_TOKEN in .env.compose "\n'
-     '        "(or ANTHROPIC_API_KEY if you bill per token). The stack starts without it and no ticket "\n'
-     '        "can run — this is the one credential that cannot be postponed", on=LOCAL)',
-     '"no agent credential is visible", on=LOCAL)'),
+     '        (repair[0] if repair else\n'
+     '         "run `claude setup-token` and put the result in CLAUDE_CODE_OAUTH_TOKEN in .env.compose "\n'
+     '         "(or ANTHROPIC_API_KEY if you bill per token)")\n'
+     '        + ". The stack starts without it and no ticket can run — this is the one credential that "\n'
+     '          "cannot be postponed", on=LOCAL)',
+     '        "no agent credential is visible", on=LOCAL)'),
 
     ("a check that raises becomes a traceback instead of a finding",
      MODULE,

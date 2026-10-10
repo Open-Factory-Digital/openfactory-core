@@ -51,6 +51,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from openfactory import plugins
+from openfactory.adapters.agent.registry import HARNESS_CREDENTIALS
 from openfactory.listeners import ENGINE, ENGINE_UI, LISTENERS, PANEL
 
 #: The fixed vocabularies — questions whose answers are this platform's, not a provider's.
@@ -122,7 +123,11 @@ def shipped(axis: str) -> tuple[str, ...]:
 #: provider registration) — MEASURED, not assumed: `_AUTH_ENV_VARS` in the container sandbox is
 #: exactly `("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")`. Inventing a variable for the other
 #: three would produce a file that looks configured and authenticates nothing.
-HARNESS_ENV_CREDENTIAL = ("claude_code",)
+#:
+#: READ FROM THE REGISTRY'S ONE ANSWER (review of #584): `HARNESS_CREDENTIALS` is what every probe
+#: asks, and a kept tuple here was a second answer to the same question — a harness added to one
+#: and not the other would have the wizard ask for a token no probe reads, or the reverse.
+HARNESS_ENV_CREDENTIAL = tuple(HARNESS_CREDENTIALS)
 
 
 @dataclass(frozen=True)

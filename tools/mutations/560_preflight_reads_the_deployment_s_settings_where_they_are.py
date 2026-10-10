@@ -18,19 +18,20 @@ TEST = "tests/test_preflight_reads_the_deployment_s_settings_where_they_are.py"
 PREFLIGHT = "openfactory/preflight.py"
 
 MUTATIONS = [
+    # RE-PINNED 2026-10-10 (#582): the harness's own reading is asked over the settings, where
+    # this probe kept a list of two names
     ("TODAY'S DEFECT: the credential is looked for in the installer's empty environment",
      PREFLIGHT,
-     "    for name in (\"CLAUDE_CODE_OAUTH_TOKEN\", \"ANTHROPIC_API_KEY\"):\n"
-     "        if settings.get(name):\n",
-     "    for name in (\"CLAUDE_CODE_OAUTH_TOKEN\", \"ANTHROPIC_API_KEY\"):\n"
-     "        if os.environ.get(name):\n"),
+     "    reading = harness_credential(kind, settings)\n",
+     "    reading = harness_credential(kind, os.environ)\n"),
     ("the moved ports are not the ones checked", PREFLIGHT,
      '        raw = (settings.get(variable) or "").strip()\n',
      '        raw = (os.environ.get(variable) or "").strip()\n'),
     ("the file wins over the environment", PREFLIGHT,
      "    return {**_env_file_rows(), **os.environ}\n",
      "    return {**os.environ, **_env_file_rows()}\n"),
+    # RE-PINNED 2026-10-10 (#582): one level out, after the harness's reading
     ("the finding says the file where the environment held it", PREFLIGHT,
-     '            where = "in the environment" if os.environ.get(name) else "in .env.compose"\n',
-     '            where = "in .env.compose"\n'),
+     '    where = "in the environment" if os.environ.get(name) else "in .env.compose"\n',
+     '    where = "in .env.compose"\n'),
 ]

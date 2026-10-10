@@ -374,7 +374,7 @@ class Probes:
     #: prerequisite you cannot postpone, and the one check doctor never made: a fresh install
     #: with zero credentials read "OK — can run a ticket" and failed at the first paid job.
     #: None = an older Probes; the check is skipped rather than invented.
-    agent_credential: Callable[[], tuple[bool, str]] | None = None
+    agent_credential: Callable[[], tuple[bool, str] | tuple[bool, str, str]] | None = None
     #: What the project's OWN CI runs, as `{key: (command, "path:line")}` — or None when this
     #: deployment cannot look (no checkout, no reader). #176.
     #:
@@ -1020,7 +1020,7 @@ def _agent_cred(p: Probes) -> Finding:
     a fresh install with zero credentials reading "OK — can run a ticket" and failing at the
     first paid job, one layer from the cause."""
     assert p.agent_credential is not None
-    present, detail = p.agent_credential()
+    present, detail, *repair = p.agent_credential()
     if present:
         return Finding("agent_credential", True,
                        detail or "an agent credential is present (box prove verifies it works)")
@@ -1043,9 +1043,15 @@ def _agent_cred(p: Probes) -> Finding:
         )
     return Finding(
         "agent_credential", False,
+        f"no agent credential ({detail}) — the coding agent cannot authenticate, so no job can "
+        "run" if detail else
         "no agent credential — the coding agent cannot authenticate, so no job can run",
-        "set CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) or ANTHROPIC_API_KEY in the "
-        "environment the worker reads — for compose: .env.compose, then restart with --env-file",
+        # THE HARNESS'S OWN REPAIR (review of #584): a pool that cannot be used is fixed in the
+        # pool, not replaced by a single token
+        (repair[0] if repair else
+         "set CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) or ANTHROPIC_API_KEY")
+        + " — in the environment the worker reads; for compose: .env.compose, then restart with "
+          "--env-file",
     )
 
 
@@ -2215,17 +2221,23 @@ def probes_for(project) -> Probes:
 
         return shutil.which(harness_binary(kind)) is not None
 
-    def _agent_credential_probe() -> tuple[bool, str]:
+    def _agent_credential_probe() -> tuple[bool, str] | tuple[bool, str, str]:
+        # THE HARNESS SAYS WHAT IT AUTHENTICATES WITH (#582) — the one reading the preflight
+        # asks too, where each kept a list: this one three names and an `if kind ==`, that one
+        # two names, and a deployment on the token pool alone passed here and failed there.
+        from openfactory.adapters.agent.registry import harness_credential
         from openfactory.adapters.agent.registry import harness_kind as _hk
 
         kind = _hk(project, "executor")
-        if kind != "claude_code":
+        reading = harness_credential(kind, os.environ)
+        if reading is None:
             return True, (f"presence is not checkable for {kind!r} from here — "
                           f"`openfactory box prove` exercises the real call")
-        if (os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY")
-                or os.environ.get("OPENFACTORY_AGENT_TOKENS")):
-            return True, ""
-        return False, "no agent credential in this environment"
+        name, said, repair = reading
+        if not name:
+            return False, said, repair
+        return True, (f"{name} is present" + (f" — {said}" if said else "")
+                      + " (box prove verifies it works)")
 
     def _forge() -> tuple[bool, str]:
         from openfactory.adapters.forge.registry import build_forge

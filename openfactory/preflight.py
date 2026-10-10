@@ -119,7 +119,9 @@ class Probes:
     env_file: Callable[[], tuple[bool, int | None, str]]
     #: `(visible, detail)` for the agent's credential — ONBOARDING calls it the one prerequisite
     #: that cannot be postponed, and the stack boots happily without it.
-    agent_credential: Callable[[], tuple[bool, str]]
+    #: `(visible, detail)`, and on a miss the REPAIR the harness names as a third item — its own
+    #: words for how its credential is fixed, which the finding says where the file is (#582).
+    agent_credential: Callable[[], tuple[bool, str] | tuple[bool, str, str]]
     #: The published ports this deployment will actually use, after its own overrides.
     ports: Callable[[], tuple[tuple[str, int], ...]]
     #: The `OPENFACTORY_PREVIEW_*` rows `.env.compose` carries (#265) — which preview runtime this
@@ -396,17 +398,20 @@ def _env_file(p: Probes) -> Finding:
 
 
 def _agent_credential(p: Probes) -> Finding:
-    visible, detail = p.agent_credential()
+    visible, detail, *repair = p.agent_credential()
     if visible:
         return _ok("agent_credential", f"an agent credential is visible ({detail})", on=LOCAL)
     # A FAILURE AND NOT A WARNING, because the stack BOOTS without it and no ticket can run — the
     # exact shape `doctor` was given this check for: a fresh install with zero credentials read
-    # "OK — can run a ticket" and failed at the first paid job.
+    # "OK — can run a ticket" and failed at the first paid job. WHAT WAS READ is said (#582): a
+    # pool that cannot be used is not the same repair as no credential at all.
     return _fail(
-        "agent_credential", "no agent credential is visible to this deployment",
-        "run `claude setup-token` and put the result in CLAUDE_CODE_OAUTH_TOKEN in .env.compose "
-        "(or ANTHROPIC_API_KEY if you bill per token). The stack starts without it and no ticket "
-        "can run — this is the one credential that cannot be postponed", on=LOCAL)
+        "agent_credential", f"no agent credential is visible to this deployment ({detail})",
+        (repair[0] if repair else
+         "run `claude setup-token` and put the result in CLAUDE_CODE_OAUTH_TOKEN in .env.compose "
+         "(or ANTHROPIC_API_KEY if you bill per token)")
+        + ". The stack starts without it and no ticket can run — this is the one credential that "
+          "cannot be postponed", on=LOCAL)
 
 
 def _preview(p: Probes) -> Finding:
@@ -560,19 +565,30 @@ def _probe_env_file(path: str = ".env.compose") -> tuple[bool, int | None, str]:
     return True, mode, read.unreadable
 
 
-def _probe_agent_credential() -> tuple[bool, str]:
-    # THE NAMES THE CONTAINER SANDBOX ACTUALLY FORWARDS, not a list invented here — the same two
-    # `openfactory/onboarding/deployment.py` calls `HARNESS_ENV_CREDENTIAL`'s reason for existing.
+def _probe_agent_credential() -> tuple[bool, str] | tuple[bool, str, str]:
+    # THE HARNESS SAYS WHAT IT AUTHENTICATES WITH (#582), read by its own adapter
+    # (`registry.harness_credential`) over the deployment's settings. This kept two names of its
+    # own — the two the container sandbox forwards to the box — and failed a deployment running
+    # on the token pool alone, which the worker runs on, telling it to replace a token that worked.
     # READ WHERE THE DEPLOYMENT KEEPS THEM (#560): `_settings`, the env file under the environment.
     # The installer's preflight runs in a container whose environment holds nothing of
     # `.env.compose`, and read from the environment alone, an upgrade was told to replace a token
     # that was in the file and worked.
+    from openfactory.adapters.agent.registry import executor_kind, harness_credential
+
     settings = _settings()
-    for name in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"):
-        if settings.get(name):
-            where = "in the environment" if os.environ.get(name) else "in .env.compose"
-            return True, f"{name} is set {where}"
-    return False, "neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set" + _unread()
+    kind = executor_kind(settings)
+    reading = harness_credential(kind, settings)
+    if reading is None:
+        return True, (f"{kind} signs in through its own login, which no setting shows — "
+                      f"`openfactory box prove` exercises the real call")
+    name, said, repair = reading
+    if not name:
+        # THE REPAIR IS THE HARNESS'S (review of #584): a pool that cannot be used is fixed in the
+        # pool, and the old fixed sentence sent it to replace the pool with one token
+        return False, said + _unread(), f"{repair} — in .env.compose"
+    where = "in the environment" if os.environ.get(name) else "in .env.compose"
+    return True, f"{name} is set {where}" + (f" — {said}" if said else "")
 
 
 def _unread(path: str = ".env.compose") -> str:
