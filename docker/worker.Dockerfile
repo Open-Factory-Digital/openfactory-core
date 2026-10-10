@@ -361,8 +361,10 @@ RUN set -eu; \
 # OCR (#337): `tesseract` reads a scanned PDF's pages and `pdftoppm` (poppler) renders them, in the
 # languages the documents are written in — Portuguese and English here, `OPENFACTORY_OCR_LANGS` to
 # choose among what is installed. Without them every scanned PDF a client sends was unreadable.
+#
+# `tini` is the init the ENTRYPOINT below runs (#532).
 RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates \
-       tesseract-ocr tesseract-ocr-por tesseract-ocr-eng poppler-utils \
+       tesseract-ocr tesseract-ocr-por tesseract-ocr-eng poppler-utils tini \
     && mkdir -p -m 755 /etc/apt/keyrings \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
        -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -520,4 +522,12 @@ ENV OPENFACTORY_REGISTRY=/var/lib/openfactory/registry.yaml
 ENV OPENFACTORY_REGISTRY_SEED=/etc/openfactory/registry.seed.yaml
 VOLUME ["/var/lib/openfactory"]
 
+# AN INIT IN THE IMAGE, NOT ONLY IN THE COMPOSE FILE (#532). PID 1 inherits every orphan in the
+# container, and Python waits only for the children it started: git's detached auto-maintenance
+# after each commit or fetch stayed a zombie for the container's life, and a panel ran out of
+# processes after 39 hours. `docker-compose.yml` says `init: true`; this holds the property on a
+# runtime that starts the image with no init — a cluster's default. `-s` makes tini a subreaper,
+# so it reaps whatever it inherits whether it runs as PID 1 or under the daemon's own init.
+# The panel's `command:` runs through it too: compose passes it as the arguments.
+ENTRYPOINT ["tini", "-s", "--"]
 CMD ["python", "-m", "openfactory.runtime.temporal.worker"]

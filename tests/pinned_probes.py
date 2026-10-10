@@ -100,6 +100,8 @@ GREEN_ANSWERS: dict[str, Any] = {
     # A card the product role files is born in the backlog, out of the queue the poller reads
     # (#536) — the board above. A test about a board whose new card is born in the queue names it.
     "board_intake": lambda: _born_in_the_backlog(),
+    # A worker and a panel with room to spare, and no zombie under either init (#532).
+    "pid_counts": lambda: _pid_counts_with_room(),
     # The same six columns, each the stage the platform's own board names it (#521) — the board
     # `board_columns` lists, read as the card's door reads it.
     "board_stages": lambda: ({"Backlog": "backlog", "TO-DO": "todo", "In progress": "in_progress",
@@ -162,6 +164,13 @@ def _born_in_the_backlog():
     from openfactory.adapters.board.base import Intake
 
     return Intake(column="Backlog", queue="TO-DO", queued=False)
+
+
+def _pid_counts_with_room():
+    from openfactory.doctor import PidCount
+
+    return [PidCount("worker", current=41, limit=17435, zombies=0),
+            PidCount("panel", current=12, limit=17435, zombies=0)]
 
 
 def _no_operator_guidelines():

@@ -324,6 +324,12 @@ def _read_the_forges_base(host_clone: Path, base_branch: str, remote_url: str) -
                            f"starts from and is measured against: {_redact(out).strip()[:300]}")
 
 
+#: Said after a refused `docker run` whose daemon had no init to give the box (#532): Docker ships
+#: one, and podman's docker-compatible socket needs `catatonit` and refuses the run without it.
+_NO_INIT_BINARY = (" — the box is started with `--init` (#532), and this daemon has no init binary "
+                   "to give it: on podman, install `catatonit`")
+
+
 class ContainerSandbox(SandboxAdapter):
     def __init__(
         self,
@@ -523,6 +529,12 @@ class ContainerSandbox(SandboxAdapter):
             "docker", "run", "-d", "--name", cname,
             "--cpus", self.cpus, "--memory", self.memory,
             "--network", self.network,
+            # AN INIT AS PID 1, BECAUSE `sleep` IS NOT ONE (#532). Every command the agent and the
+            # gates run arrives through `docker exec`, and what one of them orphans — git's
+            # detached auto-maintenance after a commit or a fetch, measured — is adopted by PID 1,
+            # which only an init reaps. The image is the client's (ADR-0037 D1), so the init comes
+            # from the daemon, not from anything the image might carry.
+            "--init",
             # override any image ENTRYPOINT so the keep-alive command runs as-is
             "--entrypoint", "sleep",
             "-v", f"{host_clone}:{_WORKDIR}", "-w", _WORKDIR,
@@ -552,7 +564,7 @@ class ContainerSandbox(SandboxAdapter):
             # SOMEBODY ELSE'S container: another client's checkout, cache and network.
             raise RuntimeError(
                 f"could not start the box {cname!r} (docker run exited {rc}): {out.strip()[:300]}"
-            )
+                + _NO_INIT_BINARY * any(w in out for w in ("init binary", "catatonit")))
         _host(["docker", "exec", cname, "git", "config", "--global",
                "--add", "safe.directory", _WORKDIR])
 

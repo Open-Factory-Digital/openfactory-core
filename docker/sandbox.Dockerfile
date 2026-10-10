@@ -45,13 +45,17 @@ FROM ${OPENFACTORY_BASE_IMAGE}
 # The GitHub CLI: in the whole-job-in-task model the tracker/forge run INSIDE the task
 # (in the local model they ran on the host), so the task needs `gh`. Auth is the bot
 # token via GH_TOKEN, set by the adapters at call time.
+#
+# `tini`, the init this image's ENTRYPOINT runs (#532), is installed HERE, in the layer that names
+# it: the base is an ARG (ADR-0043), and a base that lacks it would start no job at all
+# (`exec: "tini": executable file not found`) where before a job merely had no init.
 RUN mkdir -p -m 755 /etc/apt/keyrings \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
        -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
     && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
        > /etc/apt/sources.list.d/github-cli.list \
-    && apt-get update && apt-get install -y --no-install-recommends gh \
+    && apt-get update && apt-get install -y --no-install-recommends gh tini \
     && rm -rf /var/lib/apt/lists/*
 
 # Bake the platform so `python -m openfactory.runtime.boxed_job` works. The task needs the
@@ -88,7 +92,12 @@ RUN sh docker/install-addons.sh .
 RUN git config --global --add safe.directory '*'
 
 WORKDIR /work
-ENTRYPOINT []
+# AN INIT AS PID 1 WHEN THIS IMAGE RUNS A JOB ITSELF (#532): `boxed_job` runs the agent and the
+# gates, and what they orphan — git's detached auto-maintenance, measured — is adopted by PID 1,
+# which Python never reaps. A runtime that starts this image may add no init of its own; `-s`
+# keeps tini reaping under one that does. The box the worker starts overrides the entrypoint and
+# gets its init from `docker run --init` (`adapters/sandbox/container.py`).
+ENTRYPOINT ["tini", "-s", "--"]
 CMD ["python", "-m", "openfactory.runtime.boxed_job"]
 
 # WHAT THIS BOX OFFERS THE CLIENT'S COMMANDS, written down so a REBUILD is not mistaken for a
