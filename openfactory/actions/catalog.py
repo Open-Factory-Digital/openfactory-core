@@ -5144,12 +5144,15 @@ def card_view(proj, tracker, board, ref: str, *, opened_by: str, column: str | N
             placed = {}
         column = placed.get(canonical_ref(ref)) or placed.get(str(ref)) or ""
     key = stage_key(board, column) if (board is not None and column) else ""
-    started = has_started(key)
+    started, finished = has_started(key), has_finished(key)
     can_remove = removes(tracker)
-    return {"started": started, "finished": has_finished(key), "removes": can_remove,
+    return {"started": started, "finished": finished, "removes": can_remove,
             "open": (state or "open") == "open",
+            # `finished` is the same reading `_card_close` decides `delivered` with, so the control
+            # says the word the close will record (#534)
             "words": card_controls(opened_by_product=bool(opened_by), started=started,
-                                   removes=can_remove, language=getattr(proj, "language", None))}
+                                   removes=can_remove, finished=finished,
+                                   language=getattr(proj, "language", None))}
 
 
 async def _card_reopen(*, project: str, issue: str, by: Actor) -> Outcome:
