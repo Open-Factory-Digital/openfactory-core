@@ -110,3 +110,32 @@ def platform_stamp() -> dict[str, str]:
 
     code, _built = namespace.build_stamp()
     return {"version": __version__, "build": code}
+
+
+#: Who signs a job's ending when the attended driver ran it — `openfactory run` or `openfactory
+#: poll`, a one-machine deployment's scheduler (#551). The workflow signs `the workflow`.
+BY_THE_ATTENDED_DRIVER = "the attended driver"
+
+
+def record_ending(project, issue: str, state: str, *, by: str, note: str = "") -> str:
+    """Append a job's ENDING to its card's journal — a `state` line that carries `by` — and return
+    the state written. RAISES what the journal raises: each caller decides what a failure means.
+
+    THE ONE WRITER OF THE LINE `query.outcomes` READS AS AN ENDING (#551), for the same reason
+    `record_job` is one function: two drivers, and the second one had none. The workflow wrote it
+    from `record_outcome` at the job's one exit; the attended driver — `openfactory run` and
+    `openfactory poll`, the only scheduler a one-machine deployment has — wrote nothing. So there
+    every job read as "without a recorded ending", `jobs` was 0, and an evidence pack's activity
+    threshold failed however much work the deployment did. Both drivers write through here, so a
+    second one cannot grow a second shape of the line.
+
+    APPENDS, NEVER REWRITES: the box's own `state` lines say how far the job got, and carry a
+    `reason`, never a `by` (`machine._set_state`); this adds what it became."""
+    from openfactory.observability.events import JobEvent, now_iso
+    from openfactory.observability.registry import journal_for
+    from openfactory.paths import events_file
+
+    journal_for(events_file(project, issue)).emit(JobEvent(
+        ts=now_iso(), job_id=f"#{issue}", ticket_id=f"#{issue}", kind="state", message=state,
+        data={"reason": (note or "").strip() or None, "by": by}))
+    return state

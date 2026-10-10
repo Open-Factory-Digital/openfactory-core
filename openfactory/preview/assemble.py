@@ -201,20 +201,16 @@ def _env_values(service: dict) -> list[tuple[str, str]]:
     included — read to find the hosts it will try to reach, never to say a value."""
     out = [(str(k), str(v)) for k, v in as_map(service.get("environment")).items()
            if isinstance(v, str)]
+    from openfactory import envfile
+
     for item in service.get("env_file") or []:
         path = item.get("path") if isinstance(item, dict) else item
         if not isinstance(path, str) or not os.path.isfile(path):
             continue
-        try:
-            with open(path, encoding="utf-8", errors="replace") as fh:
-                lines = fh.read().splitlines()
-        except OSError:
-            continue
-        for line in lines:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, _, v = line.removeprefix("export ").partition("=")
-                out.append((k.strip(), v.strip().strip("'\"")))
+        # BY THE ONE SET OF RULES (`envfile`, #583): a parser of its own here stripped `export`
+        # and kept a trailing comment in the value, where the preflight's did the opposite. A file
+        # that cannot be read names no host — this reads to find hosts, never to say a value.
+        out.extend(envfile.read(path).rows.items())
     return out
 
 

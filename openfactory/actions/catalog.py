@@ -1322,14 +1322,11 @@ def _journal_the_stop(project, issue: str, *, by: Actor, why: str) -> None:
     `record_outcome` was written to end. Best-effort: the stop stands whatever the journal says."""
     try:
         from openfactory.contracts import JobState
-        from openfactory.observability.events import JobEvent, now_iso
-        from openfactory.observability.registry import journal_for
-        from openfactory.paths import events_file
+        from openfactory.observability.job_record import record_ending
 
-        journal_for(events_file(project, issue)).emit(JobEvent(
-            ts=now_iso(), job_id=f"#{issue}", ticket_id=f"#{issue}", kind="state",
-            message=JobState.SKIPPED.value,
-            data={"reason": f"stopped by {by}" + (f": {why}" if why else ""), "by": str(by)}))
+        # THE ONE WRITER OF THE ENDING LINE, which both drivers write through (#551)
+        record_ending(project, issue, JobState.SKIPPED.value, by=str(by),
+                      note=f"stopped by {by}" + (f": {why}" if why else ""))
     except Exception:  # noqa: BLE001 — the stop stands; only its journal line is missing
         log.warning("OPENFACTORY_STOP_NOT_JOURNALLED project=%s issue=%s — the job was stopped "
                     "and its journal does not say so", getattr(project, "name", "?"), issue,
@@ -5144,12 +5141,15 @@ def card_view(proj, tracker, board, ref: str, *, opened_by: str, column: str | N
             placed = {}
         column = placed.get(canonical_ref(ref)) or placed.get(str(ref)) or ""
     key = stage_key(board, column) if (board is not None and column) else ""
-    started = has_started(key)
+    started, finished = has_started(key), has_finished(key)
     can_remove = removes(tracker)
-    return {"started": started, "finished": has_finished(key), "removes": can_remove,
+    return {"started": started, "finished": finished, "removes": can_remove,
             "open": (state or "open") == "open",
+            # `finished` is the same reading `_card_close` decides `delivered` with, so the control
+            # says the word the close will record (#534)
             "words": card_controls(opened_by_product=bool(opened_by), started=started,
-                                   removes=can_remove, language=getattr(proj, "language", None))}
+                                   removes=can_remove, finished=finished,
+                                   language=getattr(proj, "language", None))}
 
 
 async def _card_reopen(*, project: str, issue: str, by: Actor) -> Outcome:

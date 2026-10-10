@@ -67,8 +67,9 @@ def test_a_first_install_has_no_file_and_no_credential(installation):
     """THE FAIL A FIRST INSTALL EXPECTS STAYS: nothing has been written yet (`run_preflight`)."""
     seen = preflight.probes_for_this_machine().agent_credential()
 
-    assert seen == (False, "none of OPENFACTORY_AGENT_TOKENS, CLAUDE_CODE_OAUTH_TOKEN, "
-                           "ANTHROPIC_API_KEY is set")
+    assert seen[:2] == (False, "none of OPENFACTORY_AGENT_TOKENS, CLAUDE_CODE_OAUTH_TOKEN, "
+                               "ANTHROPIC_API_KEY is set")
+    assert "claude setup-token" in seen[2], "a first install is told how to get a token"
 
 
 def test_the_whole_report_says_ok_where_the_installer_once_said_fail(installation):

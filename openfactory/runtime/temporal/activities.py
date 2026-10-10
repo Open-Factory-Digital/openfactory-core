@@ -2713,18 +2713,11 @@ async def record_outcome(inp: HoldSyncInput) -> str:
     NEVER RAISES. The job has already ended; nothing about recording that may fail it.
     """
     def _write() -> str:
-        from openfactory.observability.events import JobEvent, now_iso
-        from openfactory.observability.registry import journal_for
-        from openfactory.paths import events_file
+        # THE ONE WRITER OF THE ENDING LINE, which the attended driver writes through too (#551)
+        from openfactory.observability.job_record import record_ending
 
-        project = ProjectRegistry().get(inp.project)
-        sink = journal_for(events_file(project, inp.issue))
-        note = (inp.note or "").strip()
-        sink.emit(JobEvent(
-            ts=now_iso(), job_id=f"#{inp.issue}", ticket_id=f"#{inp.issue}",
-            kind="state", message=inp.state, data={"reason": note or None, "by": "the workflow"},
-        ))
-        return inp.state
+        return record_ending(ProjectRegistry().get(inp.project), inp.issue, inp.state,
+                             by="the workflow", note=inp.note or "")
 
     try:
         recorded = await asyncio.to_thread(_write)

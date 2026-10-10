@@ -107,14 +107,53 @@ def test_a_broken_pool_beside_a_token_runs_and_says_there_is_no_failover(bare, m
     assert f"{POOL} is set and it could not be read" in said and "no failover" in said
 
 
-def test_a_broken_pool_alone_fails_saying_why_not_that_nothing_is_set(bare):
-    _in_the_file(bare, {POOL: "[{oops"})
+@pytest.mark.parametrize("pool", ["[{oops", '[{"id": "a"}]'])
+def test_a_broken_pool_alone_fails_saying_why_and_how_the_pool_is_fixed(bare, pool):
+    """REVIEW OF #584: the message named the broken pool and the REMEDY — what the person acts on —
+    still said "run `claude setup-token` and put the result in CLAUDE_CODE_OAUTH_TOKEN": replace
+    the pool with one token, the wrong repair #582 was opened for, one shape over."""
+    _in_the_file(bare, {POOL: pool})
 
     report = preflight.check(preflight.probes_for_this_machine())
 
     [line] = [f for f in report.findings if f.check == "agent_credential"]
     assert not line.ok
-    assert f"{POOL} is set and it could not be read" in line.message, line.message
+    assert f"{POOL} is set and it" in line.message, line.message
+    assert line.remedy.startswith(f"fix {POOL}: a JSON array"), line.remedy
+    assert "setup-token" not in line.remedy and "in .env.compose" in line.remedy
+
+
+def test_nothing_set_is_still_told_to_set_a_token(bare):
+    report = preflight.check(preflight.probes_for_this_machine())
+
+    [line] = [f for f in report.findings if f.check == "agent_credential"]
+    assert not line.ok and "claude setup-token" in line.remedy
+
+
+@pytest.mark.parametrize(("rows", "repair"), [
+    ({POOL: "[{oops"}, f"fix {POOL}"), ({}, "claude setup-token")])
+def test_the_doctor_gives_the_harnesss_repair_too(bare, monkeypatch, rows, repair):
+    """On a box that isolates — the container's — where the login on this machine reaches no
+    harness, so a missing credential is a failure with a repair."""
+    from tests.pinned_probes import a_fully_pinned_probe_set
+
+    _in_the_environment(monkeypatch, rows)
+    probes = a_fully_pinned_probe_set(agent_credential=_doctor_probe(bare),
+                                      sandbox=lambda: "container")
+
+    [line] = [f for f in doctor.diagnose(probes).findings if f.check == "agent_credential"]
+
+    assert not line.ok and repair in line.remedy, line.remedy
+    assert ("setup-token" in line.remedy) is (repair != f"fix {POOL}"), line.remedy
+
+
+def test_the_wizard_asks_a_token_of_exactly_the_harnesses_the_probes_read():
+    """REVIEW OF #584: `init` decided from a tuple of its own which harnesses get a token row — a
+    second answer to "which harness authenticates through settings"."""
+    from openfactory.adapters.agent.registry import HARNESS_CREDENTIALS
+    from openfactory.onboarding.deployment import HARNESS_ENV_CREDENTIAL
+
+    assert set(HARNESS_ENV_CREDENTIAL) == set(HARNESS_CREDENTIALS)
 
 
 def test_a_pool_with_no_token_in_it_is_said_as_one(bare):
@@ -122,9 +161,10 @@ def test_a_pool_with_no_token_in_it_is_said_as_one(bare):
     which fell back to a single token without a word."""
     _in_the_file(bare, {POOL: '[{"id": "a"}]'})
 
-    ok, said = preflight.probes_for_this_machine().agent_credential()
+    ok, said, repair = preflight.probes_for_this_machine().agent_credential()
 
     assert not ok and said == f"{POOL} is set and it holds no entry with a token"
+    assert repair.startswith(f"fix {POOL}")
 
 
 @pytest.mark.parametrize("where", ["file", "environment"])

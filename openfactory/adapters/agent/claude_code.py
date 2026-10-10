@@ -94,22 +94,35 @@ def _pool_in(settings: Mapping[str, str]) -> tuple[list[dict], str]:
     return pool, ("" if pool else "it holds no entry with a token")
 
 
-def credential_in(settings: Mapping[str, str]) -> tuple[str, str]:
-    """`(the setting this harness would authenticate with, what else is worth saying)` for a
-    deployment whose settings are `settings` — the answer `_load_agent_token_pool` acts on, read
-    by the same code. `("", why)` when it would find none.
+#: How each miss is repaired, in this harness's own terms — said by the probe with where the
+#: deployment keeps its settings. A pool that cannot be used is fixed IN the pool (review of #584):
+#: the one fixed sentence sent a pool deployment to replace its pool with a single token.
+_REPAIR = {
+    "pool": (f"fix {POOL}: a JSON array with one {{\"id\": \"…\", \"token\": \"…\"}} per token "
+             "(remove it to run on a single token instead)"),
+    "none": ("run `claude setup-token` and put the result in CLAUDE_CODE_OAUTH_TOKEN (or "
+             "ANTHROPIC_API_KEY if you bill per token)"),
+}
+
+
+def credential_in(settings: Mapping[str, str]) -> tuple[str, str, str]:
+    """`(the setting this harness would authenticate with, what else is worth saying, how a miss
+    is repaired)` for a deployment whose settings are `settings` — the answer
+    `_load_agent_token_pool` acts on, read by the same code. `("", why, repair)` when it would
+    find none, and the repair `""` when it would.
 
     A POOL THAT CANNOT BE USED beside a single token still runs, on that token and with no
     failover, and says so; alone, it is no credential at all."""
     pool, why = _pool_in(settings)
     if pool:
-        return POOL, f"a pool of {len(pool)}"
+        return POOL, f"a pool of {len(pool)}", ""
     broken = f"{POOL} is set and {why}, so there is no failover" if why else ""
     for name in CREDENTIALS[1:]:
         if settings.get(name):  # truthy, exactly as `_load_agent_token_pool` takes it
-            return name, broken
-    return "", (f"{POOL} is set and {why}" if why else
-                f"none of {', '.join(CREDENTIALS)} is set")
+            return name, broken, ""
+    if why:
+        return "", f"{POOL} is set and {why}", _REPAIR["pool"]
+    return "", f"none of {', '.join(CREDENTIALS)} is set", _REPAIR["none"]
 
 
 def _load_agent_token_pool() -> list[dict]:
