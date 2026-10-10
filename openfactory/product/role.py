@@ -315,6 +315,32 @@ class IssueDraft(BaseModel):
     #: to close.
     already_on_board: str | None = None
 
+    #: THE FRONTS OF THIS SAME BREAKDOWN THIS ONE NEEDS TO EXIST FIRST, by their position in the
+    #: list (1 = the first) — `[]` when it stands alone (#576).
+    #:
+    #: The decomposition held no order between its fronts, and filing could not ask for one: a run
+    #: whose first front the review refused filed the second anyway — "given the per-version rows
+    #: introduced by the persistence change" — and the pre-flight parked it a move later, on a
+    #: foundation nobody had filed. The model that wrote the fronts is the one place the dependency
+    #: is known, so it says so here; nothing reads it out of a front's prose. A position outside
+    #: the list, or the front's own, is read as no dependency (`issues_for`, which logs it).
+    builds_on: list[int] = Field(default_factory=list)
+
+    @field_validator("builds_on", mode="before")
+    @classmethod
+    def _positions(cls, v):
+        """Positions as whole numbers — a model answers `2`, `"2"` and `null` alike; anything that
+        is not one is no position at all."""
+        if not isinstance(v, list):
+            return []
+        out = []
+        for item in v:
+            try:
+                out.append(int(str(item).strip().lstrip("#")))
+            except (TypeError, ValueError):
+                continue
+        return out
+
     @field_validator("already_on_board", mode="before")
     @classmethod
     def _ref_as_written(cls, v):
@@ -465,9 +491,14 @@ _ISSUES_SCHEMA = """\
 Return ONLY a JSON object (no prose, no code fences):
 {"issues": [{"title": str, "objective": str, "acceptance_criteria": [str],
              "out_of_scope": [str], "target_repo": str, "cites": int,
-             "already_on_board": str|null}]}
+             "already_on_board": str|null, "builds_on": [int]}]}
 Each issue must be ONE cohesive, independent, testable outcome. If describing it honestly needs the
 word "and", split it. Every issue cites the requirement number it executes.
+
+`builds_on` lists the issues OF THIS SAME LIST that this one needs to exist first, by position (1 is
+the first issue you return) — the change whose rows, endpoint or screen this one uses. Leave it []
+when the issue stands on what already exists. An issue is not opened while one it builds on was not,
+so say it whenever it is true, and only then.
 
 `already_on_board` is how you say "this front already exists": set it to that card's number and it
 will be reused instead of created — keep the entry, it is how the requirement gets linked to the
@@ -1123,6 +1154,16 @@ class ProductRole:
         # or cites something else, has drifted from the document it claims to execute.
         for issue in issues:
             issue.cites = requirement.number
+        # A FRONT BUILDS ONLY ON A FRONT OF ITS OWN BREAKDOWN (#576): a position outside the list,
+        # or its own, names nothing that will be filed, and is read as no dependency — said here
+        for position, issue in enumerate(issues, start=1):
+            kept = [b for b in dict.fromkeys(issue.builds_on)
+                    if 1 <= b <= len(issues) and b != position]
+            if kept != issue.builds_on:
+                log.info("REQ-%04d front %d (%r) builds on %s; read as %s — a front builds only on "
+                         "another of the same %d", requirement.number, position,
+                         issue.title[:60], issue.builds_on, kept, len(issues))
+                issue.builds_on = kept
         return ProductAnswer(ok=True, issues=issues, raw=raw)
 
     def survey(self, *, sandbox, workspace, areas: list[str], layout: str = "") -> ProductAnswer:

@@ -169,9 +169,11 @@ MUTATIONS = [
      "        if vet is not None:\n            vetted, why = vet(draft)",
      "        if False:\n            vetted, why = vet(draft)"),
 
+    # RE-PINNED 2026-10-10 (#576): each front's result is kept by its position, so a front can
+    # wait on the one it builds on
     ("the breakdown never hands its cards to the check", MODULE,
-     "            results.append(self._file_one(draft, requirement, tracker, board, vet=vet,",
-     "            results.append(self._file_one(draft, requirement, tracker, board, vet=None,"),
+     "                filed[index] = self._file_one(draft, requirement, tracker, board, vet=vet,",
+     "                filed[index] = self._file_one(draft, requirement, tracker, board, vet=None,"),
 
     ("a requirement's card the judge blocks is filed anyway", CARDS,
      '    return None, "; ".join(feedback[:3]) or "it did not pass the review"',
@@ -197,9 +199,10 @@ MUTATIONS = [
      "        if not isinstance(again, dict):\n            # the same input would reach the same verdict: a judge call spent for nothing\n            break",
      "        if not isinstance(again, dict):\n            # the same input would reach the same verdict: a judge call spent for nothing\n            continue"),
 
+    # RE-PINNED 2026-10-10 (#576): the budget is the second question, after a held front
     ("the breakdown starts new cards past its budget", MODULE,
-     "            if time.monotonic() - started > BREAKDOWN_BUDGET_SECONDS:",
-     "            if False:"),
+     "            elif time.monotonic() - started > BREAKDOWN_BUDGET_SECONDS:",
+     "            elif False:"),
 
     ("REVIEW OF #390: the judge's room reaches the box as a str, the crash of #380", CARDS,
      "            sandbox = judging_worktree(project, root=Path(room))",
