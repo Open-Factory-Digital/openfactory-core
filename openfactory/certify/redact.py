@@ -306,8 +306,28 @@ class Redactor(Pseudonyms):
                         for (f, c), n in sorted(self.dropped.items())],
             "fields_dropped": sorted(self.fields_dropped,
                                      key=lambda d: (d["file"], d["field"])),
-            "kept": ["practitioner"],
+            # EVERY FIELD CARRIED VERBATIM (review of #549): a reader auditing a pack against
+            # this log found the partner and the profile in it and no line accounting for them
+            "kept": list(KEPT),
         }
+
+
+def what_a_name_carries(name: str) -> list[str]:
+    """What a pack would drop from `name` — an e-mail address, a URL, a host, a path, a credential —
+    by the very rules every other string of it passes; `[]` for a person's name.
+
+    THE ONE FIELD THE RULES DO NOT READ (review of #549). The practitioner is kept verbatim and
+    taken out WHOLE before a text is classified, so whatever was typed into `--practitioner` passed
+    every rule: `helena.prado@altiva.io` reached `pack.json` and `summary.md`, and `redactions.json`
+    called it a kept name, in a pack whose own promise is "no URLs, hostnames, e-mail addresses or
+    any credential". So the rules are asked of it before it is kept."""
+    return Redactor(salt=b"practitioner", identifiers={}).survivors(name)
+
+
+#: What a pack carries as it was typed, past every rule, and why each is not a customer's: the
+#: practitioner is the partner's engineer (`what_a_name_carries` holds it to a name), the partner
+#: a slug the partners repository gave it, the profile one of the program's own words.
+KEPT = ("practitioner", "partner", "profile")
 
 
 def _is_a_digest(core: str, long: re.Match[str]) -> bool:

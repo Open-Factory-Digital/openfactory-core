@@ -223,6 +223,16 @@ def certify_deployment_refusal(*, partner: str | None, profile: str | None,
     if profile not in PROFILES:
         return refuse_flag("--profile", f"{profile!r} is not a profile",
                            f"pass one of: {', '.join(PROFILES)}")
+    # A NAME, NOT AN ADDRESS (review of #549): the practitioner is kept past every rule a pack
+    # applies, so the rules are asked of it here, before anything is read
+    from openfactory.certify.redact import what_a_name_carries
+
+    carries = what_a_name_carries(practitioner or "")
+    if carries:
+        return refuse_flag("--practitioner", f"{practitioner!r} carries {' and '.join(carries)}: "
+                                             f"a pack keeps the engineer's name, and no e-mail "
+                                             f"address, URL, host or credential",
+                           'pass the name alone — `--practitioner "<first name> <last name>"`')
     if window_days < 1:
         return refuse_flag("--window-days", f"is {window_days}: a window has at least one day",
                            "pass `--window-days 90`, or leave it out for the 90-day default")
