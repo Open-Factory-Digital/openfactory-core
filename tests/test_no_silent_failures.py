@@ -16,6 +16,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 #: What counts as SAYING something. Deliberately narrow: an earlier version counted a bare
 #: `return`/`continue`, which passed 42 handlers that returned `None`, `[]` or `{}` after
 #: swallowing a failure — the caller then cannot tell "nothing there" from "could not look".
@@ -117,14 +119,25 @@ def test_a_NAMED_exception_taking_a_defined_branch_is_not_a_swallow():
     assert not _is_catch_all(handler)
 
 
-def test_the_token_pool_says_when_it_falls_back_to_ONE_credential():
+@pytest.mark.parametrize("pool", ["[{not json", '{"id": "a"}', '[{"id": "a"}]'])
+def test_the_token_pool_says_when_it_falls_back_to_ONE_credential(monkeypatch, caplog, pool):
     """The find that made this sweep worth doing. A typo in `OPENFACTORY_AGENT_TOKENS` left a deployment
     with a single credential and no failover, looking exactly like one that never configured a pool
-    — until the day that credential failed and there was nothing to rotate to."""
-    src = Path("openfactory/adapters/agent/claude_code.py").read_text()
-    block = src[src.index("OPENFACTORY_AGENT_TOKENS"):][:2000]
-    assert "no failover" in block
-    assert "log.warning" in block
+    — until the day that credential failed and there was nothing to rotate to.
+
+    CALLED, NOT READ (re-pinned 2026-10-10, #582): it read the 2,000 characters after the variable's
+    first mention for `log.warning`, and the first mention moved to a constant. A pool that parses
+    and holds no token is the same typo, and fell back without a word until then."""
+    import logging
+
+    from openfactory.adapters.agent import claude_code
+
+    monkeypatch.setenv("OPENFACTORY_AGENT_TOKENS", pool)
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-single")
+    with caplog.at_level(logging.WARNING, logger=claude_code.log.name):
+        assert [t["id"] for t in claude_code._load_agent_token_pool()] == ["single"]
+
+    assert any("no failover" in r.getMessage() for r in caplog.records), caplog.text
 
 
 def test_the_cleanup_that_leaves_a_task_BILLING_is_never_silent():

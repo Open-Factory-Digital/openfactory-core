@@ -24,6 +24,7 @@ import os
 import re
 import shlex
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 from openfactory.adapters.agent.base import (
@@ -65,6 +66,52 @@ _CHAT_TIMEOUT = int(os.environ.get("OPENFACTORY_CHAT_TIMEOUT", "300"))
 _CHAT_MAX_TURNS = int(os.environ.get("OPENFACTORY_CHAT_MAX_TURNS", "12"))
 
 
+#: The pool of failover tokens, a JSON array of `{"id", "token", "type"?}`.
+POOL = "OPENFACTORY_AGENT_TOKENS"
+
+#: THE SETTINGS THIS HARNESS AUTHENTICATES WITH, in the order it reads them (#582): the pool,
+#: then one subscription token, then one API key. The doctor and the preflight ask THIS module
+#: through `credential_in` rather than keep lists of their own — the preflight kept two of the
+#: three and failed a pool-only deployment with a token that worked.
+CREDENTIALS = (POOL, "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
+
+
+def _pool_in(settings: Mapping[str, str]) -> tuple[list[dict], str]:
+    """The pool `settings` hold, and why it cannot be used — `""` when it can, or is not set."""
+    raw = (settings.get(POOL) or "").strip()
+    if not raw:
+        return [], ""
+    try:
+        data = json.loads(raw)
+        pool = [
+            {"id": str(t.get("id", i)), "token": t["token"],
+             "type": t.get("type", "subscription")}
+            for i, t in enumerate(data)
+            if isinstance(t, dict) and t.get("token")
+        ]
+    except (json.JSONDecodeError, TypeError, KeyError) as exc:
+        return [], f"it could not be read ({str(exc)[:120]})"
+    return pool, ("" if pool else "it holds no entry with a token")
+
+
+def credential_in(settings: Mapping[str, str]) -> tuple[str, str]:
+    """`(the setting this harness would authenticate with, what else is worth saying)` for a
+    deployment whose settings are `settings` — the answer `_load_agent_token_pool` acts on, read
+    by the same code. `("", why)` when it would find none.
+
+    A POOL THAT CANNOT BE USED beside a single token still runs, on that token and with no
+    failover, and says so; alone, it is no credential at all."""
+    pool, why = _pool_in(settings)
+    if pool:
+        return POOL, f"a pool of {len(pool)}"
+    broken = f"{POOL} is set and {why}, so there is no failover" if why else ""
+    for name in CREDENTIALS[1:]:
+        if settings.get(name):  # truthy, exactly as `_load_agent_token_pool` takes it
+            return name, broken
+    return "", (f"{POOL} is set and {why}" if why else
+                f"none of {', '.join(CREDENTIALS)} is set")
+
+
 def _load_agent_token_pool() -> list[dict]:
     """The agent's credential pool for rate-limit / auth FAILOVER.
 
@@ -72,26 +119,16 @@ def _load_agent_token_pool() -> list[dict]:
     or revoked token fail over to the next instead of halting the job. Falls back to the
     single `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` so a single-token deploy behaves
     exactly as before. A malformed pool degrades to that fallback, never a crash (#2)."""
-    raw = os.environ.get("OPENFACTORY_AGENT_TOKENS", "").strip()
-    if raw:
-        try:
-            data = json.loads(raw)
-            pool = [
-                {"id": str(t.get("id", i)), "token": t["token"],
-                 "type": t.get("type", "subscription")}
-                for i, t in enumerate(data)
-                if isinstance(t, dict) and t.get("token")
-            ]
-            if pool:
-                return pool
-        except (json.JSONDecodeError, TypeError, KeyError) as exc:
-            # A TYPO IN THE POOL LEAVES YOU WITH ONE TOKEN AND NO FAILOVER, which looks identical
-            # to a deployment that never configured a pool — right up until the day one credential
-            # fails and there is nothing to rotate to. Said out loud, because it is unfixable by
-            # anything but a person editing that value.
-            log.warning("OPENFACTORY_AGENT_TOKENS could not be read (%s) — falling back to a "
-                        "SINGLE "
-                        "credential, so there is no failover", str(exc)[:120])
+    pool, why = _pool_in(os.environ)
+    if pool:
+        return pool
+    if why:
+        # A TYPO IN THE POOL LEAVES YOU WITH ONE TOKEN AND NO FAILOVER, which looks identical
+        # to a deployment that never configured a pool — right up until the day one credential
+        # fails and there is nothing to rotate to. Said out loud, because it is unfixable by
+        # anything but a person editing that value.
+        log.warning("%s %s — falling back to a SINGLE credential, so there is no failover",
+                    POOL, why)
     if tok := os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
         return [{"id": "single", "token": tok, "type": "subscription"}]
     if tok := os.environ.get("ANTHROPIC_API_KEY"):

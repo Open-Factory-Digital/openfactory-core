@@ -390,9 +390,10 @@ def _agent_credential(p: Probes) -> Finding:
         return _ok("agent_credential", f"an agent credential is visible ({detail})", on=LOCAL)
     # A FAILURE AND NOT A WARNING, because the stack BOOTS without it and no ticket can run — the
     # exact shape `doctor` was given this check for: a fresh install with zero credentials read
-    # "OK — can run a ticket" and failed at the first paid job.
+    # "OK — can run a ticket" and failed at the first paid job. WHAT WAS READ is said (#582): a
+    # pool that cannot be used is not the same repair as no credential at all.
     return _fail(
-        "agent_credential", "no agent credential is visible to this deployment",
+        "agent_credential", f"no agent credential is visible to this deployment ({detail})",
         "run `claude setup-token` and put the result in CLAUDE_CODE_OAUTH_TOKEN in .env.compose "
         "(or ANTHROPIC_API_KEY if you bill per token). The stack starts without it and no ticket "
         "can run — this is the one credential that cannot be postponed", on=LOCAL)
@@ -543,18 +544,28 @@ def _probe_env_file(path: str = ".env.compose") -> tuple[bool, int | None]:
 
 
 def _probe_agent_credential() -> tuple[bool, str]:
-    # THE NAMES THE CONTAINER SANDBOX ACTUALLY FORWARDS, not a list invented here — the same two
-    # `openfactory/onboarding/deployment.py` calls `HARNESS_ENV_CREDENTIAL`'s reason for existing.
+    # THE HARNESS SAYS WHAT IT AUTHENTICATES WITH (#582), read by its own adapter
+    # (`registry.harness_credential`) over the deployment's settings. This kept two names of its
+    # own — the two the container sandbox forwards to the box — and failed a deployment running
+    # on the token pool alone, which the worker runs on, telling it to replace a token that worked.
     # READ WHERE THE DEPLOYMENT KEEPS THEM (#560): `_settings`, the env file under the environment.
     # The installer's preflight runs in a container whose environment holds nothing of
     # `.env.compose`, and read from the environment alone, an upgrade was told to replace a token
     # that was in the file and worked.
+    from openfactory.adapters.agent.registry import _role_envs, harness_credential
+
     settings = _settings()
-    for name in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"):
-        if settings.get(name):
-            where = "in the environment" if os.environ.get(name) else "in .env.compose"
-            return True, f"{name} is set {where}"
-    return False, "neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set"
+    variable, _model, default = _role_envs("executor")
+    kind = (settings.get(variable) or "").strip() or default
+    reading = harness_credential(kind, settings)
+    if reading is None:
+        return True, (f"{kind} signs in through its own login, which no setting shows — "
+                      f"`openfactory box prove` exercises the real call")
+    name, said = reading
+    if not name:
+        return False, said
+    where = "in the environment" if os.environ.get(name) else "in .env.compose"
+    return True, f"{name} is set {where}" + (f" — {said}" if said else "")
 
 
 def _probe_ports() -> tuple[tuple[str, int], ...]:

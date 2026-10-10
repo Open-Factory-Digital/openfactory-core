@@ -61,7 +61,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from openfactory import plugins
@@ -162,6 +162,32 @@ HARNESS_BINARIES: dict[str, str] = {"claude_code": "claude"}
 def harness_binary(kind: str) -> str:
     """The executable name for a harness kind."""
     return HARNESS_BINARIES.get(kind, kind)
+
+
+def _claude_credential(settings: Mapping[str, str]) -> tuple[str, str]:
+    from openfactory.adapters.agent.claude_code import credential_in
+
+    return credential_in(settings)
+
+
+#: kind → which of a deployment's settings the harness would authenticate with (#582), answered
+#: by the adapter's own reading — `(name, what else to say)`, or `("", why not)`. A harness
+#: missing here signs in through its own CLI's login inside the box (`codex login`, `kimi login`,
+#: OpenCode's provider registration), which no setting shows.
+#:
+#: ONE ANSWER FOR EVERY PROBE. The doctor and the preflight each kept a list of the variables
+#: that are an agent credential: the doctor's three, the preflight's two. A deployment running on
+#: the token pool alone passed one and failed the other, told to replace a token that worked.
+HARNESS_CREDENTIALS: dict[str, Callable[[Mapping[str, str]], tuple[str, str]]] = {
+    "claude_code": _claude_credential,
+}
+
+
+def harness_credential(kind: str, settings: Mapping[str, str]) -> tuple[str, str] | None:
+    """What `kind` would authenticate with in `settings` (`HARNESS_CREDENTIALS`) — None when it
+    signs in through a login no setting shows, so presence cannot be read from here."""
+    read = HARNESS_CREDENTIALS.get(kind)
+    return read(settings) if read else None
 
 
 #: The key a dict-shaped `harness:` / `model:` uses for every role it does not name. Named once,

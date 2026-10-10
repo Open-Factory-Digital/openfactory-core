@@ -17,14 +17,14 @@ from __future__ import annotations
 import pytest
 
 from openfactory import preflight
-
-CREDENTIALS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
+from openfactory.adapters.agent.claude_code import CREDENTIALS
 
 
 @pytest.fixture
 def installation(tmp_path, monkeypatch):
     """The installer's run: `/out` with its `.env.compose`, and a bare environment."""
-    for name in (*CREDENTIALS, *(variable for _w, variable, _d in preflight.PUBLISHED_PORTS)):
+    for name in (*CREDENTIALS, "OPENFACTORY_HARNESS_EXECUTOR",
+                 *(variable for _w, variable, _d in preflight.PUBLISHED_PORTS)):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.chdir(tmp_path)
 
@@ -67,7 +67,8 @@ def test_a_first_install_has_no_file_and_no_credential(installation):
     """THE FAIL A FIRST INSTALL EXPECTS STAYS: nothing has been written yet (`run_preflight`)."""
     seen = preflight.probes_for_this_machine().agent_credential()
 
-    assert seen == (False, "neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set")
+    assert seen == (False, "none of OPENFACTORY_AGENT_TOKENS, CLAUDE_CODE_OAUTH_TOKEN, "
+                           "ANTHROPIC_API_KEY is set")
 
 
 def test_the_whole_report_says_ok_where_the_installer_once_said_fail(installation):
