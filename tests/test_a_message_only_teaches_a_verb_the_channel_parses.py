@@ -26,19 +26,7 @@ import re
 import pytest
 
 from openfactory.contracts.commands import parse_command
-from openfactory.techlead.classify import (
-    CODE,
-    CREDENTIAL,
-    ENVIRONMENT,
-    POLICY,
-    PROJECT,
-    REQUIREMENT,
-    TRANSIENT,
-    TREE,
-    UNKNOWN,
-    Verdict,
-    remedy_for,
-)
+from openfactory.techlead.classify import CLASSES, Verdict, remedy_for
 
 #: A verb a message TELLS somebody to type is written in backticks — the platform's own convention
 #: for "this is a command", used by every canned sentence that carries one.
@@ -53,8 +41,9 @@ from openfactory.techlead.classify import (
 _TAUGHT = re.compile(r"`([a-zA-Zà-ÿ]{3,})`")
 
 #: One verdict per cause the taxonomy has, so a remedy added for a new cause is checked without
-#: this file being updated.
-_CAUSES = (TRANSIENT, CREDENTIAL, ENVIRONMENT, REQUIREMENT, CODE, POLICY, PROJECT, TREE, UNKNOWN)
+#: this file being updated — read from the classifier (`CLASSES`). It was a list of its own, and
+#: the tenth class, `gate`, never reached it (found 2026-10-10, review of #545).
+_CAUSES = CLASSES
 
 
 def _every_remedy_sentence() -> list[tuple[str, str]]:

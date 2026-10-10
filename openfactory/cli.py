@@ -2267,6 +2267,12 @@ def autonomy_cmd(
     except StoreUnreadable as exc:
         typer.echo(f"✗ {unread(project, exc, language=language)['said']['headline']}", err=True)
         raise typer.Exit(2) from None
+    except Exception as exc:  # noqa: BLE001 — a store added from outside raises its own errors
+        # EVERY STORE, NOT ONLY THIS CORE'S (review of #545): the SQLite sink raises
+        # `StoreUnreadable`, and a sink an add-on brings raised its vendor's error past this line
+        # as a traceback, where the help promises exit 2 with what failed
+        typer.echo(f"✗ {unread(project, exc, language=language)['said']['headline']}", err=True)
+        raise typer.Exit(2) from None
     since = datetime.now(UTC) - timedelta(days=days) if days else None
     block = autonomy(records, project, since=since, language=language)
     if as_json:

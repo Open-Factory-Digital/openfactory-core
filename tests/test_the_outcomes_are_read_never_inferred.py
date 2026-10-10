@@ -30,6 +30,7 @@ from openfactory.lifecycle import record
 from openfactory.observability import query
 from openfactory.observability.metrics import MetricRecord
 from openfactory.observability.sqlite_metrics import SqliteMetricsSink
+from openfactory.techlead.classify import CLASSES
 
 UNTIL = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
 SINCE = UNTIL - timedelta(days=90)
@@ -320,7 +321,7 @@ def test_parks_are_read_into_the_tech_leads_classes_from_the_card_record(d):
     parks = d.outcomes()["parks"]
 
     assert parks["transient"] == 1 and parks["unknown"] == 1 and parks["credential"] == 0
-    assert set(parks) == set(query.PARK_CLASSES)
+    assert set(parks) == set(CLASSES)
 
 
 def test_parks_are_null_where_the_card_record_began_after_a_job_in_the_window(d):
@@ -413,18 +414,58 @@ def _roles_the_orchestrator_counts() -> set[str]:
 
 
 def test_the_shared_definitions_are_the_codes_own_vocabulary():
-    """Matched to #85's autonomy reading, and held here to what the code actually records: every
-    repair role is a role the orchestrator counts a pass under, every park class is a class the
-    tech-lead's classifier can answer, every state past the merge is a job state."""
+    """Held to what the code actually records: every repair role is a role the orchestrator counts
+    a pass under, the classes are every class the classifier can answer — each rule's and each
+    declaration's — and the states past the merge are the machine's own, `MERGED` to `DONE`."""
     import importlib
 
-    from openfactory.contracts.state import JobState
+    from openfactory.contracts.state import PAST_THE_MERGE, JobState
+    from openfactory.observability import autonomy
 
     classify = importlib.import_module("openfactory.techlead.classify")
+    assert query.REPAIR_ROLES is autonomy.REPAIR_ROLES
     assert query.REPAIR_ROLES <= _roles_the_orchestrator_counts()
-    assert set(query.PARK_CLASSES) == set(classify._DECLARED)
-    assert query.PAST_THE_MERGE <= {s.value for s in JobState}
+    assert set(classify.CLASSES) == set(classify._DECLARED)
+    assert {cause for cause, _pattern, _detail in classify._RULES} <= set(classify.CLASSES)
+    order = [s.value for s in JobState]
+    assert PAST_THE_MERGE == set(order[order.index("merged"):order.index("done") + 1])
     assert set(query.ENDINGS) <= {s.value for s in JobState}
+
+
+#: The two lists that were copied by hand (reviews of #545 and #554): a class and a state past the
+#: merge that only these lists hold beside each other.
+_COPIED = {"the tech-lead's classes": {"transient", "gate"},
+           "the states past the merge": {"staging_deploying", "rolling_back"}}
+
+
+def _copies(source: str) -> list[str]:
+    """`<line> <what>` for every tuple, list or set literal in `source` holding a copied list."""
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Tuple | ast.List | ast.Set):
+            words = {e.value for e in node.elts
+                     if isinstance(e, ast.Constant) and isinstance(e.value, str)}
+            found += [f"{node.lineno} {what}" for what, marks in _COPIED.items() if marks <= words]
+    return found
+
+
+def test_no_module_keeps_a_copy_of_the_classes_or_the_states_past_the_merge():
+    """A GUARD ON THE SHAPE OF THE DEFECT: a tuple, list or set literal holding these words beside
+    each other is a copy. The classifier's own constants and the enum are where they live, and
+    every reader imports them."""
+    copies = [f"{path.relative_to(ROOT)}:{where}"
+              for path in sorted((ROOT / "openfactory").rglob("*.py"))
+              for where in _copies(path.read_text(encoding="utf-8"))]
+    assert copies == [], f"a list the code defines once was copied again: {copies}"
+
+
+def test_the_guard_sees_the_copies_it_replaced():
+    """THE GUARD CALLS ITS OWN RULE on the two lists as they were written before."""
+    before = ('PARK_CLASSES = ("transient", "credential", "environment", "requirement", "code",\n'
+              '                "policy", "project", "tree", "gate", "unknown")\n'
+              'PAST_THE_MERGE = frozenset({"merged", "staging_deploying", "staging_verifying",\n'
+              '                            "rolling_back", "done"})\n')
+    assert _copies(before) == ["1 the tech-lead's classes", "3 the states past the merge"]
 
 
 # ── certify deployment reads it ─────────────────────────────────────────────────────────────────

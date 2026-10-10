@@ -69,6 +69,14 @@ TREE = "tree"
 #: the platform knows exactly, and prints it in the note one line above.
 GATE = "gate"
 
+#: EVERY CLASS, in the order the dashboards' tables read them — the ONE list of the taxonomy. The
+#: autonomy table (`observability/autonomy.py`) and the outcomes' `parks` (`observability/query.py`)
+#: each kept a copy, equal to it by hand (reviews of #545 and #554); a tenth class reached neither
+#: until somebody remembered. They read this now, and a guard holds that every rule and every
+#: declaration names a class in it.
+CLASSES = (TRANSIENT, CREDENTIAL, ENVIRONMENT, REQUIREMENT, CODE, POLICY, PROJECT, TREE, GATE,
+           UNKNOWN)
+
 #: What a HOLD MAY SAY IT IS, and the short phrase that names it — the vocabulary a machine-made
 #: park may put in `RunResult.hold_cause` instead of leaving the cause to be re-derived from its
 #: own prose. A cause outside this map is not a declaration and is ignored, so a stranger's string

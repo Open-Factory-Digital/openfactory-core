@@ -56,6 +56,15 @@ class JobState(StrEnum):
     FAILED = "failed"
 
 
+#: THE STATES PAST THE MERGE, read off the machine's own order: every state from `MERGED` to
+#: `DONE`, as ADR-0001 D-12 lays them out. A job that ENDED in one of them landed its change. It
+#: was copied by hand into `observability/autonomy.py` and `observability/query.py` (reviews of
+#: #545 and #554): a state added after `DONE` would have stopped counting in both, silently.
+_ORDER = list(JobState)
+PAST_THE_MERGE = frozenset(
+    s.value for s in _ORDER[_ORDER.index(JobState.MERGED):_ORDER.index(JobState.DONE) + 1])
+
+
 #: THE BOX'S PROGRESS MARKS (ADR-0055 D7, #414) — the states a job writes on its card ITSELF, from
 #: wherever it runs, because they say how far the job is and nothing follows them. While a job
 #: runs, the card is in one lifecycle state, `running`; these are the board's view of how far it

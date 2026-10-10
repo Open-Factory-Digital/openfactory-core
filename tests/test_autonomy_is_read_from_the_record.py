@@ -346,6 +346,26 @@ def test_a_store_that_cannot_be_built_exits_2_too(store, monkeypatch):
     assert "nonesuch" in printed.output
 
 
+def test_a_store_added_from_outside_that_raises_its_own_error_exits_2_too(store, monkeypatch):
+    """REVIEW OF #545: the command caught this core's `StoreUnreadable` only, and a sink an add-on
+    brings raises its vendor's own error — which reached the operator as a traceback."""
+    from openfactory.api import metrics_view
+
+    class VendorThrottled(Exception):
+        pass
+
+    def scan(**_kw):
+        raise VendorThrottled("ProvisionedThroughputExceededException: rate exceeded")
+
+    monkeypatch.setattr(metrics_view, "scan_all_or_raise", scan)
+
+    printed = _cli("acme")
+
+    assert printed.exit_code == 2, printed.output
+    assert "rate exceeded" in printed.output and "Traceback" not in printed.output
+    assert "No card is measured yet" not in printed.output
+
+
 def test_the_dashboard_says_an_unreadable_store_rather_than_an_empty_record(store, tmp_path):
     """Asked of the payload's own function: through the panel, the same file is the people store
     the gate reads first, and the gate already refuses the request with a 503 that says so."""
