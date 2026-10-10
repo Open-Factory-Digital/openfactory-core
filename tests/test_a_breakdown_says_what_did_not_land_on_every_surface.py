@@ -86,11 +86,38 @@ def test_the_break_down_row_names_the_front_that_was_not_filed(origin, monkeypat
     assert "**" not in out.message, "the conversation's emphasis reached the action layer"
 
 
+def test_two_fronts_refused_are_both_named(origin, monkeypatch, worker):  # noqa: F811
+    """REVIEW OF #580: only the first failed row's sentence was printed, so with two fronts refused
+    the second was named nowhere but the log — and "the others went ahead" was said of it."""
+    mod, _h, _t = _module(origin, monkeypatch)
+    _through_the_catalog(mod, monkeypatch)
+    second = voice.breakdown_said("not_vetted", title="export the ledger nightly",
+                                  why="no criterion says when", language="en")
+    worker[:] = [LANDED, _refused("not_vetted"),
+                 {"ok": False, "ref": "", "url": "", "existed": False, "detail": second}]
+
+    out = asyncio.run(catalog._product_accept(project="books", number=str(AUTHORED),
+                                              by=_panel_actor(), yes=True))
+
+    assert "2 could not be registered" in out.message, out.message
+    assert "keep each delivered version" in out.message
+    assert "export the ledger nightly" in out.message, "the second refused front is unnamed"
+    assert "went ahead" not in out.message
+
+
+def test_the_board_is_asked_off_the_event_loop_with_the_project_in_hand():
+    """REVIEW OF #580: the backlog's name is an HTTP read on Jira and Azure, and it ran on the
+    event loop of every acceptance; the registry was read again by a name the caller held."""
+    for door in (catalog._with_the_work_filed, catalog._product_break_down):
+        assert "asyncio.to_thread(_breakdown_said, proj," in inspect.getsource(door), door.__name__
+    assert "ProjectRegistry" not in inspect.getsource(catalog._breakdown_said)
+
+
 def test_both_catalog_doors_and_the_conversation_render_through_one_function():
     """A GUARD, so a third door cannot grow a third rendering — the defect was two of them."""
     for door in (catalog._with_the_work_filed, catalog._product_break_down):
         source = inspect.getsource(door)
-        assert "_breakdown_said(" in source and "Work filed:" not in source, door.__name__
+        assert "_breakdown_said" in source and "Work filed:" not in source, door.__name__
     assert "breakdown_outcome(" in inspect.getsource(catalog._breakdown_said)
     assert "_breakdown_reply(" in inspect.getsource(confirm.breakdown_outcome)
 

@@ -18,14 +18,21 @@ CATALOG = "openfactory/actions/catalog.py"
 CONFIRM = "openfactory/product/confirm.py"
 
 MUTATIONS = [
+    # RE-PINNED 2026-10-10 (review of #580): the board is asked in a thread, with the project the
+    # door already holds
     ("TODAY'S DEFECT, ON THE ACCEPTANCE: only what landed is said", CATALOG,
-     '        return done(f"{accepted.message} {_breakdown_said(project, number, filed)}", '
-     "**data)\n",
-     '        return done(f"{accepted.message} {_breakdown_said(project, number, made)}", '
-     "**data)\n"),
+     "        said = await asyncio.to_thread(_breakdown_said, proj, number, filed)\n",
+     "        said = await asyncio.to_thread(_breakdown_said, proj, number, made)\n"),
     ("the break-down row says only what landed", CATALOG,
-     "        return done(_breakdown_said(proj.name, num, filed), **data)\n",
-     "        return done(_breakdown_said(proj.name, num, made), **data)\n"),
+     "        return done(await asyncio.to_thread(_breakdown_said, proj, num, filed), **data)\n",
+     "        return done(await asyncio.to_thread(_breakdown_said, proj, num, made), **data)\n"),
+    # review of #580: with two fronts refused, the second was named nowhere
+    ("a second front not filed is named nowhere", CONFIRM,
+     '        out += said["not_registered_some"].format(n=len(failed)) + " ".join(told)\n',
+     '        out += said["not_registered_some"].format(n=len(failed)) + told[0]\n'),
+    ("the board's name is read on the event loop", CATALOG,
+     "        return done(await asyncio.to_thread(_breakdown_said, proj, num, filed), **data)\n",
+     "        return done(_breakdown_said(proj, num, filed), **data)\n"),
     ("the conversation's emphasis reaches the action layer", CONFIRM,
      "                            project=project, backlog=backlog, marked=False)\n",
      "                            project=project, backlog=backlog, marked=True)\n"),

@@ -2319,18 +2319,19 @@ _BREAKDOWN_SAID = {
                   "cartão novo"),
         "en": ("that piece of work is already in {ref} — I pointed the requirement there instead "
                "of opening a new card")},
+    # NOT "THE OTHERS WENT AHEAD" (review of #580): with two fronts refused it was false for the
+    # second, and the reply's head already says which cards were opened
     "not_vetted": {
         "pt-BR": ("a frente “{title}” não passou na revisão automática, então não abri esse "
-                  "cartão — as outras seguiram. O que falta: {why}"),
-        "en": ("“{title}” did not pass the automatic review, so I did not open that card — the "
-               "others went ahead. What is missing: {why}")},
+                  "cartão. O que falta: {why}"),
+        "en": ("“{title}” did not pass the automatic review, so I did not open that card. What "
+               "is missing: {why}")},
     "title_exists": {"pt-BR": "já existe um cartão com esse título",
                      "en": "a card with that title already exists"},
     "file_failed": {
-        "pt-BR": ("não consegui registrar “{title}” agora. O time foi avisado e resolve — as "
-                  "outras frentes seguiram."),
+        "pt-BR": "não consegui registrar “{title}” agora. O time foi avisado e resolve.",
         "en": ("I could not record “{title}” just now. The team has been told and will sort it "
-               "out — the others went ahead.")},
+               "out.")},
     "unplaced": {
         "pt-BR": ("criado, mas o quadro recusou a colocação — o cartão está sem coluna e o time "
                   "foi avisado."),

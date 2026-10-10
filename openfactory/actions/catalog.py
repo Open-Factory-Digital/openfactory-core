@@ -3469,7 +3469,7 @@ async def _product_accept(*, project: str, number: str, by: Actor,
         return accepted
     if getattr(result, "nothing_to_build", False) is True:
         return _with_nothing_to_build(accepted, project=proj, number=num)
-    return await _with_the_work_filed(accepted, project=proj.name, number=num, by=by)
+    return await _with_the_work_filed(accepted, project=proj.name, number=num, by=by, proj=proj)
 
 
 def _with_nothing_to_build(accepted: Outcome, *, project, number: int) -> Outcome:
@@ -3504,7 +3504,7 @@ def _with_nothing_to_build(accepted: Outcome, *, project, number: int) -> Outcom
 
 
 async def _with_the_work_filed(accepted: Outcome, *, project: str, number: int,
-                               by: Actor) -> Outcome:
+                               by: Actor, proj=None) -> Outcome:
     """The acceptance, plus whatever the automatic breakdown produced.
 
     THE BREAKDOWN MUST NEVER BE ABLE TO COST THE AGREEMENT — the channel's rule, kept verbatim
@@ -3545,30 +3545,37 @@ async def _with_the_work_filed(accepted: Outcome, *, project: str, number: int,
     if made:
         # EVERY ROW, NOT ONLY THE ONES THAT LANDED (#564): what was not filed, and why, is said in
         # the module's own sentence, the way the conversation says it
-        return done(f"{accepted.message} {_breakdown_said(project, number, filed)}", **data)
+        import asyncio
+
+        said = await asyncio.to_thread(_breakdown_said, proj, number, filed)
+        return done(f"{accepted.message} {said}", **data)
     detail = next((r.get("detail") for r in filed if not r.get("ok") and r.get("detail")), "")
     return done(f"{accepted.message} I could not turn it into units of work "
                 f"{f'({detail}) ' if detail else ''}— the agreement is recorded either way, and "
                 f"asking me to break it down will try again.", **data)
 
 
-def _breakdown_said(project: str, number: int, filed: list[dict]) -> str:
+def _breakdown_said(proj, number: int, filed: list[dict]) -> str:
     """A breakdown's outcome as every surface says it — `confirm.breakdown_outcome`, the
     conversation's own rendering, in the project's language and naming this board's backlog
-    (#564). The board's word is a courtesy: one that cannot be read leaves the platform's."""
-    from openfactory.product.confirm import breakdown_outcome
-    from openfactory.registry import ProjectRegistry
+    (#564). The board's word is a courtesy: one that cannot be read leaves the platform's.
 
-    proj, backlog = None, ""
+    BLOCKING — IT ASKS THE BOARD (review of #580): on Jira and Azure the column's name is an HTTP
+    read, so the async doors call this in a thread, never on the event loop. `proj` is the
+    registry project the caller already holds; it was read again by name here."""
+    from openfactory.product.confirm import breakdown_outcome
+    from openfactory.util.causes import first_message
+
+    backlog = ""
     try:
-        proj = ProjectRegistry().get(project)
         from openfactory.adapters.board import build_board
         from openfactory.adapters.board.base import stage_column
 
         board = build_board(proj)
         backlog = stage_column(board, "backlog") if board is not None else ""
-    except Exception:  # noqa: BLE001 — a column's name is a courtesy; the outcome is not
-        log.info("could not ask %s's board what it calls its backlog", project, exc_info=True)
+    except Exception as exc:  # noqa: BLE001 — a column's name is a courtesy; the outcome is not
+        log.info("could not ask %s's board what it calls its backlog (%s) — the platform's word "
+                 "is said instead", getattr(proj, "name", ""), first_message(exc, limit=120))
     return breakdown_outcome(filed, number=number, project=proj, backlog=backlog)
 
 
@@ -3668,7 +3675,7 @@ async def _product_break_down(*, project: str, number: str, by: Actor,
     if made:
         # THE SAME RENDERING AS THE ACCEPTANCE AND THE CONVERSATION (#564): a front not filed is
         # named beside the ones that were, never dropped because another one landed
-        return done(_breakdown_said(proj.name, num, filed), **data)
+        return done(await asyncio.to_thread(_breakdown_said, proj, num, filed), **data)
     detail = next((r.get("detail") for r in filed if not r.get("ok") and r.get("detail")), "")
     why = f": {detail}" if detail else " — the breakdown produced no unit of work"
     return refused(FAILED, f"nothing was filed for requirement {num}{why.rstrip('.')}.", **data)

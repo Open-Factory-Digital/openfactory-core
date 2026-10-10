@@ -965,8 +965,11 @@ def _breakdown_reply(results, number: int, name: str, lang=None, project=None, *
 
     head = f"{name}: " if name else ""
     failed = [r for r in results if not r.ok]
+    # EVERY FRONT THAT WAS NOT OPENED, each in its own sentence (#576): the first alone was said,
+    # and a front held because the one it builds on was refused went unnamed behind it
+    told = list(dict.fromkeys(_client_detail(r.detail, lang, project=project) for r in failed))
     if failed and len(failed) == len(results):
-        return f"{head}{_client_detail(failed[0].detail, lang, project=project)}"
+        return head + " ".join(told)
     if not results:
         # no drafts and no errors: the breakdown ran and produced nothing. Counting that as "virou
         # 0 tarefas" and announcing the Backlog was the shape this whole function is being fixed
@@ -1014,8 +1017,7 @@ def _breakdown_reply(results, number: int, name: str, lang=None, project=None, *
             out += said["about"].format(refs=", ".join(r.ref for r in unplaced if r.ref))
         out = _still_to_say(out, unplaced[0], lang, project=project)
     if failed:
-        out += (said["not_registered_some"].format(n=len(failed))
-                + _client_detail(failed[0].detail, lang, project=project))
+        out += said["not_registered_some"].format(n=len(failed)) + " ".join(told)
     return out
 
 

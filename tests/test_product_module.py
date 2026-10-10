@@ -301,7 +301,11 @@ def test_one_failing_issue_does_not_lose_the_others(tmp_path):
     mod, _ = _module(tmp_path, answer=_TWO_ISSUES)
     results = mod.file_issues(_req(), actor=ADMIN, tracker=_Tracker(explode=True), board=None)
     assert all(r.ok is False for r in results)
-    assert all("as outras frentes seguiram" in r.detail for r in results)
+    # EACH NAMES ITS OWN FRONT — "the others went ahead" was false here, where none did (review of
+    # #580), and the reply's head is what says which ones landed
+    assert [("Add the review queue" in r.detail, "Badge the nav" in r.detail)
+            for r in results] == [(True, False), (False, True)]
+    assert all("O time foi avisado" in r.detail for r in results)
     assert not any("github said no" in r.detail for r in results), \
         "the forge's exception was reported to the client as the reason"
 
