@@ -114,8 +114,9 @@ class Probes:
     #: published one the compose file actually names (measured 2026-08-30, running the command).
     #: A pass about the wrong image is worse than no answer about the right one.
     sandbox_image: Callable[[], str | None]
-    #: `(exists, mode)` for `.env.compose`; mode is None when it is absent.
-    env_file: Callable[[], tuple[bool, int | None]]
+    #: `(exists, mode, unreadable)` for `.env.compose`: mode is None when it is absent, and
+    #: `unreadable` says why a file that is there could not be read — `""` when it could (#583).
+    env_file: Callable[[], tuple[bool, int | None, str]]
     #: `(visible, detail)` for the agent's credential — ONBOARDING calls it the one prerequisite
     #: that cannot be postponed, and the stack boots happily without it.
     agent_credential: Callable[[], tuple[bool, str]]
@@ -365,13 +366,23 @@ def _box_image(p: Probes) -> Finding:
 
 
 def _env_file(p: Probes) -> Finding:
-    exists, mode = p.env_file()
+    exists, mode, unreadable = p.env_file()
     if not exists:
         return _fail(
             "env_file", ".env.compose has not been written yet",
             "run `openfactory init` — it asks a few questions and writes the file with only the "
             "rows your answers use (by hand instead: cp .env.compose.example .env.compose)",
             on=LOCAL)
+    # THERE AND NOT TO BE READ IS NOT "NOT WRITTEN" (#583). The installer runs this as the
+    # person's own uid, and a file a `sudo` run left root-owned at 0600 read as no file at all:
+    # the credential line below it then said nothing was set. Compose, run as the same person,
+    # cannot read it either, so nothing in it reaches the stack.
+    if unreadable:
+        return _fail(
+            "env_file", f".env.compose is there but could not be read ({unreadable}) — nothing "
+            "in it reaches this check, or the stack",
+            "make it yours and private again: `sudo chown \"$(id -u):$(id -g)\" .env.compose && "
+            "chmod 600 .env.compose`", on=LOCAL)
     # 0600 IS NOT TIDINESS. That file holds a forge credential with write access to somebody's
     # repositories and a harness token that costs money. `init` writes it 0600 before anything can
     # read it; a file that arrived another way (copied from the template, restored from a backup,
@@ -533,13 +544,20 @@ def _probe_writable(where: str) -> tuple[bool, str]:
     return True, "created and written as this user"
 
 
-def _probe_env_file(path: str = ".env.compose") -> tuple[bool, int | None]:
+def _probe_env_file(path: str = ".env.compose") -> tuple[bool, int | None, str]:
+    """`(it is there, its mode, why it could not be read — "" when it could)` (#583)."""
     import pathlib
 
-    file = pathlib.Path(path)
-    if not file.exists():
-        return False, None
-    return True, file.stat().st_mode & 0o777
+    from openfactory import envfile
+
+    read = envfile.read(path)
+    if not read.exists:
+        return False, None, ""
+    try:
+        mode = pathlib.Path(path).stat().st_mode & 0o777
+    except OSError:
+        mode = None
+    return True, mode, read.unreadable
 
 
 def _probe_agent_credential() -> tuple[bool, str]:
@@ -554,7 +572,17 @@ def _probe_agent_credential() -> tuple[bool, str]:
         if settings.get(name):
             where = "in the environment" if os.environ.get(name) else "in .env.compose"
             return True, f"{name} is set {where}"
-    return False, "neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set"
+    return False, "neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set" + _unread()
+
+
+def _unread(path: str = ".env.compose") -> str:
+    """What a setting that was not found owes the person when the file was there and could not be
+    read (#583): an unreadable file read as no file at all, and this line then said a credential
+    in it was not set."""
+    from openfactory import envfile
+
+    why = envfile.read(path).unreadable
+    return f" — and {path} is there but could not be read ({why})" if why else ""
 
 
 def _probe_ports() -> tuple[tuple[str, int], ...]:
@@ -586,22 +614,11 @@ def _interpolate(text: str, env: dict[str, str]) -> str:
 
 
 def _env_file_rows(path: str = ".env.compose") -> dict[str, str]:
-    """The `KEY=value` rows of the env file, for interpolating the compose file the way compose
-    will. Never raises: a missing or unreadable file is an ordinary state here."""
-    import pathlib
+    """The rows of the env file, read by the one set of rules every reader shares
+    (`envfile.read`, #583) — `{}` when it is absent or cannot be read, which `env_file` says."""
+    from openfactory import envfile
 
-    rows: dict[str, str] = {}
-    try:
-        text = pathlib.Path(path).read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return rows
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        rows[key.strip()] = value.strip().strip('"').strip("'")
-    return rows
+    return envfile.read(path).rows
 
 
 def _settings() -> dict[str, str]:
