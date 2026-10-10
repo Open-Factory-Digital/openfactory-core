@@ -57,8 +57,8 @@ _SAID = {
         "no_task": ("Não consegui tirar nenhuma tarefa do requisito {number}. Me diga o que ele "
                     "deveria produzir na prática e eu tento de novo."),
         "task": ("tarefa", "tarefas"),
-        "became": "O requisito {number} virou **{count}** {noun}{tail}.",
-        "already_split": ("O requisito {number} já estava dividido em **{count}** {noun}{tail} — "
+        "became": "O requisito {number} virou {count} {noun}{tail}.",
+        "already_split": ("O requisito {number} já estava dividido em {count} {noun}{tail} — "
                           "não criei nada novo e não mudei nada de lugar."),
         "it_is": ("Está", "Estão"), "is": ("está", "estão"),
         "in_backlog": ("\n\n{where} na coluna {backlog} — começar a trabalhar {them} continua "
@@ -83,8 +83,8 @@ _SAID = {
         "no_task": ("I could not get any task out of requirement {number}. Tell me what it should "
                     "produce in practice and I will try again."),
         "task": ("task", "tasks"),
-        "became": "Requirement {number} became **{count}** {noun}{tail}.",
-        "already_split": ("Requirement {number} was already split into **{count}** {noun}{tail} "
+        "became": "Requirement {number} became {count} {noun}{tail}.",
+        "already_split": ("Requirement {number} was already split into {count} {noun}{tail} "
                           "— I created nothing new and moved nothing."),
         "it_is": ("It is", "They are"), "is": ("is", "are"),
         "in_backlog": ("\n\n{where} in the {backlog} — starting work on {them} is still a "
@@ -941,7 +941,7 @@ def _also_broke_it_down(module, number: int, user: str, head: str, lang, project
 
 
 def _breakdown_reply(results, number: int, name: str, lang=None, project=None, *,
-                     backlog: str = "") -> str:
+                     backlog: str = "", marked: bool = True) -> str:
     """What the client reads after a requirement was broken into tasks.
 
     BOTH failure branches pass through `_client_detail`: the guard that found the second one is the
@@ -965,8 +965,11 @@ def _breakdown_reply(results, number: int, name: str, lang=None, project=None, *
 
     head = f"{name}: " if name else ""
     failed = [r for r in results if not r.ok]
+    # EVERY FRONT THAT WAS NOT OPENED, each in its own sentence (#576): the first alone was said,
+    # and a front held because the one it builds on was refused went unnamed behind it
+    told = list(dict.fromkeys(_client_detail(r.detail, lang, project=project) for r in failed))
     if failed and len(failed) == len(results):
-        return f"{head}{_client_detail(failed[0].detail, lang, project=project)}"
+        return head + " ".join(told)
     if not results:
         # no drafts and no errors: the breakdown ran and produced nothing. Counting that as "virou
         # 0 tarefas" and announcing the Backlog was the shape this whole function is being fixed
@@ -985,8 +988,11 @@ def _breakdown_reply(results, number: int, name: str, lang=None, project=None, *
     noun = said["task"][0 if len(landed) == 1 else 1]
     tail = f": {listed}" if listed else ""
     # nothing was created and nothing was moved: "became" would claim this turn did something
+    # THE EMPHASIS IS THE CONVERSATION'S: the catalog's surfaces print it as literal asterisks
+    # (`breakdown_outcome`, `test_the_layer_does_not_learn_a_transport`)
+    count = f"**{len(landed)}**" if marked else str(len(landed))
     out = head + said["became" if fresh else "already_split"].format(
-        number=number, count=len(landed), noun=noun, tail=tail)
+        number=number, count=count, noun=noun, tail=tail)
     if placed:
         n = 0 if len(placed) == 1 else 1
         where = (said["it_is"][n] if len(placed) == len(landed)
@@ -1011,9 +1017,32 @@ def _breakdown_reply(results, number: int, name: str, lang=None, project=None, *
             out += said["about"].format(refs=", ".join(r.ref for r in unplaced if r.ref))
         out = _still_to_say(out, unplaced[0], lang, project=project)
     if failed:
-        out += (said["not_registered_some"].format(n=len(failed))
-                + _client_detail(failed[0].detail, lang, project=project))
+        out += said["not_registered_some"].format(n=len(failed)) + " ".join(told)
     return out
+
+
+def breakdown_outcome(rows, *, number: int, project=None, backlog: str = "") -> str:
+    """THE ONE RENDERING OF A BREAKDOWN'S OUTCOME, for the catalog's two doors (#564) — the
+    conversation's own `_breakdown_reply`, so every surface says what landed, what already
+    existed, what could not be placed, and what was NOT FILED and why, in the module's sentence.
+
+    THE CATALOG SAID ONLY WHAT LANDED. The acceptance (`_with_the_work_filed`) and the
+    `product_break_down` row read the failed rows only when nothing landed, so a front the vet
+    refused — or one the breakdown ran out of time for — was dropped without a word whenever
+    another landed: a person learned of the missing front from a parked job an hour later, while
+    the conversation's reply named it from the same rows. `rows` are the workflow's rows (dicts) or
+    the module's `WriteResult`s; the text is plain, because emphasis is a surface's, not the
+    action layer's."""
+    import dataclasses
+
+    from openfactory.product.authoring import WriteResult
+
+    known = {f.name for f in dataclasses.fields(WriteResult)}
+    results = [r if isinstance(r, WriteResult) else
+               WriteResult(**{k: v for k, v in dict(r).items() if k in known})
+               for r in rows or []]
+    return _breakdown_reply(results, number, "", getattr(project, "language", None),
+                            project=project, backlog=backlog, marked=False)
 
 
 # ── the gate a token arrives at: a click, the panel, the `product_answer` row ────────────────────
