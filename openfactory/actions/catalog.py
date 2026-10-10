@@ -1322,14 +1322,11 @@ def _journal_the_stop(project, issue: str, *, by: Actor, why: str) -> None:
     `record_outcome` was written to end. Best-effort: the stop stands whatever the journal says."""
     try:
         from openfactory.contracts import JobState
-        from openfactory.observability.events import JobEvent, now_iso
-        from openfactory.observability.registry import journal_for
-        from openfactory.paths import events_file
+        from openfactory.observability.job_record import record_ending
 
-        journal_for(events_file(project, issue)).emit(JobEvent(
-            ts=now_iso(), job_id=f"#{issue}", ticket_id=f"#{issue}", kind="state",
-            message=JobState.SKIPPED.value,
-            data={"reason": f"stopped by {by}" + (f": {why}" if why else ""), "by": str(by)}))
+        # THE ONE WRITER OF THE ENDING LINE, which both drivers write through (#551)
+        record_ending(project, issue, JobState.SKIPPED.value, by=str(by),
+                      note=f"stopped by {by}" + (f": {why}" if why else ""))
     except Exception:  # noqa: BLE001 — the stop stands; only its journal line is missing
         log.warning("OPENFACTORY_STOP_NOT_JOURNALLED project=%s issue=%s — the job was stopped "
                     "and its journal does not say so", getattr(project, "name", "?"), issue,
@@ -4377,6 +4374,14 @@ async def _card_create(*, project: str, title: str, by: Actor, body: str = "",
         key, bad = await asyncio.to_thread(_operators_column, proj, board, wanted)
         if bad:
             return bad
+    # …AND WHERE IT WOULD BE BORN (#543): a card opened to wait, on a board where a new card is
+    # born in the pickup column, is one the poller takes with nobody queueing it (ADR-0019 §5) —
+    # the product role's filing was held there by #536, and this is the same board. A card the
+    # person opens IN the queue is not asked: that is the one gesture that spends, and theirs.
+    if key == "backlog":
+        bad = await asyncio.to_thread(_born_in_the_queue, proj, tracker, board)
+        if bad:
+            return bad
 
     def _open() -> str:
         # THE REQUESTER IS WHOEVER FILED IT (ADR-0049 D7). A row whose namespace is the platform's
@@ -4412,6 +4417,29 @@ async def _card_create(*, project: str, title: str, by: Actor, body: str = "",
     said, gate = _as_pickup_would(line, await asyncio.to_thread(_pickup_says, tracker, ref))
     out = done(said, project=proj.name, issue=str(ref), url=tracker.ticket_url(ref), **gate)
     return out if moved.refused else _after_the_door(moved, out)
+
+
+def _born_in_the_queue(proj, tracker, board) -> Outcome | None:
+    """The refusal to open a card that would be born in the pickup column, or on a board that
+    could not say where it would be — `None` when it may be opened (#543).
+
+    THE DECISION IS `board.base.intake_held`, the one every writer of a new card asks; the sentence
+    is the product's, in the project's language, because the person reading it is on the board —
+    and it names the way they DO have: opening the card in the queue themselves."""
+    from openfactory.adapters.board.base import intake_held
+    from openfactory.product.voice import card_open_held
+
+    born = intake_held(tracker, board)
+    if born is None:
+        return None
+    lang = getattr(proj, "language", None)
+    if born.queued:
+        return refused(CONFLICT, card_open_held("queue", column=str(born.column), language=lang),
+                       project=proj.name, column=str(born.column))
+    if born.unknown:
+        return refused(CONFLICT, card_open_held("undeclared", column=born.queue, language=lang),
+                       project=proj.name, column=born.queue)
+    return refused(UNAVAILABLE, card_open_held("unread", language=lang), project=proj.name)
 
 
 def _operators_column(proj, board, wanted: str) -> tuple[str, Outcome | None]:
@@ -5113,12 +5141,15 @@ def card_view(proj, tracker, board, ref: str, *, opened_by: str, column: str | N
             placed = {}
         column = placed.get(canonical_ref(ref)) or placed.get(str(ref)) or ""
     key = stage_key(board, column) if (board is not None and column) else ""
-    started = has_started(key)
+    started, finished = has_started(key), has_finished(key)
     can_remove = removes(tracker)
-    return {"started": started, "finished": has_finished(key), "removes": can_remove,
+    return {"started": started, "finished": finished, "removes": can_remove,
             "open": (state or "open") == "open",
+            # `finished` is the same reading `_card_close` decides `delivered` with, so the control
+            # says the word the close will record (#534)
             "words": card_controls(opened_by_product=bool(opened_by), started=started,
-                                   removes=can_remove, language=getattr(proj, "language", None))}
+                                   removes=can_remove, finished=finished,
+                                   language=getattr(proj, "language", None))}
 
 
 async def _card_reopen(*, project: str, issue: str, by: Actor) -> Outcome:

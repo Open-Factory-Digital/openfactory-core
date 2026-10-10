@@ -200,6 +200,12 @@ def report(project, cause: str, detail: str = "", *, tracker=None) -> str:
             _LAST[f"{name}|{cause}"] = False      # the board HAS it; a repeat adds nothing
             log.info("OPENFACTORY_OPS_STILL_OPEN project=%s cause=%s ref=%s", name, cause, existing)
             return str(existing)
+        held = _born_in_the_queue(project, trk)
+        if held:
+            log.error("OPENFACTORY_OPS_IMPEDIMENT_HELD project=%s cause=%s — %s, so the impediment "
+                      "was not filed and only this line records it: %s", name, cause, held,
+                      detail[:200])
+            return ""          # nothing remembered: asked again on the next occurrence
         board = _board(project)
         ref = trk.create_ticket(
             title=title,
@@ -267,6 +273,36 @@ def resolved(project, cause: str, evidence: str = "", *, tracker=None) -> bool:
         log.warning("OPENFACTORY_OPS_CLOSE_FAILED project=%s cause=%s "
                     "(%s)", name, cause, str(exc)[:160])
         return False
+
+
+def _born_in_the_queue(project, trk) -> str:
+    """Why the impediment must not be created now — `""` when it may (#543).
+
+    THE FACTORY'S OWN CARD WOULD BE BUILT. On the product's own board — the one a local deployment
+    derives, or a declared `factory_board` that IS the product's tracker — an impediment is one of
+    the product's cards, and on a board where a new card is born in the pickup column the poller
+    takes it: an agent sent to fix "the product role cannot read the code" in the client's
+    repository, paid for, with nobody queueing it (ADR-0019 §5). So it is asked there, as every
+    writer of a new card asks (`board.base.intake_held`), and a board that could not say holds it
+    too.
+
+    A BOARD OF ITS OWN IS NOT ASKED: the factory's board on another tracker (ADR-0027) is no
+    project's queue — the poller reads the boards of registered projects, and the factory's is
+    declared beside one, not as one — and holding an impediment there would leave the trouble in
+    a log line for a column nobody reads. The same test `_door_view` makes."""
+    declared = getattr(project, "factory_board", None)
+    if declared is not None and getattr(declared, "tracker", None) != getattr(project, "tracker",
+                                                                               None):
+        return ""
+    from openfactory.adapters.board.base import intake_held
+    from openfactory.lifecycle.ports import Ports
+
+    born = intake_held(trk, Ports(project, tracker=trk).board)
+    if born is None:
+        return ""
+    if born.queued:
+        return f"a card created now on this board is born in {born.column!r}, the pickup column"
+    return born.unknown or "the board could not say where a card created now would be born"
 
 
 def _door_view(project):

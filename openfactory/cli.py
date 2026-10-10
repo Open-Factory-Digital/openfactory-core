@@ -501,6 +501,8 @@ def project_forget_conversations(
     registry project of it, so those are named before it asks and theirs go too. A name no longer
     registered deletes what is recorded under that name alone.
     """
+    import asyncio
+
     from openfactory.memory import transcript
     from openfactory.product import forget
 
@@ -537,6 +539,13 @@ def project_forget_conversations(
         named = counts["people who named them"]
         typer.echo(f"erased {counts['files sent in them']} file(s) sent in them, and the names "
                    f"{named} person(s) gave them")
+    # AND THE RUNS THAT STILL HOLD THEM (#533): a conversation's run stays open until its next
+    # turns roll it over, which a forgotten conversation never takes, so the engine's retention
+    # never reached what was said in it. Closed here, the same way `project forget` closes them.
+    closed = asyncio.run(forget.close_runs(where))
+    typer.echo(forget.engine_went(closed).line())
+    if closed.unread or closed.at_work:
+        raise typer.Exit(1)
 
 
 @project_app.command("forget")
@@ -3442,17 +3451,30 @@ def _drive_one(view, issue: str, *, sandbox: str, image: str, review: bool = Tru
     from datetime import UTC, datetime
 
     from openfactory.lifecycle.handed_back import apply as the_outcomes_go_through_the_door
-    from openfactory.observability.job_record import record_job
+    from openfactory.observability.job_record import (
+        BY_THE_ATTENDED_DRIVER,
+        record_ending,
+        record_job,
+    )
 
     started = time.monotonic()
     result = build_runner(view, issue, sandbox=sandbox, image=image, review=review).run(issue)
     the_outcomes_go_through_the_door(view, issue, result)
+    state = getattr(result.state, "value", str(result.state))
     record_job(project=view.name, issue=str(issue),
-               ts=datetime.now(UTC).isoformat(),
-               state=getattr(result.state, "value", str(result.state)),
+               ts=datetime.now(UTC).isoformat(), state=state,
                wall_s=round(time.monotonic() - started, 1),
                total_cost_usd=result.total_cost_usd, pr_url=result.pr_url or "",
                knowledge=result.knowledge, agent_runs=result.agent_runs)
+    # AND HOW IT ENDED, IN ITS JOURNAL (#551): the line `query.outcomes` reads a job's ending
+    # from, written by the same function the workflow's `record_outcome` writes it with. Without
+    # it every job this driver ran read as never ended, and a one-machine deployment's evidence
+    # pack counted none. Never a reason to change what happened to the job.
+    try:
+        record_ending(view, str(issue), state, by=BY_THE_ATTENDED_DRIVER, note=result.note or "")
+    except Exception as exc:  # noqa: BLE001 — the job ended; the record failing must not undo it
+        log.warning("OPENFACTORY_OUTCOME_NOT_JOURNALLED %s#%s ended as %s and its journal does "
+                    "not say so (%s)", view.name, issue, state, str(exc)[:160])
     return result
 
 

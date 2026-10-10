@@ -14,6 +14,9 @@ offer, and the next deployment writing it again. The layers are the core's; so i
                                                           search record and recall indexes derived
                                                           from them, the files sent in them and
                                                           the names given to them
+    engine           what was said, still in the run      the product's idle conversation runs and
+                     that holds it                        the project's tech-lead run, closed, so
+                                                          the engine's retention expires them
     loops            "I will tell you when it is fixed"   the store's `forget` of `agent_loop`
     records          old buttons, stale previews          the store's `forget` of `card_verdict`,
                                                           `preview`, `channel_message`,
@@ -50,11 +53,13 @@ from pathlib import Path
 
 log = logging.getLogger("openfactory.product.forget")
 
-CONVERSATIONS, LOOPS, RECORDS, INTAKE, CLOSED_CARDS, CONTEXT, PROCESSES = (
-    "conversations", "loops", "records", "intake", "closed cards", "context", "processes")
+CONVERSATIONS, ENGINE, LOOPS, RECORDS, INTAKE, CLOSED_CARDS, CONTEXT, PROCESSES = (
+    "conversations", "engine", "loops", "records", "intake", "closed cards", "context",
+    "processes")
 #: Every layer, in the order it is forgotten — the conversations first, because a deletion request
-#: is about them, and the processes last, because what they hold is told by the rest.
-LAYERS = (CONVERSATIONS, LOOPS, RECORDS, INTAKE, CLOSED_CARDS, CONTEXT, PROCESSES)
+#: is about them, and the runs that still hold them right after; the processes last, because what
+#: they hold is told by the rest.
+LAYERS = (CONVERSATIONS, ENGINE, LOOPS, RECORDS, INTAKE, CLOSED_CARDS, CONTEXT, PROCESSES)
 
 #: The metrics-store kinds `records` forgets, each with what it is called when it is counted.
 #: A CLOSED LIST, and the reason is the list of what is NOT in it: `person` (the deployment's
@@ -85,7 +90,8 @@ KEPT = (
     "old notices)",
     "what every agent run and job cost",
     "the deployment's people and their sessions, and every other project's rows",
-    "the durable engine's own history of each conversation's workflow, for its retention",
+    "the durable engine's history of each run this closes, until the engine's retention "
+    "expires it — the run itself is closed, so that retention starts",
 )
 
 #: What a layer came to. `kept` is the operator's choice (a flag, or nothing there to forget);
@@ -219,6 +225,185 @@ def _conversations(t: Target, **_flags) -> Went:
     return Went(CONVERSATIONS, FORGOTTEN, conversations(t.where, t.members))
 
 
+# ── the runs that still hold what was said ──────────────────────────────────────────────────────
+
+#: Why a run this closes was ended, as the engine records it.
+CLOSED_BECAUSE = "forgotten: what was said in it was deleted, and its history expires with the " \
+                 "engine's retention"
+
+
+@dataclass(frozen=True)
+class Closed:
+    """What closing a product's runs came to: the runs closed, the ones left open because a turn
+    was at work in them, the engine's retention as it said it — and `unread`, why it could not."""
+
+    runs: tuple[str, ...] = ()
+    at_work: tuple[str, ...] = ()
+    retention: str = ""
+    unread: str = ""
+    engine: bool = True
+
+    def sentence(self) -> str:
+        """`their history expires with the engine's retention (30 days)`, and what was left open."""
+        kept = (f"their history expires with the engine's retention ({self.retention})"
+                if self.retention else "their history expires with the engine's retention")
+        if self.at_work:
+            kept += (f"; {len(self.at_work)} left open, a turn at work in "
+                     f"{'it' if len(self.at_work) == 1 else 'them'} — run this again once it ends")
+        return kept
+
+
+def coordinator_id(project: str) -> str:
+    """The project's always-alive tech-lead run — the id `activities` signals it by."""
+    return f"openfactory-coordinator-{project}"
+
+
+async def _engine_client():
+    """`(client, unread, declared)` — the engine as `in_flight` reaches it, for whoever must ask."""
+    from openfactory.listeners import ENGINE as DECLARED
+    from openfactory.util.causes import first_message
+
+    # asked of the declaration itself (`connection.address()` asks the same), before any import
+    # that needs the engine's library: an install without it still answers "none declared"
+    if not DECLARED.declared():
+        return None, "", False
+    try:
+        from openfactory.runtime.temporal import view as tv
+    except ImportError as exc:
+        from openfactory.runtime.host import why_the_engine_cannot_be_read
+
+        return None, why_the_engine_cannot_be_read(exc), True
+    try:
+        return await tv.connect(), "", True
+    except Exception as exc:  # noqa: BLE001 — said by the caller
+        return None, f"the durable engine did not answer ({first_message(exc)})", True
+
+
+async def _retention(client) -> str:
+    """The namespace's retention, as a person reads it (`30 days`) — `""` where it cannot be read:
+    the sentence then names the retention without its value rather than a guess at it."""
+    try:
+        from temporalio.api.workflowservice.v1 import DescribeNamespaceRequest
+
+        described = await client.workflow_service.describe_namespace(
+            DescribeNamespaceRequest(namespace=client.namespace))
+        seconds = int(described.config.workflow_execution_retention_ttl.seconds)
+    except Exception as exc:  # noqa: BLE001 — the value is said when it can be, and only then
+        log.info("could not read the engine's retention (%s) — the report names it without its "
+                 "value", exc)
+        return ""
+    if not seconds:
+        return ""
+    if seconds % 86400 == 0:
+        days = seconds // 86400
+        return f"{days} day{'' if days == 1 else 's'}"
+    return f"{seconds // 3600} hours"
+
+
+async def close_runs(where, *, coordinator: str = "", client=None) -> Closed:
+    """CLOSE THE RUNS THAT STILL HOLD WHAT WAS SAID (#533): the product's conversation runs that
+    no turn is at work in, and — for `project forget` — the project's tech-lead run.
+
+    WHY CLOSE, AND NOT CLEAR. A conversation's run ends only in `continue_as_new`, after
+    `TURNS_PER_RUN` turns, and a forgotten conversation takes no more: the run holding its words —
+    every message a signal in its event history, the display copies in `_heard`, the replies in
+    `_outbox` — stayed open indefinitely, measured with 76 entries six days after a forget, and an
+    open run's history is never reached by retention. Clearing its state by a signal would leave
+    the signals that carried the words in that same open history. Terminated, the run is closed:
+    the engine's retention then expires its history, and the next message starts a new run with
+    nothing in it (`door.receive` starts on a signal).
+
+    A RUN WITH A TURN AT WORK IS LEFT OPEN and said, never ended mid-turn: `in_flight` refuses
+    `project forget` while one is, so here it is the race of a message that came in between.
+    The tech-lead's run holds the project's parked decisions and its narration of the cards'
+    moments, not a conversation; it is closed only when named, by `project forget`, which forgets
+    those cards' records too. It restarts on the next decision, by the same signal-with-start."""
+    from openfactory.product.key import product_slug
+    from openfactory.util.causes import first_message
+
+    if client is None:
+        client, unread, declared = await _engine_client()
+        if not declared:
+            return Closed(engine=False)
+        if client is None:
+            return Closed(unread=unread)
+    prefix = f"po-{product_slug(where.key)}-"
+    closed: list[str] = []
+    at_work: list[str] = []
+    try:
+        mine = [str(wf.id) async for wf in client.list_workflows(_CONVERSATIONS)
+                if str(wf.id).startswith(prefix)]
+        await close_idle(client, mine, closed=closed, at_work=at_work)
+        if coordinator:
+            async for wf in client.list_workflows(
+                    f'WorkflowId = "{coordinator}" AND ExecutionStatus = "Running"'):
+                await client.get_workflow_handle(str(wf.id)).terminate(reason=CLOSED_BECAUSE)
+                closed.append(str(wf.id))
+    except Exception as exc:  # noqa: BLE001 — said; what closed before stays closed
+        return Closed(runs=tuple(closed), at_work=tuple(at_work),
+                      unread=f"the engine could not close the runs ({first_message(exc)})")
+    return Closed(runs=tuple(closed), at_work=tuple(at_work), retention=await _retention(client))
+
+
+async def close_idle(client, wids, *, closed: list | None = None,
+                     at_work: list | None = None) -> tuple[list[str], list[str]]:
+    """Terminate each conversation run in `wids` that no turn is at work in — `(closed, at_work)`.
+    Apart from `close_runs`'s listing, so the engine's own semantics — the run closed, the next
+    message starting a new one — are proven against a real engine, whose test server lists
+    nothing (`tests/test_a_forgotten_conversation_s_run_is_closed.py`)."""
+    from openfactory.product import door
+
+    closed = [] if closed is None else closed
+    at_work = [] if at_work is None else at_work
+    for wid in wids:
+        try:
+            seen = await door.watch(client, wid, 0)
+        except door.NotStarted:
+            continue
+        presence = (seen or {}).get("presence") or {}
+        if any(presence.get(k) for k in ("running", "working", "fast", "waiting")):
+            at_work.append(wid)
+            continue
+        await client.get_workflow_handle(wid).terminate(reason=CLOSED_BECAUSE)
+        closed.append(wid)
+    return closed, at_work
+
+
+def _in_a_thread(coro):
+    """Run `coro` to its end from synchronous code — in this thread when no loop runs here, else
+    in a thread of its own, so a caller already inside a loop is not refused by `asyncio.run`."""
+    import asyncio
+    import concurrent.futures
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
+def engine_went(closed: Closed) -> Went:
+    """What closing the runs came to, as the report's `engine` line."""
+    if not closed.engine:
+        return Went(ENGINE, KEPT_BY_CHOICE,
+                    said="no durable engine is declared here, so no conversation runs in one")
+    conversations = sum(1 for r in closed.runs if r.startswith("po-"))
+    counts = {"conversation runs closed": conversations}
+    if len(closed.runs) > conversations:
+        counts["tech-lead runs closed"] = len(closed.runs) - conversations
+    if closed.unread:
+        return Went(ENGINE, FAILED, counts,
+                    said=f"{closed.unread} — run this again once the engine answers")
+    if closed.at_work:
+        return Went(ENGINE, FAILED, counts, said=closed.sentence())
+    return Went(ENGINE, FORGOTTEN, counts, said=closed.sentence())
+
+
+def _engine(t: Target, **_flags) -> Went:
+    return engine_went(_in_a_thread(close_runs(t.where, coordinator=coordinator_id(t.name))))
+
+
 def _loops(t: Target, **_flags) -> Went:
     from openfactory.memory.store import LEDGER_KIND
 
@@ -314,8 +499,8 @@ def _processes(t: Target, **_flags) -> Went:
     return Went(PROCESSES, RESTART, said=RESTART_SENTENCE)
 
 
-_RUN = {CONVERSATIONS: _conversations, LOOPS: _loops, RECORDS: _records, INTAKE: _intake,
-        CLOSED_CARDS: _closed_cards, CONTEXT: _context, PROCESSES: _processes}
+_RUN = {CONVERSATIONS: _conversations, ENGINE: _engine, LOOPS: _loops, RECORDS: _records,
+        INTAKE: _intake, CLOSED_CARDS: _closed_cards, CONTEXT: _context, PROCESSES: _processes}
 
 
 def forget(t: Target, *, with_context: bool = False,
@@ -360,6 +545,9 @@ def plan(t: Target, *, with_context: bool = False, keep_closed_cards: bool = Fal
         f"{CONVERSATIONS}: every recorded turn of the product's conversations{shared}; the index "
         f"lines, search record and recall indexes derived from them; the files sent in them and "
         f"the names people gave them",
+        f"{ENGINE}: the product's conversation runs in the durable engine and the project's "
+        f"tech-lead run, closed, so the engine's retention expires what they held — a run with "
+        f"a turn at work is left open and said",
         f"{LOOPS}: the project's loop ledger — the product role's promises and waits, and every "
         f"other loop the same ledger holds",
         f"{RECORDS}: the card verdicts, the preview records (a preview still up runs to its own "
@@ -414,25 +602,14 @@ async def in_flight(t: Target, *, client=None) -> Flight:
     from openfactory.util.causes import first_message
 
     if client is None:
-        from openfactory.listeners import ENGINE
-
-        # NOBODY DECLARED AN ENGINE, so nothing runs in one — asked of the declaration itself
-        # (`connection.address()` asks the same), before any import that needs the engine's
-        # library: an install without it still answers "none declared" truthfully
-        if not ENGINE.declared():
+        # NOBODY DECLARED AN ENGINE, so nothing runs in one; DECLARED AND NOT ASKABLE FROM HERE
+        # is not "nothing runs" — the worker may well have the library this install lacks
+        # (`_engine_client`, which `close_runs` reaches the engine through too)
+        client, unread, declared = await _engine_client()
+        if not declared:
             return Flight(engine=False)
-        try:
-            from openfactory.runtime.temporal import view as tv
-        except ImportError as exc:
-            # DECLARED AND NOT ASKABLE FROM HERE is not "nothing runs": the worker may well have
-            # the library this install lacks
-            from openfactory.runtime.host import why_the_engine_cannot_be_read
-
-            return Flight(unread=why_the_engine_cannot_be_read(exc))
-        try:
-            client = await tv.connect()
-        except Exception as exc:  # noqa: BLE001 — refused by the caller, said
-            return Flight(unread=f"the durable engine did not answer ({first_message(exc)})")
+        if client is None:
+            return Flight(unread=unread)
     from openfactory.product import door
     from openfactory.product.key import product_slug
 

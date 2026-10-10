@@ -3683,22 +3683,24 @@ class ProductModule:
 
         AN UNREAD BOARD REFUSES TOO. The question is whether filing starts spending, and a board
         that could not say has not said no; the filing is asked for again in a moment. A board the
-        tracker creates no card on by itself (`intake` answers `None`) files as before."""
-        from openfactory.adapters.board.base import Intake, intake
+        tracker creates no card on by itself (`intake` answers `None`) files as before.
+
+        THE DECISION IS `board.base.intake_held`, the one every writer that creates a card asks
+        (#543); this says it in the conversation."""
+        from openfactory.adapters.board.base import intake_held
         from openfactory.product.voice import filing_held
 
-        try:
-            born = intake(tracker, board)
-        except Exception as exc:  # noqa: BLE001 — unsure is not "safe to spend"
-            log.info("could not tell where a card filed now would start (%s)", exc)
-            born = Intake(column=None, queue="", queued=False)
-        if born is None or (born.column is not None and not born.queued):
+        born = intake_held(tracker, board)
+        if born is None:
             return None
         lang = getattr(getattr(self, "project", None), "language", None)
         if born.queued:
             return _could_not(filing_held("queue", column=str(born.column), language=lang),
                               act=act, cause=f"a card filed now is born in {born.column!r}, the "
                                              f"pickup column {born.queue!r} (#536)")
+        if born.unknown:
+            return _could_not(filing_held("undeclared", language=lang), act=act,
+                              cause=born.unknown)
         return _could_not(filing_held("unread", language=lang), act=act,
                           cause="the board could not say where a card filed now would start")
 
@@ -4666,7 +4668,11 @@ class ProductModule:
         result = self._close_one(number, actor=actor, in_favour_of=None, reason=reason,
                                  delivered=delivered, event="closed" if delivered else "withdrawn")
         if result.ok and not result.detail:
-            result.detail = card_withdrawn_result(ref=number, how="closed", language=lang)
+            # THE ONE `delivered` FOR THE RECORD AND THE SENTENCE (#534): the record above wrote
+            # `completed` for a finished card, and the answer said "not done" — #162 again, from
+            # the sentence's side
+            result.detail = card_withdrawn_result(ref=number, how="delivered" if delivered
+                                                  else "closed", language=lang)
         return result
 
     def _asked_by(self, number: str) -> str:

@@ -38,9 +38,12 @@ MUTATIONS = [
      '                  *([{"op": "add", "path": "/fields/System.State", "value": state}]\n'
      "                    if state else []),\n",
      ""),
+    # three rows re-pinned 2026-10-09 (#552): the tracker now checks a declared backlog against the
+    # type's states, the doctor FAILs a board it read no answer from with the same `False` line
+    # shape, and the probe tells that board from an unread one — each row still cuts its own claim
     ("the tracker forgets the backlog the deployment declared", TRACKER,
-     '        return self.state_map.get("backlog", "")',
-     '        return ""'),
+     '        declared = self.state_map.get("backlog", "")',
+     '        declared = ""'),
 
     # 2. the board's half
     ("the incoming column is read off the wrong column type", BOARD,
@@ -71,12 +74,14 @@ MUTATIONS = [
      '        return Intake(column="", queue="", queued=False)\n    said = '),
 
     # 4. the product role asks before it writes
-    ("the role files wherever the card is born", MODULE,
-     "        if born is None or (born.column is not None and not born.queued):",
-     "        if True:"),
-    ("an unread board is read as safe to file on", MODULE,
-     "        if born is None or (born.column is not None and not born.queued):",
-     "        if born is None or not born.queued:"),
+    # two rows re-pinned 2026-10-05: the decision moved to `board.base.intake_held`, which every
+    # writer of a new card asks (#543)
+    ("the role files wherever the card is born", BASE,
+     "    if born is None or (born.column is not None and not born.queued):",
+     "    if True:"),
+    ("an unread board is read as safe to file on", BASE,
+     "    if born is None or (born.column is not None and not born.queued):",
+     "    if born is None or not born.queued:"),
     ("a card asked for is filed without asking where it is born", MODULE,
      '        held = self._born_in_the_queue(tracker, board, act="file a ticket")\n'
      "        if held is not None:\n            return held\n",
@@ -98,8 +103,10 @@ MUTATIONS = [
 
     # 5. the doctor
     ("the doctor only warns about a board that spends on its own", DOCTOR,
-     '            "board_intake", False,\n',
-     '            "board_intake", True,\n'),
+     '            "board_intake", False,\n'
+     '            f"a card the product role files is created in {column!r}, the column the poller "',
+     '            "board_intake", True,\n'
+     '            f"a card the product role files is created in {column!r}, the column the poller "'),
     ("the doctor never asks", DOCTOR,
      "        board_intake=_intake,\n",
      ""),
@@ -108,7 +115,7 @@ MUTATIONS = [
      "    except BoardUnreadable:\n"
      '        return [Finding("board_intake", False, "the board could not be read", "")]\n'),
     ("the probe reports an unread board as one whose new card is on no column", DOCTOR,
-     "        if born is not None and born.column is None:",
+     "        if born is not None and born.column is None and not born.unknown:",
      "        if False:"),
 
     # 6. the guide

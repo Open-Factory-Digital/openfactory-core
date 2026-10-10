@@ -407,7 +407,9 @@ def confirm_in_repository(*, docs_repo: str, clone_url: str, slug: str, flow: Fl
         target.write_text(render_capability(cap.model_copy(update={"path": rel})),
                           encoding="utf-8")
         _git(["add", "--", rel], cwd=tmp)
-        rc, out = _git(["commit", "-m", f"capacidade {slug}: confirmada por {confirmed_by}"],
+        # A MACHINE ARTEFACT, IN ENGLISH (review of #550): a commit message is read in the git log,
+        # not by the person the capability was confirmed for — it was Portuguese on every project
+        rc, out = _git(["commit", "-m", f"capability {slug}: confirmed by {confirmed_by}"],
                        cwd=tmp)
         if rc != 0:
             return failed("could not commit", out)
