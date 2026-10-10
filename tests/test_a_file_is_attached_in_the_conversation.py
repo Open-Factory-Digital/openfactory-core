@@ -700,7 +700,7 @@ def test_a_line_names_a_discarded_file_as_gone(monkeypatch, tmp_path):
     transcript.record(project, thread=ANA, role="person", text="olha", actor="ana",
                       attachments=[gone.as_dict(), kept.as_dict()])
     files.discard(KEY, conversation=ANA, ident=gone.id)
-    [line] = product_chat._history(project, ANA, "ana")
+    [line], _earlier = product_chat._history(project, ANA, "ana")
     assert [bool(f.get("gone")) for f in line["attachments"]] == [True, False]
 
 

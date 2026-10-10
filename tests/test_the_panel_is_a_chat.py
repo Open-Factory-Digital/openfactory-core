@@ -75,6 +75,10 @@ class Memory:
         # what the room said to somebody else is read only by a caller that shows the room
         return [t for t in self.turns.get(thread, []) if overheard or t.addressed]
 
+    def page(self, project, *, thread, before="", limit=40):
+        # the page SHOWS the room — every line, a page at a time (#566); one page holds it here
+        return list(self.turns.get(thread, [])), ""
+
 
 class Role:
     """The product module behind the engine: it answers with what it was handed as the current
@@ -224,6 +228,7 @@ def chat(monkeypatch, tmp_path):
     memory = Memory()
     monkeypatch.setattr(transcript, "record", memory.record)
     monkeypatch.setattr(transcript, "recent", memory.recent)
+    monkeypatch.setattr(transcript, "page", memory.page)
     monkeypatch.setattr(product_module, "ProductModule", Role)
     monkeypatch.setattr(trackers, "build_tracker", lambda *_a, **_k: Tracker())
     # the reader's clock, shortened: a test waits a fraction of a second, never a tick

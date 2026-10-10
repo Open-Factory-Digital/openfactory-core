@@ -155,7 +155,8 @@ async def test_every_row_that_names_a_conversation_resolves_the_key_the_same_way
 
 @pytest.fixture
 def remembered(monkeypatch):
-    """A transcript with a room and two private conversations, behind `transcript.recent`."""
+    """A transcript with a room and two private conversations, behind `transcript.page` — the
+    read that SHOWS a conversation, a page at a time (#566)."""
     from openfactory.memory import transcript
     store = {
         "acme": [Turn(role="person", text="precisamos do fechamento", ts="t1", actor="ana"),
@@ -166,13 +167,12 @@ def remembered(monkeypatch):
     }
     asked: list = []
 
-    def recent(project, *, thread, channel="", budget=0, overheard=False):
-        # the thread row SHOWS the room, so it asks for every line of it (#266 slice 6)
-        assert overheard, "the thread row read the room the way a prompt does"
+    def page(project, *, thread, before="", limit=40):
+        # the thread row SHOWS the room — every line of it (#266 slice 6) — a page at a time
         asked.append(thread)
-        return list(store.get(thread, []))
+        return list(store.get(thread, [])), ""
 
-    monkeypatch.setattr(transcript, "recent", recent)
+    monkeypatch.setattr(transcript, "page", page)
     monkeypatch.setattr(catalog, "_product_module",
                         lambda _name, **_k: (object(), _project(), None))
     return asked
@@ -223,7 +223,8 @@ async def test_an_empty_conversation_still_answers(remembered):
 def test_the_read_is_registered_as_one():
     spec = actions.spec("product_thread")
     assert spec.scope == PRODUCT and spec.needs_admin is False
-    assert tuple(spec.required) == ("project",) and tuple(spec.optional) == ("thread",)
+    assert tuple(spec.required) == ("project",)
+    assert tuple(spec.optional) == ("thread", "before"), "the earlier pages are reached (#566)"
 
 
 # --- the page ------------------------------------------------------------------------------

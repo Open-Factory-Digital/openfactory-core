@@ -224,6 +224,8 @@ PARAMS: dict[str, str] = {
     # the product role
     "token": "the token identifying the proposal being answered — copy it from the proposal",
     "thread": "the conversation this turn belongs to, if continuing one",
+    "before": "the cursor of an earlier page of a conversation — the `earlier` value the page "
+              "after it handed back; empty for the newest page",
     "context": "what the person is looking at: `{page, project, card}` as the panel's page says "
                "it — checked against who they are before the role reads it",
     "message_id": "this message's own id, so a retry of it is the same message and its answer "

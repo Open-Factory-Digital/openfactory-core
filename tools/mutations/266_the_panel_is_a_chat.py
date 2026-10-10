@@ -121,10 +121,11 @@ MUTATIONS = [
     ("a published answer is not numbered, so a transport's cursor never reaches it", CONVERSATION,
      "        said = [r for r in replies if r.get(\"kind\") != \"receipt\"]\n        self._seq += 1\n",
      "        said = [r for r in replies if r.get(\"kind\") != \"receipt\"]\n"),
-    # RE-PINNED 2026-09-30 (#443): the history frame also names what waits for an answer
+    # RE-PINNED 2026-09-30 (#443): the history frame also names what waits for an answer.
+    # RE-PINNED 2026-10-10 (#566): and the cursor of the page before the one it hands
     ("a page that subscribes is handed no catch-up", CHAT,
-     "        fan.release(sub, {\"kind\": \"history\", \"turns\": turns, \"staged\": sub.staged})\n",
-     "        fan.release(sub, {\"kind\": \"history\", \"turns\": [], \"staged\": sub.staged})\n"),
+     "        fan.release(sub, {\"kind\": \"history\", \"turns\": turns, \"staged\": sub.staged,\n",
+     "        fan.release(sub, {\"kind\": \"history\", \"turns\": [], \"staged\": sub.staged,\n"),
     # RE-PINNED 2026-09-28 (#395): the presence carries what the role is doing
     ("a presence names whose messages are waiting", CHAT,
      "    return {\"kind\": \"presence\", \"state\": THINKING if busy else IDLE, \"ahead\": ahead,\n"

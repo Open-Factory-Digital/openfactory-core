@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS metrics (
     PRIMARY KEY (pk, sk)                  -- == put_item: a retry replaces, never appends
 );
 CREATE INDEX IF NOT EXISTS metrics_by_kind ON metrics (pk, kind, ts);
+CREATE INDEX IF NOT EXISTS metrics_by_ticket ON metrics (pk, kind, ticket, ts);
 CREATE INDEX IF NOT EXISTS metrics_expiry  ON metrics (expires_at);
 """
 
@@ -286,6 +287,20 @@ class SqliteMetricsSink:
             " AND (expires_at IS NULL OR expires_at > ?)"
             " ORDER BY ts DESC, sk DESC LIMIT ?",
             (project, kind, int(time.time()), max(0, limit)))
+        return list(reversed(rows))
+
+    def records_of_ticket(self, project: str, kind: str, ticket: str, *, before: str = "",
+                          limit: int = 50) -> list[dict]:
+        """Rows of one kind under one ticket, **oldest first**, keeping the most RECENT `limit`
+        whose key comes before `before` (`TicketReadingSink`, #566) — one conversation read by its
+        key, a page at a time, through `metrics_by_ticket`. THE CURSOR IS THE ROW'S `sk`
+        (`<ts>#<ticket>#<role>`), the primary key: unique, and ordered as the conversation was
+        written, so a page boundary never skips nor repeats a row — a `ts` alone could tie."""
+        rows = self._query(
+            "SELECT data FROM metrics WHERE pk = ? AND kind = ? AND ticket = ?"
+            " AND (expires_at IS NULL OR expires_at > ?) AND (? = '' OR sk < ?)"
+            " ORDER BY sk DESC LIMIT ?",
+            (project, kind, ticket, int(time.time()), before, before, max(0, limit)))
         return list(reversed(rows))
 
     def _query(self, sql: str, args: tuple) -> list[dict]:

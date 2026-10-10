@@ -481,15 +481,19 @@ def _echo_key(role: str, ident, text) -> tuple[str, str]:
     return (f"{role}#", ident) if ident else (role, str(text or "").strip())
 
 
-def _history(project, key: str, person: str) -> list[dict]:
-    """The conversation's recent turns from the transcript — the catch-up a page is handed on
-    subscribing, the same read `product_thread` makes: EVERY LINE, the ones the room said to each
-    other included (ADR-0051 D14) — this shows the room to the people in it, and builds no
-    prompt."""
+def _history(project, key: str, person: str, *, before: str = "") -> tuple[list[dict], str]:
+    """One page of the conversation from the transcript, and the cursor of the page before it
+    (`""` at its start) — the catch-up a page is handed on subscribing, and each earlier page it
+    asks for: EVERY LINE, the ones the room said to each other included (ADR-0051 D14) — this shows
+    the room to the people in it, and builds no prompt.
+
+    PAGED, NEVER BUDGETED (#566). It read `transcript.recent`, the prompt's read: the newest turns
+    within 6,000 characters, so a person who reopened their own conversation saw its end — the
+    first four of fourteen turns, where the requirement was worked out, were unreachable."""
     from openfactory.memory import transcript
 
     agent = getattr(getattr(project, "product", None), "agent_name", "") or "product"
-    turns = transcript.recent(project, thread=key, overheard=True)
+    turns, cursor = transcript.page(project, thread=key, before=before)
     held = _held(project, key) if any(t.attachments for t in turns) else set()
     # WITH WHICH MESSAGE EACH TURN IS, AND WHICH ONE IT ANSWERS (#402). The transcript has kept
     # both since #266 slice 4 and this read dropped them, so the page could reconcile what it
@@ -501,7 +505,7 @@ def _history(project, key: str, person: str) -> list[dict]:
              "overheard": not t.addressed,
              **({"attachments": [_marked(f, held) for f in t.attachments]}
                 if t.attachments else {})}
-            for t in turns]
+            for t in turns], cursor
 
 
 def _held(project, key: str) -> set[str]:
@@ -576,13 +580,29 @@ async def serve(ws, *, actor, watch, close_code) -> None:
                                        "session": session_of(key)}))
         await fan.subscribe(sub)
         # THE CATCH-UP IS THE TRANSCRIPT, read once the subscription is live
-        turns = await asyncio.to_thread(_history, project, key, actor.id)
+        turns, earlier = await asyncio.to_thread(_history, project, key, actor.id)
         sub.echoes = [_echo_key(t["role"], t["id"] if t["role"] != "agent" else t["in_reply_to"],
                                 t["text"]) for t in turns[-ECHO_TURNS:]]
         sub.echo_until = time.monotonic() + ECHO_SECONDS
         # …AND WHAT WAITS FOR THEIR ANSWER, from the store — the page replaces its own with it
         sub.staged = await asyncio.to_thread(staged_for, project, key, actor.id)
-        fan.release(sub, {"kind": "history", "turns": turns, "staged": sub.staged})
+        # `earlier`: the cursor of the page before this one, `""` when this is the whole of it
+        fan.release(sub, {"kind": "history", "turns": turns, "staged": sub.staged,
+                          "earlier": earlier})
+
+    async def _earlier(asked: dict) -> None:
+        """THE PAGE BEFORE THE ONE SHOWN (#566), of the conversation this socket is subscribed
+        to — never one the frame names, so a page asks only for more of what it may already read.
+        """
+        sub, project = state["sub"], state.get("project")
+        if sub is None or project is None:
+            return
+        turns, earlier = await asyncio.to_thread(_history, project, sub.conversation, actor.id,
+                                                 before=str(asked.get("before") or "")[:256])
+        # UNDER THE SUBSCRIPTION'S GENERATION, like the catch-up: a page that changed conversation
+        # while this was read drops it, rather than drawing one conversation's turns on another
+        await frames.put((sub.generation, {"kind": "earlier", "turns": turns,
+                                           "earlier": earlier}))
 
     async def _say(asked: dict) -> None:
         from openfactory import actions
@@ -624,6 +644,8 @@ async def serve(ws, *, actor, watch, close_code) -> None:
                     await _subscribe(asked)
                 elif asked.get("kind") == "say":
                     await _say(asked)
+                elif asked.get("kind") == "earlier":
+                    await _earlier(asked)
             except Exception:  # noqa: BLE001 — one frame that broke must not end the socket mute
                 log.exception("the product chat could not handle a %r frame",
                               str(asked.get("kind"))[:20])
