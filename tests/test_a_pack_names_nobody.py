@@ -281,6 +281,19 @@ def test_redactions_json_is_written_even_when_nothing_was_redacted():
     assert log["salt_id"] == built.document["salt_id"]
 
 
+def test_the_log_accounts_for_every_field_the_pack_carries_as_typed():
+    """REVIEW OF #549: the partner and the profile are carried verbatim too, and the log named the
+    practitioner alone — a reader auditing a pack against it found two fields it did not explain."""
+    built = pack.assemble(_bare_reading(), profile="light", partner="altiva",
+                          practitioner=bed.PRACTITIONER)
+
+    log = json.loads(built.files["redactions.json"])
+    assert log["kept"] == ["practitioner", "partner", "profile"]
+    for field, value in (("practitioner", bed.PRACTITIONER), ("partner", "altiva"),
+                         ("profile", "light")):
+        assert value in built.files["pack.json"], f"{field} is listed as kept and is not there"
+
+
 def test_the_log_names_each_pseudonyms_category_and_never_an_original(tmp_path, monkeypatch):
     bed.build(tmp_path, monkeypatch)
 

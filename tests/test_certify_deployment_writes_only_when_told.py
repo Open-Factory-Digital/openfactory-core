@@ -75,6 +75,31 @@ def test_a_flag_with_a_value_it_cannot_take_is_refused_by_name(args, flag, nothi
     assert result.output.startswith(f"✗ {flag} "), result.output
 
 
+@pytest.mark.parametrize("practitioner,carries", [
+    ("helena.prado@altiva.io", "email"),
+    ("https://altiva.io/team/helena", "url"),
+    ("altiva.io", "host"),
+])
+def test_a_practitioner_that_is_an_address_is_refused_by_name(practitioner, carries,
+                                                              nothing_is_read):
+    """REVIEW OF #549: the practitioner is kept past every rule, so an address typed there reached
+    `pack.json` and `summary.md` of a pack that promises none — and `redactions.json` called it a
+    kept name. The pack's own rules are asked of it first."""
+    result = _invoke("--partner", "altiva", "--profile", "light", "--practitioner", practitioner)
+
+    assert result.exit_code == 2, result.output
+    assert result.output.startswith(f"✗ --practitioner {practitioner!r} carries {carries}:")
+    assert "Nothing was read and nothing was written" in result.output
+
+
+@pytest.mark.parametrize("name", ["Helena Prado", "Ana-Maria O'Neil", "J. Smith", "x"])
+def test_a_practitioners_name_is_kept_as_typed(name):
+    from openfactory.cli_refusals import certify_deployment_refusal
+
+    assert certify_deployment_refusal(partner="altiva", profile="light", practitioner=name,
+                                      window_days=90, consent=None) is None
+
+
 # ── printing and writing ────────────────────────────────────────────────────────────────────────
 
 def _listing(root):
