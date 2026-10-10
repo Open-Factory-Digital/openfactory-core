@@ -545,16 +545,25 @@ def _probe_env_file(path: str = ".env.compose") -> tuple[bool, int | None]:
 def _probe_agent_credential() -> tuple[bool, str]:
     # THE NAMES THE CONTAINER SANDBOX ACTUALLY FORWARDS, not a list invented here — the same two
     # `openfactory/onboarding/deployment.py` calls `HARNESS_ENV_CREDENTIAL`'s reason for existing.
+    # READ WHERE THE DEPLOYMENT KEEPS THEM (#560): `_settings`, the env file under the environment.
+    # The installer's preflight runs in a container whose environment holds nothing of
+    # `.env.compose`, and read from the environment alone, an upgrade was told to replace a token
+    # that was in the file and worked.
+    settings = _settings()
     for name in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"):
-        if os.environ.get(name):
-            return True, f"{name} is set"
+        if settings.get(name):
+            where = "in the environment" if os.environ.get(name) else "in .env.compose"
+            return True, f"{name} is set {where}"
     return False, "neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set"
 
 
 def _probe_ports() -> tuple[tuple[str, int], ...]:
+    # THE DEPLOYMENT'S PORTS (#560), from `_settings`: an upgrade of a deployment whose ports were
+    # moved checked the defaults, because the moved ones are in the file, not the installer's run.
+    settings = _settings()
     out = []
     for what, variable, default in PUBLISHED_PORTS:
-        raw = (os.environ.get(variable) or "").strip()
+        raw = (settings.get(variable) or "").strip()
         out.append((what, int(raw) if raw.isdigit() else default))
     return tuple(out)
 
@@ -595,6 +604,17 @@ def _env_file_rows(path: str = ".env.compose") -> dict[str, str]:
     return rows
 
 
+def _settings() -> dict[str, str]:
+    """THE DEPLOYMENT'S SETTINGS, AS THE STACK WILL READ THEM: `.env.compose`'s rows, overridden by
+    the environment — what compose itself does (#560). The one answer for every probe of a
+    deployment setting, because in the installer's run the two disagree: `install.sh` runs this in
+    the CLI image with `.env.compose` mounted in the working directory and none of it in the
+    environment. A probe reading the environment alone then told an upgrade that no agent
+    credential was visible, in the same run whose `env_file` probe had just read the file, and
+    sent the person to replace a token that worked."""
+    return {**_env_file_rows(), **os.environ}
+
+
 def _probe_sandbox_image() -> str | None:
     """Which box image this deployment will launch, asked in the order the truth actually lives in.
 
@@ -630,7 +650,7 @@ def _probe_sandbox_image() -> str | None:
         return None
     if not declared:
         return None
-    return _interpolate(str(declared), {**_env_file_rows(), **os.environ}) or None
+    return _interpolate(str(declared), _settings()) or None
 
 
 def _probe_work_dir() -> str:
@@ -665,7 +685,7 @@ def probes_for_this_machine() -> Probes:
         env_file=_probe_env_file,
         agent_credential=_probe_agent_credential,
         ports=_probe_ports,
-        preview_rows=lambda: {k: v for k, v in {**_env_file_rows(), **os.environ}.items()
+        preview_rows=lambda: {k: v for k, v in _settings().items()
                               if k.startswith("OPENFACTORY_PREVIEW_")},
     )
 
