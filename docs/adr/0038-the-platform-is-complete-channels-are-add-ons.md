@@ -5,6 +5,7 @@
 - **Relates to:** ADR-0015 (the notifier), ADR-0016 (production is never released from chat),
   ADR-0022 (provider seams), ADR-0026 (two surfaces, same floor), C-23 (#51, the action layer),
   [`docs/core/07`](../core/07-extensibility.md) (the extension model).
+- **Amended by:** [ADR-0056](./0056-who-may-act-is-one-decision-and-a-production-approval-is-a-person.md) (Proposed): the production gate's wording below — "the panel with a password" becomes the signed-in person holding the `approver` role, with a step-up (D4).
 
 ## Context
 
@@ -85,7 +86,8 @@ and this ADR is the reason it is not optional.
 ## What this does NOT mean
 
 - **Not that ADR-0016 is relaxed.** Production is still never released from chat. A channel may
-  carry the *question*; the prod gate stays the panel with a password. D3 says a channel adds no
+  carry the *question*; the prod gate stays the panel with a password (*proposed to become the
+  signed-in person with the `approver` role and a step-up, [ADR-0056](./0056-who-may-act-is-one-decision-and-a-production-approval-is-a-person.md) D4*). D3 says a channel adds no
   function — it does not say every function reaches every channel.
 - **Not that Slack loses features.** The tech-lead channel keeps its voice, its brevity and its
   presence (ADR-0026). What changes is where the capability lives, not how it reads.

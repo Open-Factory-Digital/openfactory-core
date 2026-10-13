@@ -456,6 +456,31 @@ def test_the_adr_index_status_column_is_the_ADRs_own_status():
         "nothing to measure")
 
 
+def test_every_ADR_has_a_row_in_the_index():
+    """The status-column guard above reads the rows the index HAS, so a record nobody indexed passed
+    it: the index is the front door to `docs/adr/`, and a record missing from it is one a reader
+    meets only by listing the directory."""
+    index = (ROOT / "docs" / "adr" / "README.md").read_text()
+    rows = set(re.findall(r"^\| \[(\d{4})\]\((\d{4}-[^)]+\.md)\) \|", index, re.M))
+    records = {(p.name[:4], p.name)
+               for p in (ROOT / "docs" / "adr").glob("[0-9][0-9][0-9][0-9]-*.md")}
+    assert len(records) > 30, f"only {len(records)} ADRs found — this guard is measuring nothing"
+    missing = sorted(name for _, name in records - rows)
+    assert not missing, f"docs/adr/README.md has no row linking to: {missing}"
+
+
+def test_a_link_from_one_ADR_to_another_resolves():
+    """An ADR that amends or completes another says so with a link in the other record's header,
+    and a link to a renamed or misspelt record is a pointer that leads nowhere — in the one place
+    a reader of the older decision learns it no longer stands as written."""
+    broken = []
+    for adr in sorted((ROOT / "docs" / "adr").glob("[0-9][0-9][0-9][0-9]-*.md")):
+        for target in re.findall(r"\]\((?:\./)?(\d{4}-[^)#\s]+\.md)", adr.read_text()):
+            if not (adr.parent / target).exists():
+                broken.append(f"{adr.name} -> {target}")
+    assert not broken, "an ADR links to a record that does not exist:\n  " + "\n  ".join(broken)
+
+
 def test_the_status_page_is_the_ONE_place_a_test_COUNT_is_written():
     """The other half of the same rule. A count in the README and a count in STATUS drift apart the
     first time only one of them is edited — so exactly one document carries it, and this asserts
