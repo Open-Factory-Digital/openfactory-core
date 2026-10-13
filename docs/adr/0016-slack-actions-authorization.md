@@ -3,7 +3,7 @@
 - **Status:** **Accepted; v3 shipped** (resume/skip from Slack, gated).
 - **Date:** 2026-07-22
 - **Relates to / amends:** ADR-0015 (the tech-lead: diagnosis + Slack, one brain / two triggers). This is the v3 "act" trigger + its authorization model.
-- **Amended by:** [ADR-0056](./0056-who-may-act-is-one-decision-and-a-production-approval-is-a-person.md) (Proposed): the `project.admins` allowlist becomes the `operator` role on the project (D3, D6), and the production boundary's "identity + password" becomes an approval by the signed-in person holding `approver`, with a step-up (D4).
+- **Amended by:** [ADR-0057](./0057-who-may-act-is-one-decision-and-a-production-approval-is-a-person.md) (Proposed): the `project.admins` allowlist becomes the `operator` role on the project (D3, D6), and the production boundary's "identity + password" becomes an approval by the signed-in person holding `approver`, with a step-up (D4).
 
 ## Context
 
@@ -32,7 +32,7 @@ entirely.**
   button uses, so Slack is just another transport for a decision the framework already models.
 - **Hard boundary — prod is never actionable from Slack.** Prod release / tag / deploy-to-prod stay
   human-authenticated through the approver flow (identity + password, ADR-0001 D-12 — *proposed to
-  become the signed-in person with the `approver` role and a step-up, [ADR-0056](./0056-who-may-act-is-one-decision-and-a-production-approval-is-a-person.md) D4*). Slack actions
+  become the signed-in person with the `approver` role and a step-up, [ADR-0057](./0057-who-may-act-is-one-decision-and-a-production-approval-is-a-person.md) D4*). Slack actions
   cannot promote to prod, full stop — even for an admin. Slack acts on the *floor* (unblock a parked
   job), not on *releases*.
 

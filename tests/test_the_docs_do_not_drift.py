@@ -469,6 +469,17 @@ def test_every_ADR_has_a_row_in_the_index():
     assert not missing, f"docs/adr/README.md has no row linking to: {missing}"
 
 
+def test_no_two_ADRs_share_a_number():
+    """Two records written on two branches both take the next free number, and each one's index row
+    resolves, so the guards above pass for both. The collision shows only when the second merges:
+    two files and two rows answering to one number, and every "ADR-00NN" in the docs ambiguous."""
+    by_number: dict[str, list[str]] = {}
+    for p in (ROOT / "docs" / "adr").glob("[0-9][0-9][0-9][0-9]-*.md"):
+        by_number.setdefault(p.name[:4], []).append(p.name)
+    shared = {n: sorted(names) for n, names in by_number.items() if len(names) > 1}
+    assert not shared, f"two ADRs share a number: {shared}"
+
+
 def test_a_link_from_one_ADR_to_another_resolves():
     """An ADR that amends or completes another says so with a link in the other record's header,
     and a link to a renamed or misspelt record is a pointer that leads nowhere — in the one place

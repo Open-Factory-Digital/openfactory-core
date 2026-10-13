@@ -1,4 +1,4 @@
-# ADR 0056 — Who may act is one decision the core's policy makes, and a production approval is a person, not a password
+# ADR 0057 — Who may act is one decision the core's policy makes, and a production approval is a person, not a password
 
 - **Status:** Proposed (design only — no code changes with this ADR; a maintainer accepts it in review)
 - **Date:** 2026-10-13
@@ -124,16 +124,24 @@ deployment grants roles; it cannot invent one, for the same reason it cannot inv
 | `product-owner` | `product` | everything a requester may, plus accept, drop, close, queue, release a card the client has said works (ADR-0025) | `project.product.admins` |
 | `operator` | `floor` | resume, skip, ack, merge, adjust, discard, enable, scan, diagnose | `project.admins` (Slack), a board token / `people invite --board` |
 | `approver` | `floor` | approve a production release (`approve_prod`, `promote`) — and nothing else | `prod_approvers`, `OPENFACTORY_PROD_APPROVERS`, `approvers.json` |
-| `admin` | both | everything an operator and a product-owner may, plus invite people and grant roles — **but not approve production** | the panel token and its per-person rows, the CLI |
+| `admin` | `floor`, plus the deployment's people and roles | everything an operator may, plus invite people, grant roles and change the installation — **but not act in a client's product area, and not approve production** | the panel token and its per-person rows, the CLI |
 
 - **Each catalog row declares the least role it needs** (`needs="operator"`), replacing the
   boolean `needs_admin`. `scope` stays on the row and must agree with the role's area — a test
   asserts every row's pair is one the table above can satisfy, so a row cannot be unreachable by
   construction.
+- **`admin` is not a product-owner.** Accepting, dropping, closing, queuing and releasing a client's
+  requirements stay with `product-owner` grants, exactly as `product.admins` guards them today:
+  `product/module.py::may_act` keeps the product scope "deliberately separate from the factory
+  floor's, because the client who may approve a requirement and the operator who may skip a job are
+  different trusts and always were". An admin may *grant* `product-owner`, and the grant is an
+  audit line; holding `admin` never implies it.
 - **`approver` is never implied.** Not by `admin`, not by `operator`. Releasing production is the
   one act whose blast radius the floor cannot bound (ADR-0016), and separation of duties is the
-  first question an enterprise security review asks. An admin may *grant* `approver` — to
-  themselves, too — and the grant is an audit line with their name on it, which is the point.
+  first question an enterprise security review asks. An admin may *grant* `approver` to
+  someone else, never to themselves: a self-issued `approver` grant is refused with a sentence
+  naming the rule. A deployment with a single admin grants it from the CLI, the break-glass path,
+  and the grant is recorded with `via=cli`.
 - **Grants name subject ids or groups.** `authz.may` already matches either; that stays, so an
   OIDC deployment grants a role to a directory group and never lists a person.
 - **Where grants live.** Per project, a `roles:` map on the registry entry
@@ -143,8 +151,10 @@ deployment grants roles; it cannot invent one, for the same reason it cannot inv
   role, and the OIDC group map, whose right-hand side accepts a role name
   (`OPENFACTORY_OIDC_GROUPS="eng-leads=operator,release-board=approver"`). A per-deployment grant
   holds on every project; a per-project grant holds on that project alone.
-- **The CLI is a fixed subject**, `cli`, holding `admin` — as now, but written in the table rather
-  than implied by `admin=True` at three call sites. It does not hold `approver` (D4).
+- **The CLI is a fixed subject**, `cli`, holding `admin` and `product-owner` on every project, as now:
+  a shell on the host outranks every gate (ADR-0039), and today's product rows already let the CLI
+  through (`catalog.py::_a_product_admin`). It is written in the table rather than implied by
+  `admin=True` at three call sites. It does not hold `approver` (D4).
 
 ### D4 — Production approval is identity-backed, with a step-up hook
 
@@ -197,7 +207,8 @@ add|remove` are retired.** An approver is a person the identity axis knows, hold
    the seed in D6 replaces it with explicit, visible grants. `openfactory doctor` warns while the
    store is set.
 2. **The next minor release.** The form's login/password path is refused with the remedy
-   (*"production is approved by the signed-in person; ask an admin to grant you `approver`"*). The
+   (*"production is approved by a named, signed-in person: sign in with your own credential, and ask
+   an admin to grant you `approver`"*). The
    verbs print the equivalent `openfactory roles grant approver <id>` and change nothing.
    `doctor` fails while the store is set.
 3. **The one after.** The module, the verbs and the variables are deleted. `certify`'s
@@ -225,8 +236,8 @@ for the upgrade to keep the doors it had open — and an explicit `roles:` entry
 | OIDC: a group mapped to `product` | `requester` | deployment | |
 | OIDC: a group mapped to `floor` | `operator` | deployment | |
 | OIDC: a group mapped to a role name | that role | deployment | new |
-| OIDC: a subject no mapped group covers | `admin` | deployment | today's panel answer; the derived table flags every person who holds `admin` only through this line, and `openfactory init` writes `OPENFACTORY_OIDC_DEFAULT_ROLE=viewer` for a new install |
-| the CLI | `admin` | deployment | fixed subject `cli` |
+| OIDC: a subject no mapped group covers | `admin` | deployment | today's panel answer; the derived table flags every person who holds `admin` only through this line, `openfactory doctor` warns while any does, and `openfactory init` writes `OPENFACTORY_OIDC_DEFAULT_ROLE=viewer` for a new install |
+| the CLI | `admin` and `product-owner` | deployment | fixed subject `cli`: the break-glass path, unchanged |
 
 **How a seeded name meets a signed-in person.** A grant matches a subject by exact equality of
 `Subject.id` (or of a group name), and by nothing else: the people store's id for `local`, the
@@ -252,8 +263,9 @@ neither is silent; a third looks like one and is not:
 
 Every other credential keeps at least the access it had. **This is a test, not a promise**: a
 table-driven test builds each legacy credential above, asks today's code and the new policy the
-same question for every catalog row, and fails if the new answer is narrower anywhere this table
-does not list.
+same question for every catalog row, and fails if the new answer differs, narrower **or wider**,
+anywhere the list above does not name. A credential that gained a power it did not have is as much
+a defect of the upgrade as one that lost a power it had.
 
 ## Consequences
 
