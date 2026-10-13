@@ -32,7 +32,7 @@ The facts this record rests on, read from the code at `da345623`:
 | `cli.py` | `Actor.admin` for the CLI | `admin=True`: a shell on the host outranks every gate |
 | `policy/authz.py::may` | Slack's floor allowlist and the product role's writers | `project.admins` for scope `factory`, `project.product.admins` for scope `product`; empty means nobody |
 | `actions/catalog.py`, rows that re-check | the product rows that write (`may_act` at four sites) and `baseline` | a second check *inside* the row, because `needs_admin` is true for everybody on the panel |
-| `actions/catalog.py::_approve_prod`, `_promote` | production | a login and a password typed into a form, checked by `approvals.verify_approver` against `~/.openfactory/approvers.json` (or `OPENFACTORY_APPROVERS`), and an allowlist from `OPENFACTORY_PROD_APPROVERS`, else the manifest's `prod_approvers`, else **every login in the password store** |
+| `actions/catalog.py::_approve_prod`, `_promote` | production | a login and a password typed into a form, checked by `approvals.verify_approver` against `~/.openfactory/approvers.json` (or `OPENFACTORY_APPROVERS`), and an allowlist from `OPENFACTORY_PROD_APPROVERS`, else the manifest's `prod_approvers`, else, for a project with no manifest on disk, **every login in the password store** |
 
 Four consequences follow, each one a defect somebody already hit or wrote down:
 
@@ -50,7 +50,8 @@ Four consequences follow, each one a defect somebody already hit or wrote down:
    scrypt hashes (and legacy unsalted SHA-256) for logins, has its own CLI verbs, its own env
    override, its own failure sentences and its own certify control (`C-APPROVERS`) — a third
    identity mechanism beside `local` and `oidc`, with no single sign-on, no MFA, no revocation
-   beyond editing a file, and a fallback that makes every login in it an approver of every project.
+   beyond editing a file, and a fallback that makes every login in it an approver of every project whose manifest is not
+   on disk while `OPENFACTORY_PROD_APPROVERS` is empty.
 
 ## Decision
 
@@ -80,7 +81,11 @@ policy.may(subject: Subject, *, action: ActionSpec, project) -> Decision   # Dec
   project is that project's business*. Grants live on the project in the registry, and
   deployment-wide grants live with the deployment's identity configuration (D3).
 - **Unchanged rules, now stated once:** an unknown scope or role is refused, never defaulted; an
-  anonymous subject (`Subject.known` is false) is refused anything above `viewer`; empty grants
+  anonymous subject (`Subject.known` is false) holds exactly the role its credential's own row
+  grants in D6 (the shared panel token `admin`, the shared board token `operator`, the shared
+  product token `requester`) and nothing else: no grant that names a subject id or a group can
+  match it, because it has neither, and it never approves (D4). An anonymous subject whose
+  credential grants no role is refused anything above `viewer`; empty grants
   mean nobody; the policy never raises and a grant source it cannot read refuses with
   `unavailable` (a 503 on the panel), never with "you are nobody".
 
@@ -223,12 +228,25 @@ for the upgrade to keep the doors it had open — and an explicit `roles:` entry
 | OIDC: a subject no mapped group covers | `admin` | deployment | today's panel answer; the derived table flags every person who holds `admin` only through this line, and `openfactory init` writes `OPENFACTORY_OIDC_DEFAULT_ROLE=viewer` for a new install |
 | the CLI | `admin` | deployment | fixed subject `cli` |
 
-**What narrows, and how each narrowing is said.** Exactly two things change for someone, and
-neither is silent:
+**How a seeded name meets a signed-in person.** A grant matches a subject by exact equality of
+`Subject.id` (or of a group name), and by nothing else: the people store's id for `local`, the
+configured `OPENFACTORY_OIDC_ID_CLAIM` (a verified email by default) for `oidc`. The names D6 seeds
+`approver` from (store logins, `prod_approvers`, `OPENFACTORY_PROD_APPROVERS`) were never subject ids,
+so some will match nobody: a store login `ana` is not the subject `ana@acme.example`. Matching on
+a second claim, or loosely, would widen who counts as an approver, so it is not done. Instead
+every seeded name that matches no person the identity axis knows is listed as *unmatched* in
+`OPENFACTORY_ROLES_DERIVED`, in `openfactory roles` and as an `openfactory doctor` warning, each
+with the fix (`openfactory roles grant approver <subject id>`).
+
+**What narrows, and how each narrowing is said.** Exactly two things narrow for someone, and
+neither is silent; a third looks like one and is not:
 
 - *A panel admin who approved production with a store login and password*: still works in D5
   release 1, with a deprecation line in the log and the panel; refused with a named remedy from
   release 2.
+- *An approver whose seeded name is not their subject id*: still approves the old way in D5
+  release 1, while `doctor`, `openfactory roles` and the derived table name them as unmatched with
+  the grant that fixes it; from release 2 they approve only once that grant exists.
 - *A store login that approved a project whose manifest names other approvers*: it never could —
   `_prod_allowlist` read the manifest first — so nothing changes.
 
