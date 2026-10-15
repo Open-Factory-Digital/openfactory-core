@@ -65,8 +65,8 @@ policy.may(subject: Subject, *, action: ActionSpec, project) -> Decision   # Dec
 ```
 
 - **Transports hand over a `Subject`, never a decision.** The panel, the CLI and every channel
-  add-on resolve a `Subject` through the identity axis (or, for the CLI, the fixed subject in
-  D3) and stop there. `Actor.admin` and `Actor.scopes` are removed from what a transport may set;
+  add-on resolve a `Subject` through the identity axis (or, for the CLI,
+  `Subject(id=<shell login>, via="cli")`, D3) and stop there. `Actor.admin` and `Actor.scopes` are removed from what a transport may set;
   `Actor` carries the `Subject` and `perform` asks the policy. This is the rename ADR-0039 §2
   promised: the parameter was carried from the start so this would not be a migration.
 - **`perform` asks before it runs, every time.** The current ordering is kept — scope first, then
@@ -84,7 +84,9 @@ policy.may(subject: Subject, *, action: ActionSpec, project) -> Decision   # Dec
   anonymous subject (`Subject.known` is false) holds exactly the role its credential's own row
   grants in D6 (the shared panel token `admin`, the shared board token `operator`, the shared
   product token `requester`) and nothing else: no grant that names a subject id or a group can
-  match it, because it has neither, and it never approves (D4). An anonymous subject whose
+  match it, because it has neither. It never approves (D4), never invites a person and never
+  grants a role: each of those acts records who did it, and an anonymous subject has no one to
+  record. An anonymous subject whose
   credential grants no role is refused anything above `viewer`; empty grants
   mean nobody; the policy never raises and a grant source it cannot read refuses with
   `unavailable` (a 503 on the panel), never with "you are nobody".
@@ -120,28 +122,36 @@ deployment grants roles; it cannot invent one, for the same reason it cannot inv
 | role | area | may | today's nearest equivalent |
 |---|---|---|---|
 | `viewer` | both, read only | read every page and stream its area serves; act on nothing | the reads ADR-0016 leaves open to a channel |
-| `requester` | `product` | talk to the product role, file and adjust their own cards, see their previews | a product token / product invitation whose holder is not on `product.admins` |
-| `product-owner` | `product` | everything a requester may, plus accept, drop, close, queue, release a card the client has said works (ADR-0025) | `project.product.admins` |
+| `requester` | `product` | every read a viewer has in `product`, plus talk to the product role, file a ticket or a defect, note a fact, adjust a card (`product_file_ticket`, `product_file_defect`, `product_note_fact`, `product_adjust`), and start, stop, rebuild and see previews (every `preview_*` row but `preview_own_shape`) | a product token / product invitation whose holder is not on `product.admins` |
+| `product-owner` | `product` | everything a requester may, plus accept, drop, close, queue, release a card the client has said works (ADR-0025), and let a preview run its change's own shape (`preview_own_shape`) | `project.product.admins` |
 | `operator` | `floor` | resume, skip, ack, merge, adjust, discard, enable, scan, diagnose | `project.admins` (Slack), a board token / `people invite --board` |
 | `approver` | `floor` | approve a production release (`approve_prod`, `promote`) — and nothing else | `prod_approvers`, `OPENFACTORY_PROD_APPROVERS`, `approvers.json` |
-| `admin` | `floor`, plus the deployment's people and roles | everything an operator may, plus invite people, grant roles and change the installation — **but not act in a client's product area, and not approve production** | the panel token and its per-person rows, the CLI |
+| `admin` | both, plus the deployment's people, roles and installation | everything an operator **and** a requester may, every read a viewer has in both areas, plus invite people, grant roles and change the installation — **never what only a product-owner may, and never approve production** | the panel token and its per-person rows, an invitation with no group, the OIDC catch-all, the CLI |
 
 - **Each catalog row declares the least role it needs** (`needs="operator"`), replacing the
   boolean `needs_admin`. `scope` stays on the row and must agree with the role's area — a test
   asserts every row's pair is one the table above can satisfy, so a row cannot be unreachable by
   construction.
-- **`admin` is not a product-owner.** Accepting, dropping, closing, queuing and releasing a client's
-  requirements stay with `product-owner` grants, exactly as `product.admins` guards them today:
+- **`admin` is a requester, not a product-owner.** It keeps the product-area access every panel
+  credential has today — previews, filing, notes, adjustments, reads — because those rows never
+  re-checked and the panel let every `admin=True` caller through. Accepting, dropping, closing,
+  queuing and releasing a client's requirements, and letting a preview run its change's own shape,
+  stay with `product-owner` grants, exactly as `product.admins` guards them today:
   `product/module.py::may_act` keeps the product scope "deliberately separate from the factory
   floor's, because the client who may approve a requirement and the operator who may skip a job are
-  different trusts and always were". An admin may *grant* `product-owner`, and the grant is an
-  audit line; holding `admin` never implies it.
+  different trusts and always were". An admin may *grant* `product-owner` (within the rules below),
+  and the grant is an audit line; holding `admin` never implies it.
 - **`approver` is never implied.** Not by `admin`, not by `operator`. Releasing production is the
   one act whose blast radius the floor cannot bound (ADR-0016), and separation of duties is the
-  first question an enterprise security review asks. An admin may *grant* `approver` to
-  someone else, never to themselves: a self-issued `approver` grant is refused with a sentence
-  naming the rule. A deployment with a single admin grants it from the CLI, the break-glass path,
-  and the grant is recorded with `via=cli`.
+  first question an enterprise security review asks.
+- **No grant is self-issued, for any role, and none comes from an anonymous subject.** A grant
+  whose grantee is the granter's own `Subject.id` is refused with a sentence naming the rule;
+  an anonymous subject never grants (D1). **A grant of `approver` or `product-owner` to a person
+  the granter invited is refused too**: inviting someone and then handing them the power to
+  release, or to agree a client's requirements, is a self-grant by proxy — one person minting an
+  identity and its authority. The invitation already records who vouched (`people_invite`'s
+  `by`), so the rule reads a fact the core has. The CLI is not an exception: its granter is its
+  shell login, held to the same rules as anyone's.
 - **Grants name subject ids or groups.** `authz.may` already matches either; that stays, so an
   OIDC deployment grants a role to a directory group and never lists a person.
 - **Where grants live.** Per project, a `roles:` map on the registry entry
@@ -151,10 +161,12 @@ deployment grants roles; it cannot invent one, for the same reason it cannot inv
   role, and the OIDC group map, whose right-hand side accepts a role name
   (`OPENFACTORY_OIDC_GROUPS="eng-leads=operator,release-board=approver"`). A per-deployment grant
   holds on every project; a per-project grant holds on that project alone.
-- **The CLI is a fixed subject**, `cli`, holding `admin` and `product-owner` on every project, as now:
-  a shell on the host outranks every gate (ADR-0039), and today's product rows already let the CLI
-  through (`catalog.py::_a_product_admin`). It is written in the table rather than implied by
-  `admin=True` at three call sites. It does not hold `approver` (D4).
+- **The CLI is `Subject(id=<shell login>, via="cli")`**, holding `admin` on every project — written
+  in the table rather than implied by `admin=True` at three call sites — and `product-owner` only
+  where its login is granted, as `may_act` decides today: the product rows that write already ask
+  `may_act` with the shell login, and refuse it unless `product.admins` lists that login. The one
+  row that lets the CLI past that check today, `preview_own_shape` (`catalog.py::_a_product_admin`),
+  is a narrowing D6 names. It does not hold `approver` (D4).
 
 ### D4 — Production approval is identity-backed, with a step-up hook
 
@@ -164,8 +176,9 @@ they must hold `approver` on that project, and they must have proved who they ar
 - **No second identity.** `approve_prod` and `promote` lose their `approver` and `password`
   parameters. The approver recorded on the card, the tag and the audit line is `Subject.id` —
   the signed-in person — and nothing a caller types can change it.
-- **Anonymous never approves.** The shared panel token (`UNKNOWN`), the shared product and board
-  tokens and the CLI cannot approve, whatever they hold. Each refusal names the fix: *"a
+- **Anonymous never approves, nor does the CLI.** The shared panel token (`UNKNOWN`) and the
+  shared product and board tokens cannot approve, whatever they hold; neither can the CLI, whose
+  shell login no identity provider can step up. Each refusal names the fix: *"a
   production release is approved by a named person — sign in with your own credential"*.
 - **The step-up hook.** The identity axis gains one optional declaration, asked by `getattr` like
   the others `IdentityProvider` lists:
@@ -223,11 +236,11 @@ for the upgrade to keep the doors it had open — and an explicit `roles:` entry
 
 | existing credential | becomes | scope of the grant | note |
 |---|---|---|---|
-| `OPENFACTORY_PANEL_TOKEN` (shared) | `admin`, anonymous | deployment | everything it did except approving production in its own name, which it never could: the approver was always the store login |
-| `OPENFACTORY_PANEL_TOKENS` rows | `admin` | deployment | named |
+| `OPENFACTORY_PANEL_TOKEN` (shared) | `admin`, anonymous | deployment | everything it did, its product-area access included (previews, `product_file_ticket`, `product_file_defect`, `product_note_fact`, `product_adjust`, reads), and no product-owner write, which it never had; it never approved production in its own name either (the approver was always the store login). Inviting a person narrows, below |
+| `OPENFACTORY_PANEL_TOKENS` rows | `admin` | deployment | named; the same product-area access, and no product-owner write |
 | `OPENFACTORY_BOARD_TOKEN` / `_TOKENS`, `people invite --board` | `operator` | deployment | the `floor` group, unchanged on the wire |
 | `OPENFACTORY_PRODUCT_TOKEN` / `_TOKENS`, a product invitation | `requester` | deployment | the `product` group, unchanged on the wire |
-| an invitation with no group | `admin` | deployment | what its session is today: unscoped, `admin=True` |
+| an invitation with no group | `admin` | deployment | what its session is today: unscoped, `admin=True`; the same product-area access, and no product-owner write |
 | `project.admins` | `operator` | that project | ADR-0016's allowlist |
 | `project.product.admins` | `product-owner` | that project | |
 | manifest `prod_approvers` | `approver` | that project | |
@@ -236,8 +249,8 @@ for the upgrade to keep the doors it had open — and an explicit `roles:` entry
 | OIDC: a group mapped to `product` | `requester` | deployment | |
 | OIDC: a group mapped to `floor` | `operator` | deployment | |
 | OIDC: a group mapped to a role name | that role | deployment | new |
-| OIDC: a subject no mapped group covers | `admin` | deployment | today's panel answer; the derived table flags every person who holds `admin` only through this line, `openfactory doctor` warns while any does, and `openfactory init` writes `OPENFACTORY_OIDC_DEFAULT_ROLE=viewer` for a new install |
-| the CLI | `admin` and `product-owner` | deployment | fixed subject `cli`: the break-glass path, unchanged |
+| OIDC: a subject no mapped group covers | `admin` | deployment | today's panel answer, with the same product-area access and no product-owner write; the derived table flags every person who holds `admin` only through this line, `openfactory doctor` warns while any does, and `openfactory init` writes `OPENFACTORY_OIDC_DEFAULT_ROLE=viewer` for a new install |
+| the CLI | `admin`; `product-owner` where its login is granted | deployment; that project | `Subject(id=<shell login>, via="cli")`: `product.admins` lists the login, as `may_act` reads it today |
 
 **How a seeded name meets a signed-in person.** A grant matches a subject by exact equality of
 `Subject.id` (or of a group name), and by nothing else: the people store's id for `local`, the
@@ -249,8 +262,8 @@ every seeded name that matches no person the identity axis knows is listed as *u
 `OPENFACTORY_ROLES_DERIVED`, in `openfactory roles` and as an `openfactory doctor` warning, each
 with the fix (`openfactory roles grant approver <subject id>`).
 
-**What narrows, and how each narrowing is said.** Exactly two things narrow for someone, and
-neither is silent; a third looks like one and is not:
+**What narrows, and how each narrowing is said.** Exactly the narrowings below are deliberate,
+each with its remedy, and none is silent; the last looks like one and is not:
 
 - *A panel admin who approved production with a store login and password*: still works in D5
   release 1, with a deprecation line in the log and the panel; refused with a named remedy from
@@ -258,10 +271,26 @@ neither is silent; a third looks like one and is not:
 - *An approver whose seeded name is not their subject id*: still approves the old way in D5
   release 1, while `doctor`, `openfactory roles` and the derived table name them as unmatched with
   the grant that fixes it; from release 2 they approve only once that grant exists.
+- *An anonymous subject inviting a person*: the shared panel token can reach `people_invite` on
+  main today; from D1 it is refused, with the remedy *"an invitation records who vouched — sign in
+  with your own credential (an `OPENFACTORY_PANEL_TOKENS` row, an invitation, an OIDC login)"*.
+- *An anonymous subject granting a role*: no grant verb exists today, so nothing an existing
+  deployment does stops; the verb is born refusing it, with the same remedy.
+- *A grant to oneself, of any role*: refused with the rule's sentence; the remedy is a grant by
+  another person, or a `roles:` line the host's owner writes in the registry, which
+  `OPENFACTORY_ROLES_DERIVED` and `openfactory roles` show with its source.
+- *A grant of `approver` or `product-owner` to a person the granter invited*: refused with the
+  rule's sentence; the same two remedies.
+- *The CLI letting a preview run its change's own shape* (`preview_own_shape`): passed today by
+  `_a_product_admin`'s CLI exception; from D1 it needs `product-owner`, so the shell login needs a
+  grant on that project. The remedy, named in the refusal: list the login in `product.admins`, as
+  every other product row that writes already requires.
 - *A store login that approved a project whose manifest names other approvers*: it never could —
   `_prod_allowlist` read the manifest first — so nothing changes.
 
-Every other credential keeps at least the access it had. **This is a test, not a promise**: a
+Every other credential keeps exactly the access it had — the shared panel token,
+`OPENFACTORY_PANEL_TOKENS` rows, a group-less invitation and the OIDC catch-all keep their
+product-area access and gain no product-owner write. **This is a test, not a promise**: a
 table-driven test builds each legacy credential above, asks today's code and the new policy the
 same question for every catalog row, and fails if the new answer differs, narrower **or wider**,
 anywhere the list above does not name. A credential that gained a power it did not have is as much
@@ -275,6 +304,11 @@ a defect of the upgrade as one that lost a power it had.
 - **The production approver is the signed-in person**, with the buyer's own MFA when the
   deployment uses OIDC. *"Who approved that production release"* — the question C-26 opened with —
   has a provider-backed answer, not a login somebody typed.
+- **Granting is held to who vouched.** No grant is self-issued, of any role, and a grant of
+  `approver` or `product-owner` to someone the granter invited is refused: one person cannot mint
+  an identity and hand it the power to release, or to agree a client's requirements. A deployment
+  of one person therefore grants those roles through the registry's `roles:`, written by whoever
+  owns the host and shown with its source — a visible act, never a quiet one.
 - **A third identity store disappears**, with its hashing, its env override, its CLI verbs and the
   failure sentences of `catalog.py::_approval_denied`.
 - **Costs.** The catalog's ~40 rows each change `needs_admin` to `needs`; the panel's approval
@@ -284,4 +318,7 @@ a defect of the upgrade as one that lost a power it had.
   existing deployment's approvers out.
 - **What this does not do.** It does not add a role a deployment can define, a per-action grant,
   or time-boxed grants; it does not change *who is asking* (the identity axis is untouched apart
-  from the optional `step_up`); and it does not move a capability between areas.
+  from the optional `step_up`); and it does not move a capability between areas. It does not fix
+  the anonymous `people_invite` that a review reproduced on main — the shared panel token can
+  invite a person today — which is tracked separately; this record only decides that, once D1
+  ships, an anonymous subject never invites.
