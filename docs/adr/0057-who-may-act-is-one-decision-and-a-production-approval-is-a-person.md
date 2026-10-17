@@ -55,6 +55,12 @@ Four consequences follow, each one a defect somebody already hit or wrote down:
 
 ## Decision
 
+**What this record decides, and what decides the rest.** This record decides the rules in D1–D6.
+It does not restate, row by row, what each catalog action allows today: the parity test in the
+implementation does (D6). Where a sentence here and today's behaviour disagree on something D6
+does not list as a change, today's behaviour stands and the sentence is the defect. Row-level cases
+found in review become cases of that test, not amendments to this record.
+
 ### D1 — The decision point: `policy.may(subject, action, project, on=card)`, asked once, by `perform`
 
 **One function answers *may they*, and the action layer's `perform` is its only caller on the
@@ -144,10 +150,13 @@ deployment grants roles; it cannot invent one, for the same reason it cannot inv
   that re-checks `may_act` today; `requester` is every product row that does not; the rows that
   combine `may_act` with *the card's requester* are the third case, answered by the relation below;
   and a row whose answer depends on one of its parameters is the fourth, declaring its need per
-  value. `product_discard_attachment` is that fourth case: in the caller's own conversation, which
-  the row reaches only through `conversation_for` (addressing, not permission), it needs
-  `requester`; in the room it needs `product-owner`. The parity test reads the four cases from the
-  code, so a row added later falls into one of them without anybody editing this table.
+  value. `product_discard_attachment` is that fourth case, and its need follows the conversation
+  the row resolves to, not the parameter that asked for it: a private conversation needs
+  `requester`, the room needs `product-owner`, so a caller with no conversation of its own, which
+  resolves to the room, needs `product-owner`. (Today the row decides by the parameter, which lets
+  such a caller discard from the room; that is a defect on `main`, fixed outside this record, and
+  the parity test takes the fixed behaviour.) The parity test reads the four cases from the code,
+  so a row added later falls into one of them without anybody editing this table.
 - **Vouched, as today.** A row that vouches answers yes, on any card, to a subject that holds
   `operator` and may enter `product`: an `admin`, or an `operator` who is also a `requester` — a
   subject in both a floor group and a product group (`api/app.py::_scopes_of`). A vouched subject
@@ -187,12 +196,14 @@ deployment grants roles; it cannot invent one, for the same reason it cannot inv
   provider, which decides who a person is but not who is an `admin`, two admins can grant each
   other, and on an upgraded install every subject no group map covers is an `admin` (D6). Those two
   roles therefore come only from places the deployment's admins do not control: the registry's
-  `roles:`, written by whoever owns the host, and an identity provider's group map, written by
-  whoever owns the directory. Both are shown with their source. The grant verb refuses the two
+  `roles:`, written by whoever owns the host, and the identity provider's group map
+  (`OPENFACTORY_OIDC_GROUPS`), written in the deployment's environment by whoever owns the host,
+  over groups whose members the directory's owner decides. Both are shown with their source. The grant verb refuses the two
   roles under every kind, naming those two paths.
 - **No catalog row writes a grant.** A guard test asserts that no row writes `roles:`,
-  `product.admins` or `project.admins`, so the barrier still holds once the installation verbs
-  become rows that `admin` reaches (#741).
+  `product.admins`, `project.admins`, a manifest's `prod_approvers`, `OPENFACTORY_OIDC_GROUPS` or
+  `OPENFACTORY_PROD_APPROVERS`, so the barrier still holds once the installation verbs become rows
+  that `admin` reaches (#741).
 - **The CLI's `people invite --by` goes** (`cli.py::people_invite`): it vouched as whatever it was
   typed. The CLI vouches as its shell login, like every other inviter. `env rehearse --by` stays:
   it records who approved a spend (ADR-0048), which is not a grant.
@@ -218,6 +229,11 @@ deployment grants roles; it cannot invent one, for the same reason it cannot inv
 **The person who approves a production release is the person the identity axis says is asking,
 they must hold `approver` on that project, and they must have proved who they are recently.**
 
+- **The manifest narrows, never grants.** A project's `prod_approvers`, in its own repository,
+  grants nothing: an approver of that project holds `approver` from `roles:`,
+  `OPENFACTORY_PROD_APPROVERS` or the group map, and, when the manifest names anyone, is one of
+  them. That is today's two-party shape: the repository says who, the host proves it. As today,
+  while `OPENFACTORY_PROD_APPROVERS` is set the manifest is not read (`catalog.py::_prod_allowlist`).
 - **No second identity.** `approve_prod` and `promote` lose their `approver` and `password`
   parameters. The approver recorded on the card, the tag and the audit line is `Subject.id` —
   the signed-in person — and nothing a caller types can change it.
@@ -296,9 +312,9 @@ for the upgrade to keep the doors it had open — and an explicit `roles:` entry
 | an invitation with no group | `admin` | deployment | what its session is today: unscoped, `admin=True`; the same product-area access, and no product-owner write |
 | `project.admins` | `operator` | that project | ADR-0016's allowlist |
 | `project.product.admins` | `product-owner` | that project | |
-| manifest `prod_approvers` | `approver` | that project | |
+| manifest `prod_approvers` | no grant: it narrows who of the project's approvers may approve (D4) | that project | as today; not read while `OPENFACTORY_PROD_APPROVERS` is set, as today |
 | `OPENFACTORY_PROD_APPROVERS` | `approver` | deployment | |
-| `approvers.json` / `OPENFACTORY_APPROVERS` logins, for a project with no manifest on disk while `OPENFACTORY_PROD_APPROVERS` is empty | `approver` | each such project | today's fallback, made explicit and visible; release 1 of D5 only |
+| `approvers.json` / `OPENFACTORY_APPROVERS` logins that today's allowlist admits for a project (the env list, else the manifest's, else every login when no manifest is on disk) | `approver` | each such project | today's fallback, made explicit and visible; release 1 of D5 only |
 | OIDC: a group mapped to `product` | `requester` | deployment | |
 | OIDC: a group mapped to `floor` | `operator` | deployment | |
 | OIDC: a group mapped to a role name | that role | deployment | new |
@@ -308,7 +324,7 @@ for the upgrade to keep the doors it had open — and an explicit `roles:` entry
 **How a seeded name meets a signed-in person.** A grant matches a subject by exact equality of
 `Subject.id` (or of a group name), and by nothing else: the people store's id for `local`, the
 configured `OPENFACTORY_OIDC_ID_CLAIM` (a verified email by default) for `oidc`. The names D6 seeds
-`approver` from (store logins, `prod_approvers`, `OPENFACTORY_PROD_APPROVERS`) were never subject ids,
+`approver` from (store logins, `OPENFACTORY_PROD_APPROVERS`) were never subject ids,
 so some will match nobody: a store login `ana` is not the subject `ana@acme.example`. Matching on
 a second claim, or loosely, would widen who counts as an approver, so it is not done. Instead
 every seeded name that matches no person the identity axis knows is listed as *unmatched* in
@@ -347,6 +363,10 @@ each with its remedy, and none is silent; the last looks like one and is not:
   `_a_product_admin`'s CLI exception; from D1 it needs `product-owner`, so the shell login needs a
   grant on that project. The remedy, named in the refusal: list the login in `product.admins`, as
   every product-owner row already requires.
+- *A store login that approves through a manifest's list*: in D5 release 1 it is seeded as an
+  `approver` of that project from the store, the host's, while the manifest keeps narrowing, so
+  nothing changes; from release 2 the store is gone and the grant must be in `roles:` or the group
+  map. `doctor` lists each such login from release 1, with that fix.
 - *A store login that approved a project whose manifest names other approvers*: it never could —
   `_prod_allowlist` read the manifest first — so nothing changes.
 
@@ -372,8 +392,9 @@ a defect of the upgrade as one that lost a power it had.
 - **Separation of duties is a barrier the deployment's admins do not control.** No grant is
   self-issued, of any role, and no panel or CLI verb grants `approver` or `product-owner` at all,
   under any identity kind: those come only from the registry's `roles:`, written by whoever owns
-  the host, or from an identity provider's group map, written by whoever owns the directory, each
-  shown with its source. In D5 release 1 the store's `openfactory approver add` still writes logins
+  the host, or from the identity provider's group map, written in the deployment's environment by
+  whoever owns the host over groups the directory's owner fills, each shown with its source; a
+  project's manifest only narrows who of them may approve it. In D5 release 1 the store's `openfactory approver add` still writes logins
   D6 seeds; it is a host owner's verb, so the barrier is the same, and from release 2 it is gone.
 - **A third identity store disappears**, with its hashing, its env override, its CLI verbs and the
   failure sentences of `catalog.py::_approval_denied`.
