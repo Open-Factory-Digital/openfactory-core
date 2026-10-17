@@ -180,7 +180,7 @@ def test_the_panel_keys_a_known_person_by_id_and_a_stranger_by_the_visitor_cooki
     assert known.conversation == "person:ana@acme.example", "a known person is their own key"
 
     stranger = panel._actor(_request(cookie=f"openfactory_visitor={visitor}"))
-    assert stranger.id == "panel" and stranger.conversation == f"visitor:{visitor}"
+    assert stranger.id == "" and stranger.conversation == f"visitor:{visitor}"
 
     assert panel._actor(_request()).conversation == "", "no cookie: the project-wide one"
     assert panel._actor(_request(cookie="openfactory_visitor=../x")).conversation == ""

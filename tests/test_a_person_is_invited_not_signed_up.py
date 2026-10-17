@@ -488,6 +488,54 @@ def test_the_panel_action_issues_the_link_vouched_for_by_the_actor(local):
     assert not anonymous.ok and anonymous.code == actions.INVALID and "vouched" in anonymous.message
 
 
+def test_the_panel_keeps_an_anonymous_subject_anonymous_in_the_actor(local):
+    """`_actor_of` is the one place the panel turns a subject into an actor (#759): the shared
+    token's `UNKNOWN` becomes an actor with NO id — the word "panel" may label it, never vouch."""
+    from starlette.requests import Request
+
+    from openfactory.api.app import _actor_of
+    from openfactory.identity.base import UNKNOWN
+
+    actor = _actor_of(Request({"type": "http", "headers": []}), UNKNOWN)
+
+    assert actor.id == "" and actor.via == "panel"
+    assert actor.display, "it is still CALLED something in the audit line"
+
+
+def test_the_shared_panel_token_cannot_invite_anybody(local, monkeypatch):
+    from openfactory.api.app import app
+
+    monkeypatch.setenv("OPENFACTORY_PANEL_TOKEN", "shared-secret")
+
+    r = TestClient(app).post("/api/act/people_invite",
+                             headers={"authorization": "Bearer shared-secret"},
+                             json={"params": {"person": "ana@acme.example"}})
+
+    assert r.status_code == 400 and not r.json()["ok"], r.text
+    assert r.json()["message"] == "an invitation records who vouched for the person, and nobody did"
+    assert local.rows == [] and PeopleStore().pending() == [], "no invitation was stored"
+
+
+def test_a_named_panel_row_and_a_signed_in_person_still_invite(local, monkeypatch):
+    from openfactory.api.app import app
+
+    monkeypatch.setenv("OPENFACTORY_PANEL_TOKENS", "rob-secret:roberto:Roberto")
+    client = TestClient(app)
+
+    r = client.post("/api/act/people_invite", headers={"authorization": "Bearer rob-secret"},
+                    json={"params": {"person": "ana@acme.example"}})
+    assert r.status_code == 200 and r.json()["data"]["by"] == "roberto", r.text
+
+    invite_and_register(local, "cy@acme.example", by="roberto")
+    client.post("/auth/login", data={"id": "cy@acme.example", "password": GOOD, "next": "/"},
+                follow_redirects=False)
+    session = client.cookies["openfactory_token"]
+
+    r = client.post("/api/act/people_invite", headers={"authorization": f"Bearer {session}"},
+                    json={"params": {"person": "dee@acme.example"}})
+    assert r.status_code == 200 and r.json()["data"]["by"] == "cy@acme.example", r.text
+
+
 # ── the documents, and the partition nobody may name ───────────────────────────────────────────
 
 def test_the_kind_is_declared_and_no_example_registry_names_the_partition():

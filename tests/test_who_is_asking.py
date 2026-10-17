@@ -319,7 +319,7 @@ def test_an_ANONYMOUS_caller_may_still_label_itself(app, monkeypatch):
     who = _actor(_Req())
 
     assert who.display == "nightly-deploy"
-    assert who.id == "panel", "a labelled anonymous caller must not acquire an identity"
+    assert who.id == "", "a labelled anonymous caller must not acquire an identity"
 
 
 # ── the SECOND gate — the middleware C-26 missed, found by the adversarial review ───────────────

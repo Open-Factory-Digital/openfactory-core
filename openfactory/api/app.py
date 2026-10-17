@@ -1152,9 +1152,12 @@ def _actor(request: Request) -> actions.Actor:
 
 def _actor_of(connection, subject) -> actions.Actor:
     """`_actor`, for a subject already resolved — a request's, or a socket's (`HTTPConnection`
-    either way, so the conversation is keyed off the same cookies)."""
+    either way, so the conversation is keyed off the same cookies).
+
+    AN ANONYMOUS SUBJECT STAYS ANONYMOUS (#759): its id is empty, and "panel" is only what it is
+    CALLED. An id of "panel" let the shared token vouch for an invitation as if it were somebody."""
     scopes = _scopes_of(subject)
-    return actions.Actor(id=subject.id or "panel",
+    return actions.Actor(id=subject.id or "",
                          display=subject.display or subject.id or "panel",
                          via="panel", admin=True, scopes=scopes,
                          conversation=_conversation_of(connection, subject))
