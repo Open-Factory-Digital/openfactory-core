@@ -195,8 +195,10 @@ deployment grants roles; it cannot invent one, for the same reason it cannot inv
   identities, so an invitee can grant their inviter and two invitees each other; under an identity
   provider, which decides who a person is but not who is an `admin`, two admins can grant each
   other, and on an upgraded install every subject no group map covers is an `admin` (D6). Those two
-  roles therefore come only from places the deployment's admins do not control: the registry's
-  `roles:`, written by whoever owns the host, and the identity provider's group map
+  roles therefore come only from places the deployment's admins do not control: the host's
+  configuration — the registry's `roles:` and its aliases (`project.product.admins`,
+  `OPENFACTORY_PROD_APPROVERS`, and in D5 release 1 the store), written by whoever owns the host —
+  and the identity provider's group map
   (`OPENFACTORY_OIDC_GROUPS`), written in the deployment's environment by whoever owns the host,
   over groups whose members the directory's owner decides. Both are shown with their source. The grant verb refuses the two
   roles under every kind, naming those two paths.
@@ -330,7 +332,10 @@ a second claim, or loosely, would widen who counts as an approver, so it is not 
 every seeded name that matches no person the identity axis knows is listed as *unmatched* in
 `OPENFACTORY_ROLES_DERIVED`, in `openfactory roles` and as an `openfactory doctor` warning, each
 with the fix: an `approver` line naming the subject id in the registry's `roles:`, or the
-identity provider's group map.
+identity provider's group map. A manifest's `prod_approvers` names are matched the same way and
+listed the same way, from release 1, with their own fix: name the subject id in `prod_approvers`
+— so a project whose manifest names store logins is told, before release 2, that both the grant
+and the manifest's name must change.
 
 **What narrows, and how each narrowing is said.** Exactly the narrowings below are deliberate,
 each with its remedy, and none is silent; the last looks like one and is not:
@@ -341,7 +346,8 @@ each with its remedy, and none is silent; the last looks like one and is not:
   credential).
 - *An approver whose seeded name is not their subject id*: still approves the old way in D5
   release 1, while `doctor`, `openfactory roles` and the derived table name them as unmatched with
-  the grant that fixes it; from release 2 they approve only once that grant exists.
+  the grant that fixes it; from release 2 they approve only once that grant exists and, where the
+  project's manifest names approvers, once it names their subject id.
 - *An anonymous subject inviting a person*: the shared panel token can reach `people_invite` on
   main today; from D1 it is refused, with the remedy *"an invitation records who vouched — sign in
   with your own credential (an `OPENFACTORY_PANEL_TOKENS` row, an invitation, an OIDC login)"*.
@@ -365,8 +371,9 @@ each with its remedy, and none is silent; the last looks like one and is not:
   every product-owner row already requires.
 - *A store login that approves through a manifest's list*: in D5 release 1 it is seeded as an
   `approver` of that project from the store, the host's, while the manifest keeps narrowing, so
-  nothing changes; from release 2 the store is gone and the grant must be in `roles:` or the group
-  map. `doctor` lists each such login from release 1, with that fix.
+  nothing changes; from release 2 the store is gone, so the grant must be in `roles:` or the group
+  map and the manifest must name the subject id. `doctor` lists each such login from release 1,
+  with both edits.
 - *A store login that approved a project whose manifest names other approvers*: it never could —
   `_prod_allowlist` read the manifest first — so nothing changes.
 
@@ -391,8 +398,8 @@ a defect of the upgrade as one that lost a power it had.
   has a provider-backed answer, not a login somebody typed.
 - **Separation of duties is a barrier the deployment's admins do not control.** No grant is
   self-issued, of any role, and no panel or CLI verb grants `approver` or `product-owner` at all,
-  under any identity kind: those come only from the registry's `roles:`, written by whoever owns
-  the host, or from the identity provider's group map, written in the deployment's environment by
+  under any identity kind: those come only from the host's configuration (the registry's `roles:`
+  and its aliases), written by whoever owns the host, or from the identity provider's group map, written in the deployment's environment by
   whoever owns the host over groups the directory's owner fills, each shown with its source; a
   project's manifest only narrows who of them may approve it. In D5 release 1 the store's `openfactory approver add` still writes logins
   D6 seeds; it is a host owner's verb, so the barrier is the same, and from release 2 it is gone.
