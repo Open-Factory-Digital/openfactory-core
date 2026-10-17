@@ -6,6 +6,7 @@
 - **Relates to:** ADR-0010 (single-line strict / park on impediment), ADR-0022 (provider seams),
   ADR-0026 (two surfaces, same floor), ADR-0038 (the platform is complete; channels are add-ons),
   C-24 (#52), C-25 (#54), C-26 (#55), C-32 (#68).
+- **Completed by:** [ADR-0057](./0057-who-may-act-is-one-decision-and-a-production-approval-is-a-person.md) (Proposed): §2's decision moves into the core's policy — `perform` asks `policy.may`, and `Actor.admin` stops being the transport's answer (D1).
 
 ## Context
 
@@ -72,6 +73,9 @@ one audit line per call — the first time this platform can answer *who approve
 This is deliberately half a design. **C-26 (#55) is where the decision itself moves into a policy
 the Core owns.** Carrying it as a parameter now makes that a rename rather than a migration across
 three front ends, which is the entire reason C-26 is scheduled after C-23 rather than before.
+
+> **Completed by [ADR-0057](./0057-who-may-act-is-one-decision-and-a-production-approval-is-a-person.md) D1 (Proposed):** the transport hands over a `Subject` only,
+> and `perform` asks `policy.may` for the row's declared role.
 
 ### 3. Two universal transports, so reachability is structural
 

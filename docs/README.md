@@ -27,7 +27,7 @@ page — and a reader had to guess which one was current. There is now exactly o
 | [RELEASING.md](RELEASING.md) | how a version is cut, verified and published: the release branch per minor line, candidates, backports, security releases, and the agent that runs it |
 | [agents.md](agents.md) | the agent roles the platform runs — what each one can do, what it cannot, and where to change it |
 | [developer-guide.md](developer-guide.md) | why an agent was given an instruction, answered by `openfactory explain`; where a developer or an AI engineer may change what it is given. Every command on it is run by the suite |
-| [adr/](adr/) | why it is built this way — 55 decision records |
+| [adr/](adr/) | why it is built this way — 56 decision records |
 
 ## What is not in the core arrives as an add-on
 
