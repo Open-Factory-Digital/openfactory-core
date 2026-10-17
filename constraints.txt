@@ -1,0 +1,7 @@
+# The versions docs/reference/openapi.json is generated with. Its drift test compares the committed
+# document byte for byte with what the app generates, and that output belongs to fastapi and
+# pydantic as much as to this code, so `make install` (what CI runs) holds them here. The package's
+# own requirements stay ranges. Bumping either is a pull request that writes the document again:
+# `make install`, then `python -m openfactory.api.openapi`.
+fastapi==0.143.3
+pydantic==2.14.1

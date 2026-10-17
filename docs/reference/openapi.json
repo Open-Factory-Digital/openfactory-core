@@ -1,0 +1,6062 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OpenFactory",
+    "version": "0.7.0.dev0"
+  },
+  "paths": {
+    "/api/preview/{project}/{unit}": {
+      "get": {
+        "summary": "Preview Link",
+        "description": "One unit's preview as the panel shows it, and the way into it, for somebody the panel\nalready let in (ADR-0050; the design on #265, §5.5).\n\n`{state, live, services: [{name, url, from_change, health}], images, base_moved, notes,\nmissing, stale, proposal_url, why, log_dir, expires_at, commits, can_start, ...}`. Each URL is\non the service's own host and carries a key that opens this unit only, for minutes — never the\npanel's credential, which a preview's scripts must not be able to read — and CHAINS through\nevery other exposed service's door first, so one click opens them all. The service NOT from\nthe change comes first: the screens a person opens are usually the part the change did not\ntouch.\n\n`can_start` and `stale` ARE JUDGED HERE, NOT READ: from the deployment (a runtime named) and\nthe forge (an open pull request of the unit, the head it points at now), asked at most once a\nminute per unit (`preview/demand.py`). What the job wrote when it offered the preview is never\nthe answer — the moment a person merges what was missing, the card can start one.",
+        "operationId": "preview_link_api_preview__project___unit__get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "unit",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Unit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/floor/{project}": {
+      "get": {
+        "summary": "Floor State",
+        "description": "Is the factory working? — the platform's answer, for anybody who asks (#144).\n\nA THIN MAPPING ONTO A NEUTRAL MODULE, deliberately. The nine-rung ladder that produces this\nlived in `panel.html`'s JavaScript, so it was a capability of one screen: a Slack bot asked the\nsame question would have had to re-implement it, and the two would have drifted exactly as the\nfive computations inside the panel already had (#141). This route derives nothing — every word\nit returns was decided by `openfactory.floor`.\n\nWHAT THIS ENDPOINT CANNOT ANSWER, and no server can: whether the CLIENT has gone blind. \"This\npage has heard nothing for three minutes\" is a fact about a socket in somebody's tab. A caller\nwraps that around this; see `openfactory/floor/__init__.py`.\n\nScoped like every other floor read (`_scope_of_path` → `actions.FLOOR`), so a product-scoped\ncredential is refused here exactly as it is on `/api/projects`.",
+        "operationId": "floor_state_api_v1_floor__project__get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FloorRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/floor/{project}": {
+      "get": {
+        "summary": "Floor State",
+        "description": "Is the factory working? — the platform's answer, for anybody who asks (#144).\n\nA THIN MAPPING ONTO A NEUTRAL MODULE, deliberately. The nine-rung ladder that produces this\nlived in `panel.html`'s JavaScript, so it was a capability of one screen: a Slack bot asked the\nsame question would have had to re-implement it, and the two would have drifted exactly as the\nfive computations inside the panel already had (#141). This route derives nothing — every word\nit returns was decided by `openfactory.floor`.\n\nWHAT THIS ENDPOINT CANNOT ANSWER, and no server can: whether the CLIENT has gone blind. \"This\npage has heard nothing for three minutes\" is a fact about a socket in somebody's tab. A caller\nwraps that around this; see `openfactory/floor/__init__.py`.\n\nScoped like every other floor read (`_scope_of_path` → `actions.FLOOR`), so a product-scoped\ncredential is refused here exactly as it is on `/api/projects`.",
+        "operationId": "floor_state_api_floor__project__get",
+        "deprecated": true,
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FloorRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/floor": {
+      "get": {
+        "summary": "Floor State",
+        "description": "Is the factory working? — the platform's answer, for anybody who asks (#144).\n\nA THIN MAPPING ONTO A NEUTRAL MODULE, deliberately. The nine-rung ladder that produces this\nlived in `panel.html`'s JavaScript, so it was a capability of one screen: a Slack bot asked the\nsame question would have had to re-implement it, and the two would have drifted exactly as the\nfive computations inside the panel already had (#141). This route derives nothing — every word\nit returns was decided by `openfactory.floor`.\n\nWHAT THIS ENDPOINT CANNOT ANSWER, and no server can: whether the CLIENT has gone blind. \"This\npage has heard nothing for three minutes\" is a fact about a socket in somebody's tab. A caller\nwraps that around this; see `openfactory/floor/__init__.py`.\n\nScoped like every other floor read (`_scope_of_path` → `actions.FLOOR`), so a product-scoped\ncredential is refused here exactly as it is on `/api/projects`.",
+        "operationId": "floor_state_api_v1_floor_get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FloorRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/floor": {
+      "get": {
+        "summary": "Floor State",
+        "description": "Is the factory working? — the platform's answer, for anybody who asks (#144).\n\nA THIN MAPPING ONTO A NEUTRAL MODULE, deliberately. The nine-rung ladder that produces this\nlived in `panel.html`'s JavaScript, so it was a capability of one screen: a Slack bot asked the\nsame question would have had to re-implement it, and the two would have drifted exactly as the\nfive computations inside the panel already had (#141). This route derives nothing — every word\nit returns was decided by `openfactory.floor`.\n\nWHAT THIS ENDPOINT CANNOT ANSWER, and no server can: whether the CLIENT has gone blind. \"This\npage has heard nothing for three minutes\" is a fact about a socket in somebody's tab. A caller\nwraps that around this; see `openfactory/floor/__init__.py`.\n\nScoped like every other floor read (`_scope_of_path` → `actions.FLOOR`), so a product-scoped\ncredential is refused here exactly as it is on `/api/projects`.",
+        "operationId": "floor_state_api_floor_get",
+        "deprecated": true,
+        "parameters": [
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FloorRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects": {
+      "get": {
+        "summary": "List Projects",
+        "operationId": "list_projects_api_projects_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Projects Api Projects Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Add Project",
+        "operationId": "add_project_api_projects_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewProject"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Add Project Api Projects Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{name}/enabled": {
+      "post": {
+        "summary": "Set Enabled",
+        "description": "Turn the framework on/off for a board — pickup only happens when enabled.\n\nA mapping onto the `enable` action (C-23), which is what makes the same switch reachable from\nSlack and from `openfactory act` — #51 names \"a human in Slack cannot enable a project\" as one of the\ntwo live defects the missing layer caused.",
+        "operationId": "set_enabled_api_projects__name__enabled_post",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Toggle"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Enabled Api Projects  Name  Enabled Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/address": {
+      "get": {
+        "summary": "Read Address",
+        "description": "What the door below would write for this address — the READING the panel's form asks for.\n\nTHE FORM ASKED FOR GITHUB COORDINATES WHATEVER YOU TYPED (ADR-0049 slice 4c). `Repo\n(owner/name)` and a board owner/number sat under every path, including a directory on the\noperator's own disk that has no owner and no board — and a person who filled them because the\nform asked turned their own checkout into a hosted row, which is the one thing `kind_for` was\nmoved into `doors.py` to stop.\n\nSO THE FORM ASKS THE RULE RATHER THAN CARRYING A COPY OF IT. A second implementation in\nJavaScript would be a fourth door — the three that write a row agree since 4a, and a fourth\nthat only *shows* what they will do is exactly how a surface comes to promise what the door\nrefuses. This route runs `foreign_host` and `kind_for` and nothing else; it writes nothing,\nreads no disk, and answers about the STRING it was handed.\n\n  · `kind` — what every axis would be written as, `\"\"` when the address is refused;\n  · `coordinates` — whether `owner/name` and a board apply at all;\n  · `refusal` — the door's own sentence, so the form can say it BEFORE the person fills in\n    the rest of the modal rather than after.",
+        "operationId": "read_address_api_address_get",
+        "parameters": [
+          {
+            "name": "repo_path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Repo Path"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Repo"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Provider"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Read Address Api Address Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs": {
+      "get": {
+        "summary": "List Jobs",
+        "operationId": "list_jobs_api_v1_jobs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalJobs"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs": {
+      "get": {
+        "summary": "List Jobs",
+        "operationId": "list_jobs_api_jobs_get",
+        "deprecated": true,
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalJobs"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Trigger Job",
+        "description": "Launch a local (subprocess) job. A mapping onto the `start` action (C-23) — the ref\nvalidation that used to live in `_valid_issue` now happens once, inside `perform`, for every\ntransport rather than for this route alone.",
+        "operationId": "trigger_job_api_jobs_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewJob"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Trigger Job Api Jobs Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/attention": {
+      "get": {
+        "summary": "Attention",
+        "description": "Jobs that need a human — the operator's inbox (A5). One place to see every\non-hold / needs-refinement / paused / awaiting-approval job across projects.",
+        "operationId": "attention_api_v1_attention_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalJobs"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/attention": {
+      "get": {
+        "summary": "Attention",
+        "description": "Jobs that need a human — the operator's inbox (A5). One place to see every\non-hold / needs-refinement / paused / awaiting-approval job across projects.",
+        "operationId": "attention_api_attention_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalJobs"
+                }
+              }
+            }
+          }
+        },
+        "deprecated": true
+      }
+    },
+    "/api/v1/inbox": {
+      "get": {
+        "summary": "Inbox",
+        "description": "THE single 'what needs a human right now' feed — one shape for every channel (panel,\nSlack, Telegram, curl). Each item is self-describing: `kind` says what to present, `options`\n(when present) are the executable choices, and `answer` tells the client exactly how to POST\nthe reply. API-first foundation for the future chat bots: read this, present it, POST back.",
+        "operationId": "inbox_api_v1_inbox_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboxRead"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbox": {
+      "get": {
+        "summary": "Inbox",
+        "description": "THE single 'what needs a human right now' feed — one shape for every channel (panel,\nSlack, Telegram, curl). Each item is self-describing: `kind` says what to present, `options`\n(when present) are the executable choices, and `answer` tells the client exactly how to POST\nthe reply. API-first foundation for the future chat bots: read this, present it, POST back.",
+        "operationId": "inbox_api_inbox_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboxRead"
+                }
+              }
+            }
+          }
+        },
+        "deprecated": true
+      }
+    },
+    "/api/v1/budget": {
+      "get": {
+        "summary": "Api Budget",
+        "description": "The API budget of the trackers this deployment reads — one row per credential, plus the\nONE row a single sentence renders (`summary`), so the panel can SHOW when the engine is\nthrottled — no more 'nothing is happening' with no reason.\n\nIT WAS `/api/github/ratelimit`, a vendor-named route that ran `gh` for every deployment and\nanswered `remaining: null` for BOTH \"unreadable\" and \"this vendor has no budget\". Every row\nnow carries a `state` — `ok | low | unread | not_reported` — so a Jira deployment is told the\ntruth (\"no budget on this vendor\") instead of a probe failure, and a broken `gh` on a GitHub\ndeployment is told `unread` instead of nothing. Read through `openfactory.floor`, the same\ndefinition `/api/floor` judges by; this route only renders it.",
+        "operationId": "api_budget_api_v1_budget_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetRead"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/budget": {
+      "get": {
+        "summary": "Api Budget",
+        "description": "The API budget of the trackers this deployment reads — one row per credential, plus the\nONE row a single sentence renders (`summary`), so the panel can SHOW when the engine is\nthrottled — no more 'nothing is happening' with no reason.\n\nIT WAS `/api/github/ratelimit`, a vendor-named route that ran `gh` for every deployment and\nanswered `remaining: null` for BOTH \"unreadable\" and \"this vendor has no budget\". Every row\nnow carries a `state` — `ok | low | unread | not_reported` — so a Jira deployment is told the\ntruth (\"no budget on this vendor\") instead of a probe failure, and a broken `gh` on a GitHub\ndeployment is told `unread` instead of nothing. Read through `openfactory.floor`, the same\ndefinition `/api/floor` judges by; this route only renders it.",
+        "operationId": "api_budget_api_budget_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetRead"
+                }
+              }
+            }
+          }
+        },
+        "deprecated": true
+      }
+    },
+    "/api/v1/board/{project}": {
+      "get": {
+        "summary": "Board View",
+        "description": "This project's board, through the ports — one read, for every kind (ADR-0049 D6).\n\nONE ROUTE, AND THE REASON IS THE THREE-SECOND TICK. The panel already polls the floor; a board\nthat fanned out into a request per column, or per card, would multiply that against somebody's\nhosted API every time an operator left the overlay open. So this is opened on demand, answers\nthe whole board, and takes an optional `card` for the one card a person actually opened.\n\nIT COMPARES NO PROVIDER KIND, which is the panel's standing rule. What differs between a board\nin a file on this machine and a board behind somebody's API is how often it may be re-read, and\nthat is the ROW's answer (`Watchable.poll_seconds`), not a name this surface matches on. A row\nthat does not implement it is simply not watched.\n\nTHE THREE ANSWERS TRAVEL. `None` for the columns or the cards means the board could not be\nread, `[]`/`{}` means it was read and is empty, and the page renders those differently — the\ndistinction the whole read side is built on, and the one a surface destroys by being helpful.\n\nDONE HOLDS WHAT WAS DELIVERED, NOT ONLY WHAT IS STILL OPEN (#500). Every row closes a card the\nfactory delivers, so the open cards alone left Done empty; the recent cards closed as delivered\nare read back into it (`_delivered_cards`), and the same card, drawn the same way, opens on the\nclosed card's controls and moves through the same `card_move` as any other.",
+        "operationId": "board_view_api_v1_board__project__get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "card",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Card"
+            }
+          },
+          {
+            "name": "pr",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Pr"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BoardRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/board/{project}": {
+      "get": {
+        "summary": "Board View",
+        "description": "This project's board, through the ports — one read, for every kind (ADR-0049 D6).\n\nONE ROUTE, AND THE REASON IS THE THREE-SECOND TICK. The panel already polls the floor; a board\nthat fanned out into a request per column, or per card, would multiply that against somebody's\nhosted API every time an operator left the overlay open. So this is opened on demand, answers\nthe whole board, and takes an optional `card` for the one card a person actually opened.\n\nIT COMPARES NO PROVIDER KIND, which is the panel's standing rule. What differs between a board\nin a file on this machine and a board behind somebody's API is how often it may be re-read, and\nthat is the ROW's answer (`Watchable.poll_seconds`), not a name this surface matches on. A row\nthat does not implement it is simply not watched.\n\nTHE THREE ANSWERS TRAVEL. `None` for the columns or the cards means the board could not be\nread, `[]`/`{}` means it was read and is empty, and the page renders those differently — the\ndistinction the whole read side is built on, and the one a surface destroys by being helpful.\n\nDONE HOLDS WHAT WAS DELIVERED, NOT ONLY WHAT IS STILL OPEN (#500). Every row closes a card the\nfactory delivers, so the open cards alone left Done empty; the recent cards closed as delivered\nare read back into it (`_delivered_cards`), and the same card, drawn the same way, opens on the\nclosed card's controls and moves through the same `card_move` as any other.",
+        "operationId": "board_view_api_board__project__get",
+        "deprecated": true,
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "card",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Card"
+            }
+          },
+          {
+            "name": "pr",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Pr"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BoardRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/loops/{project}": {
+      "get": {
+        "summary": "Open Loops",
+        "description": "Everything the agents are still waiting on (ADR-0021) — the VISIBLE list.\n\nThis surface is load-bearing, not decorative. The chase policy is deliberately bounded to one\nreminder, and the ledger's own docstring answers continued silence with \"a person looking at\nthe list\" — a list which, until this endpoint, existed nowhere: after its single chase, an\nunacknowledged finding was alive in the store and visible to nothing. A review finding that\ncan only be closed by a human `ack` NEEDS a place where that human can see it is still open.\n\nNOBODY ELSE'S PRIVATE ITEMS (#267 slice 3). A delivery owed to somebody in their own\nconversation with the product role carries that conversation on its loop, so it can be\nannounced there; this list is the operator's, and an operator is another person. The one rule\nthe product's agenda and chat use decides (`product/agenda.py`): the room's items — every\nagent's own among them — and the caller's own, never another person's.",
+        "operationId": "open_loops_api_v1_loops__project__get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoopsRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/loops/{project}": {
+      "get": {
+        "summary": "Open Loops",
+        "description": "Everything the agents are still waiting on (ADR-0021) — the VISIBLE list.\n\nThis surface is load-bearing, not decorative. The chase policy is deliberately bounded to one\nreminder, and the ledger's own docstring answers continued silence with \"a person looking at\nthe list\" — a list which, until this endpoint, existed nowhere: after its single chase, an\nunacknowledged finding was alive in the store and visible to nothing. A review finding that\ncan only be closed by a human `ack` NEEDS a place where that human can see it is still open.\n\nNOBODY ELSE'S PRIVATE ITEMS (#267 slice 3). A delivery owed to somebody in their own\nconversation with the product role carries that conversation on its loop, so it can be\nannounced there; this list is the operator's, and an operator is another person. The one rule\nthe product's agenda and chat use decides (`product/agenda.py`): the room's items — every\nagent's own among them — and the caller's own, never another person's.",
+        "operationId": "open_loops_api_loops__project__get",
+        "deprecated": true,
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoopsRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/messages/{project}": {
+      "get": {
+        "summary": "Channel Messages",
+        "description": "What the factory has said to this project, and what it is waiting to hear back (C-25).\n\nTHE PANEL'S HALF OF THE CHANNEL AXIS. Everything this platform produces goes to\n`ChannelAdapter.say`, and until the panel became a provider there was exactly one adapter\nbehind it — so a deployment with no Slack workspace got the messages written, delivered and\ndropped. Not a quieter factory: a silent one.\n\nPull, deliberately. There is no socket here and no push; the browser asks, which is also why\nan operator who never opens the panel is not reached. That limitation is real and is why a\ndeployment needing to reach somebody who is NOT looking still wants a push channel.",
+        "operationId": "channel_messages_api_v1_messages__project__get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagesRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/messages/{project}": {
+      "get": {
+        "summary": "Channel Messages",
+        "description": "What the factory has said to this project, and what it is waiting to hear back (C-25).\n\nTHE PANEL'S HALF OF THE CHANNEL AXIS. Everything this platform produces goes to\n`ChannelAdapter.say`, and until the panel became a provider there was exactly one adapter\nbehind it — so a deployment with no Slack workspace got the messages written, delivered and\ndropped. Not a quieter factory: a silent one.\n\nPull, deliberately. There is no socket here and no push; the browser asks, which is also why\nan operator who never opens the panel is not reached. That limitation is real and is why a\ndeployment needing to reach somebody who is NOT looking still wants a push channel.",
+        "operationId": "channel_messages_api_messages__project__get",
+        "deprecated": true,
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagesRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/messages/{project}/answer": {
+      "post": {
+        "summary": "Answer Channel Message",
+        "description": "A person answering a question the factory asked on the panel.\n\nTHE TOKEN IS THE SUBJECT, not the position in a list. It identifies what the reader was SHOWN,\nso an answer arriving after the staged proposal changed cannot be applied to its replacement —\nthe difference between approving a proposal and approving something else in its name.\n\nRefuses an answer to a question that does not exist or is already answered, rather than\nrecording it: a second click on a stale page must not read as a second decision.\n\nWHO ANSWERED IS RESOLVED, NEVER DECLARED (adversarial review of C-25/C-26). The first\nversion read `by` from the request body: the panel sent none — so every answer's audit row\nnamed nobody — and any caller holding a panel credential could write somebody ELSE's name\ninto the append-only record, the precise spoofing `_subject`'s named-person rule exists to\nprevent. The body's `by` is now ignored; identity comes from the credential, and an\nanonymous caller may at most label itself via X-OpenFactory-Actor, which carries no id.",
+        "operationId": "answer_channel_message_api_messages__project__answer_post",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Answer Channel Message Api Messages  Project  Answer Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/messages/{project}/suggestion": {
+      "post": {
+        "summary": "Approve Suggestion",
+        "description": "A person approving the one action the tech-lead proposed (#123).\n\nTHE WHOLE GESTURE IN ONE PLACE. The panel used to press this by posting to `/api/act/<verb>`\nwith a verb it had remembered in a JavaScript array — so the approval was a fresh, unattached\naction, the thread kept no record that a decision had been made, and a refresh in between lost\nthe proposal entirely.\n\nIT EXECUTES THROUGH `actions.perform`, exactly like every other door. The scope and admin check\nare applied to the credential that pressed the button, not to the one that composed the\nsuggestion — a credential that could not resume a job cannot approve a proposal to resume it,\neven one addressed to somebody else.\n\nTHE TOKEN IS THE SUBJECT, the rule this file already states for the product gate: it names WHAT\nwas proposed, about which ticket, and when. An approval that arrives after the tech-lead has\nproposed something else is refused rather than applied to the replacement, and a second click\non a stale page is refused rather than read as a second decision.",
+        "operationId": "approve_suggestion_api_messages__project__suggestion_post",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/coordinator/messages": {
+      "get": {
+        "summary": "Coordinator Messages",
+        "description": "The tech-lead coordinators' recent narrated updates (pickup / merge / deploy) — the panel\npolls this and toasts what's new; the SAME feed a future Slack/PO bot reads (API-first).",
+        "operationId": "coordinator_messages_api_coordinator_messages_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Coordinator Messages Api Coordinator Messages Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/metrics": {
+      "get": {
+        "summary": "Cost Metrics",
+        "description": "The PER-PROJECT cost dashboard payload — spend by period / model / harness / role + a\nper-task table, from the metrics table (observability.metrics). `project` scopes it (defaults\nto the first project). Best-effort: empty series when the table is unset/unreadable, so the\nCosts view renders 'no data yet' instead of erroring.\n\nAND THE PROJECT'S AUTONOMY (#85), under `autonomy`, its sentences in the project's language —\na block of this route rather than a route of its own: what it measures is the operator's, like\nthe spend beside it, and this route is already withheld from the product role whole\n(`product/model.py`, `EXCLUDED`).",
+        "operationId": "cost_metrics_api_v1_metrics_get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricsRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/metrics": {
+      "get": {
+        "summary": "Cost Metrics",
+        "description": "The PER-PROJECT cost dashboard payload — spend by period / model / harness / role + a\nper-task table, from the metrics table (observability.metrics). `project` scopes it (defaults\nto the first project). Best-effort: empty series when the table is unset/unreadable, so the\nCosts view renders 'no data yet' instead of erroring.\n\nAND THE PROJECT'S AUTONOMY (#85), under `autonomy`, its sentences in the project's language —\na block of this route rather than a route of its own: what it measures is the operator's, like\nthe spend beside it, and this route is already withheld from the product role whole\n(`product/model.py`, `EXCLUDED`).",
+        "operationId": "cost_metrics_api_metrics_get",
+        "deprecated": true,
+        "parameters": [
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricsRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{project}/{issue}/events": {
+      "get": {
+        "summary": "Job Events",
+        "description": "One run's log. A project this deployment does not have is a 404 — `registry.get` raises\nKeyError, which reached the client as a 500 and read as \"the panel is broken\" for what is\nonly a stale bookmark or a de-registered project.\n\nA remote box that could not be read is a 503 carrying the sentence (#298) — a status the page\nreads as \"couldn't read this run's log\", never a 200 with an empty journal.",
+        "operationId": "job_events_api_jobs__project___issue__events_get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "issue",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Issue"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Job Events Api Jobs  Project   Issue  Events Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{project}/{issue}/stream": {
+      "get": {
+        "summary": "Job Stream",
+        "operationId": "job_stream_api_jobs__project___issue__stream_get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "issue",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Issue"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/promote/{project}/{issue}": {
+      "get": {
+        "summary": "Promote Info",
+        "description": "Info for the prod-approval dialog: current version + suggested bumps + approvers.\n\nRead-only, and deliberately NOT an action (C-23): it does nothing, it only fetches what a\nform needs to populate itself with. `_forge_and_manifest` and `_env_prod_approvers` are\nimported from the action layer's catalog rather than duplicated here — they are the same\nlookups `approve_prod` and `promote` use to decide who may release, and a second copy is\nexactly the drift moving those two actions was meant to end.",
+        "operationId": "promote_info_api_promote__project___issue__get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "issue",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Issue"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Promote Info Api Promote  Project   Issue  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Promote Prod",
+        "description": "Authenticated human action to release to prod (ADR-0001 D-12). A mapping onto the\n`promote` action (C-23).",
+        "operationId": "promote_prod_api_promote__project___issue__post",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "issue",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Issue"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromoteBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Promote Prod Api Promote  Project   Issue  Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/temporal/jobs": {
+      "get": {
+        "summary": "Temporal Jobs",
+        "description": "Live job state from the durable engine. Degrades gracefully: if the runtime\nextra is missing or the engine is down, the panel still renders (connected=False).\n\n`jobs` IS A LIST ONLY WHEN THE ENGINE ANSWERED ONE, and `None` when nobody could ask (#298).\nEvery degraded branch sent `\"jobs\": []` beside `connected: False` and the error, and the page\nread that `[]` as the engine's answer: a running job left the screen for the few seconds one\nslow read arms `view._within`'s window, and \"Scan TO-DO now\" was offered over a floor a job\nwas holding. The frame said \"nothing is running\" about a question it never got to ask. `[]`\nstill means the engine answered and nothing is there.\n\nA LIST THAT WAS READ IS NOT THROWN AWAY with the read that failed after it. The job list is\nasked before the schedule read, so a schedule that does not answer leaves a job list that\ndid; the frame is still `connected: False` (#146 pins that), and it carries what it read.",
+        "operationId": "temporal_jobs_api_v1_temporal_jobs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EngineJobsRead"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/temporal/jobs": {
+      "get": {
+        "summary": "Temporal Jobs",
+        "description": "Live job state from the durable engine. Degrades gracefully: if the runtime\nextra is missing or the engine is down, the panel still renders (connected=False).\n\n`jobs` IS A LIST ONLY WHEN THE ENGINE ANSWERED ONE, and `None` when nobody could ask (#298).\nEvery degraded branch sent `\"jobs\": []` beside `connected: False` and the error, and the page\nread that `[]` as the engine's answer: a running job left the screen for the few seconds one\nslow read arms `view._within`'s window, and \"Scan TO-DO now\" was offered over a floor a job\nwas holding. The frame said \"nothing is running\" about a question it never got to ask. `[]`\nstill means the engine answered and nothing is there.\n\nA LIST THAT WAS READ IS NOT THROWN AWAY with the read that failed after it. The job list is\nasked before the schedule read, so a schedule that does not answer leaves a job list that\ndid; the frame is still `connected: False` (#146 pins that), and it carries what it read.",
+        "operationId": "temporal_jobs_api_temporal_jobs_get",
+        "deprecated": true,
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EngineJobsRead"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Temporal Start",
+        "description": "Launch a durable job into Temporal (needs a worker running). A mapping onto the `start`\naction (C-23) with `durable=True`.",
+        "operationId": "temporal_start_api_temporal_jobs_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewJob"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Temporal Start Api Temporal Jobs Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{project}/{issue}/detail": {
+      "get": {
+        "summary": "Job Detail",
+        "description": "The card-click briefing: runtime, cost, PR, WHY the job is in its state, the review\nverdict + findings, the added suppressions (with location), the platform gates, and the\nGitHub CI checks — so an operator understands a `pr_open` at a glance (observability, not a\nbare status). Degrades gracefully.",
+        "operationId": "job_detail_api_v1_jobs__project___issue__detail_get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "issue",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Issue"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobDetailRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{project}/{issue}/detail": {
+      "get": {
+        "summary": "Job Detail",
+        "description": "The card-click briefing: runtime, cost, PR, WHY the job is in its state, the review\nverdict + findings, the added suppressions (with location), the platform gates, and the\nGitHub CI checks — so an operator understands a `pr_open` at a glance (observability, not a\nbare status). Degrades gracefully.",
+        "operationId": "job_detail_api_jobs__project___issue__detail_get",
+        "deprecated": true,
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "issue",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Issue"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobDetailRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/temporal/stream": {
+      "get": {
+        "summary": "Temporal Stream",
+        "description": "Push the durable engine's job state to the panel AS IT CHANGES (SSE) — the floor\nupdates in real time, no client polling, no refresh. One backend poll feeds every\nconnected client; a frame is sent only when the state actually changes (plus the\nfirst frame on connect). Degrades to a single 'disconnected' frame if the engine or\nruntime extra is absent — the panel still renders.\n\nIT CARRIES WHAT THE HEADER READS, and until #139 it did not. This frame held `jobs` alone,\nwhile the page REPLACED its whole engine object with it — so `intake` (is the poller\nrunning?) and `build` (are the two halves the same code?) were wiped by every frame and\nrestored only by the 20-second safety-net poll. Measured on the pilot: for the first 20\nseconds after every reload the header said `floor: running` whatever the poller was doing,\nand the build-split banner could not appear at all. That is the contradiction the operator\nreported — a screen stating a fact it had, at that instant, no way to know.\n\nTHE SCHEDULE READS ARE CACHED, deliberately. `tv.intake` describes `1 + N + P` Temporal\nschedules — the poller, one per enabled project, one more per project declaring a `product`:\n2 for one project, 4 for three, 7 for three with products, 11 for five with products (measured\n2026-09-16, counting `get_schedule_handle(...).describe()`). Doing that every 2 seconds for\nevery connected browser turns a status line into load. Ten seconds is far inside the poller's\nown 3-minute tick, so nothing observable lags.\n\n\"3-5 schedules\" stood here until 2026-09-17, four lines under the constant #146 rewrote, and\nwas never a measurement — an unchecked number in a comment is the defect #146 is about, so it\nis corrected in the file that argument edits rather than left for the next reader to re-earn.\n\nA DISCONNECTED FRAME CARRIES `\"jobs\": None`, NEVER `[]` (#298) — the route's rule, on the frame\nthat repeated the filler on every tick. A pass that raises has read no job list: the schedule\nread comes first, and the job list is the frame's last read.",
+        "operationId": "temporal_stream_api_temporal_stream_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project}/scan": {
+      "post": {
+        "summary": "Scan Now",
+        "description": "Scan this project's board TO-DO column right now — the 'don't wait for the 3-min tick'\nbutton. A mapping onto the `scan` action (C-23); the implementation (and the three defects\nthat made it non-trivial to get right) lives in `openfactory/actions/catalog.py`.",
+        "operationId": "scan_now_api_projects__project__scan_post",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Scan Now Api Projects  Project  Scan Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/temporal/approve/{project}/{issue}": {
+      "post": {
+        "summary": "Temporal Approve",
+        "description": "Authenticated prod approval delivered as a durable signal to the parked workflow (D-12) —\nthe human-in-the-loop path of the runtime. A mapping onto the `approve_prod` action (C-23).",
+        "operationId": "temporal_approve_api_temporal_approve__project___issue__post",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "issue",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Issue"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromoteBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Temporal Approve Api Temporal Approve  Project   Issue  Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/decisions": {
+      "get": {
+        "summary": "Decisions",
+        "description": "Every job currently PARKED on a human decision, with its question + options — the\nheadless feed a panel, a Slack bot, a Telegram bot, or `curl` all read to present the choice\n(API-first: the panel is just one client). POST the picked key back to /api/temporal/act.",
+        "operationId": "decisions_api_v1_decisions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionsRead"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/decisions": {
+      "get": {
+        "summary": "Decisions",
+        "description": "Every job currently PARKED on a human decision, with its question + options — the\nheadless feed a panel, a Slack bot, a Telegram bot, or `curl` all read to present the choice\n(API-first: the panel is just one client). POST the picked key back to /api/temporal/act.",
+        "operationId": "decisions_api_decisions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionsRead"
+                }
+              }
+            }
+          }
+        },
+        "deprecated": true
+      }
+    },
+    "/api/temporal/act/{project}/{issue}": {
+      "post": {
+        "summary": "Temporal Act",
+        "description": "Single-line strict (ADR-0010): the operator's (or a bot's — same API) decision on a\nPARKED job — 'resume' (re-run / retry a rate-limit now / proceed with a chosen option) or\n'skip' (free the floor). `choice` is the DecisionRequest option key when the park asked a\nquestion.\n\nA MAPPING NOW, not an implementation (C-23). It keeps its URL and its response shape because\n`panel.html` and ADR-0010 both name them, and it forwards to the same `resume`/`skip` rows the\nSlack bot and `openfactory act` reach. That is the whole point: this route and the Slack verb used to\nbe two independent pieces of code for one decision, and the panel's `choice` — the key of the\noption the job actually offered — existed on this side only.",
+        "operationId": "temporal_act_api_temporal_act__project___issue__post",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "issue",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Issue"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Temporal Act Api Temporal Act  Project   Issue  Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/product/projects": {
+      "get": {
+        "summary": "Product Projects",
+        "description": "The projects that have a product role, for a credential that may not list the rest.\n\nTHE SURFACE NEEDS A WAY IN. A product credential is refused `/api/projects` — that is the\njobs dashboard and the whole point of scoping it — so without this a business analyst can\nonly reach their own page by being handed an exact URL, and landing anywhere else shows them\na row of 403s. Names and nothing else: which clients this deployment runs is not a thing a\nrequirements author needs, and `/api/projects` carries box health, board coordinates and the\nforge for every one of them.\n\nTHE SAME RULE THE ROWS USE, not a second one. `catalog._product_module` reads a missing\n`enabled` as TRUE — a project that declares `product:` at all has the role on — and a list\nthat defaulted the other way would hide projects the actions then happily served, which is\nthe \"fix one, forget the neighbour\" shape this codebase keeps paying for.",
+        "operationId": "product_projects_api_v1_product_projects_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductProjectsRead"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/product/projects": {
+      "get": {
+        "summary": "Product Projects",
+        "description": "The projects that have a product role, for a credential that may not list the rest.\n\nTHE SURFACE NEEDS A WAY IN. A product credential is refused `/api/projects` — that is the\njobs dashboard and the whole point of scoping it — so without this a business analyst can\nonly reach their own page by being handed an exact URL, and landing anywhere else shows them\na row of 403s. Names and nothing else: which clients this deployment runs is not a thing a\nrequirements author needs, and `/api/projects` carries box health, board coordinates and the\nforge for every one of them.\n\nTHE SAME RULE THE ROWS USE, not a second one. `catalog._product_module` reads a missing\n`enabled` as TRUE — a project that declares `product:` at all has the role on — and a list\nthat defaulted the other way would hide projects the actions then happily served, which is\nthe \"fix one, forget the neighbour\" shape this codebase keeps paying for.",
+        "operationId": "product_projects_api_product_projects_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductProjectsRead"
+                }
+              }
+            }
+          }
+        },
+        "deprecated": true
+      }
+    },
+    "/api/v1/product/{project}/attachments": {
+      "get": {
+        "summary": "Product Attachment Limits",
+        "description": "What a message may carry, said BEFORE a file is sent — the types the rows read, the largest\nfile and how many at once — and, for a conversation the page names (`room`, `session`), the\nfiles sent in it and which of them were filed into the product.",
+        "operationId": "product_attachment_limits_api_v1_product__project__attachments_get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentLimitsRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/product/{project}/attachments": {
+      "get": {
+        "summary": "Product Attachment Limits",
+        "description": "What a message may carry, said BEFORE a file is sent — the types the rows read, the largest\nfile and how many at once — and, for a conversation the page names (`room`, `session`), the\nfiles sent in it and which of them were filed into the product.",
+        "operationId": "product_attachment_limits_api_product__project__attachments_get",
+        "deprecated": true,
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentLimitsRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Product Attachment Upload",
+        "description": "Keep one file for a message in a conversation of this person's — `{ok, id, name, type,\nsize}`, or `{ok: false, message}` with the sentence the person is shown.",
+        "operationId": "product_attachment_upload_api_product__project__attachments_post",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/product/{project}/attachments/{ident}": {
+      "get": {
+        "summary": "Product Attachment",
+        "description": "A file sent in one of this person's conversations, back to them — an image shown, anything\nelse downloaded; nothing is ever rendered as a page on the panel's origin.",
+        "operationId": "product_attachment_api_product__project__attachments__ident__get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "ident",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ident"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/product/{project}/documents/file/{path}": {
+      "get": {
+        "summary": "Product Document File",
+        "description": "One of the product's documents, downloaded as it is in the context repository (#336) —\nnever rendered on the panel. Only a document the ingestion recorded is served, admitted by the\nrule every path into the repository is (`documents.ingest.admitted`: no climbing out, nothing\nhidden, no link out of the tree); whoever may read the product may download any of them.\n\nREAD AS THE INGESTION READS (review of #345): `read_document` never follows a link and reads\nonly a regular file, so a link committed in the repository serves nothing — the route does not\nrest on remembering what `admitted` covers.",
+        "operationId": "product_document_file_api_product__project__documents_file__path__get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/product/{project}/documents": {
+      "get": {
+        "summary": "Product Documents",
+        "description": "The product's context repository as its ingestion found it (#269 slice 1): how many\ndocuments were read, and EVERY ONE THAT COULD NOT BE, with its type, its audience and why.\n\nNEVER SILENT IS A SCREEN, NOT A LOG LINE (#269 point 8). A protected PDF, a format no row\nreads, an image nobody could describe — each is a document that exists and says nothing, and\nthe person who put it there is the one who can fix it. A reason in the worker's log reaches\nnobody who can.\n\nTHE SAME READ THE ROLE'S FACTS ARE WRITTEN FROM (`documents.overview`, rendered as\n`documents.md` by the read model), so a document the panel lists as unreadable is one the role\nknows exists and could not read. Under `/api/product/`, so a product credential may read it.\n`checked_at` is None before the first pass: nothing read yet is not the same as nothing there.\n\nEVERY DOCUMENT IS LISTED TO EVERY CREDENTIAL THAT MAY READ THE PRODUCT (the product owner's\ndecision of 2026-09-25): whoever talks to the product role may read everything the product\nexposes, internal documents included — the product credential no longer gets a count where\nthe floor's gets names.",
+        "operationId": "product_documents_api_v1_product__project__documents_get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentsRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/product/{project}/documents": {
+      "get": {
+        "summary": "Product Documents",
+        "description": "The product's context repository as its ingestion found it (#269 slice 1): how many\ndocuments were read, and EVERY ONE THAT COULD NOT BE, with its type, its audience and why.\n\nNEVER SILENT IS A SCREEN, NOT A LOG LINE (#269 point 8). A protected PDF, a format no row\nreads, an image nobody could describe — each is a document that exists and says nothing, and\nthe person who put it there is the one who can fix it. A reason in the worker's log reaches\nnobody who can.\n\nTHE SAME READ THE ROLE'S FACTS ARE WRITTEN FROM (`documents.overview`, rendered as\n`documents.md` by the read model), so a document the panel lists as unreadable is one the role\nknows exists and could not read. Under `/api/product/`, so a product credential may read it.\n`checked_at` is None before the first pass: nothing read yet is not the same as nothing there.\n\nEVERY DOCUMENT IS LISTED TO EVERY CREDENTIAL THAT MAY READ THE PRODUCT (the product owner's\ndecision of 2026-09-25): whoever talks to the product role may read everything the product\nexposes, internal documents included — the product credential no longer gets a count where\nthe floor's gets names.",
+        "operationId": "product_documents_api_product__project__documents_get",
+        "deprecated": true,
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentsRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/whoami": {
+      "get": {
+        "summary": "Whoami",
+        "description": "Who this credential is, and which areas it may act in.\n\nTHE ONE READ EVERY CREDENTIAL MAY MAKE, and the reason it exists: a single-page app served\nfrom a static file cannot know at load time whether the person holding the token is an\noperator or a business analyst — the credential lives in the browser, not in the HTML. Without\nthis the page would have to render the operator's dashboard and discover its own scope from a\nrow of 403s, which is indistinguishable on screen from a broken deployment.\n\n`scopes: null` means unscoped — every actor that predates #98, and the answer for an ordinary\npanel token. It is not the same as `[]`, and a front end must not read it as \"no areas\".",
+        "operationId": "whoami_api_v1_whoami_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WhoamiRead"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/whoami": {
+      "get": {
+        "summary": "Whoami",
+        "description": "Who this credential is, and which areas it may act in.\n\nTHE ONE READ EVERY CREDENTIAL MAY MAKE, and the reason it exists: a single-page app served\nfrom a static file cannot know at load time whether the person holding the token is an\noperator or a business analyst — the credential lives in the browser, not in the HTML. Without\nthis the page would have to render the operator's dashboard and discover its own scope from a\nrow of 403s, which is indistinguishable on screen from a broken deployment.\n\n`scopes: null` means unscoped — every actor that predates #98, and the answer for an ordinary\npanel token. It is not the same as `[]`, and a front end must not read it as \"no areas\".",
+        "operationId": "whoami_api_whoami_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WhoamiRead"
+                }
+              }
+            }
+          }
+        },
+        "deprecated": true
+      }
+    },
+    "/api/v1/actions": {
+      "get": {
+        "summary": "List Actions",
+        "description": "What this deployment can be asked to do — the catalogue a front end renders and a script\nreads. Open (no auth): knowing an action exists is not authority to run it, and a panel that\ncannot list its own capabilities before the operator has pasted a token is a panel that shows\nan empty screen and no explanation.",
+        "operationId": "list_actions_api_v1_actions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionsRead"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/actions": {
+      "get": {
+        "summary": "List Actions",
+        "description": "What this deployment can be asked to do — the catalogue a front end renders and a script\nreads. Open (no auth): knowing an action exists is not authority to run it, and a panel that\ncannot list its own capabilities before the operator has pasted a token is a panel that shows\nan empty screen and no explanation.",
+        "operationId": "list_actions_api_actions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionsRead"
+                }
+              }
+            }
+          }
+        },
+        "deprecated": true
+      }
+    },
+    "/api/act/{name}": {
+      "post": {
+        "summary": "Act",
+        "description": "Run any catalogued action. `POST /api/act/resume {\"params\":{\"project\":\"x\",\"issue\":\"12\"}}`.\n\nReturns the Outcome verbatim — `ok`, `message`, `code`, `data` — with the HTTP status mapped\nfrom `code`, and `detail` mirroring `message` so the panel's existing error handling (which\nreads `d.detail`, the FastAPI convention) works unchanged.",
+        "operationId": "act_api_act__name__post",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/preview/{project}/{unit}/start": {
+      "post": {
+        "summary": "Preview Start",
+        "description": "Start a preview of this unit — the `preview_start` row, as whoever the panel let in. Under\n`/api/preview/`, which both areas read: the product-scoped person who asked for the change is\nwho presses it. A second start while one is starting answers `starting`.",
+        "operationId": "preview_start_api_preview__project___unit__start_post",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "unit",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Unit"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/preview/{project}/{unit}/stop": {
+      "post": {
+        "summary": "Preview Stop",
+        "description": "Take this unit's preview down now, its logs kept — the `preview_stop` row.",
+        "operationId": "preview_stop_api_preview__project___unit__stop_post",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "unit",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Unit"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/preview/{project}/{unit}/rebuild": {
+      "post": {
+        "summary": "Preview Rebuild",
+        "description": "Build this unit's preview again from its pull request's head — the `preview_rebuild` row;\na unit with nothing up is started.",
+        "operationId": "preview_rebuild_api_preview__project___unit__rebuild_post",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "unit",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Unit"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/preview/{project}/{unit}/own_shape": {
+      "post": {
+        "summary": "Preview Own Shape",
+        "description": "Let this unit's preview run its change's own shape, at the digest its card shows, and build\nit again — the `preview_own_shape` row (#348).",
+        "operationId": "preview_own_shape_api_preview__project___unit__own_shape_post",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "unit",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Unit"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Index",
+        "operationId": "index__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/p/{project}/preview/{ref}": {
+      "get": {
+        "summary": "Project Page",
+        "description": "The same single-page app; the client reads the path to focus one project's floor.\n\nTHE DEEPER ADDRESSES ARE DECLARED HERE OR THEY 404 BEFORE THE PAGE CAN READ THEM (ADR-0049\nD6). `/p/x/board` and `/p/x/card/7` are the Board and one card, and a person who bookmarks\none, or is sent one, must land on it rather than on the server's own not-found — which is\nwhat a single-page app looks like when only its root is served.\n\n`/p/x/preview/7` IS THE LINK A CARD'S COMMENT CARRIES (#405): the page opens card 7 and, its\npreview being up, walks into it with a key minted now, for whoever the panel lets in — the\nlink itself carries no credential, so it may sit in a tracker for ever.",
+        "operationId": "project_page_p__project__preview__ref__get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/p/{project}/pr/{ref}": {
+      "get": {
+        "summary": "Project Page",
+        "description": "The same single-page app; the client reads the path to focus one project's floor.\n\nTHE DEEPER ADDRESSES ARE DECLARED HERE OR THEY 404 BEFORE THE PAGE CAN READ THEM (ADR-0049\nD6). `/p/x/board` and `/p/x/card/7` are the Board and one card, and a person who bookmarks\none, or is sent one, must land on it rather than on the server's own not-found — which is\nwhat a single-page app looks like when only its root is served.\n\n`/p/x/preview/7` IS THE LINK A CARD'S COMMENT CARRIES (#405): the page opens card 7 and, its\npreview being up, walks into it with a key minted now, for whoever the panel lets in — the\nlink itself carries no credential, so it may sit in a tracker for ever.",
+        "operationId": "project_page_p__project__pr__ref__get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/p/{project}/card/{ref}": {
+      "get": {
+        "summary": "Project Page",
+        "description": "The same single-page app; the client reads the path to focus one project's floor.\n\nTHE DEEPER ADDRESSES ARE DECLARED HERE OR THEY 404 BEFORE THE PAGE CAN READ THEM (ADR-0049\nD6). `/p/x/board` and `/p/x/card/7` are the Board and one card, and a person who bookmarks\none, or is sent one, must land on it rather than on the server's own not-found — which is\nwhat a single-page app looks like when only its root is served.\n\n`/p/x/preview/7` IS THE LINK A CARD'S COMMENT CARRIES (#405): the page opens card 7 and, its\npreview being up, walks into it with a key minted now, for whoever the panel lets in — the\nlink itself carries no credential, so it may sit in a tracker for ever.",
+        "operationId": "project_page_p__project__card__ref__get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/p/{project}/board": {
+      "get": {
+        "summary": "Project Page",
+        "description": "The same single-page app; the client reads the path to focus one project's floor.\n\nTHE DEEPER ADDRESSES ARE DECLARED HERE OR THEY 404 BEFORE THE PAGE CAN READ THEM (ADR-0049\nD6). `/p/x/board` and `/p/x/card/7` are the Board and one card, and a person who bookmarks\none, or is sent one, must land on it rather than on the server's own not-found — which is\nwhat a single-page app looks like when only its root is served.\n\n`/p/x/preview/7` IS THE LINK A CARD'S COMMENT CARRIES (#405): the page opens card 7 and, its\npreview being up, walks into it with a key minted now, for whoever the panel lets in — the\nlink itself carries no credential, so it may sit in a tracker for ever.",
+        "operationId": "project_page_p__project__board_get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "ref",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/p/{project}": {
+      "get": {
+        "summary": "Project Page",
+        "description": "The same single-page app; the client reads the path to focus one project's floor.\n\nTHE DEEPER ADDRESSES ARE DECLARED HERE OR THEY 404 BEFORE THE PAGE CAN READ THEM (ADR-0049\nD6). `/p/x/board` and `/p/x/card/7` are the Board and one card, and a person who bookmarks\none, or is sent one, must land on it rather than on the server's own not-found — which is\nwhat a single-page app looks like when only its root is served.\n\n`/p/x/preview/7` IS THE LINK A CARD'S COMMENT CARRIES (#405): the page opens card 7 and, its\npreview being up, walks into it with a key minted now, for whoever the panel lets in — the\nlink itself carries no credential, so it may sit in a tracker for ever.",
+        "operationId": "project_page_p__project__get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "ref",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "get": {
+        "summary": "Auth Login",
+        "operationId": "auth_login_auth_login_get",
+        "parameters": [
+          {
+            "name": "next",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "/",
+              "title": "Next"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Auth Login Form",
+        "description": "The local row's login: a registered person, their password, a session (#33).",
+        "operationId": "auth_login_form_auth_login_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/callback": {
+      "get": {
+        "summary": "Auth Callback",
+        "operationId": "auth_callback_auth_callback_get",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Code"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "State"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Error"
+            }
+          },
+          {
+            "name": "error_description",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Error Description"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/register": {
+      "get": {
+        "summary": "Auth Register",
+        "description": "The one-time link's landing: choose a name and a credential. 404 for a link this\ndeployment did not issue, already used or expired — one sentence for all three, on purpose.",
+        "operationId": "auth_register_auth_register_get",
+        "parameters": [
+          {
+            "name": "invite",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Invite"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Auth Register Form",
+        "operationId": "auth_register_form_auth_register_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "get": {
+        "summary": "Auth Logout",
+        "description": "Both halves of the credential: the cookie goes here, the localStorage copy goes in the page\nthis answers with — a logout that cleared one would be undone by `boot()` copying the other\nback. A registered person's session is REVOKED in the store, so the token in a copied cookie\nis dead too. The OIDC provider's own session is NOT ended: the next login is the provider's to\nanswer, silently or with a prompt, and RP-initiated logout is a later slice of #33.",
+        "operationId": "auth_logout_auth_logout_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/logs/{project}/{issue}": {
+      "get": {
+        "summary": "Logs Page",
+        "description": "The Logs page, and a single run's log at its own address.\n\nSERVED HERE TOO, not only reachable by clicking. A client-side route that the server does not\nanswer works until somebody refreshes the page or pastes the link they were sent — and then it\nis a 404 on a URL the product handed them.",
+        "operationId": "logs_page_logs__project___issue__get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "issue",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Issue"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/logs/{project}": {
+      "get": {
+        "summary": "Logs Page",
+        "description": "The Logs page, and a single run's log at its own address.\n\nSERVED HERE TOO, not only reachable by clicking. A client-side route that the server does not\nanswer works until somebody refreshes the page or pastes the link they were sent — and then it\nis a 404 on a URL the product handed them.",
+        "operationId": "logs_page_logs__project__get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "issue",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Issue"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/logs": {
+      "get": {
+        "summary": "Logs Page",
+        "description": "The Logs page, and a single run's log at its own address.\n\nSERVED HERE TOO, not only reachable by clicking. A client-side route that the server does not\nanswer works until somebody refreshes the page or pastes the link they were sent — and then it\nis a 404 on a URL the product handed them.",
+        "operationId": "logs_page_logs_get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "issue",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Issue"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/product/{project}": {
+      "get": {
+        "summary": "Product Page",
+        "description": "The product role's own surface (#98).\n\nA SEPARATE ADDRESS, not a tab on the floor, because it is a separate JOB: the person who\nwrites what the product must do is not the person who watches jobs run, and the card asks for\na page \"for a BA who has no access to the jobs dashboard\". A link to this URL is the whole\nonboarding for somebody holding a product credential.\n\nStill the same single-page app and the same open HTML shell — the credential lives in the\nbrowser and every byte of content behind this arrives through `/api/*`, which is gated and\nscoped. Serving different HTML per scope would put an authorization decision in a file that is\nhanded out unauthenticated.",
+        "operationId": "product_page_product__project__get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/factory/{project}": {
+      "get": {
+        "summary": "Factory",
+        "description": "A project's cockpit: what harness / auth / tokens it runs on, plus deep-links to\nthat project's sources of truth (its board, its workflows on the engine, its logs,\nits parameters). Read-only — a place to SEE and jump out to, never to configure.",
+        "operationId": "factory_api_factory__project__get",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Factory Api Factory  Project  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ActBody": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "choice": {
+            "type": "string",
+            "title": "Choice",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "ActBody"
+      },
+      "ActRequest": {
+        "properties": {
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "title": "ActRequest",
+        "description": "Whatever the action takes. Free-form on purpose — the catalog owns the parameter list and\n`perform` checks it in both directions (missing AND unexpected), so a typed model here would be\na second copy of that list, drifting from the first."
+      },
+      "ActionRow": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "required": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required"
+          },
+          "optional": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Optional"
+          },
+          "needs_admin": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Needs Admin"
+          },
+          "params": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Params"
+          },
+          "choose_when": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choose When"
+          },
+          "available": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available"
+          },
+          "still_in": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Still In"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "ActionRow",
+        "description": "One catalogued action. `still_in` names the old route an action not yet moved into the layer\nstill lives behind; `available` is its absence."
+      },
+      "ActionsRead": {
+        "items": {
+          "$ref": "#/components/schemas/ActionRow"
+        },
+        "type": "array",
+        "title": "ActionsRead",
+        "description": "`/api/actions` — the catalogue of what this deployment can be asked to do."
+      },
+      "AttachmentLimitsRead": {
+        "properties": {
+          "accept": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accept"
+          },
+          "max_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Bytes"
+          },
+          "max_per_message": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Per Message"
+          },
+          "files": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SentFile"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Files"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "AttachmentLimitsRead",
+        "description": "`/api/product/{project}/attachments` — what a message may carry, and, for a conversation the\npage names, the files sent in it."
+      },
+      "BoardCard": {
+        "properties": {
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
+          },
+          "column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Column"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "labels": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Labels"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "BoardCard"
+      },
+      "BoardRead": {
+        "properties": {
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "columns": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Columns"
+          },
+          "cards": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/BoardCard"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cards"
+          },
+          "poll_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poll Seconds"
+          },
+          "board": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Board"
+          },
+          "card": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CardDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pr": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PullRequestDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "BoardRead",
+        "description": "`/api/board/{project}` — `columns`/`cards` are `None` when the board could not be read."
+      },
+      "BudgetRead": {
+        "properties": {
+          "summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BudgetRow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rows": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/BudgetRow"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "BudgetRead",
+        "description": "`/api/budget` — one row per credential, and the one row a single sentence renders."
+      },
+      "BudgetRow": {
+        "properties": {
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "projects": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projects"
+          },
+          "vendor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vendor"
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource"
+          },
+          "remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
+          "reset_epoch": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reset Epoch"
+          },
+          "floor": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor"
+          },
+          "reset_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reset At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "BudgetRow",
+        "description": "One tracker credential's budget (`floor.reading.budgets`). `state` is\n`ok | low | unread | not_reported`; the numbers are there only for a vendor that reports one."
+      },
+      "CardComment": {
+        "properties": {
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "CardComment"
+      },
+      "CardDetail": {
+        "properties": {
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
+          },
+          "readable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readable"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "comments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CardComment"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comments"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "opened_by_product": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opened By Product"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "CardDetail",
+        "description": "The card a person opened: `readable: false` when it could not be read, and `comments: None`\nwhen its thread could not be, which is not `[]`."
+      },
+      "ChannelMessage": {
+        "properties": {
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ts"
+          },
+          "channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          },
+          "answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer"
+          },
+          "by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "By"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "ChannelMessage"
+      },
+      "DecisionsRead": {
+        "items": {
+          "$ref": "#/components/schemas/ParkedDecision"
+        },
+        "type": "array",
+        "title": "DecisionsRead",
+        "description": "`/api/decisions` — every job parked on a person's decision, with its question and options."
+      },
+      "DocumentsRead": {
+        "properties": {
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "product": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "read": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read"
+          },
+          "documents": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ProductDocument"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documents"
+          },
+          "listed_all": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listed All"
+          },
+          "unreadable": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/UnreadableDocument"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unreadable"
+          },
+          "internal_withheld": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Internal Withheld"
+          },
+          "unreadable_internal": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/UnreadableDocument"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unreadable Internal"
+          },
+          "documents_internal": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ProductDocument"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documents Internal"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "DocumentsRead",
+        "description": "`/api/product/{project}/documents` — `product.documents.ingest.overview`. `checked_at` is\n`None` before the first pass: nothing read yet is not nothing there."
+      },
+      "EngineJob": {
+        "properties": {
+          "workflow_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Id"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "issue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "action": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "attention": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attention"
+          },
+          "wedged": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wedged"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "EngineJob",
+        "description": "One job as the durable engine lists it (`runtime.temporal.view.list_jobs`)."
+      },
+      "EngineJobsRead": {
+        "properties": {
+          "connected": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connected"
+          },
+          "build": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build"
+          },
+          "jobs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/EngineJob"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jobs"
+          },
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "intake": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intake"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "EngineJobsRead",
+        "description": "`/api/temporal/jobs` — the jobs, live. `jobs` is `None` when nobody could ask the engine,\n`[]` when it answered and nothing is there."
+      },
+      "FloorRead": {
+        "properties": {
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "word": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Word"
+          },
+          "short": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Short"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level"
+          },
+          "rung": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rung"
+          },
+          "cause": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cause"
+          },
+          "clause": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clause"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "cmd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cmd"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Meta"
+          },
+          "actions": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actions"
+          },
+          "also": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Also"
+          },
+          "also_more": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Also More"
+          },
+          "census": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Census"
+          },
+          "census_line": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Census Line"
+          },
+          "per_project": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Project"
+          },
+          "ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ok"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "FloorRead",
+        "description": "`/api/floor[/{project}]` — whether the factory is working (`floor.ladder.FloorState`)."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HowToAnswer": {
+        "properties": {
+          "method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "HowToAnswer"
+      },
+      "InboxItem": {
+        "properties": {
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "issue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          },
+          "review": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review"
+          },
+          "parked_at": {
+            "title": "Parked At"
+          },
+          "wakes_at": {
+            "title": "Wakes At"
+          },
+          "retry_at": {
+            "title": "Retry At"
+          },
+          "answer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HowToAnswer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Option"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Options"
+          },
+          "accepted": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "InboxItem",
+        "description": "One thing a person must answer, and exactly how to POST the answer."
+      },
+      "InboxRead": {
+        "items": {
+          "$ref": "#/components/schemas/InboxItem"
+        },
+        "type": "array",
+        "title": "InboxRead",
+        "description": "`/api/inbox` — what needs a person right now, in one shape for every channel."
+      },
+      "JobDetailRead": {
+        "properties": {
+          "connected": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connected"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "JobDetailRead",
+        "description": "`/api/jobs/{project}/{issue}/detail` — one job's briefing, or `connected: false` and why."
+      },
+      "JournalJob": {
+        "properties": {
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "issue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "updated": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated"
+          },
+          "events": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Events"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "JournalJob",
+        "description": "One local job, read from its journal (`/api/jobs`, `/api/attention`)."
+      },
+      "JournalJobs": {
+        "items": {
+          "$ref": "#/components/schemas/JournalJob"
+        },
+        "type": "array",
+        "title": "JournalJobs",
+        "description": "The local jobs, the most recently updated first."
+      },
+      "LoopsRead": {
+        "properties": {
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "waiting": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/WaitingLoop"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "LoopsRead",
+        "description": "`/api/loops/{project}` — everything the agents are still waiting on."
+      },
+      "MessagesRead": {
+        "properties": {
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "messages": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ChannelMessage"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Messages"
+          },
+          "pending": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PendingQuestion"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending"
+          },
+          "suggestion": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StagedSuggestion"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "MessagesRead",
+        "description": "`/api/messages/{project}` — what the factory said to a project, and what it waits to hear."
+      },
+      "MetricsRead": {
+        "properties": {
+          "projects": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projects"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "runs": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runs"
+          },
+          "knowledge_ab": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Ab"
+          },
+          "by_day": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "By Day"
+          },
+          "by_model": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "By Model"
+          },
+          "by_harness": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "By Harness"
+          },
+          "by_role": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "By Role"
+          },
+          "tasks": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tasks"
+          },
+          "totals": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MetricsTotals"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "autonomy": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Autonomy"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "MetricsRead",
+        "description": "`/api/metrics` — `api.metrics_view.cost_dashboard`: spend by period, model, harness and role,\nthe per-task table, and the project's autonomy."
+      },
+      "MetricsTotals": {
+        "properties": {
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens"
+          },
+          "tasks": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tasks"
+          },
+          "avg_cost_per_task": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Cost Per Task"
+          },
+          "avg_wall_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Wall S"
+          },
+          "agent_runs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Runs"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "MetricsTotals"
+      },
+      "NewJob": {
+        "properties": {
+          "project": {
+            "type": "string",
+            "title": "Project"
+          },
+          "issue": {
+            "type": "string",
+            "title": "Issue"
+          },
+          "sandbox": {
+            "type": "string",
+            "title": "Sandbox",
+            "default": "worktree"
+          },
+          "promote": {
+            "type": "boolean",
+            "title": "Promote",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "project",
+          "issue"
+        ],
+        "title": "NewJob"
+      },
+      "NewProject": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "repo_path": {
+            "type": "string",
+            "title": "Repo Path"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "default": ""
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          },
+          "board_owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Board Owner"
+          },
+          "board_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Board Number"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "repo_path"
+        ],
+        "title": "NewProject"
+      },
+      "Option": {
+        "properties": {
+          "key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "consequence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consequence"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "Option"
+      },
+      "ParkedDecision": {
+        "properties": {
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "issue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "ParkedDecision"
+      },
+      "PendingQuestion": {
+        "properties": {
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ts"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Option"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Options"
+          },
+          "answer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HowToAnswer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "PendingQuestion"
+      },
+      "ProductDocument": {
+        "properties": {
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          },
+          "audience": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audience"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "ProductDocument"
+      },
+      "ProductProject": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "ProductProject"
+      },
+      "ProductProjectsRead": {
+        "items": {
+          "$ref": "#/components/schemas/ProductProject"
+        },
+        "type": "array",
+        "title": "ProductProjectsRead",
+        "description": "`/api/product/projects` — the projects that have a product role, by name and nothing else."
+      },
+      "PromoteBody": {
+        "properties": {
+          "approver": {
+            "type": "string",
+            "title": "Approver"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "comment": {
+            "type": "string",
+            "title": "Comment",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "approver",
+          "password",
+          "version"
+        ],
+        "title": "PromoteBody"
+      },
+      "PullRequestDetail": {
+        "properties": {
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "readable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readable"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "diff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diff"
+          },
+          "events": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Events"
+          },
+          "refused": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refused"
+          },
+          "can_merge_here": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Can Merge Here"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "PullRequestDetail",
+        "description": "The pull request a person opened (`app._pr_detail`). `events: None` could not be read."
+      },
+      "SentFile": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "filed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filed"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "SentFile"
+      },
+      "StagedSuggestion": {
+        "properties": {
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          },
+          "ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ts"
+          },
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "issue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue"
+          },
+          "params": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Params"
+          },
+          "labels": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Labels"
+          },
+          "live": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "act": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HowToAnswer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "StagedSuggestion",
+        "description": "The one action the tech-lead proposed; `live: false` with a `reason` when it may be shown\nand not pressed."
+      },
+      "Toggle": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "title": "Toggle"
+      },
+      "UnreadableDocument": {
+        "properties": {
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          },
+          "audience": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audience"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "UnreadableDocument"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "WaitingLoop": {
+        "properties": {
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
+          "about": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "About"
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "opened": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opened"
+          },
+          "chased": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chased"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "WaitingLoop"
+      },
+      "WhoamiRead": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "display": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display"
+          },
+          "known": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Known"
+          },
+          "scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scopes"
+          },
+          "logout": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logout"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "WhoamiRead",
+        "description": "`/api/whoami`. `scopes: None` is unscoped — not `[]`, which is no area at all."
+      }
+    }
+  }
+}

@@ -31,8 +31,9 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from pydantic import BaseModel
+from starlette.routing import compile_path
 
-from openfactory import actions, doors
+from openfactory import __version__, actions, doors
 from openfactory.api import read_models
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.floor import reading as _floor_reading
@@ -77,7 +78,8 @@ if os.environ.get("OPENFACTORY_GH_APP_KEY_CONTENT") and not os.environ.get("OPEN
 #: the deployment agrees with itself.
 PANEL_ROLE = "panel"
 
-app = FastAPI(title=os.environ.get("OPENFACTORY_PLATFORM_NAME", "OpenFactory"))
+app = FastAPI(title=os.environ.get("OPENFACTORY_PLATFORM_NAME", "OpenFactory"),
+              version=__version__)
 
 
 @app.exception_handler(EngineUnreachable)
@@ -874,7 +876,7 @@ _PRODUCT_BOARD_READ = re.compile(r"^/api/board/([^/]+)$")
 
 def _the_product_owners_board(path: str, scopes, query: str = "") -> bool:
     """Whether `path` with `query` is the board a product credential may read (#562)."""
-    found = _PRODUCT_BOARD_READ.match(path) if actions.PRODUCT in scopes else None
+    found = _PRODUCT_BOARD_READ.match(_unversioned(path)) if actions.PRODUCT in scopes else None
     if not found or any(key == "pr" and value for key, value in parse_qsl(query)):
         return False
     try:
@@ -889,7 +891,9 @@ def _the_product_owners_board(path: str, scopes, query: str = "") -> bool:
 
 
 def _scope_of_path(path: str) -> str | None:
-    """Which area a request belongs to, or None when every credential may read it."""
+    """Which area a request belongs to, or None when every credential may read it. A path under
+    `/api/v1/` is in its unversioned alias's area."""
+    path = _unversioned(path)
     if path in _UNSCOPED_ROUTES or path.startswith(_EVERY_AREA_PREFIXES):
         return None
     if path.startswith(_PRODUCT_ROUTES):
@@ -1067,6 +1071,37 @@ def _reads(model: type[BaseModel]) -> dict:
     """What a read route declares about its body (#678): the model it answers in, and that a key it
     left out stays out — `read_models` says why the bodies are unchanged by it."""
     return {"response_model": model, "response_model_exclude_unset": True}
+
+
+#: Where the reads that declare their model are served (#678): a front end of one's own builds on
+#: those shapes, so the address it reads says which version of them it is.
+API_V1 = "/api/v1"
+
+
+def _read(path: str, model: type[BaseModel]):
+    """Serve a typed read at `/api/v1/…` and at `path`, its unversioned alias, marked deprecated in
+    the API's description. ONE HANDLER, ONE MODEL, both addresses: the default front end calls the
+    alias and is answered the body the versioned read answers. The alias period and what ends it
+    are in `docs/reference/the-front-end-api.md`."""
+    def register(handler):
+        app.get(API_V1 + path.removeprefix("/api"), **_reads(model))(handler)
+        app.get(path, deprecated=True, **_reads(model))(handler)
+        _VERSIONED_READS.append(compile_path(API_V1 + path.removeprefix("/api"))[0])
+        return handler
+    return register
+
+
+#: The addresses `_read` served under `/api/v1`, as the router matches them.
+_VERSIONED_READS: list[re.Pattern] = []
+
+
+def _unversioned(path: str) -> str:
+    """`path` as its alias: the gate decides an area once, by the unversioned address. ONLY FOR A
+    TYPED READ REGISTERED UNDER `/api/v1`: any other path under it keeps its own address, so it
+    cannot inherit an area by sharing a prefix with a read — it is the floor's, and not found."""
+    if any(read.match(path) for read in _VERSIONED_READS):
+        return "/api" + path.removeprefix(API_V1)
+    return path
 
 
 # ── the panel as a transport over the action layer (C-23) ────────────────────────────────────────
@@ -1274,8 +1309,8 @@ def _box_health(project) -> dict:
     return health(project)
 
 
-@app.get("/api/floor", **_reads(read_models.FloorRead))
-@app.get("/api/floor/{project}", **_reads(read_models.FloorRead))
+@_read("/api/floor", read_models.FloorRead)
+@_read("/api/floor/{project}", read_models.FloorRead)
 async def floor_state(project: str = "") -> dict:
     """Is the factory working? — the platform's answer, for anybody who asks (#144).
 
@@ -1429,7 +1464,7 @@ def add_project(body: NewProject) -> dict:
     return {"ok": True}
 
 
-@app.get("/api/jobs", **_reads(read_models.JournalJobs))
+@_read("/api/jobs", read_models.JournalJobs)
 def list_jobs() -> list[dict]:
     jobs: list[dict] = []
     for p in ProjectRegistry().list():
@@ -1601,7 +1636,7 @@ class JournalUnreadable(RuntimeError):
 # which it already holds — so there is no second name to edit, not even an alias.
 
 
-@app.get("/api/attention", **_reads(read_models.JournalJobs))
+@_read("/api/attention", read_models.JournalJobs)
 def attention() -> list[dict]:
     """Jobs that need a human — the operator's inbox (A5). One place to see every
     on-hold / needs-refinement / paused / awaiting-approval job across projects."""
@@ -1654,7 +1689,7 @@ async def _stamp_the_acceptances(jobs: list[dict]) -> None:
             job["accepted"] = accepted
 
 
-@app.get("/api/inbox", **_reads(read_models.InboxRead))
+@_read("/api/inbox", read_models.InboxRead)
 async def inbox() -> list[dict]:
     """THE single 'what needs a human right now' feed — one shape for every channel (panel,
     Slack, Telegram, curl). Each item is self-describing: `kind` says what to present, `options`
@@ -1825,7 +1860,7 @@ async def inbox() -> list[dict]:
     return out
 
 
-@app.get("/api/budget", **_reads(read_models.BudgetRead))
+@_read("/api/budget", read_models.BudgetRead)
 def api_budget() -> dict:
     """The API budget of the trackers this deployment reads — one row per credential, plus the
     ONE row a single sentence renders (`summary`), so the panel can SHOW when the engine is
@@ -1947,7 +1982,7 @@ def _updated_before(stamp: str, since) -> bool:
     return (then if then.tzinfo else then.replace(tzinfo=UTC)) < since
 
 
-@app.get("/api/board/{project}", **_reads(read_models.BoardRead))
+@_read("/api/board/{project}", read_models.BoardRead)
 def board_view(project: str, card: str = "", pr: str = "") -> dict:
     """This project's board, through the ports — one read, for every kind (ADR-0049 D6).
 
@@ -2135,7 +2170,7 @@ def _card_detail(tracker, ref: str, *, project=None, board=None,
     }
 
 
-@app.get("/api/loops/{project}", **_reads(read_models.LoopsRead))
+@_read("/api/loops/{project}", read_models.LoopsRead)
 def open_loops(project: str, request: Request) -> dict:
     """Everything the agents are still waiting on (ADR-0021) — the VISIBLE list.
 
@@ -2200,7 +2235,7 @@ def _readable_store(what: str):
                    f"nothing was decided; try again in a moment.") from exc
 
 
-@app.get("/api/messages/{project}", **_reads(read_models.MessagesRead))
+@_read("/api/messages/{project}", read_models.MessagesRead)
 def channel_messages(project: str) -> dict:
     """What the factory has said to this project, and what it is waiting to hear back (C-25).
 
@@ -2702,7 +2737,7 @@ async def product_stream(ws: WebSocket) -> None:
     await product_chat.serve(ws, actor=actor, watch=gate, close_code=_close_code)
 
 
-@app.get("/api/metrics", **_reads(read_models.MetricsRead))
+@_read("/api/metrics", read_models.MetricsRead)
 def cost_metrics(project: str | None = None) -> dict:
     """The PER-PROJECT cost dashboard payload — spend by period / model / harness / role + a
     per-task table, from the metrics table (observability.metrics). `project` scopes it (defaults
@@ -2920,7 +2955,7 @@ def _temporal_or_503():
         raise HTTPException(status_code=503, detail=str(exc)[:300]) from exc
 
 
-@app.get("/api/temporal/jobs", **_reads(read_models.EngineJobsRead))
+@_read("/api/temporal/jobs", read_models.EngineJobsRead)
 async def temporal_jobs() -> dict:
     """Live job state from the durable engine. Degrades gracefully: if the runtime
     extra is missing or the engine is down, the panel still renders (connected=False).
@@ -2980,7 +3015,7 @@ async def temporal_jobs() -> dict:
                 "build": build}
 
 
-@app.get("/api/jobs/{project}/{issue}/detail", **_reads(read_models.JobDetailRead))
+@_read("/api/jobs/{project}/{issue}/detail", read_models.JobDetailRead)
 async def job_detail(project: str, issue: str) -> dict:
     """The card-click briefing: runtime, cost, PR, WHY the job is in its state, the review
     verdict + findings, the added suppressions (with location), the platform gates, and the
@@ -3158,7 +3193,7 @@ class ActBody(BaseModel):
     choice: str = ""  # a DecisionRequest option key, when the park carried options
 
 
-@app.get("/api/decisions", **_reads(read_models.DecisionsRead))
+@_read("/api/decisions", read_models.DecisionsRead)
 async def decisions() -> list[dict]:
     """Every job currently PARKED on a human decision, with its question + options — the
     headless feed a panel, a Slack bot, a Telegram bot, or `curl` all read to present the choice
@@ -3222,7 +3257,7 @@ class ActRequest(BaseModel):
     params: dict[str, object] = {}
 
 
-@app.get("/api/product/projects", **_reads(read_models.ProductProjectsRead))
+@_read("/api/product/projects", read_models.ProductProjectsRead)
 def product_projects() -> list[dict]:
     """The projects that have a product role, for a credential that may not list the rest.
 
@@ -3267,7 +3302,7 @@ def _attachment_conversation(request: Request, proj) -> tuple[str, str]:
     return product_chat.conversation_for(_actor(request), proj, asked)
 
 
-@app.get("/api/product/{project}/attachments", **_reads(read_models.AttachmentLimitsRead))
+@_read("/api/product/{project}/attachments", read_models.AttachmentLimitsRead)
 def product_attachment_limits(project: str, request: Request) -> dict:
     """What a message may carry, said BEFORE a file is sent — the types the rows read, the largest
     file and how many at once — and, for a conversation the page names (`room`, `session`), the
@@ -3376,7 +3411,7 @@ def product_document_file(project: str, path: str) -> Response:
                              "Cache-Control": "private, no-store"})
 
 
-@app.get("/api/product/{project}/documents", **_reads(read_models.DocumentsRead))
+@_read("/api/product/{project}/documents", read_models.DocumentsRead)
 def product_documents(project: str, request: Request) -> dict:
     """The product's context repository as its ingestion found it (#269 slice 1): how many
     documents were read, and EVERY ONE THAT COULD NOT BE, with its type, its audience and why.
@@ -3409,7 +3444,7 @@ def product_documents(project: str, request: Request) -> dict:
                                                     "not none. Try again in a moment.") from exc
 
 
-@app.get("/api/whoami", **_reads(read_models.WhoamiRead))
+@_read("/api/whoami", read_models.WhoamiRead)
 def whoami(request: Request) -> dict:
     """Who this credential is, and which areas it may act in.
 
@@ -3445,7 +3480,7 @@ def _has_form_login() -> bool:
         return False
 
 
-@app.get("/api/actions", **_reads(read_models.ActionsRead))
+@_read("/api/actions", read_models.ActionsRead)
 def list_actions() -> list[dict]:
     """What this deployment can be asked to do — the catalogue a front end renders and a script
     reads. Open (no auth): knowing an action exists is not authority to run it, and a panel that

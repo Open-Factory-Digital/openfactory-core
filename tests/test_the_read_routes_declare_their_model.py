@@ -259,6 +259,21 @@ def test_each_listed_read_answers_in_its_declared_model_and_unchanged(bench, mon
         f"{at}: declaring its model changed the body it sends")
 
 
+def _versioned(path: str) -> str:
+    return "/api/v1" + path.removeprefix("/api")
+
+
+@pytest.mark.parametrize(("route", "at"), CALLED, ids=[at for _r, at in CALLED])
+def test_each_listed_read_answers_the_same_body_under_api_v1(bench, route, at):
+    """#678 slice b: the read is served under `/api/v1/…`, and the unversioned path the default
+    front end calls is an alias of it — the same handler, the same model, the same body."""
+    assert _model(_versioned(route)) is _model(route), f"{route}: the two forms declare apart"
+    old, new = bench.get(at), bench.get(_versioned(at))
+    assert old.status_code == new.status_code == 200, (at, old.status_code, new.status_code)
+
+    assert _as_sent(new.text) == _as_sent(old.text), f"{at}: /api/v1 answers another body"
+
+
 def test_a_degraded_engine_frame_is_still_its_declared_model(bench, monkeypatch):
     """The two shapes a durable-engine read degrades into — no engine to ask — are the same model."""
     from openfactory.api import app as api

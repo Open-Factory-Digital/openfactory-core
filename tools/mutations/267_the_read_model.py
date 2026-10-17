@@ -126,13 +126,13 @@ MUTATIONS = [
 
     # ── 3. the guard discovers the routes itself ───────────────────────────────────────────────
     ("the discovery forgets a route that takes the project as a query parameter", GUARD,
-     '            and ("{project}" in r.path\n'
-     '                 or any(q.name == "project" for q in r.dependant.query_params))]',
-     '            and ("{project}" in r.path)]'),
+     '              and ("{project}" in r.path\n'
+     '                   or any(q.name == "project" for q in r.dependant.query_params))]',
+     '              and ("{project}" in r.path)]'),
 
     ("the discovery finds only the routes the project closes", GUARD,
-     '            and ("{project}" in r.path\n',
-     '            and (r.path.endswith("{project}")\n'),
+     '              and ("{project}" in r.path\n',
+     '              and (r.path.endswith("{project}")\n'),
 
     ("the guard never opens a card or a pull request — it reads the board without its drawer",
      GUARD,

@@ -38,6 +38,6 @@ MUTATIONS = [
 
     # 5. the declaration itself
     ("the budget is declared without a model", APP,
-     '@app.get("/api/budget", **_reads(read_models.BudgetRead))',
+     '@_read("/api/budget", read_models.BudgetRead)',
      '@app.get("/api/budget")'),
 ]

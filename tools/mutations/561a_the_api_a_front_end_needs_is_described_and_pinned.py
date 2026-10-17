@@ -21,7 +21,7 @@ CHAT = "openfactory/api/product_chat.py"
 MUTATIONS = [
     # 1. the table
     ("a route the contract forgot goes unseen", CONTRACT,
-     "| GET | `/api/whoami` | every credential | who this credential is, and which areas it may "
+     "| GET | `/api/v1/whoami` | every credential | who this credential is, and which areas it may "
      "act in |\n", ""),
     ("a row for a route that is gone stays", CONTRACT,
      "| GET | `/api/budget` | floor |", "| GET | `/api/budgets` | floor |"),

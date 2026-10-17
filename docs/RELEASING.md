@@ -142,6 +142,14 @@ release/0.5          ●───●─────●────●───�
 - **The package declares exactly the tag without its `v`.** `pyproject.toml` and
   `openfactory/__init__.py` say `0.5.0-rc.1` for the tag `v0.5.0-rc.1` (PyPI normalises it to
   `0.5.0rc1`). The release workflow refuses a tag whose version the package does not declare.
+- **Every change of the declared version regenerates the API's description in the same commit.**
+  `docs/reference/openapi.json` carries the version as `info.version`, so a bump that leaves it
+  behind fails `test_the_committed_document_is_the_one_the_app_generates`. Write it again with
+  `python -m openfactory.api.openapi` — the command that test prints — after editing the version
+  line: the next development version, a candidate's and a final's alike. Write it from an
+  environment `make install` built: `constraints.txt` pins the fastapi and pydantic the document is
+  generated with, so the release manager's venv cannot decide what is committed. Bumping either pin
+  is a pull request of its own that writes the document again.
 - **The final release is tagged on the commit the last candidate was verified on**, plus the one
   commit that declares the final version and assembles its notes. Nothing else changes between the
   last candidate and the release: what everybody installs is what was tested.
@@ -264,14 +272,17 @@ Wednesday  the final, when nothing found in a candidate is open
 2. **Create `release/x.y` from the green commit of `main`** (release manager's go):
    `git push origin <sha>:refs/heads/release/x.y`.
 3. **On `main`, a pull request declares the next development version**: "The package declares
-   x.(y+1).0.dev0".
+   x.(y+1).0.dev0", with `docs/reference/openapi.json` written again by
+   `python -m openfactory.api.openapi` (see [Versions](#versions)).
 
 **Exit:** `release/x.y` exists and is protected by the `release/*` ruleset.
 
 ### 3. A release candidate
 
 1. **A pull request on `release/x.y`** declares the candidate's version: "The package declares
-   x.y.z-rc.N". The reviewer approves it, and it is squash-merged.
+   x.y.z-rc.N", with `docs/reference/openapi.json` written again by
+   `python -m openfactory.api.openapi` (see [Versions](#versions)). The reviewer approves it, and it
+   is squash-merged.
 2. **Tag the merge commit** (release manager's go):
    ```bash
    git fetch origin

@@ -52,8 +52,8 @@ help: ## show these targets
 # ── develop ──────────────────────────────────────────────────────────────────
 .PHONY: install test lint check
 install: ## install the package + dev tools (+ the add-on packages under addons/, where they exist)
-	pip install -e '.[dev]'
-	@for d in addons/*/; do if [ -f "$$d/pyproject.toml" ]; then pip install -e "$$d"; fi; done
+	pip install -c constraints.txt -e '.[dev]'
+	@for d in addons/*/; do if [ -f "$$d/pyproject.toml" ]; then pip install -c constraints.txt -e "$$d"; fi; done
 
 test: ## run the test suite
 	python -m pytest -q

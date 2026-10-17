@@ -38,11 +38,17 @@ MEMBERS = ("acme-web", "acme-api")
 # ── the discovery ───────────────────────────────────────────────────────────────────────────────
 
 def project_routes() -> list[APIRoute]:
-    """Every panel route that answers something about ONE project — found, never listed."""
-    return [r for r in panel.app.routes
-            if isinstance(r, APIRoute) and "GET" in r.methods and r.path.startswith("/api/")
-            and ("{project}" in r.path
-                 or any(q.name == "project" for q in r.dependant.query_params))]
+    """Every panel route that answers something about ONE project — found, never listed. A read
+    under `/api/v1/` served by the same handler as its unversioned alias (#678) answers the same
+    body, so it is read once, at the alias `EXCLUDED` names; one with no such alias is read too."""
+    routes = [r for r in panel.app.routes
+              if isinstance(r, APIRoute) and "GET" in r.methods and r.path.startswith("/api/")
+              and ("{project}" in r.path
+                   or any(q.name == "project" for q in r.dependant.query_params))]
+    aliased = {(r.path, r.endpoint) for r in routes}
+    return [r for r in routes
+            if not (r.path.startswith(f"{panel.API_V1}/")
+                    and ("/api" + r.path.removeprefix(panel.API_V1), r.endpoint) in aliased)]
 
 
 def _unfilled(route: APIRoute) -> set[str]:

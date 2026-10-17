@@ -58,38 +58,38 @@ means any credential the deployment issued.
 | method | path | area | what it is |
 |---|---|---|---|
 | POST | `/api/act/{name}` | floor; a `product_*` row: product | run one catalogued action: `{"params": {...}}` |
-| GET | `/api/actions` | floor | the catalogue of actions this deployment can be asked to do |
+| GET | `/api/actions` | floor | deprecated alias of `/api/v1/actions` |
 | GET | `/api/address` | floor | how a repository address would be read, before a project is added |
-| GET | `/api/attention` | floor | the jobs that need a person |
-| GET | `/api/board/{project}` | floor; product, for a project with a product role and without `?pr=` | a project's board, as its tracker holds it |
-| GET | `/api/budget` | floor | the API budget of the trackers this deployment reads |
+| GET | `/api/attention` | floor | deprecated alias of `/api/v1/attention` |
+| GET | `/api/board/{project}` | floor; product, for a project with a product role and without `?pr=` | deprecated alias of `/api/v1/board/{project}` |
+| GET | `/api/budget` | floor | deprecated alias of `/api/v1/budget` |
 | GET | `/api/coordinator/messages` | floor | the tech-lead's recent narrated updates |
-| GET | `/api/decisions` | floor | every job parked on a person's decision, with its question and options |
+| GET | `/api/decisions` | floor | deprecated alias of `/api/v1/decisions` |
 | GET | `/api/factory/{project}` | floor | a project's cockpit: harness, credentials, links |
-| GET | `/api/floor` | floor | whether the factory is working, for every project |
-| GET | `/api/floor/{project}` | floor | whether the factory is working, for one project |
-| GET | `/api/inbox` | floor | what needs a person right now, in one shape for every channel |
-| GET | `/api/jobs` | floor | the local jobs |
+| GET | `/api/floor` | floor | deprecated alias of `/api/v1/floor` |
+| GET | `/api/floor/{project}` | floor | deprecated alias of `/api/v1/floor/{project}` |
+| GET | `/api/inbox` | floor | deprecated alias of `/api/v1/inbox` |
+| GET | `/api/jobs` | floor | deprecated alias of `/api/v1/jobs` |
 | POST | `/api/jobs` | floor | start a local job (the `start` action) |
-| GET | `/api/jobs/{project}/{issue}/detail` | floor | one job's briefing: runtime, cost, pull request, why it is where it is |
+| GET | `/api/jobs/{project}/{issue}/detail` | floor | deprecated alias of `/api/v1/jobs/{project}/{issue}/detail` |
 | GET | `/api/jobs/{project}/{issue}/events` | floor | one run's log |
 | GET | `/api/jobs/{project}/{issue}/stream` | floor | one run's log as it is written (stream, section 4) |
-| GET | `/api/loops/{project}` | floor | everything the agents are still waiting on |
-| GET | `/api/messages/{project}` | floor | what the factory has said to a project, and what it waits to hear |
+| GET | `/api/loops/{project}` | floor | deprecated alias of `/api/v1/loops/{project}` |
+| GET | `/api/messages/{project}` | floor | deprecated alias of `/api/v1/messages/{project}` |
 | POST | `/api/messages/{project}/answer` | floor | a person's answer to a question the factory asked |
 | POST | `/api/messages/{project}/suggestion` | floor | a person's yes to the one action the tech-lead proposed |
-| GET | `/api/metrics` | floor | spend by period, model, harness and role |
+| GET | `/api/metrics` | floor | deprecated alias of `/api/v1/metrics` |
 | GET | `/api/preview/{project}/{unit}` | every credential | one unit's preview, and a key into it |
 | POST | `/api/preview/{project}/{unit}/own_shape` | every credential | let a preview run its change's own shape |
 | POST | `/api/preview/{project}/{unit}/rebuild` | every credential | build a preview again from its pull request's head |
 | POST | `/api/preview/{project}/{unit}/start` | every credential | start a preview |
 | POST | `/api/preview/{project}/{unit}/stop` | every credential | take a preview down, its logs kept |
-| GET | `/api/product/projects` | product | the projects that have a product role |
+| GET | `/api/product/projects` | product | deprecated alias of `/api/v1/product/projects` |
 | WS | `/api/product/stream` | product | the conversation with the product role (stream, section 4) |
-| GET | `/api/product/{project}/attachments` | product | what a message may carry, before a file is sent |
+| GET | `/api/product/{project}/attachments` | product | deprecated alias of `/api/v1/product/{project}/attachments` |
 | POST | `/api/product/{project}/attachments` | product | keep one file for a message |
 | GET | `/api/product/{project}/attachments/{ident}` | product | a file sent in one of the person's conversations |
-| GET | `/api/product/{project}/documents` | product | the product's documents as their ingestion found them |
+| GET | `/api/product/{project}/documents` | product | deprecated alias of `/api/v1/product/{project}/documents` |
 | GET | `/api/product/{project}/documents/file/{path:path}` | product | one of the product's documents, as it is |
 | GET | `/api/projects` | floor | the projects this deployment runs |
 | POST | `/api/projects` | floor | add a project |
@@ -100,16 +100,61 @@ means any credential the deployment issued.
 | WS | `/api/stream` | floor | what changed, as it changes (stream, section 4) |
 | POST | `/api/temporal/act/{project}/{issue}` | floor | a person's decision on a parked job |
 | POST | `/api/temporal/approve/{project}/{issue}` | floor | the production approval, sent to the parked job |
-| GET | `/api/temporal/jobs` | floor | the jobs, live, from the durable engine |
+| GET | `/api/temporal/jobs` | floor | deprecated alias of `/api/v1/temporal/jobs` |
 | POST | `/api/temporal/jobs` | floor | start a durable job (the `start` action) |
 | GET | `/api/temporal/stream` | floor | the durable jobs' state as it changes (stream, section 4) |
-| GET | `/api/whoami` | every credential | who this credential is, and which areas it may act in |
+| GET | `/api/v1/actions` | floor | the catalogue of actions this deployment can be asked to do |
+| GET | `/api/v1/attention` | floor | the jobs that need a person |
+| GET | `/api/v1/board/{project}` | floor; product, for a project with a product role and without `?pr=` | a project's board, as its tracker holds it |
+| GET | `/api/v1/budget` | floor | the API budget of the trackers this deployment reads |
+| GET | `/api/v1/decisions` | floor | every job parked on a person's decision, with its question and options |
+| GET | `/api/v1/floor` | floor | whether the factory is working, for every project |
+| GET | `/api/v1/floor/{project}` | floor | whether the factory is working, for one project |
+| GET | `/api/v1/inbox` | floor | what needs a person right now, in one shape for every channel |
+| GET | `/api/v1/jobs` | floor | the local jobs |
+| GET | `/api/v1/jobs/{project}/{issue}/detail` | floor | one job's briefing: runtime, cost, pull request, why it is where it is |
+| GET | `/api/v1/loops/{project}` | floor | everything the agents are still waiting on |
+| GET | `/api/v1/messages/{project}` | floor | what the factory has said to a project, and what it waits to hear |
+| GET | `/api/v1/metrics` | floor | spend by period, model, harness and role |
+| GET | `/api/v1/product/projects` | product | the projects that have a product role |
+| GET | `/api/v1/product/{project}/attachments` | product | what a message may carry, before a file is sent |
+| GET | `/api/v1/product/{project}/documents` | product | the product's documents as their ingestion found them |
+| GET | `/api/v1/temporal/jobs` | floor | the jobs, live, from the durable engine |
+| GET | `/api/v1/whoami` | every credential | who this credential is, and which areas it may act in |
+| GET | `/api/whoami` | every credential | deprecated alias of `/api/v1/whoami` |
 <!-- routes:end -->
 
 **Payloads.** The API describes its own HTTP routes at `/openapi.json` (and `/docs`), served
-whether or not the default front end is on. Most routes answer a JSON object without a declared
-response model, so that description names the route and its parameters and not every field; the
-fields a screen reads today are the default front end's, in `openfactory/api/panel.html`.
+whether or not the default front end is on, and the same description is committed with the code
+as [`openapi.json`](openapi.json), its `info.version` the package's version. Every read under
+`/api/v1/` declares the model it answers in, so the description names its fields; a route outside
+`/api/v1/` answers a JSON object without a declared model, and the description names the route and
+its parameters and not every field. The committed file is generated, never edited by hand:
+`tests/test_the_api_is_versioned.py` fails when it is not what the app generates, and
+
+```bash
+python -m openfactory.api.openapi
+```
+
+writes it again.
+
+### Versions, and the aliases
+
+**`/api/v1/` is the address a front end of its own builds on.** Each read that declares its model
+is served there, and its unversioned path — the one the default front end calls — answers the same
+body from the same handler: it is an **alias**, marked `deprecated: true` in the description. A
+credential reaches a versioned path exactly where it reaches its alias: the area of
+`/api/v1/<rest>` is the area of `/api/<rest>`.
+
+**The alias period.** The unversioned aliases answer for the whole of the 0.7 series. They are
+removed no earlier than 0.8.0, only in a release whose notes say so under "what an installation
+must do", and never in a patch release. A screen that calls `/api/v1/` today has nothing to do then.
+
+**The deprecation policy, for `/api/v1/` itself.** Within a version a read only grows: a field may
+be added, and none is removed, renamed or given another type. A change that would break a reader is
+a new version, served beside the old one, and the old one then follows the same course as the
+aliases: marked `deprecated: true` in the description, announced in the release notes, and
+answered for at least one more minor release.
 
 ## 4. Streams
 
@@ -127,4 +172,6 @@ while it stays open: a credential that stops opening its path ends the stream.
 
 This is slice 1 of #561. The default front end still ships with the API, in the same process and
 image, and is turned off by its setting; moving it into a module of its own, built only on this
-contract, and a guide with a minimal example are the slices after it.
+contract, and a guide with a minimal example are the slices after it. Only the reads that declare
+their model are under `/api/v1/` (#678); the actions, the streams and the other reads are not
+versioned yet, and the refusals do not yet carry a reason a program can read.
