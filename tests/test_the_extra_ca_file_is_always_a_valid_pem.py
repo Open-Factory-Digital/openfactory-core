@@ -38,6 +38,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 #: Every image whose ENV names the file. `cli.Dockerfile` deliberately does NOT set the variable —
 #: it only writes pip's config — so it is not in this list and must not be added without its ENV.
+#: Its block is run, with a certificate and without, in `test_the_cli_image_trusts_an_extra_root.py`
+#: (#738: nothing had ever run it with one, and it could not build).
 DOCKERFILES = ("docker/base-python.Dockerfile", "docker/worker.Dockerfile")
 
 _ENV = re.compile(r"^ENV NODE_EXTRA_CA_CERTS=(\S+)\s*$", re.MULTILINE)

@@ -60,6 +60,21 @@ FROM python:3.12-slim
 # `/etc/pip.conf` rather than `PIP_CERT`: a file can be written before the tool that reads it
 # runs, and a file that was never written is a stronger no-op than an environment variable always
 # set to something. It IS pip's global config on Linux, wherever pip came from.
+#
+# THE SYSTEM BUNDLE, NOT `certifi`'s (#738). This block used to append to the bundle
+# `python -c 'import certifi; …'` named, and at this line the image is a bare `python:3.12-slim`,
+# which has no `certifi`:
+#
+#   $ docker run --rm python:3.12-slim python -c 'import certifi'
+#   ModuleNotFoundError: No module named 'certifi'
+#
+# so `cat … >> ""` failed and the layer stopped on `exit code: 2` — every build WITH a certificate,
+# which is the only build this block is for, from #20 until #738. The base image does ship the
+# system bundle, `/etc/ssl/certs/ca-certificates.crt` (224 449 bytes, measured), so the extra root
+# is APPENDED there, keeping every system root, and pip is pointed at that file. It is also the
+# store the worker image extends (`update-ca-certificates`), so both images trust the same thing.
+# `tests/test_the_cli_image_trusts_an_extra_root.py` runs this block in that base, with a
+# certificate and without one.
 COPY docker/extra-ca/ /tmp/extra-ca/
 RUN set -eu; \
     mkdir -p /usr/local/share/openfactory; \
@@ -69,10 +84,8 @@ RUN set -eu; \
       cat "$crt" >> /usr/local/share/openfactory/extra-ca.crt; \
     done; \
     if [ -s /usr/local/share/openfactory/extra-ca.crt ]; then \
-      cat /usr/local/share/openfactory/extra-ca.crt >> \
-        "$(python -c 'import certifi; print(certifi.where())')"; \
-      printf '[global]\ncert = %s\n' \
-        "$(python -c 'import certifi; print(certifi.where())')" > /etc/pip.conf; \
+      cat /usr/local/share/openfactory/extra-ca.crt >> /etc/ssl/certs/ca-certificates.crt; \
+      printf '[global]\ncert = %s\n' /etc/ssl/certs/ca-certificates.crt > /etc/pip.conf; \
     fi; \
     rm -rf /tmp/extra-ca
 
