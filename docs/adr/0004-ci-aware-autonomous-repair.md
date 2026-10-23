@@ -158,11 +158,11 @@ amendment, not a reversal: the agent still repairs every red build the step does
   which checks and why, and no agent is launched.
   `repair_ci` answers `PR_OPEN` with `code_changed=False`: nothing was pushed, so the reviewer's
   verdict on the head stands, and the watch rests `_CI_POLL` and reads the checks again.
-- **Once, not on every attempt** (PO, 2026-10-19). The rule guesses, and it guesses wrong in the
+- **Once per watch, not on every attempt** (PO, 2026-10-19). The rule guesses, and it guesses wrong in the
   commonest real-regression shape: changed `src/billing/invoice_totals.ts`, failing
-  `tests/checkout.spec.ts` (#258's review). So it is asked only when `attempt == 1`. Every later
-  attempt launches the agent whatever the log says, and a wrong "unrelated" costs one CI re-run, not
-  the repair budget.
+  `tests/checkout.spec.ts` (#258's review). So it is asked only on the first repair attempt of the
+  watch. Every later attempt launches the agent whatever the log says, and a wrong "unrelated"
+  costs one CI re-run, spending one of the two repair attempts.
 - **"Could not see" is "related".** A diff the forge could not read, or one `truncated` cut (it
   carries `DIFF_CUT_MARKER`), launches the agent as before.
 - **After a pass that changed nothing, the failed jobs are re-run once.** A pass that answered

@@ -14,9 +14,9 @@ changes nothing, attempt after attempt, until the repair cap parks the card. `ch
 `log_names_the_change` are the rule the worker asks before it launches: when the failing log names
 no file the pull request changes, the failed jobs are re-run instead. The rule is a guess, and it
 guesses wrong in the commonest real-regression shape (changed `src/billing/invoice_totals.ts`,
-failing `tests/checkout.spec.ts`, #258's review), so it is trusted ONCE PER HEAD, on the first
-attempt: a wrong "unrelated" then costs one CI re-run and the next attempt reaches an agent, rather
-than the whole repair budget spent on re-runs.
+failing `tests/checkout.spec.ts`, #258's review), so it is trusted ONCE PER WATCH, on the first repair
+attempt: a wrong "unrelated" then costs one CI re-run, spending one of the two repair attempts,
+rather than the whole repair budget spent on re-runs.
 
 AN UNREADABLE OR CUT DIFF ANSWERS "RELATED". `changed_paths` answers `None` for a diff the forge
 could not read and for one `truncated` cut — the file the log names may sit past the cut — and the

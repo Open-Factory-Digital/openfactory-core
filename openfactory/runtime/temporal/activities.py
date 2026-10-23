@@ -2777,10 +2777,11 @@ def _rerun_what_the_change_does_not_touch(project, inp: CiRepairInput, repo: str
 
     IN THIS ORDER, each step cheaper than the next. The capability first, so Azure Repos, the
     local forge, every add-on and every test double without `rerun_failed` never pay a diff read
-    for a move they cannot make, and say nothing. Then the bound: the first attempt only (PO
-    answer to Q1, once per head). A wrong "unrelated" (changed `invoice_totals.ts`, failing
-    `checkout.spec.ts`, #258's review) then costs one re-run, not the whole repair budget. Then the
-    diff: one that could not be read or was cut is "could not see", and launches the agent.
+    for a move they cannot make, and say nothing. Then the bound: the first repair attempt of the
+    watch only (PO answer to Q1, once per watch). A wrong "unrelated" (changed `invoice_totals.ts`,
+    failing `checkout.spec.ts`, #258's review) then costs one re-run, spending one of the two repair
+    attempts. Then the diff: one that could not be read or was cut is "could not see", and launches
+    the agent.
 
     A REFUSED RE-RUN FALLS THROUGH TO THE AGENT, handed the same `evidence`, and is said both in
     the worker log and on the pull request (PO answer to Q3). `[]` (asked, and nothing was
