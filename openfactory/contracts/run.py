@@ -52,6 +52,11 @@ class AgentRunResult(BaseModel):
     # both work. None → nothing to resume (fresh run). Adapter-private meaning; core-agnostic.
     resume_handle: str | None = None
     raw_output: str = ""
+    # THE BOX STOPPED THIS PASS AT ITS WALL (#980). Set only by `agent.base.wall_result`. The box
+    # kills only the shell it started, so the harness and whatever it spawned may still be running
+    # and writing. Read here rather than from `TIMEOUT_MARKER` in `raw_output`, which keeps only
+    # the tail.
+    walled: bool = False
 
 
 class AgentRunMetric(BaseModel):

@@ -1097,4 +1097,5 @@ def wall_result(phase: str, model: str | None, harness: str, out: str,
         model=model or "default",
         harness=harness,
         raw_output=(out or "")[-20000:],
+        walled=True,
     )

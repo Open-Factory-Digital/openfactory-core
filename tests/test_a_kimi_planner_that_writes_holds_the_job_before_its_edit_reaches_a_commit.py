@@ -35,11 +35,14 @@ import os
 import shutil
 import stat
 import subprocess
+import time
 import uuid
 from pathlib import Path
 
 import pytest
 
+import openfactory.adapters.agent.kimi
+from openfactory.adapters.agent.base import wall_result
 from openfactory.adapters.agent.kimi import KimiAdapter
 from openfactory.adapters.sandbox import WorktreeSandbox
 from openfactory.adapters.sandbox.timeouts import TIMEOUT_EXIT, timeout_result
@@ -178,10 +181,11 @@ class _Planner:
     that records it was called and writes `feature.py` the same way."""
 
     def __init__(self, writes: str = "", *, name: str = "kimi", pauses: bool = False,
-                 cost: float | None = None) -> None:
+                 cost: float | None = None, walls: bool = False) -> None:
         self.name = name
         self.writes = writes
         self.pauses = pauses
+        self.walls = walls
         self.cost = cost
         self.planned = False
         self.executed = False
@@ -194,6 +198,12 @@ class _Planner:
         if self.pauses:
             return AgentRunResult(ok=False, pause_reason="rate_limit", retry_at="16:00",
                                   summary="usage limit reached", cost_usd=self.cost)
+        if self.walls:
+            # what a real adapter returns when the box's wall stops its harness (`kimi.py::_run`)
+            res = wall_result("agent", None, self.name,
+                              timeout_result(f"{self.name} -p …", 7200, "")[1])
+            res.cost_usd = self.cost
+            return res
         return AgentRunResult(ok=True, summary="read the tree; add feature.py",
                               cost_usd=self.cost)
 
@@ -655,3 +665,125 @@ def test_a_planner_that_puts_head_on_another_branch_holds_the_job_naming_it(repo
     agent, events = _Planner("git checkout -q -b elsewhere"), InMemoryEventSink()
     runner, result = _run(repo, agent, box, events=events)
     _assert_held_naming(runner, result, agent, events, tmp_path, ["refs/heads/elsewhere"])
+
+
+# ── #980: a walled planner ───────────────────────────────────────────────────────────────────────
+# When the box's wall stops a plan pass, `run_and_stream` kills only the shell it started (the
+# `TimeoutExpired` branch, by design), so the harness and whatever it spawned may still be running.
+# The second reading sees the tree as it is at that moment; a write after it was swept into the
+# executor's commit on main. A walled pass of a planner read-only by instruction only is held
+# before the executor runs. Each row turns red under its cut in
+# `tools/mutations/980_a_walled_kimi_planner_holds_the_job.py`.
+
+#: What the walled planner had spent, distinct from every other price here.
+WALLED_SPENT = 0.53
+
+
+def test_a_walled_result_says_it_was_walled():
+    """The orchestrator reads the wall from the result, not from `TIMEOUT_MARKER` at the head of
+    `raw_output`, which keeps only the last 20000 characters."""
+    assert wall_result("agent", None, "kimi", "x").walled is True
+    assert AgentRunResult(ok=False).walled is False
+
+
+def test_a_walled_kimi_planner_holds_the_job_before_the_executor_runs(repo, tmp_path):
+    """Criterion 1. On main the walled pass had no `pause_reason`, so the job went on to the
+    executor and reached PR_OPEN."""
+    from openfactory.techlead.classify import UNKNOWN, classify
+    agent, events = _Planner(walls=True, cost=WALLED_SPENT), InMemoryEventSink()
+    runner, result = _run(repo, agent, WorktreeSandbox(root=tmp_path / "wt"), events=events)
+
+    assert result.state is JobState.ON_HOLD, (
+        f"the planner was walled and the job went on to {result.state.value}: {result.note}")
+    assert agent.executed is False, "the executor ran on the tree a walled planner may still write"
+    assert runner.forge.opened is None, f"a pull request was opened: {runner.forge.opened}"
+    assert _branches_on_origin(tmp_path) == {"refs/heads/main"}, _branches_on_origin(tmp_path)
+    note = result.note or ""
+    assert "planner" in note and "`kimi`" in note and "wall-clock wall" in note, note
+    assert "wrote to the workspace it must only read" not in note, note
+    assert "could not be asked" not in note, note
+    assert "planner_stage" in note and ".openfactory/project.yaml" in note, note
+    assert result.hold_cause == UNKNOWN, result.hold_cause
+    verdict = classify(note, state=result.state.value, cause=result.hold_cause)
+    assert verdict.cause != "transient", (verdict.cause, verdict.detail)
+    assert [(m.role, m.cost_usd) for m in result.agent_runs] == [("planner", WALLED_SPENT)]
+    assert [e for e in events.events if e.kind == "warning" and "wall" in e.message], (
+        "no journal warning says the planner was walled")
+
+
+def test_a_walled_planner_whose_cli_holds_it_read_only_runs_on_as_today(repo, tmp_path):
+    """Criterion 2. A double named `codex` (whose CLI enforces `-s read-only`) that is walled is
+    not measured and not held: the job goes on to the executor, as on main."""
+    sandbox = _Recording(WorktreeSandbox(root=tmp_path / "wt"))
+    agent = _Planner(name="codex", walls=True)
+    runner, result = _run(repo, agent, sandbox)
+
+    assert [c for c in sandbox.commands if FINGERPRINT_RUNS in c] == []
+    assert result.state is JobState.PR_OPEN, result.note
+    assert agent.executed is True
+
+
+def test_an_unwalled_kimi_planner_runs_on(repo, tmp_path):
+    """Criterion 2, the pass that ended on its own: not walled, and the job runs on."""
+    agent = _Planner()
+    assert agent.plan(sandbox=None, workspace=None, context=None).walled is False
+    agent.planned = False
+    runner, result = _run(repo, agent, WorktreeSandbox(root=tmp_path / "wt"))
+
+    assert result.state is JobState.PR_OPEN, result.note
+    assert agent.executed is True
+
+
+class _KimiThatWaitsForTheLateWrite(KimiAdapter):
+    """The real `KimiAdapter`, whose executor waits (bounded) until the orphan the walled planner
+    left has written `late.txt`, so on main the late write is in the tree `_commit` sweeps."""
+
+    executed = False
+
+    def execute(self, *, sandbox, workspace, context) -> AgentRunResult:
+        self.executed = True
+        sandbox.run(workspace=workspace, timeout=60,
+                    command="i=0; while [ ! -f late.txt ] && [ $i -lt 150 ]; do sleep 0.1; "
+                            "i=$((i+1)); done; echo 'VALUE = 42' > feature.py")
+        return AgentRunResult(ok=True, summary="added feature.py", cost_usd=0.01)
+
+
+def test_a_kimi_planner_that_outlives_its_timeout_and_writes_later_reaches_no_commit(
+        repo, tmp_path, monkeypatch):
+    """Criterion 3 (T1). The real `KimiAdapter.plan` on the worktree box starts a `kimi` stub that
+    prints its answer, leaves a detached `( sleep 3; echo late > late.txt )` behind, and sleeps past
+    a 2 s wall. The box kills the shell only, so the orphan writes after the second reading. On
+    main the job reached PR_OPEN with `late.txt` in the pushed branch."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "kimi"
+    stub.write_text("#!/bin/sh\n"
+                    "echo '{\"role\":\"assistant\",\"content\":\"read the tree\"}'\n"
+                    "( sleep 3; echo late > late.txt ) </dev/null >/dev/null 2>&1 &\n"
+                    "exec >/dev/null 2>&1 </dev/null\n"
+                    "sleep 5\n",
+                    encoding="utf-8")
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("KIMI_CODE_HOME", raising=False)
+    monkeypatch.setattr(openfactory.adapters.agent.kimi, "_TIMEOUT", 2)
+
+    agent = _KimiThatWaitsForTheLateWrite()
+    assert agent.name == "kimi"
+    started = time.monotonic()
+    runner, result = _run(repo, agent, WorktreeSandbox(root=tmp_path / "wt"))
+
+    assert result.state is JobState.ON_HOLD, (
+        f"the planner was walled and the job went on to {result.state.value}: {result.note}")
+    assert "wall-clock wall" in (result.note or ""), result.note
+    assert agent.executed is False, "the executor ran while the walled planner could still write"
+    assert runner.forge.opened is None, f"a pull request was opened: {runner.forge.opened}"
+    assert _branches_on_origin(tmp_path) == {"refs/heads/main"}, _branches_on_origin(tmp_path)
+    # outlast the orphan, then read every commit either repository holds
+    time.sleep(max(0.0, 6.0 - (time.monotonic() - started)))
+    for where in (repo, tmp_path / "origin.git"):
+        names = _git(["log", "--all", "--name-only", "--format="], where)
+        assert "late.txt" not in names, f"the late write reached a commit in {where}: {names}"

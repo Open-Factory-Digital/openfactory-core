@@ -118,7 +118,10 @@ git's exit code and its words, and before the pass is run when the first reading
 detects the write, it does not prevent or undo it, and it sees only what is there at the second
 reading: a process the planner leaves running that writes after it is not seen, and that write can
 reach the pull request (measured in the review of dc0efac4, 2026-10-20: a background process that
-wrote `late.txt` a second after the pass left the job unheld and the file in the pushed branch). Which harnesses are measured is
+wrote `late.txt` a second after the pass left the job unheld and the file in the pushed branch). A
+pass the box walled is now held before the executor runs (#980): the box's wall kills only the
+shell it started, so a walled planner may still be running, and an ordinary timeout was enough to
+reach that limit. What remains of it is a process left behind by a pass that ended on its own. Which harnesses are measured is
 `adapters/agent/base.py::PLANNERS_READ_ONLY_BY_INSTRUCTION`, Kimi alone. A planner runs only where
 a project turned `planner_stage` on (ADR-0014).
 

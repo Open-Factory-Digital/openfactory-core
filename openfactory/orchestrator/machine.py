@@ -1558,6 +1558,27 @@ class JobRunner:
                             f"project registry), or turn `planner_stage` off in its "
                             f"`.openfactory/project.yaml`.",
                             JobState.ON_HOLD, branch=branch, hold_cause=UNKNOWN)
+                # A WALLED PLANNER MAY STILL BE WRITING (#980): the box's wall kills only the shell
+                # it started (`run_and_stream`, its `TimeoutExpired` branch), so the harness and
+                # what it spawned run on, and the reading above sees only the tree at that moment;
+                # a later write was swept into the executor's commit. Same gate as the reading
+                # (`before` is set only when measured), same cause, and nothing preserved.
+                if before is not None and plan_result.walled:
+                    self._emit(ticket, "warning", "the planner hit the box's wall-clock wall and "
+                               "may still be running", role="planner")
+                    return self._hold(
+                        ticket, owner,
+                        f"the planner hit the box's wall-clock wall and was stopped. The box "
+                        f"stops only the shell it started, so the `{self.agent.name}` harness, "
+                        f"whose planner is read-only by instruction only, may still be running "
+                        f"and writing to this workspace after the check read it. The job "
+                        f"stopped before the executor ran and before anything was pushed, and "
+                        f"the workspace is discarded. The planner runs on the executor's "
+                        f"harness: run this project's executor on another harness (the "
+                        f"`executor` entry of its `harness` setting in the deployment's project "
+                        f"registry), or turn `planner_stage` off in its "
+                        f"`.openfactory/project.yaml`. Resuming runs the plan again.",
+                        JobState.ON_HOLD, branch=branch, hold_cause=UNKNOWN)
                 if plan_result.pause_reason:
                     self._emit(ticket, "note", f"planner paused: {plan_result.summary[:200]}",
                                cost_usd=plan_result.cost_usd, role="planner")

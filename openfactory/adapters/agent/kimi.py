@@ -53,7 +53,10 @@ TWO DIFFERENCES FROM CODEX THAT SHAPE THIS ADAPTER
    A workspace git cannot answer holds it too, in git's words. It detects the write; nothing here
    prevents it, and it sees only what is there at the second reading: a process the planner
    leaves running that writes after it is not seen (measured in the review of dc0efac4,
-   2026-10-20: a background `late.txt` written a second later reached the pushed branch).
+   2026-10-20: a background `late.txt` written a second later reached the pushed branch). A pass
+   the box walled is now held before the executor runs (#980): the wall kills only the shell, so
+   a walled planner may still be running; what remains of the limit is a process left behind by a
+   pass that ended on its own.
    Where an `ask()` runs is its caller's choice. A judging role's caller builds
    `sandbox/registry.py::judging_worktree`, a `WorktreeSandbox` whose `run` is a host
    subprocess, so the question runs on the host whatever the project's box, in a room nothing
