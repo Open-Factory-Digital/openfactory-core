@@ -29,7 +29,12 @@ property, each aimed at the row that holds it:
   5. **Each hold says what it is** (review round 1 on e2b57dd1). The workflow classifies a hold
      that declares no cause by its prose, and the planner-wrote hold's prose carries the paths:
      `src/rate_limit.py` read as ('transient', 'throttled'). C1 drops `hold_cause=UNKNOWN` from
-     that hold; C2 and C3 drop `hold_cause=ENVIRONMENT` from the hold before and after the pass.
+     that hold; C2 drops `hold_cause=ENVIRONMENT` from the hold before the pass. C3, which
+     dropped it from the hold after the pass, moved to
+     `981_a_planner_that_makes_the_workspace_unreadable_is_held_as_its_doing.py` (#981): that
+     hold is the planner's doing and declares `unknown` now, and `_HOLD_AFTER` is re-pinned to it.
+     C1's anchor carries the line above it since #981: the after-pass hold's
+     `JobState.ON_HOLD, branch=branch, hold_cause=UNKNOWN)` would match it a second time.
   6. **The remedy names a role that exists** (review round 1 on e2b57dd1, point 3). The planner
      runs on the executor's harness and `harness_kind(None, "planner")` raises, so R1 puts back
      "Give the planner another harness", the sentence 6db1677c held with.
@@ -120,10 +125,17 @@ _HOLD_BEFORE = (
 )
 _HOLD_AFTER = (
     '                    if isinstance(after, Unreadable):\n'
-    '                        return self._hold(ticket, owner, self._unaskable(after, "after the '
-    'planner "\n'
-    '                                          "ran"), JobState.ON_HOLD, branch=branch,\n'
-    '                                          hold_cause=ENVIRONMENT)\n'
+    "                        # THE PLANNER'S DOING, NOT THE BOX'S (#981): the before-mark was read, "
+    'so\n'
+    '                        # git was usable here when the pass began. A planner that runs `git '
+    'init\n'
+    '                        # sub` makes `git add -A` exit 128, and "Make git usable in the box" '
+    'named\n'
+    '                        # the wrong party. It declares what the planner-wrote hold declares.\n'
+    '                        return self._hold(ticket, owner, '
+    'self._unreadable_after_planner(after),\n'
+    '                                          JobState.ON_HOLD, branch=branch, '
+    'hold_cause=UNKNOWN)\n'
 )
 _CHECK = '                if before is not None:\n                    after = fingerprint('
 _WROTE_HOLD = (
@@ -279,20 +291,16 @@ MUTATIONS = [
     # ── 5. each hold declares its cause, so its prose is never classified (review round 1) ───────
     ("C1 the planner-wrote hold declares no cause: `src/rate_limit.py` reads as throttling",
      MACHINE,
-     '                            JobState.ON_HOLD, branch=branch, hold_cause=UNKNOWN)\n',
-     '                            JobState.ON_HOLD, branch=branch)\n',
+     _I + 'f"`.openfactory/project.yaml`.",\n'
+     + _I + 'JobState.ON_HOLD, branch=branch, hold_cause=UNKNOWN)\n',
+     _I + 'f"`.openfactory/project.yaml`.",\n'
+     + _I + 'JobState.ON_HOLD, branch=branch)\n',
      THROTTLING),
     ("C2 the hold before the pass declares no cause: git's refusal is left to `classify`",
      MACHINE,
      _HOLD_BEFORE,
      _HOLD_BEFORE.replace(',\n                                      hold_cause=ENVIRONMENT)', ')'),
      AS_ENVIRONMENT.format("before-the-pass")),
-    ("C3 the hold after the pass declares no cause: git's refusal is left to `classify`",
-     MACHINE,
-     _HOLD_AFTER,
-     _HOLD_AFTER.replace(',\n                                          hold_cause=ENVIRONMENT)',
-                         ')'),
-     AS_ENVIRONMENT.format("after-the-pass")),
 
     # ── 6. the remedy names the executor, whose harness the planner runs on (review round 1) ────
     ("R1 the remedy says \"Give the planner another harness\", a role that does not exist",

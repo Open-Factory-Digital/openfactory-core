@@ -370,7 +370,7 @@ def test_a_workspace_that_cannot_be_asked_after_the_pass_holds_the_job(repo, tmp
     assert agent.planned is True and agent.executed is False
     assert _branches_on_origin(tmp_path) == {"refs/heads/main"}, _branches_on_origin(tmp_path)
     note = result.note or ""
-    assert "could not be asked after the planner ran" in note, note
+    assert "became unreadable during the planner's pass" in note, note
     assert "dubious ownership" in note, f"the hold does not name git's cause: {note}"
     assert "wrote" not in note, f"an unreadable workspace is not a planner that wrote: {note}"
 
@@ -539,21 +539,70 @@ def test_a_planner_hold_is_not_read_as_throttling_whatever_the_path(repo, tmp_pa
     assert verdict.cause != "transient", (verdict.cause, verdict.detail)
 
 
-@pytest.mark.parametrize("refuse_from", [1, 2], ids=["before-the-pass", "after-the-pass"])
+@pytest.mark.parametrize("refuse_from", [1], ids=["before-the-pass"])
 def test_a_workspace_that_cannot_be_asked_is_held_as_the_environment(repo, tmp_path,
                                                                      refuse_from):
-    """1i, the two holds a workspace git refuses makes. Its remedy is to make git usable in the
-    box, which no attempt does, so the hold declares `environment` rather than leaving its prose,
-    git's words and all, to `classify`. On e2b57dd1 it declared nothing."""
+    """1i, the hold a workspace git refuses before the pass makes. Its remedy is to make git
+    usable in the box, which no attempt does, so the hold declares `environment` rather than
+    leaving its prose, git's words and all, to `classify`. On e2b57dd1 it declared nothing. The
+    hold after the pass is the planner's doing (#981), held below."""
     from openfactory.techlead.classify import ENVIRONMENT, classify
     sandbox = _Recording(WorktreeSandbox(root=tmp_path / "wt"), refuse_fingerprint=True,
                          refuse_from=refuse_from)
     runner, result = _run(repo, _Planner(), sandbox)
     assert result.state is JobState.ON_HOLD, result.note
-    assert "could not be asked" in (result.note or ""), result.note
-    verdict = classify(result.note or "", state=result.state.value, cause=result.hold_cause)
+    note = result.note or ""
+    assert "could not be asked" in note, note
+    assert "Make git usable on this workspace in the box" in note, note
+    verdict = classify(note, state=result.state.value, cause=result.hold_cause)
     assert (result.hold_cause, verdict.cause) == (ENVIRONMENT, ENVIRONMENT), (
         result.hold_cause, verdict.cause, verdict.detail)
+
+
+# ── #981: a workspace readable before the pass and not after it is the planner's doing ───────────
+
+def _assert_held_as_the_planners_doing(result, tmp_path: Path) -> str:
+    """#981. The before-mark was read, so git was usable in the box when the planner started; what
+    made the after-mark unreadable happened during the pass. The hold says so, names the planner as
+    the likely cause, keeps git's exit and words, and declares the cause the planner-wrote hold
+    declares (`unknown`), not `environment` with "Make git usable in the box"."""
+    from openfactory.techlead.classify import UNKNOWN, classify
+    assert result.state is JobState.ON_HOLD, (
+        f"the workspace became unreadable during the pass and the job went on to "
+        f"{result.state.value}: {result.note}")
+    assert _branches_on_origin(tmp_path) == {"refs/heads/main"}, _branches_on_origin(tmp_path)
+    note = result.note or ""
+    assert "became unreadable during the planner's pass" in note, note
+    assert "the planner is the likely cause" in note, note
+    assert "exit 128" in note, f"the hold does not keep git's exit: {note}"
+    assert "Make git usable" not in note, f"the hold blames the box for the planner: {note}"
+    assert "wrote" not in note, f"an unreadable workspace is not a planner that wrote: {note}"
+    verdict = classify(note, state=result.state.value, cause=result.hold_cause)
+    assert (result.hold_cause, verdict.cause) == (UNKNOWN, UNKNOWN), (
+        result.hold_cause, verdict.cause, verdict.detail)
+    return note
+
+
+def test_a_planner_that_runs_git_init_in_the_workspace_is_held_as_its_doing(repo, tmp_path):
+    """#981, on the real fingerprint. A planner that runs `git init sub` leaves an embedded
+    repository with no commit, and the fingerprint's `git add -A` refuses it (exit 128, measured
+    on git 2.43.0: "'sub/' does not have a commit checked out"). On main the job was held as the
+    environment, telling the person to "Make git usable in the box"."""
+    agent = _Planner("git init -q sub")
+    runner, result = _run(repo, agent, WorktreeSandbox(root=tmp_path / "wt"))
+    assert agent.planned is True and agent.executed is False
+    note = _assert_held_as_the_planners_doing(result, tmp_path)
+    assert "does not have a commit checked out" in note, f"git's own words are lost: {note}"
+
+
+def test_a_workspace_unreadable_only_after_the_pass_is_held_as_the_planners_doing(repo, tmp_path):
+    """#981, the second asking refused (exit 128) after the first was answered: the after-pass
+    hold declares `unknown`, keeps git's words, and does not say "Make git usable"."""
+    sandbox = _Recording(WorktreeSandbox(root=tmp_path / "wt"), refuse_fingerprint=True,
+                         refuse_from=2)
+    runner, result = _run(repo, _Planner(), sandbox)
+    note = _assert_held_as_the_planners_doing(result, tmp_path)
+    assert "dubious ownership" in note, f"git's own words are lost: {note}"
 
 
 # ── 1j: the fingerprint's own promises (review round 1 on e2b57dd1, not blocking) ────────────────

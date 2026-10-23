@@ -1531,9 +1531,12 @@ class JobRunner:
                 if before is not None:
                     after = fingerprint(self.sandbox, ws)
                     if isinstance(after, Unreadable):
-                        return self._hold(ticket, owner, self._unaskable(after, "after the planner "
-                                          "ran"), JobState.ON_HOLD, branch=branch,
-                                          hold_cause=ENVIRONMENT)
+                        # THE PLANNER'S DOING, NOT THE BOX'S (#981): the before-mark was read, so
+                        # git was usable here when the pass began. A planner that runs `git init
+                        # sub` makes `git add -A` exit 128, and "Make git usable in the box" named
+                        # the wrong party. It declares what the planner-wrote hold declares.
+                        return self._hold(ticket, owner, self._unreadable_after_planner(after),
+                                          JobState.ON_HOLD, branch=branch, hold_cause=UNKNOWN)
                     wrote = written(self.sandbox, ws, before, after)
                     if wrote:
                         paths = ", ".join(wrote)
@@ -1543,7 +1546,7 @@ class JobRunner:
                         # planner's paths, and on e2b57dd1 (2026-10-20) `src/rate_limit.py` read as
                         # ('transient', 'throttled'), so the workflow would re-run the paid planner
                         # three times. `unknown` escalates to a person; a cause of its own is a
-                        # follow-up. The two `_unaskable` holds above declare `environment`.
+                        # follow-up. The `_unaskable` hold above declares `environment`.
                         # THE REMEDY NAMES THE EXECUTOR: the planner is `self.agent.plan`, the
                         # executor's harness, and there is no planner row to set
                         # (`harness_kind(None, "planner")` raises ValueError: unknown role).
@@ -2860,14 +2863,33 @@ class JobRunner:
         read-only by instruction only. A sentence of its own, never the "planner wrote" one: could
         not see is not "nothing was written", and not "something was" either (engineering lesson
         2). It carries git's own words, which name the cause (a client image without
-        `safe.directory` for its mount answers "detected dubious ownership", exit 128). Both
-        callers hold with `hold_cause=ENVIRONMENT`: no attempt makes git usable in the box, and
-        the prose, git's words included, is not left for `classify` to guess from."""
+        `safe.directory` for its mount answers "detected dubious ownership", exit 128). Its
+        caller, the hold before the pass, declares `hold_cause=ENVIRONMENT`: no attempt makes git
+        usable in the box, and the prose, git's words included, is not left for `classify` to
+        guess from. After the pass the hold is `_unreadable_after_planner`'s (#981)."""
         said = " ".join(answer.output.split()) or "no output"
         return (f"the job's workspace could not be asked {when} whether the planner changed it "
                 f"(exit {answer.rc}: {said}), so the job stopped before pushing anything. Make "
                 f"git usable on this workspace in the box, or turn `planner_stage` off for this "
                 f"project.")
+
+    def _unreadable_after_planner(self, answer: Unreadable) -> str:
+        """The hold sentence for a workspace the box read before a planner's pass and could not
+        read after it (#981). Git was usable when the pass began, so the planner is the likely
+        cause: one that runs `git init sub` leaves an embedded repository with no commit, and the
+        fingerprint's `git add -A` exits 128. Git's own words are kept, whitespace collapsed as
+        `_unaskable` does, and the remedy is the one the hold for a planner that changed the
+        workspace gives."""
+        said = " ".join(answer.output.split()) or "no output"
+        return (f"the job's workspace could be asked before the planner ran and became "
+                f"unreadable during the planner's pass (exit {answer.rc}: {said}), so the "
+                f"planner is the likely cause: it ran git in the workspace it must only read, "
+                f"such as `git init` in a subdirectory. The `{self.agent.name}` harness keeps its "
+                f"planner read-only by instruction only; the job stopped before pushing anything, "
+                f"and the workspace is discarded. The planner runs on the executor's harness: run "
+                f"this project's executor on another harness (the `executor` entry of its "
+                f"`harness` setting in the deployment's project registry), or turn "
+                f"`planner_stage` off in its `.openfactory/project.yaml`.")
 
     def _hold(
         self, ticket: Ticket, owner: str | None, reason: str, state: JobState, **extra: object
