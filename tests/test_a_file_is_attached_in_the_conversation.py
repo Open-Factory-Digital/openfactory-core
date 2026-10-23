@@ -692,6 +692,29 @@ async def test_a_file_in_the_room_is_discarded_by_an_admin_alone(filing):
     assert files.find(KEY, conversation="lark", ident=kept.id) is None
 
 
+@pytest.mark.asyncio
+async def test_a_caller_with_no_conversation_of_its_own_discards_from_the_room_as_an_admin_alone(
+        filing):
+    from openfactory import actions
+    from openfactory.actions.base import Actor
+
+    # no conversation of its own resolves to the project's room, whatever `room` said: the need
+    # follows the conversation the row reaches, not the parameter
+    kept = files.store(KEY, conversation="lark", name="ata.pdf", data=b"%PDF minutes")
+    bruno = Actor(id="bruno", via="panel")
+    out = await actions.perform("product_discard_attachment", by=bruno, project="lark",
+                                attachment=kept.id, room="0")
+    assert not out.ok
+    assert ("a file in the project's room is everybody's — a product admin takes it out."
+            in out.message), out.message
+    assert files.find(KEY, conversation="lark", ident=kept.id) is not None
+    ana = Actor(id="ana", via="panel")
+    out = await actions.perform("product_discard_attachment", by=ana, project="lark",
+                                attachment=kept.id, room="0")
+    assert out.ok, out.message
+    assert files.find(KEY, conversation="lark", ident=kept.id) is None
+
+
 def test_a_line_names_a_discarded_file_as_gone(monkeypatch, tmp_path):
     from openfactory.api import product_chat
     from openfactory.memory import transcript

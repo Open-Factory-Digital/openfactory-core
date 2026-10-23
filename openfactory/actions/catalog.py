@@ -3137,12 +3137,16 @@ async def _product_discard_attachment(*, project: str, by: Actor, attachment: st
     product's.
 
     YOURS IN YOUR OWN CONVERSATION; IN THE ROOM, AN ADMIN'S. The room is everybody's, so a file in
-    it is taken out only by a product admin, as filing one would be."""
+    it is taken out only by a product admin, as filing one would be. The need follows the
+    conversation the row RESOLVES to (`product/conversation.py::is_room`), not the `room`
+    parameter: a caller with no conversation of its own reaches the project's room whatever it
+    passed, and needs a product admin there like anybody else."""
     _module, proj, bad = _product_module(project, by=by)
     if bad:
         return bad
     from openfactory.api.product_chat import conversation_for
     from openfactory.product import attachments as files
+    from openfactory.product.conversation import is_room
     from openfactory.product.key import product_key
     from openfactory.product.module import may_act
 
@@ -3150,7 +3154,7 @@ async def _product_discard_attachment(*, project: str, by: Actor, attachment: st
     conversation, why = conversation_for(by, proj, {"room": asked_room, "session": session})
     if not conversation:
         return refused(DENIED, why)
-    if asked_room and not may_act(proj, by.id, via=getattr(by, "via", "") or "api"):
+    if is_room(conversation) and not may_act(proj, by.id, via=getattr(by, "via", "") or "api"):
         return refused(DENIED, "a file in the project's room is everybody's — a product admin "
                                "takes it out.")
     found = files.find(product_key(proj), conversation=conversation, ident=attachment)

@@ -162,7 +162,7 @@ MUTATIONS = [
      "        if False:\n            replace_atomically(meta, json.dumps({**known, \"names\": names}, ensure_ascii=False,\n"),
 
     ("anybody discards a file in the room", CATALOG,
-     '    if asked_room and not may_act(proj, by.id, via=getattr(by, "via", "") or "api"):\n'
+     '    if is_room(conversation) and not may_act(proj, by.id, via=getattr(by, "via", "") or "api"):\n'
      '        return refused(DENIED, "a file in the project\'s room',
      '    if False:\n'
      '        return refused(DENIED, "a file in the project\'s room'),
