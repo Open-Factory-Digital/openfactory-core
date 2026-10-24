@@ -5231,14 +5231,23 @@ function _bwatch(){
 // AND WHILE A CARD IS IN YOUR HAND. Rebuilding the DOM mid-drag drops the card you are holding;
 // the drag's own events set the flag, and the next tick after it ends paints whatever arrived.
 async function refreshBoard(){
-  let d = null;
-  const q = _bd.card ? "?card="+encodeURIComponent(_bd.card)
-          : _bd.pr   ? "?pr="+encodeURIComponent(_bd.pr) : "";
+  const board = _bd, project = board.project, card = board.card, pr = board.pr;
+  const selection = board.selection;
+  const read = board.read = (board.read||0) + 1;
+  let d = null, why = "";
+  const q = card ? "?card="+encodeURIComponent(card)
+          : pr   ? "?pr="+encodeURIComponent(pr) : "";
   // A REFUSAL IS NOT AN EMPTY BOARD (#181). The scope gate's `{detail}` has neither `columns` nor
   // `cards`, so it passed the "could not be read" test below (`undefined` is not `null`) and was
   // painted as a board with no columns. It rejects now, and the panel says why it has no board.
-  try{ d = await api("/api/board/"+encodeURIComponent(_bd.project) + q); _bd.why = ""; }
-  catch(e){ d = null; _bd.why = String((e&&e.message)||e); }
+  try{ d = await api("/api/board/"+encodeURIComponent(project) + q); }
+  catch(e){ why = String((e&&e.message)||e); }
+  // A response belongs to the selection that asked for it. A slower read must never put one
+  // card's controls on screen while those controls write to the next card (measured 2026-10-24).
+  if(_bd !== board || board.acceptedRead > read || board.project !== project ||
+     board.card !== card || board.pr !== pr || board.selection !== selection) return;
+  board.acceptedRead = read;
+  _bd.why = why;
   const sig = d === null ? "null:"+_bd.why : JSON.stringify(d);
   // `_bd.sig === null` MEANS NOTHING HAS BEEN PAINTED YET — the first tick always paints, and so
   // does the first failed read, whose refusal panel is a thing the reader has to see. After that,
@@ -5669,8 +5678,18 @@ async function boardCardReopen(){
 
 // ── one card ─────────────────────────────────────────────────────────────────────────────────
 async function boardOpenCard(ref){
-  _bd.card = ref; _bd.draft = ""; _bd.form = null; _bd.ask = null; _bd.said = null;
+  const board = _bd, selection = {};
+  board.selection = selection;
+  _bd.card = ref; _bd.pr = null; _bd.draft = ""; _bd.form = null; _bd.ask = null; _bd.said = null;
+  _bd.sig = null;
+  // Remove the previous card's controls before awaiting the new card, so even the loading
+  // interval cannot display a card whose actions target another one.
+  const old = $("#boardview .drawer");
+  if(old) old.innerHTML = `<header><span class="ref">${esc(ref)}</span>
+    <button class="x" onclick="boardCloseCard()" aria-label="Close">✕</button></header>
+    <div class="inner">loading…</div>`;
   await refreshBoard();
+  if(_bd !== board || board.selection !== selection || board.card !== ref) return;
   const drawer = $("#boardview .drawer");
   if(drawer){ drawer.classList.add("on"); drawer.setAttribute("aria-hidden","false"); }
   const scrim = $("#boardview .scrim"); if(scrim) scrim.classList.add("on");
@@ -5686,7 +5705,7 @@ function boardCloseCard(){   // the DRAWER, not the card — `boardCardClose` is
 
 function paintCard(){
   const drawer = $("#boardview .drawer"), c = (_bd.data||{}).card;
-  if(!drawer || !c) return;
+  if(!drawer || !c || String(c.ref) !== String(_bd.card)) return;
   drawer.classList.add("on"); drawer.setAttribute("aria-hidden","false");
   const scrim = $("#boardview .scrim"); if(scrim) scrim.classList.add("on");
   const said = _bd.said ? `<div class="cm" role="status" style="border-left:3px solid var(${_bd.said.ok?"--ok":"--err"})">

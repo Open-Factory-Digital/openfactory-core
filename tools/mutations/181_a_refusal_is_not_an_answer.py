@@ -162,9 +162,10 @@ MUTATIONS = [
      '<span class="lbl">token pool</span><b>${f.tokens?',
      '<span class="lbl">token pool</span><b>${true?'),
 
+    # Re-pinned 2026-10-24: keep the error local until the response's selection is accepted.
     ("the board does not keep why it could not be read", PAGE,
-     "  catch(e){ d = null; _bd.why = String((e&&e.message)||e); }",
-     "  catch(e){ d = null; }"),
+     "  catch(e){ why = String((e&&e.message)||e); }",
+     "  catch(e){}"),
 
     ("the board panel does not say why", PAGE,
      "    const why = (!d && _bd.why)\n",
