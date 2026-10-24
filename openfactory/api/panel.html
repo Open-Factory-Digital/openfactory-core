@@ -5669,6 +5669,8 @@ async function boardCardReopen(){
 
 // ── one card ─────────────────────────────────────────────────────────────────────────────────
 async function boardOpenCard(ref){
+  const board = _bd, selection = {};
+  board.selection = selection;
   _bd.card = ref; _bd.draft = ""; _bd.form = null; _bd.ask = null; _bd.said = null;
   await refreshBoard();
   const drawer = $("#boardview .drawer");
@@ -5882,11 +5884,16 @@ function _bevents(p){
 }
 
 async function boardComment(){
-  const said = (_bd.draft||"").trim();
+  const board = _bd, project = board.project, card = board.card, selection = board.selection;
+  const draft = board.draft||"", said = draft.trim();
   if(!said) return;
-  const r = await act("card_comment", {project:_bd.project, issue:_bd.card, message:said});
+  const r = await act("card_comment", {project, issue:card, message:said});
   if(!r.ok){ toast("Not posted", r.message||"", "err"); return; }
-  _bd.draft = "";
+  // Clear only the submitted draft. The person can type again, or open another card, while
+  // the request is pending; its response owns neither that newer text nor that other drawer.
+  if(_bd !== board || board.project !== project || board.card !== card ||
+     board.selection !== selection) return;
+  if(board.draft === draft) board.draft = "";
   await refreshBoard();
 }
 
