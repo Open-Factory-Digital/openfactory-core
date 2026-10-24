@@ -5429,7 +5429,7 @@ async function boardMove(ref, column){
 // form says what pickup would do with it and leaves the decision where it was.
 function _blank(mode){
   return {mode, ref:null, title:"", objective:"", context:"", criteria:[""], in_scope:"",
-          out_of_scope:"", raw:null, gate:null, timer:null, seq:0};
+          out_of_scope:"", raw:null, gate:null, timer:null, seq:0, saving:false};
 }
 
 async function boardNewCard(){
@@ -5561,7 +5561,7 @@ function paintForm(){
         <p class="hint">One item per line.</p>`}
       <div id="b_gate" class="gate" role="status" aria-live="polite"></div>
       <div style="margin-top:12px;display:flex;gap:8px">
-        <button class="btn" onclick="boardSaveCard()">save</button>
+        <button class="btn" id="b_save" onclick="boardSaveCard()"${f.saving ? " disabled" : ""}>save</button>
         <button class="btn ghost" onclick="boardCancelEdit()">cancel</button></div>
       ${f.mode === "edit" ? `<p class="hint" style="margin-top:9px">Saving leaves a comment naming what
         changed. A card the factory has already taken up cannot be corrected here — say it on the
@@ -5601,12 +5601,22 @@ function boardCancelEdit(){
 }
 
 async function boardSaveCard(){
-  const f = _bd.form; if(!f) return;
+  const f = _bd.form; if(!f || f.saving) return;
   const title = (f.title||"").trim(), body = _bbody();
   if(!title){ toast("Not saved", "say what the card is called", "err"); return; }
-  const r = f.mode === "new"
-    ? await act("card_create", {project:_bd.project, title, body})
-    : await act("card_edit", {project:_bd.project, issue:_bd.card, title, body});
+  const project = _bd.project, card = _bd.card;
+  // A slow response must neither submit this form twice nor close a different form opened meanwhile.
+  f.saving = true;
+  const save = $("#b_save"); if(save) save.disabled = true;
+  let r;
+  try {
+    r = f.mode === "new"
+      ? await act("card_create", {project, title, body})
+      : await act("card_edit", {project, issue:card, title, body});
+  } catch(e){ r = {ok:false, message:e.message||"the card could not be saved"}; }
+  f.saving = false;
+  if(_bd.form !== f || _bd.project !== project || _bd.card !== card) return;
+  const currentSave = $("#b_save"); if(currentSave) currentSave.disabled = false;
   if(!r.ok){
     // A PARTIAL EDIT IS NOT "NOT CHANGED": the row names what landed in `changed`, and the form it
     // was typed in no longer describes the card, so it closes onto the card as it now is.
