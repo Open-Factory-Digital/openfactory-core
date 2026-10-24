@@ -148,7 +148,12 @@ button{font-family:inherit}
    "dark theme header, oops". */
 header.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--raised) 92%,transparent);
   backdrop-filter:blur(9px);border-bottom:1px solid var(--line);box-shadow:var(--shadow-1)}
-.brand-row{display:flex;align-items:center;gap:24px;padding:16px 22px;max-width:var(--max);margin:0 auto}
+.brand-row{display:flex;flex-wrap:wrap;align-items:center;gap:12px 24px;padding:16px 22px;max-width:var(--max);margin:0 auto}
+@media (max-width:640px){
+  .brand-row{gap:8px 12px}
+  .brand-row .brand{flex-basis:100%}
+  .brand-row .spacer{display:none}
+}
 .brand{display:flex;align-items:center;gap:12px;cursor:pointer}
 /* The mark's dots sit ON the amber-gradient badge, not on the page — so they take `--on-amber`,
    the token this file already defines for exactly that ("text ON the amber fill — never white, it
@@ -337,7 +342,7 @@ header.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--r
 .chip.off,.btn.off{opacity:.5;cursor:help}
 
 /* project cards on the index */
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:20px}
 .proj{background:var(--card);border:1px solid var(--line);border-top:3px solid var(--line);
   border-radius:var(--radius-xl);padding:22px;cursor:pointer;position:relative;
   box-shadow:var(--shadow-2),var(--shadow-inset);
