@@ -1942,7 +1942,9 @@ function render(){
   // address then decides whether to open it on top. A person who bookmarked `/p/x/board`, or was
   // sent one, lands on the board rather than on the floor with the board one click away.
   const b=curBoard();
-  if(b){ openBoard(b.project).then(()=>{ if(b.card) boardOpenCard(b.card);
+  if(b){ const path=location.pathname, opened=openBoard(b.project), board=_bd;
+         opened.then(()=>{ if(location.pathname!==path || _bd!==board)return;
+                                         if(b.card) boardOpenCard(b.card);
                                          else if(b.pr) boardOpenPR(b.pr);
                                          if(b.preview) openPreviewNow(b.project, b.card); }); }
   else if($("#boardview").classList.contains("on")) closeBoard();
@@ -5182,26 +5184,30 @@ async function openBoard(project){
   if(!name){ toast("No project", projects===null
     ? "the project list could not be read, so there is no project to open a board for"
     : "this deployment has no project to show a board for"); return; }
+  closeBoard(false);
   _bd.project = name;
   const el = $("#boardview");
   el.classList.add("on");
   el.innerHTML = `<div class="bhead"><h2>Board</h2><span class="sub">loading…</span></div>`;
   // THE ADDRESS FOLLOWS THE VIEW, so a person can bookmark the board or send it to somebody.
-  if(!location.pathname.startsWith(`/p/${encodeURIComponent(name)}/board`)){
+  const route=curBoard();
+  if(!route || route.project!==name){
     history.pushState({}, "", `/p/${encodeURIComponent(name)}/board`);
   }
   await refreshBoard();
   _bwatch();
 }
 
-function closeBoard(){
+function closeBoard(updateAddress=true){
   const el = $("#boardview");
   el.classList.remove("on"); el.innerHTML = "";
   if(_bd.timer){ clearInterval(_bd.timer); _bd.timer = null; }
+  if(_bd.form && _bd.form.timer) clearTimeout(_bd.form.timer);
   _bd = {project:null, data:null, card:null, drawer:null, timer:null, draft:"",
          sig:null, dragging:false, form:null};
-  if(location.pathname.match(/^\/p\/[^/]+\/(board|card)/)){
-    history.pushState({}, "", location.pathname.replace(/\/(board|card)(\/.*)?$/, ""));
+  const route=curBoard();
+  if(updateAddress && route){
+    history.pushState({}, "", `/p/${encodeURIComponent(route.project)}`);
   }
 }
 
@@ -5674,6 +5680,17 @@ async function boardOpenCard(ref){
   const drawer = $("#boardview .drawer");
   if(drawer){ drawer.classList.add("on"); drawer.setAttribute("aria-hidden","false"); }
   const scrim = $("#boardview .scrim"); if(scrim) scrim.classList.add("on");
+  if(_bd.card === ref){
+    const path = boardCardPath(ref);
+    if(location.pathname !== path) history.pushState({}, "", path);
+  }
+}
+
+function boardCardPath(ref){
+  const route=curBoard();
+  if(route && route.project===_bd.project && route.preview && route.card===ref)
+    return location.pathname;
+  return `/p/${encodeURIComponent(_bd.project)}/card/${encodeURIComponent(ref)}`;
 }
 
 function boardCloseCard(){   // the DRAWER, not the card — `boardCardClose` is the card's own verb
@@ -5682,6 +5699,10 @@ function boardCloseCard(){   // the DRAWER, not the card — `boardCardClose` is
   const drawer = $("#boardview .drawer");
   if(drawer){ drawer.classList.remove("on"); drawer.setAttribute("aria-hidden","true"); }
   const scrim = $("#boardview .scrim"); if(scrim) scrim.classList.remove("on");
+  const route=curBoard();
+  if(route && (route.card || route.preview)){
+    history.pushState({}, "", `/p/${encodeURIComponent(_bd.project)}/board`);
+  }
 }
 
 function paintCard(){
