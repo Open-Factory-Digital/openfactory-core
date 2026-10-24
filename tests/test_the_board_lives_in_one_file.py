@@ -173,6 +173,101 @@ def test_two_openers_of_a_BRAND_NEW_file_both_get_in(tmp_path):
         f"the WAL conversion is the one lock the busy handler does not cover")
 
 
+def _hold_a_brand_new_file(where):
+    """A neighbour that made the file in a rollback journal and is still writing to it."""
+    where.parent.mkdir(parents=True, exist_ok=True)
+    rival = sqlite3.connect(where, isolation_level=None, check_same_thread=False)
+    rival.execute("BEGIN IMMEDIATE")
+    rival.execute("CREATE TABLE neighbour(x)")
+    return rival
+
+
+def test_the_WAL_conversion_waits_out_a_neighbour_holding_the_brand_new_file(tmp_path):
+    """THE RACE ABOVE, MADE CERTAIN. A neighbour holds the brand-new file's write lock for 1.5 s,
+    longer than the 0.4 s the conversion used to ask for (#958, #1048); the opener must wait it
+    out, as it waits out every other lock here, and come in with the file in WAL."""
+    import threading
+
+    where = tmp_path / "board.db"
+    rival = _hold_a_brand_new_file(where)
+
+    def _release() -> None:
+        rival.execute("COMMIT")
+
+    timer = threading.Timer(1.5, _release)
+    timer.start()
+    try:
+        with connect(where, write=True) as conn:
+            conn.execute(
+                "INSERT INTO cards(project, ref, created_at, updated_at) VALUES (?,?,?,?)",
+                ("acme", next_ref(conn, "acme"), now_iso(), now_iso()))
+            assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+    finally:
+        timer.cancel()
+        timer.join()
+        rival.close()
+
+
+def test_the_WAL_conversion_gives_up_loudly_at_its_bound(tmp_path, monkeypatch, caplog):
+    """A neighbour that never lets go is a wedged deployment: the opener says so in the log and
+    raises, rather than waiting forever or carrying on in a rollback journal."""
+    import logging
+
+    from openfactory.adapters import board_db
+
+    monkeypatch.setattr(board_db, "_WAL_BOUND_S", 0.2)
+    where = tmp_path / "board.db"
+    rival = _hold_a_brand_new_file(where)
+    try:
+        with caplog.at_level(logging.WARNING, logger="openfactory.board_db"), \
+                pytest.raises(sqlite3.OperationalError):
+            with connect(where, write=True):
+                pass
+    finally:
+        rival.close()
+    warned = [r for r in caplog.records
+              if r.name == "openfactory.board_db" and r.levelno == logging.WARNING]
+    assert warned, "hitting the bound must leave a why behind it"
+    assert "WAL" in warned[0].getMessage() and "0.2" in warned[0].getMessage()
+
+
+class _Refusing:
+    """A connection whose WAL conversion is refused with a chosen SQLite code, `refusals` times."""
+
+    def __init__(self, code: int, refusals: int) -> None:
+        self.code, self.refusals, self.calls = code, refusals, 0
+
+    def execute(self, sql: str):
+        self.calls += 1
+        if self.calls <= self.refusals:
+            exc = sqlite3.OperationalError("refused")
+            exc.sqlite_errorcode = self.code
+            raise exc
+        return None
+
+
+def test_the_WAL_conversion_does_not_retry_an_error_that_is_not_a_lock(caplog):
+    """Only a lock is worth waiting out; a disk error asked again is the same disk error, later."""
+    from openfactory.adapters import board_db
+
+    fake = _Refusing(sqlite3.SQLITE_IOERR, refusals=99)
+    with pytest.raises(sqlite3.OperationalError):
+        board_db._to_wal(fake)
+    assert fake.calls == 1
+    assert not [r for r in caplog.records if r.name == "openfactory.board_db"]
+
+
+def test_the_WAL_conversion_asks_again_while_it_meets_a_lock():
+    from openfactory.adapters import board_db
+
+    busy = _Refusing(sqlite3.SQLITE_BUSY, refusals=2)
+    board_db._to_wal(busy)
+    assert busy.calls == 3
+    locked = _Refusing(sqlite3.SQLITE_LOCKED, refusals=1)
+    board_db._to_wal(locked)
+    assert locked.calls == 2
+
+
 def test_a_failed_write_leaves_nothing_behind(db):
     with connect(db, write=True) as conn:
         conn.execute("INSERT INTO cards(project, ref, created_at, updated_at) VALUES (?,?,?,?)",

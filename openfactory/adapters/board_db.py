@@ -30,6 +30,7 @@ that is a migration and it will need saying out loud.
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 import time
@@ -49,9 +50,13 @@ PATH_ENV = "OPENFACTORY_BOARD_DB"
 BUSY_TIMEOUT_MS = 5000
 
 #: How long to keep asking for the WAL conversion, and why it needs asking at all — see `_to_wal`.
-#: Forty tries of 10 ms is 0.4 s at the very worst, on the one open per process that can meet a
-#: converting neighbour; every later open finds the file already in WAL and returns on the first.
-_WAL_TRIES, _WAL_WAIT_S = 40, 0.01
+#: The same bound as every other lock here, asked every 10 ms: a neighbour still writing the
+#: brand-new file's first pages can hold it longer than the 0.4 s this once was (#958). Only the
+#: one open per process that meets a converting neighbour pays it; every later open finds the
+#: file already in WAL and returns on the first try. Read at call time, so a test can shorten it.
+_WAL_BOUND_S, _WAL_WAIT_S = BUSY_TIMEOUT_MS / 1000, 0.01
+
+log = logging.getLogger("openfactory.board_db")
 
 _SCHEMA = (
     # A card. `ref` is an INTEGER per project because the number sequence is per project (D5);
@@ -317,24 +322,37 @@ def _to_wal(conn: sqlite3.Connection) -> None:
     wait for. On an EXISTING file none of this arises — six processes writing 25 cards each
     produced 150 contiguous numbers, no duplicates, no failures.
 
-    RAISES ON THE LAST TRY rather than degrading to a rollback journal: a file that is not in WAL
+    ONLY A LOCK IS ASKED AGAIN, decided by SQLite's own error code rather than the message text: a
+    disk error or a read-only file asked again is the same error, five seconds later.
+
+    RAISES AT THE BOUND rather than degrading to a rollback journal: a file that is not in WAL
     would serialise the panel behind the worker, and the caller should hear that its database is
-    genuinely wedged rather than silently getting the slower shape."""
-    # THE EXHAUSTION RAISES WITHOUT CONSULTING THE BOUND, and a mutation is what taught the
-    # difference. Written as `if attempt == _WAL_TRIES - 1: raise`, the loop's limit and its
-    # give-up condition are two expressions that have to agree — cut the limit alone and the
-    # function returns NORMALLY over a file it never converted, leaving the deployment in a
-    # rollback journal with nobody told. Falling out of the loop cannot disagree with itself.
-    last: sqlite3.OperationalError | None = None
-    for _ in range(_WAL_TRIES):
+    genuinely wedged rather than silently getting the slower shape. The warning names the bound,
+    so the log says it was a wait that ran out and not a refusal on the first try."""
+    # THE ONLY NORMAL RETURN IS THE CONVERSION SUCCEEDING, and a mutation is what taught that. A
+    # counted loop whose limit and give-up condition were two expressions could, with the limit
+    # cut alone, return NORMALLY over a file it never converted, leaving the deployment in a
+    # rollback journal with nobody told. Here the deadline only ever leads to a raise.
+    bound = _WAL_BOUND_S
+    deadline = time.monotonic() + bound
+    while True:
         try:
             conn.execute("PRAGMA journal_mode=WAL")
             return
         except sqlite3.OperationalError as exc:
-            last = exc
+            if not _is_lock(exc):
+                raise
+            if time.monotonic() >= deadline:
+                log.warning("the board's WAL conversion was still refused by a lock after %ss, "
+                            "its bound; giving up: %s", bound, exc)
+                raise
             time.sleep(_WAL_WAIT_S)
-    raise last if last is not None else RuntimeError(
-        "the journal mode was never set and nothing said why")
+
+
+def _is_lock(exc: sqlite3.OperationalError) -> bool:
+    """Whether SQLite refused for a lock (BUSY or LOCKED, any extended code), by its own code."""
+    primary = getattr(exc, "sqlite_errorcode", 0) & 0xFF
+    return primary in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
 
 
 def _add_columns(conn: sqlite3.Connection) -> None:

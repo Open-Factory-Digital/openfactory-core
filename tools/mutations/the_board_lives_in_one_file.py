@@ -67,9 +67,30 @@ MUTATIONS = [
      "loser gets `database is locked` out of `connect`, before it has run anything", DB,
      "        _to_wal(conn)", '        conn.execute("PRAGMA journal_mode=WAL")', SLICE),
 
+    # RE-PINNED 2026-10-23 (#958): the retry is bounded by time, the board's own busy timeout,
+    # rather than by 40 tries of 10 ms — a neighbour still writing the brand-new file outlasted
+    # 0.4 s. Same cut: a bound of nothing gives up on the first refusal.
     ("the retry gives up after one try, which is the unconverted file said another way — and it "
      "must RAISE rather than return over a database it never put in WAL", DB,
-     "    for _ in range(_WAL_TRIES):", "    for _ in range(1):", SLICE),
+     "    bound = _WAL_BOUND_S", "    bound = 0", SLICE),
+
+    ("the retry goes back to a bound shorter than a neighbour's first write, so the opener that "
+     "meets one is refused the brand-new file again (#958, #1048)", DB,
+     "    bound = _WAL_BOUND_S", "    bound = 0.4", SLICE),
+
+    ("hitting the bound raises with no trace in the log, so a wedged database reads as a refusal "
+     "on the first try", DB,
+     "                log.warning(\"the board's WAL conversion was still refused by a lock after %ss, \"\n"
+     "                            \"its bound; giving up: %s\", bound, exc)\n",
+     "", SLICE),
+
+    ("an error that is not a lock is asked again for five seconds — a disk error, later", DB,
+     "    return primary in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)",
+     "    return True", SLICE),
+
+    ("a lock is no longer asked again, so the first refusal is the opener's last", DB,
+     "    return primary in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)",
+     "    return False", SLICE),
 
     ("the journal goes back to the default, so the panel reading blocks the worker writing", DB,
      '        conn.execute("PRAGMA journal_mode=WAL")',
