@@ -161,6 +161,14 @@ such as `token_env: file:acme-ado-pat` for a secret mounted as a file:
 complete ADO walkthrough, `work_item_type`, `state_map` and the multi-repo `areas` map included,
 is [docs/setup/azure-devops.md](../setup/azure-devops.md).)
 
+**An Azure Boards project can be limited to one Epic** with `scope_epic: "70133"` in the tracker's
+options, the id of the Epic whose work items are this project's: the pickup queue, the board and
+the search for an already filed card then read only the work items under it, at any depth, and an
+Epic that cannot be resolved reads as an unreadable board, never as no scope. It is the Azure
+counterpart of Jira's `scope_jql` (below), and
+[docs/setup/azure-devops.md](../setup/azure-devops.md) §8 says what it limits, what it costs, and
+the two limits to plan around.
+
 **A Jira tracker names the site's own words**, because every Jira project has its own workflow and
 its administrator named — and localised — everything in it:
 
@@ -214,6 +222,10 @@ children by parent), the workflow's statuses, or the check that the project exis
 nothing in it reads as an empty board, and a project that is not there still reads as unreadable.
 Single-quote it in YAML, because JQL quotes with `"`. Unset, or blank, the queries are exactly
 those of a project without it.
+
+**The cockpit's Board link opens the panel's own board for a project with `scope_jql`**, so it
+shows that project's scoped slice. An Azure Boards project with `scope_epic` follows the same
+rule. Every other project opens its provider's board.
 
 **Every project on a shared Jira project needs its own `scope_jql`, and no issue may be in two
 scopes.** The scope narrows only the project that declares it: one project left without a scope

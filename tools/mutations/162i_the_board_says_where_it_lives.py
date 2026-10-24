@@ -48,9 +48,18 @@ MUTATIONS = [
      "    def url(self) -> str:", "    def _url_removed(self) -> str:"),
 
     # ── the panel's own honesty ─────────────────────────────────────────────────────────────────
+    # Re-pinned 2026-10-24: scoped boards now return the panel route before asking `url()`.
     ("a board that cannot say gets a button anyway", APP,
-     "        return str(made.url() or \"\") if made is not None else \"\"",
-     '        return str(made.url()) if made is not None else "https://github.com"', VENDOR),
+     '        return str(made.url() or "")',
+     '        return str(made.url()) or "https://github.com"', VENDOR),
+
+    ("a scoped project opens the provider's wider board", APP,
+     "        if callable(named_scope) and named_scope() and name:",
+     "        if False:", VENDOR),
+
+    ("an unscoped named project opens the panel instead of its provider", APP,
+     "        if callable(named_scope) and named_scope() and name:",
+     "        if name:", VENDOR),
 
     ("a board that RAISES takes the cockpit down", APP,
      '    except Exception as exc:  # noqa: BLE001 — a missing link never fails a page\n'

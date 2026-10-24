@@ -166,6 +166,57 @@ def test_the_cockpit_ASKS_THE_BOARD_where_it_lives(monkeypatch):
     assert asked and got == "https://dev.azure.com/contoso/Payments/_boards"
 
 
+def test_the_cockpit_opens_its_own_board_when_the_board_is_scoped(monkeypatch):
+    """A provider's Board can be wider than the project's slice.
+
+    Azure Boards belongs to a team, so `scope_epic` narrows the cards OpenFactory reads without
+    creating a second Azure URL. The cockpit must therefore open the panel board, whose API has
+    the same scope, rather than send the person to the whole team. `scope_named()` is already the
+    vendor-neutral capability the gates use; this test keeps the panel from spelling an option or
+    a provider name of its own.
+    """
+    import openfactory.api.app as app
+
+    asked: list = []
+
+    class _Board:
+        def scope_named(self):
+            return "within this project's slice"
+
+        def url(self):
+            asked.append("external")
+            return "https://would-be-the-whole-board.example"
+
+    monkeypatch.setattr("openfactory.adapters.board.factory.build_board",
+                        lambda project, **kw: _Board())
+    project = type("Project", (), {"name": "Deskline API"})()
+
+    assert app._board_url(project) == "/p/Deskline%20API/board"
+    assert not asked, "the whole provider board is not this project's board"
+
+
+def test_the_cockpit_opens_the_provider_board_when_a_named_project_is_unscoped(monkeypatch):
+    """A project name alone must not select the panel route: an empty scope keeps the provider URL.
+
+    The older provider-link checks used `object()`, whose missing name stopped the scoped branch
+    even if that branch ignored `scope_named()`. This named project reaches the scope decision.
+    """
+    import openfactory.api.app as app
+
+    class _Board:
+        def scope_named(self):
+            return ""
+
+        def url(self):
+            return "https://this-projects-board.example"
+
+    monkeypatch.setattr("openfactory.adapters.board.factory.build_board",
+                        lambda project, **kw: _Board())
+    project = type("Project", (), {"name": "Deskline API"})()
+
+    assert app._board_url(project) == "https://this-projects-board.example"
+
+
 def test_and_the_panel_spells_no_vendor_URL_of_its_own():
     """The weld, asserted on code with the prose stripped — the paragraphs explaining the rule name
     the very host they forbid."""

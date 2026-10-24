@@ -48,7 +48,7 @@ from __future__ import annotations
 import logging
 import urllib.parse
 
-from openfactory.adapters.azure_devops import AzureDevOpsClient
+from openfactory.adapters.azure_devops import AzureDevOpsClient, epic_subtree, within_epic
 from openfactory.contracts import JobState
 from openfactory.contracts.refs import canonical_ref, qualify_ref, ref_number, split_repo_ref
 
@@ -113,7 +113,7 @@ class AzureBoardsBoard:
                  columns: dict[str, str] | None = None, order_by: str = "",
                  token: str | None = None, token_provider=None,
                  default_repo: str = "", areas: dict[str, str] | None = None,
-                 options: dict[str, str] | None = None) -> None:
+                 scope_epic: str = "", options: dict[str, str] | None = None) -> None:
         if not (organization or "").strip() or not (project or "").strip():
             # Fails HERE, not on the first read inside a job: the shared client makes the same
             # promise for the same reason, and a board that resolves to something unusable is a
@@ -159,6 +159,22 @@ class AzureBoardsBoard:
         self._board_cache: str = ""
         self._columns_cache: list[dict] | None = None
         self._area_cache: str | None = None
+        #: The id of the Epic whose subtree is this project's slice of the team's board, `""` for
+        #: the whole board (#1078). Declared in the tracker's options as `scope_epic`; the board
+        #: takes it as a constructor argument, as it takes `areas`, so a value that is not an id
+        #: cannot raise HERE — `scan_todo` does not catch a constructor, and a poller tick with a
+        #: stack trace is no pickup queue. It reads as an unreadable board instead (`_epic_ids`).
+        #: TAKEN AS IT COMES, not stripped again: `scope_epic_of` is the one place the option is
+        #: normalised, and a second `.strip()` here hid a mutation of the first (the mutation run
+        #: of this change printed `!!GREEN!!` for the cut that removed it — the same pair of
+        #: strips #752 found on `scope_jql`). A value that reaches this constructor with spaces in
+        #: it is not an id, and reads as an unreadable board.
+        self._scope_epic = scope_epic or ""
+        #: The subtree's ids, read once per instance: `columns()` asks one question per column and
+        #: the Epic does not change between them. `None` is a failed read and is cached too — a
+        #: second attempt inside one tick would spend a request to learn what the first said.
+        self._epic_read = False
+        self._epic_cache: frozenset[str] | None = None
 
     @property
     def token(self) -> str | None:
@@ -425,6 +441,51 @@ class AzureBoardsBoard:
         self._area_cache = f"({' OR '.join(parts)})" if parts else ""
         return self._area_cache
 
+    def _epic_ids(self) -> frozenset[str] | None:
+        """The ids under this project's `scope_epic`, or `None` when they cannot be told.
+
+        `None` AND NEVER "NO SCOPE". A scope that disappears when it cannot be resolved widens the
+        read to the whole team — the accident the option exists to prevent — so every way of not
+        knowing (an id that is not a number, one that names nothing, a subtree too large for one
+        query, a request that failed) is the same unreadable board, and the warning names the
+        option, because the board's own remedy for an unreadable one points at the credential."""
+        if self._epic_read:
+            return self._epic_cache
+        try:
+            self._epic_cache = epic_subtree(self._client(team=True), self._scope_epic)
+        except Exception as exc:  # noqa: BLE001 — unreadable is None, whatever the cause
+            log.warning("could not read the work items under scope_epic %r of %s/%s (%s) — "
+                        "reporting the board as UNREADABLE rather than as unscoped, which would "
+                        "hand the factory every card of the team",
+                        self._scope_epic, self.organization, self.project, str(exc)[:200])
+            self._epic_cache = None
+        self._epic_read = True
+        return self._epic_cache
+
+    def holds(self, ref: str) -> bool | None:
+        """Whether the card `ref` is under this project's `scope_epic`: `True`, `False`, or `None`
+        when that could not be told. Read through `getattr` by the edit/close/remove gate
+        (`actions/catalog.py::_stage`) for a card `columns()` did not return, and by the product
+        role's queueing — the port does not learn it (#752 made the same seam for Jira).
+
+        WHY THE GATE NEEDS IT. `columns()` is the slice, but an edit, a close or a removal reaches
+        a card by key, so another Epic's card is absent from `columns()` and reads as "nobody has
+        moved it". Unscoped, every card is this project's: `True`, with no request, so a project
+        that declares no scope pays nothing. `None` is not `False`: "could not see" is retried,
+        "it is not ours" is final."""
+        if not self._scope_epic:
+            return True
+        below = self._epic_ids()
+        if below is None:
+            return None
+        number = ref_number(split_repo_ref(ref)[1])
+        return number is not None and str(number) in below
+
+    def scope_named(self) -> str:
+        """`within scope_epic '<id>'` for the gate's refusal of a card outside the slice, `""`
+        without a scope — the option is this row's, so generic code does not spell it."""
+        return f"within scope_epic {self._scope_epic!r}" if self._scope_epic else ""
+
     # ---- the one query path ------------------------------------------------------------------
 
     def _ids(self, clause: str = "") -> list[str] | None:
@@ -443,6 +504,13 @@ class AzureBoardsBoard:
         area = self._team_area_clause()
         if area:
             where.append(area)
+        if self._scope_epic:
+            below = self._epic_ids()
+            if below is None:
+                return None
+            if not below:
+                return []     # an Epic with nothing under it: a read, and nothing there
+            where.append(within_epic(below))
         if clause:
             where.append(clause)
         return self._run(" AND ".join(where))

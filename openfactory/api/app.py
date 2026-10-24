@@ -4594,7 +4594,15 @@ def _board_url(project) -> str:
     NEVER RAISES AND NEVER GUESSES. The cockpit is informational: a project with no board, an
     unknown vendor, or a provider that cannot say all resolve to no button, which is honest. A
     link to the wrong host is not — it is a person clicking through to a 404 and concluding the
-    platform has lost their board."""
+    platform has lost their board.
+
+    A SCOPED BOARD OPENS HERE. An external provider can own the underlying board while not having
+    a URL for just this project's slice of it: Azure Boards owns a team's board, for example,
+    while `scope_epic` is an OpenFactory read boundary within that board. `scope_named()` is the
+    row's optional, vendor-neutral answer that such a boundary exists. In that case the panel's
+    own board route is the only link that shows the same cards the factory reads. An unscoped row
+    still sends the person to the provider's own board URL.
+    """
     try:
         from openfactory.adapters.board.factory import build_board
 
@@ -4605,7 +4613,13 @@ def _board_url(project) -> str:
         # token on every cockpit load to compose a string, and a mint that failed deleted a link
         # that needs no credential at all. Adversarial review, 2026-08-20.
         made = build_board(project)
-        return str(made.url() or "") if made is not None else ""
+        if made is None:
+            return ""
+        named_scope = getattr(made, "scope_named", None)
+        name = str(getattr(project, "name", "") or "").strip()
+        if callable(named_scope) and named_scope() and name:
+            return f"/p/{quote(name, safe='')}/board"
+        return str(made.url() or "")
     except Exception as exc:  # noqa: BLE001 — a missing link never fails a page
         log.warning("panel: could not resolve the board link for %s (%s)",
                     getattr(project, "name", "?"), str(exc)[:120])

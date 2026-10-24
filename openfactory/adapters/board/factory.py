@@ -156,7 +156,7 @@ def _azure_devops(project, *, token, token_provider, options):
     # the credential already lives one level up, in `adapters/azure_devops.py` (C-20 — one
     # HTTP client for every Azure DevOps axis), so the board holds no vendor knowledge the
     # tracker also holds, and a deployment can run Azure Boards with a GitHub forge.
-    from openfactory.adapters.azure_devops import coordinates
+    from openfactory.adapters.azure_devops import coordinates, scope_epic_of
     from openfactory.adapters.board.azure_devops import AzureBoardsBoard
     from openfactory.adapters.forge.registry import repo_of
 
@@ -189,6 +189,10 @@ def _azure_devops(project, *, token, token_provider, options):
             "falling back to the convention that an area's leaf name IS the repository name. "
             "On a product whose areas are named differently, every card then routes to the "
             "default repository"),
+        # #1078: the Epic whose subtree is this project's slice of the team's board. Read through
+        # the one normaliser the tracker also uses, so the two axes cannot disagree about whether
+        # a project is scoped.
+        scope_epic=scope_epic_of(options),
         token=token,
         token_provider=token_provider,
         options=options,
@@ -271,11 +275,21 @@ def _jira_coordinates(project) -> str:
 
 
 def _azure_devops_unreadable(project) -> str:
-    return (f"check that {_token_variable(project, 'AZURE_DEVOPS_PAT')} is set for THIS process "
-            "and grants read on Work Items — Azure DevOps answers a wrong credential with HTTP "
-            "200 and a sign-in PAGE rather than a 401, so this reads as an empty board. A GitHub "
-            "token reaching this axis produces exactly that; the board takes the TRACKER's "
-            "credential, never the forge's.")
+    from openfactory.adapters.azure_devops import scope_epic_of
+
+    remedy = (f"check that {_token_variable(project, 'AZURE_DEVOPS_PAT')} is set for THIS process "
+              "and grants read on Work Items — Azure DevOps answers a wrong credential with HTTP "
+              "200 and a sign-in PAGE rather than a 401, so this reads as an empty board. A GitHub "
+              "token reaching this axis produces exactly that; the board takes the TRACKER's "
+              "credential, never the forge's.")
+    # #1078: a declared Epic that names nothing this credential can read leaves the board exactly
+    # as unreadable, and the credential is only the first suspect — not the only one.
+    scope = scope_epic_of(_options(project))
+    if scope:
+        remedy += (f" If the credential is right, check `scope_epic` ({scope!r}): it must be the "
+                   "id of a work item this credential can read, and the board stays unreadable "
+                   "rather than falling back to the whole team.")
+    return remedy
 
 
 def _jira_unreadable(project) -> str:

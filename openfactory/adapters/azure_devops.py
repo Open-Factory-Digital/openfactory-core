@@ -33,6 +33,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 import subprocess
 import threading
 import time
@@ -94,6 +95,80 @@ def coordinates(project, *, ref) -> tuple[str, str]:
     # why the forge must not reach for `repo_of()` here: that resolves to a git repository, and
     # this deployment really does contain a repo whose name matches its project.
     return organization, (getattr(tracker, "repo", None) or "").strip()
+
+
+#: The most descendants one `scope_epic` may name. The subtree goes back into the flat query as
+#: `[System.Id] IN (…)`, and a WIQL query has a length limit (32,000 characters), so a subtree
+#: past this is REFUSED BY NAME rather than cut: a cut list is a queue missing cards that look as
+#: if they were never there. 25 descendants is an Epic of a real product; 1,500 is a long way past.
+SCOPE_CEILING = 1500
+
+
+def scope_epic_of(options: dict | None) -> str:
+    """The `scope_epic` a tracker's options declare, stripped — `""` when the project declares none.
+
+    WHITESPACE ALONE IS NO SCOPE, so a YAML key left blank cannot become `IN ()`, which Azure
+    refuses, nor a scope that matches nothing. This is the one place the option is normalised: the
+    board and the tracker both read it here, and a second strip would hide a mutation of the first
+    (measured on `scope_jql`, #752)."""
+    return str((options or {}).get("scope_epic") or "").strip()
+
+
+def epic_subtree(client, epic: str) -> frozenset[str]:
+    """The ids of every work item UNDER `epic`, at any depth — the Epic itself not among them.
+
+    RAISES `AzureDevOpsError` naming `scope_epic` for every way the answer cannot be trusted, and
+    the callers turn that into "unreadable", never into "no scope": a scope that disappears when
+    it cannot be resolved widens the read to the whole team, which is the accident it exists to
+    prevent.
+
+    TWO READS ARE NEEDED AND THIS IS THE FIRST. Measured against a live project (2026-10-23):
+
+      * flat WIQL has no "descendant of", and `[System.Parent]` reaches one level while the depth
+        is the process's (Epic → Feature → Product Backlog Item here, Epic → Issue → Task on Basic);
+      * a recursive link query returns the whole subtree in one request — 26 relations for an Epic
+        with 25 descendants, the Epic itself as the root;
+      * a filter on the TARGET (type, state, column) cannot ride along: in a tree query it applies
+        to every node on the path, the Features in between are filtered out, and only the root
+        comes back (1 relation instead of 26). So the ids come back here and the caller puts them
+        into the flat query it always asked.
+
+    AN ID THAT IS NOT THERE AND AN EPIC WITH NOTHING UNDER IT ARE TOLD APART by the root. Measured:
+    a missing id answers 200 with no relations at all, an item without children answers 200 with
+    the root alone. Without that distinction a typo in the id is a quiet day.
+
+    The id is validated BEFORE it is written into a query: it is the one value of this option that
+    becomes WIQL text, and `1 OR 1=1` must not."""
+    if not re.fullmatch(r"[0-9]+", epic or ""):
+        raise AzureDevOpsError(
+            f"scope_epic must be the id of one work item — a number — and {epic!r} is not. "
+            "A title is not accepted because two work items can share one.")
+    query = ("SELECT [System.Id] FROM WorkItemLinks "
+             f"WHERE [Source].[System.Id] = {int(epic)} "
+             "AND [System.Links.LinkType] = 'System.LinkTypes.Hierarchy-Forward' "
+             "MODE (Recursive)")
+    answer = client.call("POST", "wit/wiql", body={"query": query})
+    relations = answer.get("workItemRelations") or []
+    root = str(int(epic))
+    if not any(r.get("source") is None and str((r.get("target") or {}).get("id")) == root
+               for r in relations):
+        raise AzureDevOpsError(
+            f"scope_epic {epic} names no work item this credential can read, so the board cannot "
+            "say which cards are under it.")
+    below = frozenset(str(r["target"]["id"]) for r in relations
+                      if r.get("source") is not None and (r.get("target") or {}).get("id"))
+    if len(below) > SCOPE_CEILING:
+        raise AzureDevOpsError(
+            f"scope_epic {epic} has {len(below)} work items under it, past the {SCOPE_CEILING} "
+            "this adapter can put into one query. Narrow the scope to a smaller Epic.")
+    return below
+
+
+def within_epic(ids: frozenset[str]) -> str:
+    """`[System.Id] IN (…)` for the ids of a subtree — ids in ascending order, so the query is the
+    same text for the same Epic. NEVER CALLED WITH NO IDS: `IN ()` is a syntax error, and an Epic
+    with nothing under it is an empty answer the caller gives without asking."""
+    return "[System.Id] IN (" + ", ".join(sorted(ids, key=int)) + ")"
 
 
 def _az_mint() -> tuple[str, float] | None:

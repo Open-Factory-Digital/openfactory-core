@@ -89,7 +89,13 @@ import logging
 import urllib.parse
 from html.parser import HTMLParser
 
-from openfactory.adapters.azure_devops import AzureDevOpsClient, AzureDevOpsError
+from openfactory.adapters.azure_devops import (
+    AzureDevOpsClient,
+    AzureDevOpsError,
+    epic_subtree,
+    scope_epic_of,
+    within_epic,
+)
 from openfactory.adapters.tracker.base import (
     NOT_REPORTED,
     BudgetAnswer,
@@ -190,6 +196,13 @@ class AzureBoardsTracker:
         #: area → repository, the board's own `areas` option (a JSON map, like `state_map`) — read
         #: backwards here to say which area a card of a repository is filed under
         self._areas = _areas_of((options or {}).get("areas"))
+        #: The Epic whose subtree is this project's slice of the cards (#1078), `""` for all of
+        #: them. The board reads the same option through the same normaliser, so the poller's
+        #: reads and the panel's cannot drift into two different slices of one project. What the
+        #: subtree IS is read once per instance (`_below`), the outcome kept even when it is a
+        #: failure — a second attempt inside one tick would only repeat the first.
+        self._scope_epic = scope_epic_of(options)
+        self._epic_outcome: frozenset[str] | AzureDevOpsError | None = None
         #: type name → ((state name, category), …) in the process's own workflow order. Populated
         #: on demand and refetched when a state we have never seen shows up, because a process
         #: gains a state while a worker is running and answering "unknown" for it would mean
@@ -260,6 +273,23 @@ class AzureBoardsTracker:
     def _work_item(self, ref: str, *, expand: str | None = None) -> dict:
         params = {"$expand": expand} if expand else None
         return self.ado.call("GET", f"wit/workitems/{self.work_item_id(ref)}", params=params)
+
+    def _below(self) -> frozenset[str]:
+        """The ids under `scope_epic`, read once per instance. RAISES `AzureDevOpsError` — naming
+        the option — when they cannot be told, and keeps that failure too: `list_tickets` turns it
+        into its word for "unreadable", `find_ticket` lets it out, and neither ever reads an
+        unresolvable scope as "no scope", which would hand the caller the whole project."""
+        if self._epic_outcome is None:
+            try:
+                self._epic_outcome = epic_subtree(self.ado, self._scope_epic)
+            except AzureDevOpsError as exc:
+                self._epic_outcome = exc
+            except Exception as exc:  # noqa: BLE001 — a failed request is the same unresolved scope
+                self._epic_outcome = AzureDevOpsError(
+                    f"scope_epic {self._scope_epic!r} could not be read: {str(exc)[:200]}")
+        if isinstance(self._epic_outcome, AzureDevOpsError):
+            raise self._epic_outcome
+        return self._epic_outcome
 
     def _states(self, type_name: str, *, refresh: bool = False) -> tuple[tuple[str, str], ...]:
         """`((name, category), …)` for a work item type, in the process's own workflow order."""
@@ -535,9 +565,14 @@ class AzureBoardsTracker:
             clauses.append(
                 f"[System.ChangedDate] >= '{str(updated_since).replace(chr(39), chr(39) * 2)}'")
             params["timePrecision"] = "true"
-        query = ("SELECT [System.Id] FROM WorkItems WHERE " + " AND ".join(clauses)
-                 + " ORDER BY [System.ChangedDate] DESC")
         try:
+            if self._scope_epic:
+                below = self._below()
+                if not below:
+                    return []     # an Epic with nothing under it: a read, and nothing there
+                clauses.append(within_epic(below))
+            query = ("SELECT [System.Id] FROM WorkItems WHERE " + " AND ".join(clauses)
+                     + " ORDER BY [System.ChangedDate] DESC")
             found = self.ado.call("POST", "wit/wiql", body={"query": query}, params=params)
             ids = [str(row.get("id")) for row in (found.get("workItems") or []) if row.get("id")]
             # ONLY WHEN THE CEILING WAS OURS. A caller that asked for three and got three learned
@@ -802,9 +837,19 @@ class AzureBoardsTracker:
         # `an O'Brien "quoted" title` answers 400 ("Expecting closing quote") — verified live — and
         # the splitter's one guard against filing a duplicate would be the thing that failed.
         escaped = (title or "").replace("'", "''")
+        # WITHIN THE EPIC'S SUBTREE (#1078), or the splitter and the product role reuse another
+        # Epic's open card of the same title instead of filing their own. `_below` RAISES when the
+        # scope cannot be told, because `None` here already means "nothing of that title": an
+        # unreadable scope answered `None` would make the caller file a duplicate.
+        scope = ""
+        if self._scope_epic:
+            below = self._below()
+            if not below:
+                return None
+            scope = f"AND {within_epic(below)} "
         query = ("SELECT [System.Id] FROM WorkItems "
                  "WHERE [System.TeamProject] = @project "
-                 f"AND [System.Title] = '{escaped}' ORDER BY [System.Id] DESC")
+                 f"AND [System.Title] = '{escaped}' {scope}ORDER BY [System.Id] DESC")
         found = self.ado.call("POST", "wit/wiql", body={"query": query})
         ids = [str(row.get("id")) for row in (found.get("workItems") or []) if row.get("id")]
         if not ids:
