@@ -718,13 +718,15 @@ class WhoamiRead(ReadModel):
 class ActionRow(ReadModel):
     """One catalogued action. `still_in` names the old route an action not yet moved into the layer
     still lives behind; `available` is its absence. `refusals` is every reason a refusal of the row
-    may carry in `data["reason"]`."""
+    may carry in `data["reason"]`. `installation` says the row changes the deployment itself, so
+    only an unscoped credential runs it."""
 
     name: str | None = None
     summary: str | None = None
     required: list[str] | None = None
     optional: list[str] | None = None
     needs_admin: bool | None = None
+    installation: bool | None = None
     params: dict[str, str] | None = None
     choose_when: str | None = None
     available: bool | None = None

@@ -395,14 +395,18 @@ class ContextOutcome:
 
 def onboard_product_context(project, *, sources: list[str],
                             stream: StageFn | None = None) -> ContextOutcome:
-    """The context box: create-or-use the repository, backfill it, propose it — one PR.
+    """The context box: use the repository, backfill it, propose it — one PR.
 
     BOTH SHAPES, because a deployment has both at once — an enterprise organisation keeps a
     documentation repository on some projects and none on others: a `product.docs_repo` already
-    in the registry is
-    USED — cloned, read, merged into — and only a project with none gets a repository created
-    in its own organisation (GitHub and Azure Repos both implement the capability; a forge
+    in the registry is USED — cloned, read, merged into — and a project with none has one created
+    in its own organisation first (GitHub and Azure Repos both implement the capability; a forge
     without it refuses by name).
+
+    NOT HERE, THOUGH (#741). Creating that repository records it in the registry, which changes
+    the installation, and changing the installation is a catalogue row's: `product_init` with
+    `create_context`, which `onboard` performs before it calls this. A project handed here with no
+    repository declared is told so, and nothing is created.
 
     THE BACKFILL RUNS WHERE THE FACTORY LIVES. The survey is deterministic; the one agent pass
     (citation-checked — a sentence whose `file:line` does not resolve is demoted into a
@@ -423,7 +427,6 @@ def onboard_product_context(project, *, sources: list[str],
         PRODUCT_YAML,
         context_clone_url,
         context_forge,
-        create_context_repository,
         plan,
         proposal_branch,
     )
@@ -431,20 +434,11 @@ def onboard_product_context(project, *, sources: list[str],
     out = ContextOutcome()
     docs_repo = (getattr(getattr(project, "product", None), "docs_repo", "") or "").strip()
     if not docs_repo:
-        _say(stream, "start", "context: no repository declared — creating one")
-        try:
-            docs_repo, out.created = create_context_repository(
-                project, getattr(project, "name", "product"))
-        except (ValueError, RuntimeError) as exc:
-            out.detail = f"could not create the context repository: {exc}"
-            return out
-        # RE-READ WHAT WAS JUST RECORDED — the stale-object defect, third sighting prevented
-        from openfactory.registry import ProjectRegistry
-
-        try:
-            project = ProjectRegistry().get(getattr(project, "name", ""))
-        except KeyError:
-            pass  # a doubled registry in a test may not answer; the record itself happened
+        out.detail = (f"{getattr(project, 'name', 'this project')} declares no context "
+                      f"repository, so there is nothing to backfill — product_init with "
+                      f"create_context creates one in the client's organisation, and "
+                      f"product_declare names the one they already have. Nothing was done")
+        return out
     out.docs_repo = docs_repo
 
     _say(stream, "start", f"context: cloning {docs_repo}")

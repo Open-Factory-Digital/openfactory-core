@@ -23,17 +23,24 @@ THE RULES HELD HERE, each over cases read from the code rather than named:
      written over;
   9. a row of several steps says what each step came to — a step that raises is a failed step,
      said, never a traceback, and never with the credential a git call was handed — and running
-     it again does only what is missing.
+     it again does only what is missing;
+ 10. no command of the CLI writes the installation but through a row, as far as the walk reads a
+     command (`_reaches` says which shapes it reads and which it does not), and every
+     installation row is the mapping of a command.
 """
 
 from __future__ import annotations
 
 import ast
 import asyncio
+import collections
 import dataclasses
 import functools
+import importlib
+import inspect
 import json
 import re
+import typing
 from pathlib import Path
 
 import pytest
@@ -58,6 +65,7 @@ from tests.the_tree_read_once import parsed
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PY = ROOT / "openfactory" / "actions" / "catalog.py"
+SCHEDULE_PY = ROOT / "openfactory" / "runtime" / "temporal" / "schedule.py"
 CONTRACT = ROOT / "docs" / "reference" / "the-front-end-api.md"
 
 #: The rows that write the installation's registry and are NOT the administrator's, each with why.
@@ -87,46 +95,41 @@ def _writers(path: str, owner: str, through: str) -> frozenset[str]:
 @functools.cache
 def _poller_holds() -> frozenset[str]:
     """The schedule module's functions that pause or unpause a schedule."""
-    tree = parsed(ROOT / "openfactory/runtime/temporal/schedule.py")
+    tree = parsed(SCHEDULE_PY)
     return frozenset(
         fn.name for fn in tree.body if isinstance(fn, ast.AsyncFunctionDef | ast.FunctionDef)
         and any(isinstance(n, ast.Call) and getattr(n.func, "attr", "") in ("pause", "unpause")
                 for n in ast.walk(fn)))
 
 
+#: `class whose instance is written through → (its module, what each of its writers calls on itself)`.
+_WRITTEN_THROUGH = {"ProjectRegistry": ("openfactory/registry.py", "_save_raw"),
+                    "PeopleStore": ("openfactory/identity/people.py", "_record")}
+
 #: `class whose instance is written through → its writers`.
-WRITERS = {
-    "ProjectRegistry": _writers("openfactory/registry.py", "ProjectRegistry", "_save_raw"),
-    "PeopleStore": _writers("openfactory/identity/people.py", "PeopleStore", "_record"),
-}
+WRITERS = {cls: _writers(path, cls, through) for cls, (path, through) in _WRITTEN_THROUGH.items()}
+
+#: The same classes by where they are defined, so an instance is known by its class.
+_WRITER_HOMES = {(ROOT / path, cls): cls for cls, (path, _) in _WRITTEN_THROUGH.items()}
+
+#: Builtin types whose methods a writer's name may share: `set.add`, `list.remove`.
+_BUILTINS = (dict, list, set, frozenset, str, bytes, tuple)
 
 
-def _builds(node: ast.AST, cls: str) -> bool:
-    """Whether `node` constructs `cls` — `ProjectRegistry()` or `_people.PeopleStore()`."""
-    return isinstance(node, ast.Call) and (getattr(node.func, "id", "") == cls
-                                           or getattr(node.func, "attr", "") == cls)
-
-
-def _writes_directly(fn: ast.AST) -> set[str]:
-    """What this one function writes: `Class.method` for a writer called on an instance it built
-    (inline, or through a name it bound to one), and the poller's hold called by name."""
-    bound = {cls: {t.id for n in ast.walk(fn) if isinstance(n, ast.Assign) and _builds(n.value, cls)
-                   for t in n.targets if isinstance(t, ast.Name)} for cls in WRITERS}
-    holds = _poller_holds()
-    found: set[str] = set()
-    for n in ast.walk(fn):
-        if not isinstance(n, ast.Call):
-            continue
-        if getattr(n.func, "id", "") in holds:
-            found.add(f"schedule.{n.func.id}")
-        if not isinstance(n.func, ast.Attribute):
-            continue
-        for cls, methods in WRITERS.items():
-            receiver = n.func.value
-            if n.func.attr in methods and (_builds(receiver, cls)
-                                           or getattr(receiver, "id", "") in bound[cls]):
-                found.add(f"{cls}.{n.func.attr}")
-    return found
+@functools.cache
+def _named_only_by_their_writer() -> dict[str, str]:
+    """`writer → its class`, for the writers whose name no other function or method of the package
+    defines and no builtin type has. Such a call writes the installation whatever it is called on
+    (`local.people().invite(...)`, `self.registry.set_docs_repo(...)`), so the reading needs no idea
+    of the receiver. The others are seen only on a value the reading knows is a registry or a
+    store: on 2026-10-24 those were `add` (a set's, and six other modules'), `remove` (a list's and
+    a set's, and `lifecycle/ports.py`'s), `set_enabled` (a route of the panel's) and `register` (a
+    function inside the panel's app)."""
+    defined = collections.Counter(
+        n.name for path in sorted((ROOT / "openfactory").rglob("*.py"))
+        for n in ast.walk(parsed(path)) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef))
+    return {method: cls for cls, methods in WRITERS.items() for method in methods
+            if defined[method] == 1 and not any(hasattr(t, method) for t in _BUILTINS)}
 
 
 def _module_file(dotted: str) -> Path | None:
@@ -139,59 +142,383 @@ def _module_file(dotted: str) -> Path | None:
 
 
 def _from_the_package(node: ast.AST) -> dict[str, str]:
-    """What `node` imports from the package: local name → dotted path, a module's
-    (`from openfactory.product import before_code`) or a function's (`from
-    openfactory.product.onboard import create_context_repository`)."""
-    return {alias.asname or alias.name: f"{n.module}.{alias.name}"
-            for n in ast.walk(node)
-            if isinstance(n, ast.ImportFrom) and not n.level
-            and (n.module or "").startswith("openfactory")
-            for alias in n.names}
+    """What `node` imports from the package: local name → dotted path, a module's (`from
+    openfactory.product import before_code`, `import openfactory.product.onboard as onboard`,
+    `import openfactory.product.onboard`, which binds `openfactory`) or a function's or a class's
+    (`from openfactory.product.onboard import create_context_repository`). A relative import is
+    not read: the package had none on 2026-10-24."""
+    out: dict[str, str] = {}
+    for n in ast.walk(node):
+        if isinstance(n, ast.ImportFrom) and not n.level and (n.module or "").startswith(
+                "openfactory"):
+            out.update({alias.asname or alias.name: f"{n.module}.{alias.name}" for alias in n.names})
+        elif isinstance(n, ast.Import):
+            out.update({alias.asname or "openfactory": alias.name if alias.asname else "openfactory"
+                        for alias in n.names if alias.name.partition(".")[0] == "openfactory"})
+    return out
+
+
+class _Read(typing.NamedTuple):
+    """A module of the package, as the walk reads it."""
+
+    dotted: str                    # `openfactory.product.onboard`
+    functions: dict[str, ast.AST]  # its functions by name, its classes' methods as `Class.method`
+    classes: frozenset[str]
+    values: frozenset[str]         # the other names it binds at the top: `CATALOG`, `app`
+    imports: dict[str, str]        # what it imports from the package, anywhere in it
 
 
 @functools.cache
-def _catalog_writes() -> dict[str, set[str]]:
-    """`row → what it writes`, following what its runner names: the catalogue's own helpers, by a
-    call or handed on — a row whose steps leave the loop hands its body to `asyncio.to_thread` —
-    and the package's functions it imports, by name or as a module's attribute.
+def _module(path: Path) -> _Read:
+    tree = parsed(path)
+    functions = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)}
+    classes = [n for n in tree.body if isinstance(n, ast.ClassDef)]
+    functions.update({f"{c.name}.{m.name}": m for c in classes for m in c.body
+                      if isinstance(m, ast.FunctionDef | ast.AsyncFunctionDef)})
+    values = {t.id for n in tree.body if isinstance(n, ast.Assign | ast.AnnAssign)
+              for t in (n.targets if isinstance(n, ast.Assign) else [n.target])
+              if isinstance(t, ast.Name)}
+    dotted = ".".join(path.relative_to(ROOT).with_suffix("").parts).removesuffix(".__init__")
+    return _Read(dotted, functions, frozenset(c.name for c in classes), frozenset(values),
+                 _from_the_package(tree))
+
+
+@functools.cache
+def _target(dotted: str) -> tuple[str, Path, str] | None:
+    """What a dotted name of the package is, as `(kind, its module's file, its name there)`: a
+    `function` (a method as `Class.method`), a `class`, or another `value` the module binds at its
+    top — read in the longest prefix that is a module, and through a name that module imports."""
+    followed: set[str] = set()
+    while dotted not in followed:
+        followed.add(dotted)
+        parts = dotted.split(".")
+        cut = next((cut for cut in range(len(parts) - 1, 0, -1)
+                    if _module_file(".".join(parts[:cut])) is not None), None)
+        if cut is None:
+            return None
+        file = _module_file(".".join(parts[:cut]))
+        mod, rest = _module(file), parts[cut:]
+        key = ".".join(rest)
+        if key in mod.functions:
+            return "function", file, key
+        if len(rest) == 1 and key in mod.classes:
+            return "class", file, key
+        if len(rest) == 1 and key in mod.values:
+            return "value", file, key
+        if rest[0] not in mod.imports:
+            return None
+        dotted = ".".join([mod.imports[rest[0]], *rest[1:]])
+    return None
+
+
+@dataclasses.dataclass(frozen=True)
+class _Is:
+    """What the reading knows a value is: an instance of the class `cls` of the module at `home`,
+    and, for a row taken from the catalogue by its name, which row."""
+
+    home: Path
+    cls: str
+    row: str | None = None
+
+
+def _home(fn) -> tuple[Path, str]:
+    """Where a function (or a class) of the package is read from: its module's file in this tree,
+    and its name. By the module's name rather than the file the interpreter loaded, so an editable
+    install of another checkout cannot send the walk to read a different tree."""
+    return _module_file(fn.__module__), fn.__name__
+
+
+#: A row of the catalogue: what `CATALOG[...]` holds. Its `.run`, called, is the row's runner.
+_ROW = _Is(*_home(actions.ActionSpec))
+
+#: Where the catalogue is held: the table, and the lazy view of it `openfactory.actions` exports.
+THE_CATALOGUE = frozenset((_module_file(m.__name__), "CATALOG") for m in (catalog, actions))
+
+
+class _Scope(typing.NamedTuple):
+    """One function, as the walk reads it."""
+
+    path: Path
+    names: dict[str, str]  # what it and its module import from the package
+    typed: dict[str, _Is]  # what its names are known to hold
+
+
+_SCOPES: dict[tuple, _Scope] = {}
+_RETURNS: dict[tuple[Path, str], _Is | None] = {}
+
+
+def _static(fn: ast.AST) -> bool:
+    return any(getattr(d, "id", "") == "staticmethod" for d in fn.decorator_list)
+
+
+def _named(scope: _Scope, node: ast.AST) -> tuple[str, Path, str] | None:
+    """What a name, or a chain of attributes off one, names in the package (`_target`)."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name) or node.id in scope.typed:
+        return None
+    head = scope.names.get(node.id) or f"{_module(scope.path).dotted}.{node.id}"
+    return _target(".".join([head, *reversed(parts)]))
+
+
+def _annotated(scope: _Scope, node: ast.AST | None) -> _Is | None:
+    """The class of the package an annotation names: `ProjectRegistry`, `X | None`, `Optional[X]`,
+    `"X"`."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        try:
+            node = ast.parse(node.value, mode="eval").body
+        except SyntaxError:
+            return None
+    if isinstance(node, ast.BinOp):
+        return _annotated(scope, node.left) or _annotated(scope, node.right)
+    if isinstance(node, ast.Subscript) and "Optional" in (getattr(node.value, "id", ""),
+                                                          getattr(node.value, "attr", "")):
+        return _annotated(scope, node.slice)
+    found = _named(scope, node) if node is not None else None
+    return _Is(found[1], found[2]) if found and found[0] == "class" else None
+
+
+def _is_the_catalogue(scope: _Scope, node: ast.AST) -> bool:
+    found = _named(scope, node)
+    return found is not None and found[0] == "value" and (found[1], found[2]) in THE_CATALOGUE
+
+
+def _row(key: ast.AST | None) -> _Is:
+    """A row taken from the catalogue: which one, when its name is written there."""
+    named = isinstance(key, ast.Constant) and key.value in catalog.CATALOG
+    return dataclasses.replace(_ROW, row=key.value) if named else _ROW
+
+
+def _type(scope: _Scope, node: ast.AST) -> _Is | None:
+    """What the expression `node` is known to hold, or `None`."""
+    if isinstance(node, ast.Await):
+        return _type(scope, node.value)
+    if isinstance(node, ast.Name):
+        return scope.typed.get(node.id)
+    if isinstance(node, ast.BoolOp):  # `registry or ProjectRegistry()`, as `product/forget.py` has it
+        return next((found for v in node.values if (found := _type(scope, v)) is not None), None)
+    if isinstance(node, ast.IfExp):
+        return _type(scope, node.body) or _type(scope, node.orelse)
+    if isinstance(node, ast.Subscript):
+        return _row(node.slice) if _is_the_catalogue(scope, node.value) else None
+    if not isinstance(node, ast.Call):
+        return None
+    func = node.func
+    if isinstance(func, ast.Attribute) and func.attr == "get" and _is_the_catalogue(scope,
+                                                                                     func.value):
+        return _row(node.args[0] if node.args else None)
+    if (named := _named(scope, func)) is not None and named[0] == "class":
+        return _Is(named[1], named[2])
+    if (callee := _callee(scope, func)) is not None:
+        return _returns(callee[0], callee[1])
+    # A BUILD THE IMPORTS DO NOT NAME, by its class's name, as the reading always read one
+    said = getattr(func, "id", "") or getattr(func, "attr", "")
+    return next((_Is(*home) for home, cls in _WRITER_HOMES.items() if cls == said), None)
+
+
+def _returns(path: Path, key: str) -> _Is | None:
+    """What a function of the package returns, when the reading knows: by its annotation, or by a
+    `return` of a value it knows."""
+    if (path, key) not in _RETURNS:
+        _RETURNS[(path, key)] = None  # a cycle returns nothing known
+        fn, scope = _module(path).functions[key], _scope(path, key)
+        _RETURNS[(path, key)] = _annotated(scope, fn.returns) or next(
+            (found for n in ast.walk(fn) if isinstance(n, ast.Return) and n.value is not None
+             and (found := _type(scope, n.value)) is not None), None)
+    return _RETURNS[(path, key)]
+
+
+def _bound(node: ast.AST):
+    """`(name, the expression it is bound to, whether to each item of it)` for what `node` binds."""
+    if isinstance(node, ast.Assign):
+        yield from ((t.id, node.value, False) for t in node.targets if isinstance(t, ast.Name))
+    elif isinstance(node, ast.AnnAssign | ast.NamedExpr) and isinstance(node.target, ast.Name) \
+            and node.value is not None:
+        yield node.target.id, node.value, False
+    elif isinstance(node, ast.withitem) and isinstance(node.optional_vars, ast.Name):
+        yield node.optional_vars.id, node.context_expr, False
+    elif isinstance(node, ast.For | ast.AsyncFor | ast.comprehension):
+        target = node.target
+        if isinstance(target, ast.Tuple) and len(target.elts) == 2:
+            target = target.elts[1]  # `for name, spec in CATALOG.items()`
+        if isinstance(target, ast.Name):
+            yield target.id, node.iter, True
+
+
+def _scope(path: Path, key: str, given: frozenset = frozenset()) -> _Scope:
+    """The function `key` of the module at `path`, with its parameters holding what `given` says
+    its caller handed them."""
+    if (path, key, given) not in _SCOPES:
+        fn = _module(path).functions[key]
+        scope = _SCOPES[(path, key, given)] = _Scope(
+            path, {**_module(path).imports, **_from_the_package(fn)}, dict(given))
+        params = [*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs]
+        if "." in key and params and not _static(fn):
+            scope.typed.setdefault(params[0].arg, _Is(path, key.partition(".")[0]))
+        for p in params:
+            if (found := _annotated(scope, p.annotation)) is not None:
+                scope.typed.setdefault(p.arg, found)
+        for _ in range(3):  # a name bound to a name bound to a build
+            for n in ast.walk(fn):
+                for name, value, each in _bound(n):
+                    if each:  # an item of the catalogue's `values()` or `items()` is a row
+                        held = (_ROW if isinstance(value, ast.Call)
+                                and getattr(value.func, "attr", "") in ("values", "items")
+                                and _is_the_catalogue(scope, value.func.value) else None)
+                    else:
+                        held = _type(scope, value)
+                    if held is not None:
+                        scope.typed.setdefault(name, held)
+    return _SCOPES[(path, key, given)]
+
+
+def _callee(scope: _Scope, node: ast.AST) -> tuple[Path, str, int] | None:
+    """The function of the package `node` names, as `(its module's file, its key there, how many
+    of its first parameters are not handed in a call's arguments)`: one of the module's own, one
+    imported, a module's attribute, a method of a value the reading knows (`self` included) or of
+    a class, or a class's `__init__` — `None` for anything else."""
+    if isinstance(node, ast.Attribute) and (held := _type(scope, node.value)) is not None:
+        key = f"{held.cls}.{node.attr}"
+        fn = _module(held.home).functions.get(key)
+        return (held.home, key, 0 if _static(fn) else 1) if fn is not None else None
+    named = _named(scope, node)
+    if named is None:
+        return None
+    kind, home, key = named
+    if kind == "class":
+        init = f"{key}.__init__"
+        return (home, init, 1) if init in _module(home).functions else None
+    if kind != "function":
+        return None
+    fn = _module(home).functions[key]
+    classmethod_ = any(getattr(d, "id", "") == "classmethod" for d in fn.decorator_list)
+    return home, key, 1 if classmethod_ else 0
+
+
+def _handed(scope: _Scope, callee: tuple[Path, str, int], args, keywords) -> frozenset:
+    """What a call hands `callee`'s parameters that the reading knows, by position or by name."""
+    fn = _module(callee[0]).functions[callee[1]]
+    params = [p.arg for p in (*fn.args.posonlyargs, *fn.args.args)][callee[2]:]
+    given = {}
+    for param, arg in zip(params, args, strict=False):  # a call may leave defaults out
+        if isinstance(arg, ast.Starred):
+            break
+        if (held := _type(scope, arg)) is not None:
+            given[param] = held
+    for kw in keywords:
+        if kw.arg and (held := _type(scope, kw.value)) is not None:
+            given[kw.arg] = held
+    return frozenset(given.items())
+
+
+def _written(scope: _Scope, node: ast.AST) -> set[str]:
+    """What the one node `node` writes of the installation, called or handed on."""
+    if isinstance(node, ast.Call) and getattr(node.func, "id", "") in _poller_holds():
+        return {f"schedule.{node.func.id}"}
+    if not isinstance(node, ast.Attribute):
+        return set()
+    if (cls := _named_only_by_their_writer().get(node.attr)) is not None:
+        return {f"{cls}.{node.attr}"}
+    held = _type(scope, node.value)
+    cls = _WRITER_HOMES.get((held.home, held.cls)) if held is not None else None
+    return {f"{cls}.{node.attr}"} if cls and node.attr in WRITERS[cls] else set()
+
+
+def _entered(scope: _Scope, node: ast.AST) -> list[tuple[Path, str, frozenset]]:
+    """The functions of the package the one node `node` enters, each with what its parameters are
+    handed that the reading knows."""
+    out = []
+    if isinstance(node, ast.Name | ast.Attribute) and (callee := _callee(scope, node)):
+        out.append((callee[0], callee[1], frozenset()))
+    if not isinstance(node, ast.Call):
+        return out
+    func = node.func
+    if isinstance(func, ast.Attribute) and func.attr == "run" and (
+            held := _type(scope, func.value)) is not None and dataclasses.replace(
+            held, row=None) == _ROW:  # a row's runner, called without the door
+        specs = [catalog.CATALOG[held.row]] if held.row else list(catalog.CATALOG.values())
+        out += [(*_home(spec.run), frozenset()) for spec in specs]
+    if (callee := _callee(scope, func)) is not None:
+        out.append((callee[0], callee[1], _handed(scope, callee, node.args, node.keywords)))
+    for i, arg in enumerate(node.args):  # a function handed on gets the arguments after it
+        if (callee := _callee(scope, arg)) is not None:
+            out.append((callee[0], callee[1], _handed(scope, callee, node.args[i + 1:], [])))
+    return out
+
+
+def _reaches(path: Path, name: str, *, door: tuple[Path, str] | None = None,
+             seen: set[tuple[Path, str]] | None = None) -> dict[str, tuple[str, ...]]:
+    """What the function `name` of the module at `path` writes of the installation, followed into
+    the package: `writer → the functions it was reached through`, so a failure can say how. The
+    walk does not enter `door`; `seen` is left holding every function it entered.
+
+    WHAT IS READ AS A WRITE, called or handed on:
+      - a writer of the registry or the people store on a value the reading knows is one: built
+        there (`ProjectRegistry()`), a name bound to one (`registry = registry or
+        ProjectRegistry()` included), what a function of the package returns when it returns one
+        (by its annotation, or a `return` of one), a parameter annotated as one, or a parameter a
+        caller handed one to, by position or by name, or as an argument after a function it hands
+        on (`asyncio.to_thread(helper, registry)`);
+      - a writer whose name nothing else defines (`_named_only_by_their_writer`), on anything;
+      - the poller's hold called by its name, and any of the schedule's pausing functions entered.
+
+    WHAT IS FOLLOWED: every function of the package a function names, called or handed on — its
+    module's own, one imported by name, a module's attribute through any chain of modules
+    (`from openfactory.x import y`, `import openfactory.x as y`, `import openfactory.x`), a class's
+    `__init__` where the class is named, a method of a value the reading knows (`self` in a method
+    included) or of the class itself — and a row's runner, where `.run(...)` is called on a row
+    taken from the catalogue (`CATALOG[...]`, `CATALOG.get(...)`, a name bound to either, an item
+    of `CATALOG.values()` or `.items()`, a value annotated `ActionSpec`): that row's runner when
+    its name is written there, every row's when it is not.
+
+    WHAT IS NOT: a name looked up by a string (`getattr`, `importlib`); a function the module
+    holds in a table at its top (`HANDLERS[name]()`); a registry or a store the reading cannot
+    type — held in a container or on another object's attribute, or handed back by a function
+    from its own parameter — written by a name something else defines too (`add`, `remove`,
+    `set_enabled`, `register`); a method a class inherits; a row's runner handed on uncalled; a
+    relative import (the package had none on 2026-10-24); and what a module runs when it is
+    imported. Six of those were put in a command of `cli.py` on 2026-10-24 and each passed rule
+    10: `getattr(ProjectRegistry(), "set_enabled")`, a module-level table, an inherited method,
+    `set_enabled` on another object's attribute, a registry handed back from a parameter, and a
+    runner bound to a name before it was called. A function a call returns IS read: the function
+    that returns it names it, and the walk enters what a function names.
 
     THE CATALOGUE'S EDGE WAS WHERE THIS READING STOPPED, and two rows wrote past it: main's
     `product_start` and `product_first_source` (#992) register a project and give it its code
     through `product/before_code.py`, and they read as rows that write nothing, so neither was
-    declared the installation's and a board credential ran both (slice 3)."""
-    modules: dict[Path, tuple[dict[str, ast.AST], dict[str, str]]] = {}
+    declared the installation's and a board credential ran both (slice 3). AND A HOLD WAS SEEN ONLY
+    BY ITS NAME: the schedule's pause, reached as the module's attribute, was a function that
+    calls `.pause` on a handle and nothing else — so entering one is reaching it (slice 4). AND A
+    WRITE WAS SEEN ONLY ON AN INSTANCE BUILT IN THE SAME FUNCTION: an independent review of slice
+    4 put five commands in `cli.py` — a registry handed to a helper, one a helper returned, a
+    class's method, `catalog.CATALOG["enable"].run(...)` and `import openfactory.product.onboard
+    as pob` — and each passed this walk; each is a cut of plan 741d now."""
+    return _walk(path, name, frozenset(), door, set() if seen is None else seen, set())
 
-    def module(path: Path) -> tuple[dict[str, ast.AST], dict[str, str]]:
-        if path not in modules:
-            tree = parsed(path)
-            modules[path] = ({n.name: n for n in tree.body
-                              if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)},
-                             _from_the_package(tree))
-        return modules[path]
 
-    def reached(path: Path, name: str, seen: set[tuple[Path, str]]) -> set[str]:
-        functions, imported = module(path)
-        if (path, name) in seen or name not in functions:
-            return set()
-        seen.add((path, name))
-        fn = functions[name]
-        names = {**imported, **_from_the_package(fn)}
-        out = _writes_directly(fn)
-        for n in ast.walk(fn):
-            if isinstance(n, ast.Name) and n.id in functions:
-                out |= reached(path, n.id, seen)
-            elif isinstance(n, ast.Name) and n.id in names:
-                home, _, called = names[n.id].rpartition(".")
-                if (found := _module_file(home)) is not None:
-                    out |= reached(found, called, seen)
-            elif (isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
-                  and n.value.id in names
-                  and (found := _module_file(names[n.value.id])) is not None):
-                out |= reached(found, n.attr, seen)
-        return out
+def _walk(path: Path, key: str, given: frozenset, door, seen: set,
+          entered: set) -> dict[str, tuple[str, ...]]:
+    if (path, key) == door or key not in _module(path).functions or (path, key, given) in entered:
+        return {}
+    entered.add((path, key, given))
+    seen.add((path, key))
+    scope, here = _scope(path, key, given), f"{path.relative_to(ROOT)}::{key}"
+    out = {f"schedule.{key}": (here,)} if path == SCHEDULE_PY and key in _poller_holds() else {}
+    for node in ast.walk(_module(path).functions[key]):
+        for writer in _written(scope, node):
+            out.setdefault(writer, (here,))
+        for callee in _entered(scope, node):
+            for writer, trail in _walk(*callee, door, seen, entered).items():
+                out.setdefault(writer, (here, *trail))
+    return out
 
-    return {name: reached(CATALOG_PY, spec.run.__name__, set())
-            for name, spec in catalog.CATALOG.items()}
+
+@functools.cache
+def _catalog_writes() -> dict[str, set[str]]:
+    """`row → what it writes`, following what its runner names into the package (`_reaches`)."""
+    return {name: set(_reaches(*_home(spec.run))) for name, spec in catalog.CATALOG.items()}
 
 
 def test_what_writes_the_installation_is_read_off_the_modules_that_write_it():
@@ -206,6 +533,15 @@ def test_what_writes_the_installation_is_read_off_the_modules_that_write_it():
     # — handed to a thread as a module's attribute — is read as writing it
     assert "ProjectRegistry.add" in _catalog_writes()["product_start"], (
         "the reading stops at the catalogue's edge again")
+    # A WRITER IS READ ON ANY RECEIVER ONLY BY A NAME NOTHING ELSE HAS: `add` is a set's too
+    named = _named_only_by_their_writer()
+    assert named.get("set_docs_repo") == "ProjectRegistry" and named.get("withdraw") == \
+        "PeopleStore", named
+    assert {"add", "remove"}.isdisjoint(named), named
+    # THE CATALOGUE IS READ WHERE `perform` READS IT: each place it is held gives the table's rows
+    held = [getattr(importlib.import_module(_module(path).dotted), name)
+            for path, name in sorted(THE_CATALOGUE)]
+    assert len(held) == 2 and all(h["enable"] is catalog.CATALOG["enable"] for h in held), held
 
 
 # ── 1. a row that writes the installation says so, and only such a row ─────────────────────────
@@ -364,6 +700,16 @@ def test_the_front_end_contract_lists_exactly_the_installation_rows_and_what_the
         spec = catalog.CATALOG[name]
         said = [p.strip(" `[]") for p in takes.split(",") if p.strip(" `[]-")]
         assert said == list(spec.parameters), (name, said, spec.parameters)
+
+
+def test_the_catalogue_a_front_end_reads_marks_exactly_the_installation_rows():
+    """`GET /api/v1/actions` says which rows are the installation's, so a screen of one's own that
+    holds a scoped credential can leave them out rather than offer a button that answers 403."""
+    from openfactory.api.app import app
+
+    listed = TestClient(app).get("/api/v1/actions").json()
+
+    assert sorted(row["name"] for row in listed if row["installation"]) == INSTALLATION, listed
 
 
 # ── 5. one doctor, whichever door asked ─────────────────────────────────────────────────────────
@@ -1259,6 +1605,41 @@ def test_each_verb_of_several_steps_runs_its_row_and_writes_nothing_itself(argv,
     assert one_project.read_bytes() == before, f"{argv} wrote the registry itself"
 
 
+def test_onboard_creates_a_context_repository_through_its_row_and_writes_nothing_itself(
+        one_project, monkeypatch):
+    """`onboard` on a project with no context repository asks `product_init` to create one, once,
+    and records nothing itself: with the row's own code replaced by a recorder, the verb answers
+    and the registry is byte for byte as it was (slice 4). Before, the onboarding module created
+    the repository and wrote it into the registry from the command line's own code."""
+    from types import SimpleNamespace
+
+    from openfactory import cli
+    from openfactory.onboarding import onboard
+
+    before, seen = one_project.read_bytes(), []
+
+    async def recorder(by=None, **params):
+        seen.append(params)
+        return actions.done("recorded", steps=[{"step": "context", "state": "done",
+                                                 "said": "created acme-corp/acme-context"}])
+
+    monkeypatch.setattr(catalog, "CATALOG", {**catalog.CATALOG, "product_init": dataclasses.replace(
+        catalog.CATALOG["product_init"], run=recorder)})
+    proven = SimpleNamespace(ok=True, detail="nothing to propose", pr="", proof="proven",
+                             questions=[], manifest_already_there=True, repo="acme")
+    monkeypatch.setattr(onboard, "onboard_source_repo", lambda *a, **kw: proven)
+    monkeypatch.setattr(onboard, "onboard_product_context", lambda project, **kw: (
+        onboard.ContextOutcome(ok=True, docs_repo="acme-corp/acme-context", detail="proposed")))
+
+    out = CliRunner().invoke(cli.app, ["onboard", "acme", "--yes"])
+
+    assert out.exit_code == 0, out.output
+    assert [p.get("create_context") for p in seen] == [True], (
+        f"onboard did not ask product_init to create the context repository: {seen}")
+    assert one_project.read_bytes() == before, "onboard wrote the registry itself"
+    assert "(created)" in out.output, out.output
+
+
 # ── 8, again: what is registered is never written over (slice 3) ────────────────────────────
 
 def _add_elsewhere(repo):
@@ -1751,3 +2132,160 @@ def test_a_git_call_that_carries_the_credential_and_runs_out_of_time_is_said_as_
         assert ("acme-corp/acme-context" in declaration["said"]
                 and f"timed out after {catalog._A_CONTEXT_GIT_S} s" in declaration["said"]
                 and "Command '" not in declaration["said"]), declaration
+
+
+# ── 10. the command line changes the installation through its rows, and only so (slice 4) ──────
+#
+# THE GUARD #741 ASKED FOR, AND THE DIRECTION NOTHING CHECKED. `test_the_action_layer.py` proves
+# every row is reached from the shell (`openfactory act`); nothing proved that a verb which changes
+# the installation goes through a row. Three slices moved the verbs one by one, and the last one
+# still writing past them, `onboard`'s context repository, was found by this walk, not by a list.
+
+def _the_door() -> tuple[Path, str]:
+    """`perform`: where every front end hands a row its parameters. The walk does not enter it —
+    what a row writes is the row's, held to the row's declaration by rule 1 — and nothing else is
+    a door."""
+    return _home(actions.perform)
+
+
+@functools.cache
+def _commands() -> dict[str, object]:
+    """Every command a person can type, read off the Typer app itself: the tree click builds from
+    it, which is what runs, as `words → the function that runs`."""
+    import typer.main
+
+    from openfactory.cli import app
+
+    def walk(command, words: tuple[str, ...]):
+        subs = getattr(command, "commands", None)
+        if subs:
+            for name, sub in sorted(subs.items()):
+                yield from walk(sub, (*words, name))
+        else:
+            yield " ".join(words), inspect.unwrap(command.callback)
+
+    return dict(walk(typer.main.get_command(app), ()))
+
+
+def _registered() -> dict[str, object]:
+    """The same commands, read off what the app registered: the second reading the walk is held
+    to, so a walk that loses a group is seen."""
+    from openfactory.cli import app
+
+    def names(typer_app, words: tuple[str, ...]):
+        for c in typer_app.registered_commands:
+            said = c.name or c.callback.__name__.lower().replace("_", "-")
+            yield " ".join((*words, said)), inspect.unwrap(c.callback)
+        for group in typer_app.registered_groups:
+            yield from names(group.typer_instance, (*words, group.name))
+
+    return dict(names(app, ()))
+
+
+def _read_as_written(fn) -> bool:
+    """Whether the walk reads `fn`'s own body: a module-level function of the package, the one of
+    its name that starts on the line the interpreter says it does."""
+    path, name = _home(fn)
+    node = _module(path).functions.get(name) if path is not None else None
+    if node is None:
+        return False
+    first = min([node.lineno, *(d.lineno for d in node.decorator_list)])
+    return first == fn.__code__.co_firstlineno
+
+
+_HANDS_ON: dict[tuple[Path, str], bool] = {}
+
+
+def _hands_on(home: tuple[Path, str]) -> bool:
+    """Whether calling this function hands a row's name to the door: it is `perform`, or it passes
+    its own first parameter on to a function that does — the shell's `_perform`."""
+    if home == _the_door():
+        return True
+    if home not in _HANDS_ON:
+        _HANDS_ON[home] = False  # a cycle hands nothing on
+        path, name = home
+        fn = _module(path).functions.get(name)
+        first = fn.args.args[0].arg if fn is not None and fn.args.args else None
+        scope = _scope(path, name) if first else None
+        _HANDS_ON[home] = bool(first) and any(
+            isinstance(c, ast.Call) and c.args and isinstance(c.args[0], ast.Name)
+            and c.args[0].id == first and (callee := _callee(scope, c.func)) is not None
+            and _hands_on(callee[:2]) for c in ast.walk(fn))
+    return _HANDS_ON[home]
+
+
+@functools.cache
+def _walked(words: str) -> tuple[dict[str, tuple[str, ...]], frozenset[str]]:
+    """What the command `words` writes of the installation without going through the door, and
+    the rows it hands to the door by name — the first argument of a call, in a function the walk
+    entered, to a function that hands it on."""
+    seen: set[tuple[Path, str]] = set()
+    writes = _reaches(*_home(_commands()[words]), door=_the_door(), seen=seen)
+    rows = set()
+    for path, name in seen:
+        scope = _scope(path, name)
+        rows |= {c.args[0].value for c in ast.walk(_module(path).functions[name])
+                 if isinstance(c, ast.Call) and c.args and isinstance(c.args[0], ast.Constant)
+                 and c.args[0].value in catalog.CATALOG
+                 and (callee := _callee(scope, c.func)) is not None and _hands_on(callee[:2])}
+    return writes, frozenset(rows)
+
+
+def test_the_walk_reaches_every_command_the_app_registers_and_reads_each_body():
+    """The guard below is only as good as its list of commands, so the list is read twice off the
+    app — the tree that runs and what was registered — and the two must be the same commands
+    running the same functions; and the walk must read each one's own body."""
+    walked, registered = _commands(), _registered()
+
+    assert walked == registered, (
+        f"the walk and the app's registrations disagree: "
+        f"{sorted(set(walked) ^ set(registered)) or 'the same words run different functions'}")
+    assert any(" " in words for words in walked), "the walk never left the root"
+    unread = sorted(words for words, fn in walked.items() if not _read_as_written(fn))
+    assert not unread, f"commands whose body the walk cannot read: {unread}"
+
+
+def test_no_command_writes_the_installation_but_through_a_row():
+    """A command that changes the installation is a mapping onto a row: what it writes, it writes
+    through `perform`, which asks who is acting and logs it. Every command is walked into the
+    package as rule 1 walks a row, and none may reach a writer of the registry, the people store
+    or the poller's schedule on its own — directly, through a helper or a class's method, or by
+    calling a row's runner without the door. Each failure names the command, the writer and the
+    rows that write it.
+
+    WHAT THE WALK DOES NOT READ is written on `_reaches`: a name looked up by a string, a function
+    held in a module's table, a registry it cannot type written by a name something else defines
+    too, an inherited method, a runner handed on uncalled, a relative import, and import-time
+    code. A command that writes through one of those passes this test."""
+    said = []
+    for words in sorted(_commands()):
+        for writer, trail in sorted(_walked(words)[0].items()):
+            rows = sorted(r for r, what in _catalog_writes().items() if writer in what)
+            onto = (f"map it onto {' or '.join(rows)} through `perform`" if rows else
+                    "no row writes it yet: add one, declared `installation=True`, and map the "
+                    "command onto it")
+            said.append(f"`openfactory {words}` writes {writer} outside a row "
+                        f"({' → '.join(trail)}) — {onto}")
+
+    assert not said, "\n".join(said)
+
+
+def test_every_installation_row_is_the_mapping_of_a_command():
+    """THE POSITIVE TWIN, and #741's other half: the shell's verbs are mappings over the
+    installation's rows. Each installation row is handed to `perform`, by name, from a command the
+    walk reaches — so the walk reads the commands down to the door, and a walk that lost a group,
+    or a door the shell's verbs stopped going through, loses the rows they map.
+
+    A NEW INSTALLATION ROW COMES WITH ITS VERB, in the same pull request: #741 asks that the shell
+    can do what a front end can, and #1041, the next rows for the registry, asks for a typed verb
+    for each option. So the failure says what to add rather than naming an exemption: there is
+    none, and a row that should have no verb of its own is a decision for the review that adds
+    it."""
+    mapped = {row for words in _commands() for row in _walked(words)[1]}
+
+    missing = sorted(set(INSTALLATION) - mapped)
+    assert not missing, (
+        f"installation rows no command maps onto: {missing} — add the verb that changes this part "
+        f"of the installation, calling the row through `perform` as the other verbs do, in the "
+        f"pull request that adds the row. `openfactory act` reaches every row, but it is not "
+        f"that verb")

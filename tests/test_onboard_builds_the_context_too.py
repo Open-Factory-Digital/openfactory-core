@@ -6,8 +6,9 @@ client added: some projects already keep a documentation repository (USED, never
 have none (CREATED, in their own organisation). What these hold:
 
   1. a declared docs repo is cloned and used — nothing is created;
-  2. an undeclared one is created THROUGH the extracted leg and the project is RE-READ (the
-     stale-object defect's third sighting, prevented);
+  2. an undeclared one is created THROUGH the `product_init` row, which records it, and the
+     project is RE-READ (the stale-object defect's third sighting, prevented) — never by the
+     onboarding module itself, since recording it changes the installation (#741);
   3. the backfill runs server-side and says WHICH mode it took — deterministic with the why
      when no harness credential is present, never a silent downgrade;
   4. the PR carries product.yaml + the backfill documents, and the third declaration (each
@@ -122,18 +123,59 @@ def test_a_declared_context_repo_is_USED_never_created(tmp_path, wired):
     assert recorded == [], "the registry was rewritten for a repo it already named"
 
 
-def test_an_undeclared_context_repo_is_created_recorded_and_the_project_reread(tmp_path, wired):
+def test_an_undeclared_context_repo_is_not_created_by_the_onboarding_module(tmp_path, wired):
+    """Creating it records it in the registry, which is the installation's and a row's (#741): a
+    project handed here with none is told which row makes one, and nothing is created."""
     origins, forge, recorded = wired
     origins["acme/api"] = _bare(tmp_path, "api",
                                 seed={"pkg/app.py": "def main():\n    return 1\n"})
-    origins["acme/dsk-context"] = _bare(tmp_path, "ctx")  # born empty, like a created repo
 
     out = ob.onboard_product_context(_project(), sources=["acme/api"])
 
-    assert out.ok, out.detail
-    assert out.created
+    assert not out.ok and "product_init" in out.detail, out.detail
+    assert forge.created == [] and recorded == [], "the module made a repository itself"
+
+
+def test_onboard_creates_an_undeclared_context_repo_through_its_row_and_rereads_the_project(
+        tmp_path, monkeypatch):
+    """`onboard` performs `product_init` with `create_context`: the repository is created with a
+    derived name and recorded — in the real registry, in a file of this test's own — and the
+    context half then runs on the project as re-read, so the backfill lands in the repository just
+    made, said as created."""
+    from types import SimpleNamespace
+
+    from typer.testing import CliRunner
+
+    from openfactory import cli
+    from openfactory.registry import ProjectRegistry
+
+    origins: dict[str, Path] = {}
+    forge = _Forge()
+    monkeypatch.setattr("openfactory.adapters.forge.registry.build_forge",
+                        lambda *a, **kw: forge)
+    monkeypatch.setattr("openfactory.adapters.forge.registry.clone_url_for",
+                        lambda view, repo, token=None: str(origins[repo]))
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("OPENFACTORY_REGISTRY", str(tmp_path / "registry.yaml"))
+    ProjectRegistry().add(_project())
+    origins["acme/api"] = _bare(tmp_path, "api",
+                                seed={"pkg/app.py": "def main():\n    return 1\n"})
+    origins["acme/dsk-context"] = _bare(tmp_path, "ctx")  # born empty, like a created repo
+    proven = SimpleNamespace(ok=True, detail="nothing to propose", pr="", proof="proven",
+                             questions=[], manifest_already_there=True, repo="acme/api")
+    monkeypatch.setattr(ob, "onboard_source_repo", lambda *a, **kw: proven)
+
+    out = CliRunner().invoke(cli.app, ["onboard", "dsk", "--yes"])
+
+    assert out.exit_code == 0, out.output
     assert forge.created == ["dsk-context"], "the name must be derived, never free text"
-    assert recorded == [("dsk", "acme/dsk-context")], "created and NOT recorded is theatre"
+    assert ProjectRegistry().get("dsk").product.docs_repo == "acme/dsk-context", (
+        "created and NOT recorded is theatre")
+    assert "✓ acme/dsk-context (created)" in out.output, out.output
+    shown = subprocess.run(["git", "show", "--name-only", "--format=", "main"],
+                           cwd=origins["acme/dsk-context"], capture_output=True, text=True)
+    assert ".openfactory/product.yaml" in shown.stdout, "the backfill missed the repository made"
 
 
 def test_the_pr_carries_declaration_backfill_and_the_human_todo(tmp_path, wired):

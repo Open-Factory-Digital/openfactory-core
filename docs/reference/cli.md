@@ -113,7 +113,9 @@ measured: per repository it reads the manifest out of the code, **proves it in t
 generates the module map, and opens one pull request carrying all three with the proof's
 verdict in the body; then creates-or-uses the context repository and proposes the backfill the
 same way (a context repository born empty gets the declaration as its first commit instead —
-no pull request can target a commitless base). `--source owner/repo` (repeatable) names the repositories of a multi-repo product —
+no pull request can target a commitless base). Creating one is the `product_init` action, as
+`product init --create-context` is: like every command that changes the installation, `onboard`
+changes it only through an action. `--source owner/repo` (repeatable) names the repositories of a multi-repo product —
 N repositories, N proofs, N pull requests; `--skip-context` leaves the context half out. A
 failing proof does not withhold the pull request — it is quoted in it. Walked in [ONBOARDING §3](../ONBOARDING.md).
 

@@ -1867,6 +1867,31 @@ def _onboard_preview(project, repo: str, outcome) -> None:
                    + (" (already open)" if said.existed else ""))
 
 
+def _a_context_repository_for(name: str, project, *, stage) -> tuple[object, bool, str]:
+    """`(project, created, "")` once the project names its context repository — re-read from the
+    registry when this made one — or `(project, False, why)` when it could not be made.
+
+    CREATING ONE CHANGES THE INSTALLATION, SO IT IS A ROW'S (#741). `onboard` created the
+    repository and recorded it in the registry from the command line's own code, through the
+    onboarding module: the one verb still writing the installation outside a row once `product
+    init` became `product_init`. That row creates the repository in the client's organisation and
+    records it, as `product init --create-context` does. Without `write` it proposes nothing: the
+    declaration this verb proposes travels with the backfill, in one review. Its declaration step
+    reads the repository just made to show a plan nobody prints here — one clone of an empty
+    repository, the price of not keeping a second way to make one."""
+    from openfactory.actions import STEP_DONE, STEP_FAILED
+
+    if (getattr(getattr(project, "product", None), "docs_repo", "") or "").strip():
+        return project, False, ""
+    stage("start", "context: no repository declared — creating one")
+    outcome = _perform("product_init", project=name, create_context=True)
+    context = next((step for step in outcome.data.get("steps") or []
+                    if step["step"] == "context"), None)
+    if context is None or context["state"] == STEP_FAILED:
+        return project, False, context["said"] if context else outcome.message
+    return _get_project(name), context["state"] == STEP_DONE, ""
+
+
 @app.command("onboard")
 @speaks_plainly("onboard that repository")
 def onboard_cmd(
@@ -1933,10 +1958,15 @@ def onboard_cmd(
 
     context_outcome = None
     if not skip_context:
-        from openfactory.onboarding.onboard import onboard_product_context
+        from openfactory.onboarding.onboard import ContextOutcome, onboard_product_context
 
         typer.echo("\n── the context repository")
-        context_outcome = onboard_product_context(project, sources=repos, stream=_stage)
+        project, created, not_made = _a_context_repository_for(name, project, stage=_stage)
+        if not_made:
+            context_outcome = ContextOutcome(detail=not_made)
+        else:
+            context_outcome = onboard_product_context(project, sources=repos, stream=_stage)
+            context_outcome.created = created
         mark = "✓" if context_outcome.ok else "✗"
         made = " (created)" if context_outcome.created else ""
         typer.echo(f"{mark} {context_outcome.docs_repo or 'context'}{made} — "

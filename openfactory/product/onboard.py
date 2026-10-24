@@ -342,10 +342,11 @@ def create_context_repository(project, name: str) -> tuple[str, bool]:
 
     SEEDING LIVES AT THE OTHER DOOR, and deliberately (review of #106). `openfactory project init`
     on a local row creates this repository AND writes its first commit, because on that runtime
-    nothing else will: the module is switched on by the same command. The two callers here write
-    the file themselves after cloning (`checkout -B main`), so an unseeded repository costs them
-    nothing — what would be wrong is believing the reasoning lives in one place when it is
-    implemented in two, which is why both ends now say so.
+    nothing else will: the module is switched on by the same command. What follows this writes
+    the file itself after cloning (`checkout -B main`) — `product_init`'s declaration and
+    `onboard`'s backfill — so an unseeded repository costs it nothing; what would be wrong is
+    believing the reasoning lives in one place when it is implemented in two, which is why both
+    ends now say so.
 
     THE FORGE IS ASKED, NOT ASSUMED. `RepositoryCreatingForge` is a separate protocol precisely
     so a deployment whose forge cannot — or may not — create repositories says so here, in one
@@ -362,8 +363,10 @@ def create_context_repository(project, name: str) -> tuple[str, bool]:
     project after this returns — the object they hold predates the record (the stale-object
     defect the v2 verification pass reproduced, 2026-08-10).
 
-    Extracted from the CLI (2026-08-13) so the `onboard` verb can drive it; the CLI wraps it and
-    keeps its exit codes."""
+    Extracted from the CLI (2026-08-13) so the `onboard` verb could drive it. Its one caller now
+    is the `product_init` row (#741), which `product init --create-context` and `onboard` both
+    perform: recording the repository changes the installation, so no command calls this
+    itself."""
     from openfactory.adapters.forge.base import RepositoryCreatingForge
     from openfactory.registry import ProjectRegistry
 

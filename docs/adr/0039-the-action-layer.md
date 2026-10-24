@@ -147,6 +147,24 @@ is not decoration: ADR-0037 D4 shipped with `image=` missing from all four launc
 guard forbidding the *wrong value* passed thirteen times, because absence has no pattern to scan
 for.
 
+> **Amended (2026-10-23, #741): the other direction, for the installation.** The reachability
+> guard proves every row is reached from both transports; nothing proved that a front end reaches
+> the installation only through rows. For the command line it is proven now:
+> `tests/test_the_installation_is_changed_through_its_rows.py` reads every command off the Typer
+> app, walks each into the package as it walks a row's runner, and fails on a command that reaches
+> a writer of the registry, the people store or the poller's schedule without going through
+> `perform`, naming the rows that write it. The walk is a static reading, and it sees the shapes
+> it reads: a function of the package a command names, through any form of absolute import, as a
+> module's attribute, or as a method of an instance it can type; a registry or a store it can type
+> (built, bound to a name, returned by a function, annotated, or handed in by a caller), or a
+> writer by a name nothing else in the package defines; and a row's runner called off the
+> catalogue. It does not see a name looked up by a string, a function held in a module's table, a
+> registry it cannot type written by a name something else defines too, an inherited method, a
+> relative import, or what a module runs when it is imported; the test's `_reaches` lists both. Its positive twin holds every installation row to be
+> handed to `perform`, by name, from some command. Its first run found `onboard`, which created a
+> context repository and recorded it from the command line's own code; it maps onto `product_init`
+> now. `GET /api/v1/actions` marks those rows `installation: true`.
+
 ## Consequences
 
 - **`sdlc/api/temporal_view.py` moved to `sdlc/runtime/temporal/view.py`.** The filename was the

@@ -3736,6 +3736,11 @@ def list_actions() -> list[dict]:
     return [
         {"name": s.name, "summary": s.summary, "required": list(s.required),
          "optional": list(s.optional), "needs_admin": s.needs_admin,
+         # WHOSE IT IS, beside whether it needs an admin (#741): a row that changes the deployment
+         # itself is refused to every credential scoped to an area, so a screen of one's own can
+         # leave it out for a board or a product credential instead of offering a button that
+         # answers 403.
+         "installation": s.installation,
          # WHAT TO PUT IN EACH PARAMETER, and when to choose this row over its neighbours (#172).
          # Resolved HERE rather than by each front end, because the catalogue is the only thing
          # that knows: a panel or a script inventing a label from the parameter's name is the
